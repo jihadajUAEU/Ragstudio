@@ -6,7 +6,17 @@ import { studioRoutes } from "../lib/routes";
 import { cn } from "../lib/utils";
 import { Button } from "./ui/button";
 
-export function AppShell({ children }: { children: ReactNode }) {
+export function AppShell({
+  activePath,
+  title,
+  onNavigate,
+  children,
+}: {
+  activePath: string;
+  title: string;
+  onNavigate: (path: string) => void;
+  children: ReactNode;
+}) {
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
 
   useEffect(() => {
@@ -41,14 +51,18 @@ export function AppShell({ children }: { children: ReactNode }) {
           className="fixed inset-y-0 left-0 z-30 w-64 border-r border-[#d6dde1] bg-[#fbfcfd] lg:hidden"
         >
           <SidebarContent
+            activePath={activePath}
             onClose={() => setIsMobileNavOpen(false)}
-            onNavigate={() => setIsMobileNavOpen(false)}
+            onNavigate={(path) => {
+              onNavigate(path);
+              setIsMobileNavOpen(false);
+            }}
           />
         </aside>
       ) : null}
 
       <aside className="fixed inset-y-0 left-0 z-20 hidden w-64 border-r border-[#d6dde1] bg-[#fbfcfd] lg:block">
-        <SidebarContent />
+        <SidebarContent activePath={activePath} onNavigate={onNavigate} />
       </aside>
 
       <div className="lg:pl-64">
@@ -57,7 +71,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             <div className="min-w-0">
               <p className="truncate text-sm font-semibold lg:hidden">RAG-Anything Studio</p>
               <h1 className="truncate text-lg font-semibold text-[#1f2933] sm:text-xl">
-                Studio Dashboard
+                {title}
               </h1>
             </div>
             <Button
@@ -85,11 +99,13 @@ export function AppShell({ children }: { children: ReactNode }) {
 }
 
 function SidebarContent({
+  activePath,
   onClose,
   onNavigate,
 }: {
+  activePath: string;
   onClose?: () => void;
-  onNavigate?: () => void;
+  onNavigate?: (path: string) => void;
 }) {
   return (
     <>
@@ -120,7 +136,11 @@ function SidebarContent({
           const Icon = route.icon;
           const className = cn(
             "flex min-h-10 items-center gap-3 rounded-md px-3 text-sm font-medium",
-            route.enabled ? "bg-[#e7f1f4] text-[#174657]" : "text-[#7e8b92]",
+            route.enabled && route.href === activePath
+              ? "bg-[#e7f1f4] text-[#174657]"
+              : route.enabled
+                ? "text-[#3a4a53] hover:bg-[#eef4f6]"
+                : "text-[#7e8b92]",
           );
 
           if (!route.enabled) {
@@ -133,7 +153,16 @@ function SidebarContent({
           }
 
           return (
-            <a key={route.href} href={route.href} className={className} onClick={onNavigate}>
+            <a
+              key={route.href}
+              href={route.href}
+              className={className}
+              aria-current={route.href === activePath ? "page" : undefined}
+              onClick={(event) => {
+                event.preventDefault();
+                onNavigate?.(route.href);
+              }}
+            >
               <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
               <span className="truncate">{route.label}</span>
             </a>

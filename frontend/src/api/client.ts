@@ -6,6 +6,9 @@ import type {
   JobOut,
   Page,
   RunOut,
+  SettingsProfileIn,
+  SettingsProfileOut,
+  VariantIn,
   VariantOut,
 } from "./generated";
 
@@ -51,8 +54,29 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export const apiClient = {
   health: () => request<HealthOut>("/api/health"),
   documents: () => request<Page<DocumentOut>>("/api/documents"),
+  uploadDocument: (file: File) => {
+    const formData = new FormData();
+    formData.set("file", file);
+    return request<DocumentOut>("/api/documents", {
+      method: "POST",
+      body: formData,
+    });
+  },
   jobs: () => request<Page<JobOut>>("/api/jobs"),
   variants: () => request<Page<VariantOut>>("/api/variants"),
+  createVariant: (payload: VariantIn) =>
+    request<VariantOut>("/api/variants", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }),
+  defaultSettings: () => request<SettingsProfileOut>("/api/settings/default"),
+  updateDefaultSettings: (payload: SettingsProfileIn) =>
+    request<SettingsProfileOut>("/api/settings/default", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }),
   runs: () => request<Page<RunOut>>("/api/runs"),
   diagnostics: () => request<DiagnosticsOut>("/api/diagnostics"),
   graph: () => request<GraphOut>("/api/graph"),

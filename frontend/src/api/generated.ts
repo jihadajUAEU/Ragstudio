@@ -24,6 +24,17 @@ export interface DocumentOut {
   status: StageStatus;
 }
 
+export interface SettingsProfileIn {
+  provider: string;
+  llm_model: string;
+  embedding_model: string;
+  storage_backend: string;
+}
+
+export interface SettingsProfileOut extends SettingsProfileIn {
+  id: string;
+}
+
 export interface JobOut {
   id: string;
   type: string;
@@ -36,6 +47,12 @@ export interface JobOut {
 
 export interface VariantOut {
   id: string;
+  name: string;
+  preset: string;
+  parameters: Record<string, unknown>;
+}
+
+export interface VariantIn {
   name: string;
   preset: string;
   parameters: Record<string, unknown>;
