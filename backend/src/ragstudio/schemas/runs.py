@@ -13,3 +13,8 @@ class RunOut(StudioModel):
     chunk_traces: list[dict[str, Any]]
     timings: dict[str, Any]
     error: str | None
+
+
+class RunPage(StudioModel):
+    items: list[RunOut]
+    total: int

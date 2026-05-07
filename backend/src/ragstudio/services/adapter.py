@@ -40,6 +40,7 @@ class RAGAnythingAdapter:
                     "rank": index + 1,
                     "source_location": chunk.source_location,
                     "metadata": chunk.metadata,
+                    "inclusion_status": "prompt-included",
                 }
                 for index, chunk in enumerate(selected)
             ],

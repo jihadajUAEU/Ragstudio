@@ -1,4 +1,4 @@
-from ragstudio.api.routes import chunks, documents, evaluation_sets, health, jobs, settings, variants
+from ragstudio.api.routes import chunks, documents, evaluation_sets, health, jobs, query, runs, settings, variants
 
 ROUTERS = [
     health.router,
@@ -8,4 +8,6 @@ ROUTERS = [
     chunks.router,
     jobs.router,
     evaluation_sets.router,
+    query.router,
+    runs.router,
 ]
