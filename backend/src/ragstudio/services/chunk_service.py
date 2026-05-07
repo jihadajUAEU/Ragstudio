@@ -1,5 +1,6 @@
 import re
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
+from typing import Any
 
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -33,7 +34,7 @@ class ChunkService:
                 document_id=document.id,
                 text=adapter_chunk.text,
                 source_location=adapter_chunk.source_location,
-                metadata_json=adapter_chunk.metadata,
+                metadata_json=self._safe_metadata(adapter_chunk.metadata, document.id),
             )
             for adapter_chunk in adapter_chunks
         ]
@@ -49,28 +50,46 @@ class ChunkService:
         statement = select(Chunk)
         if search_in.document_ids:
             statement = statement.where(Chunk.document_id.in_(search_in.document_ids))
-        result = await self.session.execute(statement.order_by(Chunk.created_at.asc()))
+        result = await self.session.execute(statement.order_by(Chunk.created_at.asc(), Chunk.id.asc()))
         chunks = list(result.scalars().all())
 
         ranked = sorted(
-            ((self._score(search_in.query, chunk), chunk) for chunk in chunks),
+            ((self._score(search_in.query, chunk), source_order, chunk) for source_order, chunk in enumerate(chunks)),
             key=lambda item: (
-                item[0],
-                item[1].created_at,
-                item[1].id,
+                -item[0],
+                self._source_order(item[2], item[1]),
             ),
-            reverse=True,
         )
         if search_in.query.strip():
             ranked = [item for item in ranked if item[0] > 0]
 
-        items = [self._chunk_out_with_score(chunk, score) for score, chunk in ranked[:limit]]
+        items = [self._chunk_out_with_score(chunk, score) for score, _, chunk in ranked[:limit]]
         return ChunkSearchOut(items=items, total=len(items))
 
     def _chunk_out_with_score(self, chunk: Chunk, score: float) -> ChunkOut:
         output = ChunkOut.model_validate(chunk)
         output.metadata = {**output.metadata, "score": score}
         return output
+
+    def _safe_metadata(self, metadata: dict[str, Any], document_id: str) -> dict[str, Any]:
+        safe = {
+            key: value
+            for key, value in metadata.items()
+            if key not in {"artifact_path", "path", "file_path"} and not self._is_absolute_path_value(value)
+        }
+        safe["document_id"] = document_id
+        return safe
+
+    def _is_absolute_path_value(self, value: Any) -> bool:
+        if not isinstance(value, str):
+            return False
+        return Path(value).is_absolute() or PureWindowsPath(value).is_absolute()
+
+    def _source_order(self, chunk: Chunk, fallback_order: int) -> tuple[int, Any, Any, Any]:
+        chunk_index = chunk.metadata_json.get("chunk_index")
+        if isinstance(chunk_index, int):
+            return (0, chunk_index, chunk.created_at, chunk.id)
+        return (1, fallback_order, chunk.created_at, chunk.id)
 
     def _score(self, query: str, chunk: Chunk) -> float:
         query_text = query.strip().lower()

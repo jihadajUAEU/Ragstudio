@@ -49,6 +49,7 @@ class RAGAnythingAdapter:
         return {"nodes": [], "edges": [], "placeholder": True}
 
     def _line_split_index(self, artifact_path: Path) -> list[AdapterChunk]:
+        artifact_ref = artifact_path.name
         content = artifact_path.read_bytes().decode("utf-8", errors="replace")
         lines = content.splitlines()
         chunks: list[AdapterChunk] = []
@@ -62,9 +63,10 @@ class RAGAnythingAdapter:
                     text=text,
                     source_location={"line": line_number},
                     metadata={
-                        "adapter": "fallback",
-                        "artifact_path": str(artifact_path),
+                        "backend": "fallback",
+                        "artifact_ref": artifact_ref,
                         "chunk_index": len(chunks),
+                        "source_type": "text",
                     },
                 )
             )
@@ -75,9 +77,10 @@ class RAGAnythingAdapter:
                     text=content.strip(),
                     source_location={"line": 1},
                     metadata={
-                        "adapter": "fallback",
-                        "artifact_path": str(artifact_path),
+                        "backend": "fallback",
+                        "artifact_ref": artifact_ref,
                         "chunk_index": 0,
+                        "source_type": "text",
                     },
                 )
             )

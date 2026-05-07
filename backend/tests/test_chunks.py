@@ -17,6 +17,11 @@ async def test_index_uploaded_document_creates_line_chunks(client):
     assert chunks[0]["document_id"] == document_id
     assert chunks[0]["source_location"] == {"line": 1}
     assert chunks[1]["source_location"] == {"line": 3}
+    assert chunks[0]["metadata"]["document_id"] == document_id
+    assert chunks[0]["metadata"]["backend"] == "fallback"
+    assert chunks[0]["metadata"]["artifact_ref"]
+    assert "artifact_path" not in chunks[0]["metadata"]
+    assert not chunks[0]["metadata"]["artifact_ref"].startswith("/")
 
 
 @pytest.mark.asyncio
@@ -47,6 +52,37 @@ async def test_search_chunks_returns_ranked_matches(client):
         "apple banana carrot",
     ]
     assert payload["items"][0]["metadata"]["score"] > payload["items"][1]["metadata"]["score"]
+
+
+@pytest.mark.asyncio
+async def test_search_chunks_preserves_source_order_for_ties_and_empty_query(client):
+    upload_response = await client.post(
+        "/api/documents",
+        files={
+            "file": (
+                "ties.txt",
+                b"same match first\nsame match second\nsame match third\n",
+                "text/plain",
+            )
+        },
+    )
+    document_id = upload_response.json()["id"]
+    await client.post(f"/api/chunks/index/{document_id}")
+
+    tie_response = await client.post(
+        "/api/chunks/search",
+        json={"query": "same match", "document_ids": [document_id], "limit": 10},
+    )
+    empty_response = await client.post(
+        "/api/chunks/search",
+        json={"query": "", "document_ids": [document_id], "limit": 10},
+    )
+
+    assert tie_response.status_code == 200
+    assert empty_response.status_code == 200
+    expected = ["same match first", "same match second", "same match third"]
+    assert [item["text"] for item in tie_response.json()["items"]] == expected
+    assert [item["text"] for item in empty_response.json()["items"]] == expected
 
 
 @pytest.mark.asyncio
