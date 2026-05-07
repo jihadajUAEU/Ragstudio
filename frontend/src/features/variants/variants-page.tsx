@@ -1,11 +1,19 @@
 import { useMemo, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
-import { GitCompare, Loader2, Plus, RefreshCcw, SlidersHorizontal } from "lucide-react";
+import {
+  AlertCircle,
+  GitCompare,
+  Loader2,
+  Plus,
+  RefreshCcw,
+  SlidersHorizontal,
+} from "lucide-react";
 
 import { apiClient } from "../../api/client";
 import type { VariantIn, VariantOut } from "../../api/generated";
 import { DataTable } from "../../components/data-table";
+import { EmptyState } from "../../components/empty-state";
 import { Button } from "../../components/ui/button";
 import { titleCase } from "../../lib/utils";
 
@@ -172,12 +180,32 @@ export function VariantsPage() {
             <GitCompare className="h-4 w-4 text-[#176b87]" aria-hidden="true" />
             <h3 className="truncate text-base font-semibold text-[#1f2933]">Variant matrix</h3>
           </div>
-          <DataTable
-            columns={variantColumns}
-            data={variantsQuery.data?.items ?? []}
-            emptyTitle="No variants"
-            emptyDescription="Created variants will appear here."
-          />
+          {variantsQuery.isLoading ? (
+            <EmptyState
+              icon={Loader2}
+              title="Loading variants"
+              description="Fetching variant matrix."
+            />
+          ) : variantsQuery.isError ? (
+            <EmptyState
+              icon={AlertCircle}
+              title="Variants unavailable"
+              description={variantsQuery.error.message}
+              action={
+                <Button variant="secondary" onClick={() => void variantsQuery.refetch()}>
+                  <RefreshCcw className="h-4 w-4" aria-hidden="true" />
+                  Retry
+                </Button>
+              }
+            />
+          ) : (
+            <DataTable
+              columns={variantColumns}
+              data={variantsQuery.data?.items ?? []}
+              emptyTitle="No variants"
+              emptyDescription="Created variants will appear here."
+            />
+          )}
         </section>
       </section>
     </div>

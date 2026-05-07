@@ -1,11 +1,12 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useMemo, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
-import { FileUp, Loader2, RefreshCcw, Upload } from "lucide-react";
+import { AlertCircle, FileUp, Loader2, RefreshCcw, Upload } from "lucide-react";
 
 import { apiClient } from "../../api/client";
 import type { DocumentOut, JobOut } from "../../api/generated";
 import { DataTable } from "../../components/data-table";
+import { EmptyState } from "../../components/empty-state";
 import { StatusBadge } from "../../components/status-badge";
 import { Button } from "../../components/ui/button";
 import { titleCase } from "../../lib/utils";
@@ -17,6 +18,7 @@ const queryKeys = {
 
 export function DocumentsPage() {
   const queryClient = useQueryClient();
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
   const documentsQuery = useQuery({ queryKey: queryKeys.documents, queryFn: apiClient.documents });
   const jobsQuery = useQuery({ queryKey: queryKeys.jobs, queryFn: apiClient.jobs });
@@ -25,6 +27,9 @@ export function DocumentsPage() {
     mutationFn: apiClient.uploadDocument,
     onSuccess: () => {
       setFile(null);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
       void queryClient.invalidateQueries({ queryKey: queryKeys.documents });
       void queryClient.invalidateQueries({ queryKey: queryKeys.jobs });
     },
@@ -144,6 +149,7 @@ export function DocumentsPage() {
           <label className="min-w-0 flex-1 text-sm font-medium text-[#3a4a53]">
             <span className="mb-1.5 block truncate">Upload file</span>
             <input
+              ref={fileInputRef}
               type="file"
               className="block w-full min-w-0 rounded-md border border-[#cfd8dd] bg-white text-sm text-[#1f2933] file:mr-3 file:h-10 file:border-0 file:bg-[#edf3f5] file:px-3 file:text-sm file:font-medium file:text-[#24313a]"
               onChange={(event) => setFile(event.target.files?.[0] ?? null)}
@@ -166,21 +172,57 @@ export function DocumentsPage() {
 
       <section className="grid gap-4 xl:grid-cols-[minmax(0,1.3fr)_minmax(360px,0.7fr)]">
         <Panel title="Documents" icon={FileUp}>
-          <DataTable
-            columns={documentColumns}
-            data={documentsQuery.data?.items ?? []}
-            emptyTitle="No documents"
-            emptyDescription="Uploaded files will appear here."
-          />
+          {documentsQuery.isLoading ? (
+            <EmptyState
+              icon={Loader2}
+              title="Loading documents"
+              description="Fetching uploaded files."
+            />
+          ) : documentsQuery.isError ? (
+            <EmptyState
+              icon={AlertCircle}
+              title="Documents unavailable"
+              description={documentsQuery.error.message}
+              action={
+                <Button variant="secondary" onClick={() => void documentsQuery.refetch()}>
+                  <RefreshCcw className="h-4 w-4" aria-hidden="true" />
+                  Retry
+                </Button>
+              }
+            />
+          ) : (
+            <DataTable
+              columns={documentColumns}
+              data={documentsQuery.data?.items ?? []}
+              emptyTitle="No documents"
+              emptyDescription="Uploaded files will appear here."
+            />
+          )}
         </Panel>
 
         <Panel title="Jobs" icon={RefreshCcw}>
-          <DataTable
-            columns={jobColumns}
-            data={jobsQuery.data?.items ?? []}
-            emptyTitle="No jobs"
-            emptyDescription="Upload and indexing jobs will appear here."
-          />
+          {jobsQuery.isLoading ? (
+            <EmptyState icon={Loader2} title="Loading jobs" description="Fetching job status." />
+          ) : jobsQuery.isError ? (
+            <EmptyState
+              icon={AlertCircle}
+              title="Jobs unavailable"
+              description={jobsQuery.error.message}
+              action={
+                <Button variant="secondary" onClick={() => void jobsQuery.refetch()}>
+                  <RefreshCcw className="h-4 w-4" aria-hidden="true" />
+                  Retry
+                </Button>
+              }
+            />
+          ) : (
+            <DataTable
+              columns={jobColumns}
+              data={jobsQuery.data?.items ?? []}
+              emptyTitle="No jobs"
+              emptyDescription="Upload and indexing jobs will appear here."
+            />
+          )}
         </Panel>
       </section>
     </div>
