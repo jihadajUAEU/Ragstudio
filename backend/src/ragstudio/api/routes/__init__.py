@@ -1,4 +1,18 @@
-from ragstudio.api.routes import chunks, documents, evaluation_sets, health, jobs, query, runs, settings, variants
+from ragstudio.api.routes import (
+    chunks,
+    diagnostics,
+    documents,
+    evaluation_sets,
+    experiments,
+    graph,
+    health,
+    jobs,
+    optimizer,
+    query,
+    runs,
+    settings,
+    variants,
+)
 
 ROUTERS = [
     health.router,
@@ -10,4 +24,8 @@ ROUTERS = [
     evaluation_sets.router,
     query.router,
     runs.router,
+    experiments.router,
+    optimizer.router,
+    graph.router,
+    diagnostics.router,
 ]
