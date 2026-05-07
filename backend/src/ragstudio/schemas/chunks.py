@@ -1,5 +1,7 @@
 from typing import Any
 
+from pydantic import AliasChoices, Field
+
 from ragstudio.schemas.common import StudioModel
 
 
@@ -8,7 +10,10 @@ class ChunkOut(StudioModel):
     document_id: str
     text: str
     source_location: dict[str, Any]
-    metadata: dict[str, Any]
+    metadata: dict[str, Any] = Field(
+        validation_alias=AliasChoices("metadata_json", "metadata"),
+        serialization_alias="metadata",
+    )
 
 
 class ChunkSearchIn(StudioModel):
