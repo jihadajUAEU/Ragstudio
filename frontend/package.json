@@ -8,7 +8,7 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "test": "vitest --passWithNoTests",
-    "e2e": "NODE_PATH=./node_modules playwright test --config ../e2e",
+    "e2e": "NODE_PATH=./node_modules playwright test --config ../e2e/playwright.config.ts",
     "generate:api": "openapi-typescript http://127.0.0.1:8000/openapi.json -o src/api/generated.ts"
   },
   "dependencies": {

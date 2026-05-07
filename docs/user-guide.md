@@ -61,9 +61,9 @@ cases:
 
 ### CSV
 
-CSV imports map columns into evaluation case fields. Use simple scalar columns for `id`, `query`, and `expected_answer`; list-like fields such as `must_include`, `must_avoid`, `expected_sources`, and `documents` can be comma-separated values.
+CSV imports map columns into evaluation case fields. Use simple scalar columns for `id`, `query`, and `expected_answer`; list-like fields such as `must_include`, `must_avoid`, `expected_sources`, and `documents` use pipe-delimited values inside a cell.
 
 ```csv
 id,query,expected_answer,must_include,expected_sources
-case-1,What changed in the contract?,The renewal term changed.,renewal term,contract.pdf
+case-1,What changed in the contract?,The renewal term changed.,renewal term|effective date,contract.pdf
 ```
