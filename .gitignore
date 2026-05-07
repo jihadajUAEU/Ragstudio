@@ -1,1 +1,16 @@
+.DS_Store
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.pyright/
+node_modules/
+dist/
+coverage/
+playwright-report/
+test-results/
+.ragstudio/
+backend/src/ragstudio/static/dist/
+frontend/src/api/generated.ts
 .worktrees/

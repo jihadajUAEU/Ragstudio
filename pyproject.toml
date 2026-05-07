@@ -1,0 +1,17 @@
+[project]
+name = "rag-anything-studio-workspace"
+version = "0.1.0"
+requires-python = ">=3.12,<3.15"
+description = "Workspace wrapper for RAG-Anything Studio"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "RUF"]
+
+[tool.pyright]
+pythonVersion = "3.12"
+typeCheckingMode = "strict"
+include = ["backend/src", "backend/tests"]
