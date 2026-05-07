@@ -58,6 +58,37 @@ export interface VariantIn {
   parameters: Record<string, unknown>;
 }
 
+export interface ChunkOut {
+  id: string;
+  document_id: string;
+  text: string;
+  source_location: Record<string, unknown>;
+  metadata: Record<string, unknown>;
+}
+
+export interface ChunkSearchIn {
+  query: string;
+  document_ids: string[];
+  variant_id?: string | null;
+  limit: number;
+}
+
+export interface ChunkSearchOut {
+  items: ChunkOut[];
+  total: number;
+}
+
+export interface QueryIn {
+  query: string;
+  document_ids: string[];
+  variant_ids: string[];
+  limit: number;
+}
+
+export interface QueryOut {
+  runs: RunOut[];
+}
+
 export interface RunOut {
   id: string;
   variant_id: string;

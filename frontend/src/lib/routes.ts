@@ -4,6 +4,7 @@ import {
   FileText,
   FlaskConical,
   GitBranch,
+  GitFork,
   LayoutDashboard,
   MessageSquareText,
   Settings,
@@ -20,12 +21,13 @@ export interface StudioRoute {
 
 export const studioRoutes: StudioRoute[] = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard, enabled: true },
+  { href: "/pipeline", label: "Pipeline", icon: GitFork, enabled: true },
   { href: "/documents", label: "Documents", icon: FileText, enabled: true },
-  { href: "/chunks", label: "Chunks", icon: Database, enabled: false },
-  { href: "/query", label: "Query", icon: MessageSquareText, enabled: false },
+  { href: "/chunks", label: "Chunks", icon: Database, enabled: true },
+  { href: "/query", label: "Query", icon: MessageSquareText, enabled: true },
   { href: "/experiments", label: "Experiments", icon: FlaskConical, enabled: false },
   { href: "/variants", label: "Variants", icon: SlidersHorizontal, enabled: true },
-  { href: "/graph", label: "Graph", icon: GitBranch, enabled: false },
+  { href: "/graph", label: "Graph", icon: GitBranch, enabled: true },
   { href: "/runs", label: "Runs", icon: BarChart3, enabled: false },
   { href: "/settings", label: "Settings", icon: Settings, enabled: true },
 ];

@@ -1,15 +1,23 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { AppShell } from "./components/app-shell";
+import { ChunkInspector } from "./features/chunks/chunk-inspector";
 import { DashboardPage } from "./features/dashboard/dashboard-page";
 import { DocumentsPage } from "./features/documents/documents-page";
+import { GraphPage } from "./features/graph/graph-page";
+import { PipelineBuilder } from "./features/pipeline/pipeline-builder";
+import { QueryPage } from "./features/query/query-page";
 import { SettingsPage } from "./features/settings/settings-page";
 import { VariantsPage } from "./features/variants/variants-page";
 
 const pageTitles: Record<string, string> = {
   "/": "Studio Dashboard",
+  "/pipeline": "Pipeline Builder",
   "/documents": "Documents",
+  "/chunks": "Chunk Inspector",
+  "/query": "Query",
   "/variants": "Variants",
+  "/graph": "Graph",
   "/settings": "Settings",
 };
 
@@ -25,10 +33,18 @@ export default function App() {
 
   const page = useMemo(() => {
     switch (route) {
+      case "/pipeline":
+        return <PipelineBuilder />;
       case "/documents":
         return <DocumentsPage />;
+      case "/chunks":
+        return <ChunkInspector />;
+      case "/query":
+        return <QueryPage />;
       case "/variants":
         return <VariantsPage />;
+      case "/graph":
+        return <GraphPage />;
       case "/settings":
         return <SettingsPage />;
       default:

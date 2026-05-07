@@ -5,6 +5,11 @@ import type {
   HealthOut,
   JobOut,
   Page,
+  ChunkOut,
+  ChunkSearchIn,
+  ChunkSearchOut,
+  QueryIn,
+  QueryOut,
   RunOut,
   SettingsProfileIn,
   SettingsProfileOut,
@@ -74,6 +79,22 @@ export const apiClient = {
   updateDefaultSettings: (payload: SettingsProfileIn) =>
     request<SettingsProfileOut>("/api/settings/default", {
       method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+  }),
+  indexDocumentChunks: (documentId: string) =>
+    request<ChunkOut[]>(`/api/chunks/index/${encodeURIComponent(documentId)}`, {
+      method: "POST",
+    }),
+  searchChunks: (payload: ChunkSearchIn) =>
+    request<ChunkSearchOut>("/api/chunks/search", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }),
+  query: (payload: QueryIn) =>
+    request<QueryOut>("/api/query", {
+      method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     }),
