@@ -17,6 +17,7 @@
     "@radix-ui/react-label": "latest",
     "@radix-ui/react-popover": "latest",
     "@radix-ui/react-select": "latest",
+    "@radix-ui/react-slot": "^1.2.4",
     "@radix-ui/react-tabs": "latest",
     "@radix-ui/react-toast": "latest",
     "@radix-ui/react-tooltip": "latest",
@@ -39,6 +40,7 @@
   },
   "devDependencies": {
     "@eslint/js": "latest",
+    "@tailwindcss/vite": "^4.2.4",
     "@testing-library/react": "latest",
     "@types/node": "latest",
     "@types/react": "latest",
@@ -46,12 +48,14 @@
     "@vitejs/plugin-react": "latest",
     "eslint": "latest",
     "eslint-plugin-react-hooks": "latest",
+    "globals": "^17.6.0",
     "jsdom": "latest",
     "openapi-typescript": "latest",
     "playwright": "latest",
     "prettier": "latest",
     "tailwindcss": "latest",
     "typescript": "latest",
+    "typescript-eslint": "^8.59.2",
     "vite": "latest",
     "vitest": "latest"
   }
