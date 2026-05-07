@@ -22,7 +22,7 @@ class DocumentService:
         if existing is not None:
             return DocumentOut.model_validate(existing)
 
-        artifact_path.write_bytes(content)
+        _, artifact_path, created_artifact = self.store.write_upload(filename, content)
         document = Document(
             filename=filename,
             content_type=content_type,
@@ -40,6 +40,14 @@ class DocumentService:
             existing = await self.session.scalar(select(Document).where(Document.sha256 == digest))
             if existing is not None:
                 return DocumentOut.model_validate(existing)
+            if created_artifact:
+                artifact_path.unlink(missing_ok=True)
+            raise
+        except Exception:
+            await self.session.rollback()
+            existing = await self.session.scalar(select(Document).where(Document.sha256 == digest))
+            if existing is None and created_artifact:
+                artifact_path.unlink(missing_ok=True)
             raise
         await self.session.refresh(document)
         return DocumentOut.model_validate(document)

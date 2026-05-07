@@ -1,4 +1,5 @@
 import asyncio
+from hashlib import sha256
 
 import pytest
 from sqlalchemy import select
@@ -49,6 +50,29 @@ async def test_upload_document_is_idempotent_by_content_hash(client):
     index_jobs = [job for job in jobs_response.json()["items"] if job["type"] == "index_document"]
     assert len(index_jobs) == 1
     assert index_jobs[0]["target_id"] == first_response.json()["id"]
+
+
+@pytest.mark.asyncio
+async def test_duplicate_uploads_with_different_filenames_share_one_artifact(tmp_path):
+    engine = make_engine(f"sqlite+aiosqlite:///{tmp_path / 'studio.sqlite3'}")
+    session_factory = make_session_factory(engine)
+    await init_db(engine)
+
+    content = b"same artifact bytes"
+    digest = sha256(content).hexdigest()
+
+    async with session_factory() as session:
+        service = DocumentService(session, tmp_path)
+        first_document = await service.upload("first.txt", "text/plain", content)
+        second_document = await service.upload("second.txt", "text/plain", content)
+        documents = (await session.execute(select(Document))).scalars().all()
+
+    await engine.dispose()
+
+    upload_files = [path for path in (tmp_path / "uploads").iterdir() if path.is_file()]
+    assert second_document.id == first_document.id
+    assert len(documents) == 1
+    assert upload_files == [tmp_path / "uploads" / digest]
 
 
 @pytest.mark.asyncio
