@@ -2,9 +2,14 @@ import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 
 import { AppShell } from "./components/app-shell";
 import { ChunkInspector } from "./features/chunks/chunk-inspector";
+import { ComparisonPage } from "./features/comparison/comparison-page";
 import { DashboardPage } from "./features/dashboard/dashboard-page";
+import { DiagnosticsPage } from "./features/diagnostics/diagnostics-page";
 import { DocumentsPage } from "./features/documents/documents-page";
+import { EvaluationPage } from "./features/evaluation/evaluation-page";
+import { ExperimentsPage } from "./features/experiments/experiments-page";
 import { GraphPage } from "./features/graph/graph-page";
+import { OptimizerPage } from "./features/optimizer/optimizer-page";
 import { QueryPage } from "./features/query/query-page";
 import { SettingsPage } from "./features/settings/settings-page";
 import { VariantsPage } from "./features/variants/variants-page";
@@ -19,8 +24,13 @@ const pageTitles: Record<string, string> = {
   "/documents": "Documents",
   "/chunks": "Chunk Inspector",
   "/query": "Query",
+  "/evaluation": "Evaluation",
+  "/experiments": "Experiments",
+  "/comparison": "Comparison",
+  "/optimizer": "Optimizer",
   "/variants": "Variants",
   "/graph": "Graph",
+  "/diagnostics": "Diagnostics",
   "/settings": "Settings",
 };
 
@@ -44,10 +54,20 @@ export default function App() {
         return <ChunkInspector />;
       case "/query":
         return <QueryPage />;
+      case "/evaluation":
+        return <EvaluationPage />;
+      case "/experiments":
+        return <ExperimentsPage />;
+      case "/comparison":
+        return <ComparisonPage />;
+      case "/optimizer":
+        return <OptimizerPage />;
       case "/variants":
         return <VariantsPage />;
       case "/graph":
         return <GraphPage />;
+      case "/diagnostics":
+        return <DiagnosticsPage />;
       case "/settings":
         return <SettingsPage />;
       default:

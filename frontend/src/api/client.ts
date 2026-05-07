@@ -1,9 +1,14 @@
 import type {
   DiagnosticsOut,
   DocumentOut,
+  EvaluationSetOut,
+  ExperimentIn,
+  ExperimentOut,
   GraphOut,
   HealthOut,
   JobOut,
+  OptimizerIn,
+  OptimizerOut,
   Page,
   ChunkOut,
   ChunkSearchIn,
@@ -98,6 +103,39 @@ export const apiClient = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     }),
+  evaluationSets: () => request<Page<EvaluationSetOut>>("/api/evaluation-sets"),
+  importEvaluationSet: ({ file, name }: { file: File; name: string }) => {
+    const formData = new FormData();
+    formData.set("file", file);
+    return request<EvaluationSetOut>(
+      `/api/evaluation-sets/import?name=${encodeURIComponent(name)}`,
+      {
+        method: "POST",
+        body: formData,
+      },
+    );
+  },
+  createExperiment: (payload: ExperimentIn) =>
+    request<ExperimentOut>("/api/experiments", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }),
+  optimize: async (payload: OptimizerIn) => {
+    const init = {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    };
+    try {
+      return await request<OptimizerOut>("/api/optimizer/recommend", init);
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 404) {
+        return request<OptimizerOut>("/api/optimizer", init);
+      }
+      throw error;
+    }
+  },
   runs: () => request<Page<RunOut>>("/api/runs"),
   diagnostics: () => request<DiagnosticsOut>("/api/diagnostics"),
   graph: () => request<GraphOut>("/api/graph"),
