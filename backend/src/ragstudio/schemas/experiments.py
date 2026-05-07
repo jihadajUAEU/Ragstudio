@@ -4,6 +4,13 @@ from ragstudio.schemas.common import StudioModel
 from ragstudio.schemas.runs import RunOut
 
 
+class ExperimentScoreOut(StudioModel):
+    id: str
+    run_id: str
+    total: int
+    details: dict[str, Any]
+
+
 class ExperimentIn(StudioModel):
     name: str
     document_ids: list[str]
@@ -15,3 +22,4 @@ class ExperimentIn(StudioModel):
 class ExperimentOut(ExperimentIn):
     id: str
     runs: list[RunOut] = []
+    scores: list[ExperimentScoreOut] = []

@@ -2,7 +2,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ragstudio.db.models import Experiment, OptimizationSession, Run, Score
-from ragstudio.schemas.optimizer import OptimizerIn, OptimizerOut
+from ragstudio.schemas.optimizer import OptimizerCandidateSummary, OptimizerIn, OptimizerOut
 
 
 class ExperimentNotFoundError(LookupError):
@@ -39,22 +39,61 @@ class OptimizerService:
 
         scores_result = await self.session.execute(select(Score).where(Score.run_id.in_([run.id for run in runs])))
         scores_by_run_id = {score.run_id: score for score in scores_result.scalars().all()}
-        best_run = max(runs, key=lambda run: (scores_by_run_id.get(run.id).total if run.id in scores_by_run_id else 0))
-        best_score = scores_by_run_id.get(best_run.id)
-        total = best_score.total if best_score else 0
+        candidate_summaries = self._summarize_candidates(runs, scores_by_run_id)
+        selected_summary = max(candidate_summaries, key=lambda item: (item.average_score, item.total_score, item.run_count))
+        selected_run_id = selected_summary.best_run_id
         session = OptimizationSession(
             experiment_id=payload.experiment_id,
             objective=payload.objective or experiment.objective,
-            selected_variant_id=best_run.variant_id,
-            explanation=f"Selected variant {best_run.variant_id} from run {best_run.id} with score {total}.",
+            selected_variant_id=selected_summary.variant_id,
+            explanation=(
+                f"Selected variant {selected_summary.variant_id} with average score "
+                f"{selected_summary.average_score:.2f} across {selected_summary.run_count} runs "
+                f"(total {selected_summary.total_score:.2f})."
+            ),
             tried_variant_ids=tried_variant_ids,
         )
         self.session.add(session)
         await self.session.commit()
         await self.session.refresh(session)
-        return self._out(session, selected_run_id=best_run.id)
+        return self._out(session, selected_run_id=selected_run_id, candidate_summaries=candidate_summaries)
 
-    def _out(self, session: OptimizationSession, selected_run_id: str | None) -> OptimizerOut:
+    def _summarize_candidates(
+        self, runs: list[Run], scores_by_run_id: dict[str, Score]
+    ) -> list[OptimizerCandidateSummary]:
+        grouped: dict[str, list[tuple[Run, float]]] = {}
+        for run in runs:
+            grouped.setdefault(run.variant_id, []).append((run, self._run_score(run, scores_by_run_id.get(run.id))))
+
+        summaries: list[OptimizerCandidateSummary] = []
+        for variant_id, scored_runs in grouped.items():
+            total_score = sum(score for _, score in scored_runs)
+            best_run, best_run_score = max(scored_runs, key=lambda item: item[1])
+            summaries.append(
+                OptimizerCandidateSummary(
+                    variant_id=variant_id,
+                    run_count=len(scored_runs),
+                    average_score=round(total_score / len(scored_runs), 2),
+                    total_score=round(total_score, 2),
+                    best_run_id=best_run.id,
+                    best_run_score=round(best_run_score, 2),
+                )
+            )
+        return summaries
+
+    def _run_score(self, run: Run, score: Score | None) -> float:
+        if score is not None:
+            return float(score.total)
+        if run.error:
+            return 0.0
+        return float(min(100, 50 + (10 * len(run.sources))))
+
+    def _out(
+        self,
+        session: OptimizationSession,
+        selected_run_id: str | None,
+        candidate_summaries: list[OptimizerCandidateSummary] | None = None,
+    ) -> OptimizerOut:
         return OptimizerOut(
             id=session.id,
             experiment_id=session.experiment_id,
@@ -63,4 +102,5 @@ class OptimizerService:
             selected_run_id=selected_run_id,
             explanation=session.explanation,
             tried_variant_ids=session.tried_variant_ids,
+            candidate_summaries=candidate_summaries or [],
         )

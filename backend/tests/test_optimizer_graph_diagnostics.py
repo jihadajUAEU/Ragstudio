@@ -1,6 +1,6 @@
 import pytest
 
-from ragstudio.db.models import Experiment
+from ragstudio.db.models import Experiment, Run, Score
 
 
 @pytest.mark.asyncio
@@ -41,6 +41,52 @@ async def test_optimizer_recommends_best_variant_from_experiment_runs(client):
     assert payload["selected_variant_id"] in {first.json()["id"], second.json()["id"]}
     assert payload["selected_run_id"]
     assert set(payload["tried_variant_ids"]) == {first.json()["id"], second.json()["id"]}
+
+
+@pytest.mark.asyncio
+async def test_optimizer_aggregates_scores_per_variant_across_runs(client):
+    transport = client._transport
+    async with transport.app.state.session_factory() as session:
+        experiment = Experiment(
+            name="Aggregate optimizer experiment",
+            document_ids=[],
+            evaluation_set_id="eval",
+            variant_ids=["spiky", "steady"],
+            objective={"metric": "total"},
+        )
+        session.add(experiment)
+        await session.flush()
+        runs = [
+            Run(variant_id="spiky", experiment_id=experiment.id, query="q1", status="succeeded", answer="great"),
+            Run(variant_id="spiky", experiment_id=experiment.id, query="q2", status="succeeded", answer="poor"),
+            Run(variant_id="steady", experiment_id=experiment.id, query="q1", status="succeeded", answer="good"),
+            Run(variant_id="steady", experiment_id=experiment.id, query="q2", status="succeeded", answer="good"),
+        ]
+        session.add_all(runs)
+        await session.flush()
+        session.add_all(
+            [
+                Score(run_id=runs[0].id, total=100, details={"total": 100}),
+                Score(run_id=runs[1].id, total=0, details={"total": 0}),
+                Score(run_id=runs[2].id, total=60, details={"total": 60}),
+                Score(run_id=runs[3].id, total=60, details={"total": 60}),
+            ]
+        )
+        await session.commit()
+        experiment_id = experiment.id
+
+    response = await client.post("/api/optimizer", json={"experiment_id": experiment_id, "objective": {}})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["selected_variant_id"] == "steady"
+    assert payload["selected_run_id"] in {runs[2].id, runs[3].id}
+    assert "average score 60.00" in payload["explanation"]
+    summaries = {item["variant_id"]: item for item in payload["candidate_summaries"]}
+    assert summaries["spiky"]["average_score"] == 50
+    assert summaries["spiky"]["total_score"] == 100
+    assert summaries["steady"]["average_score"] == 60
+    assert summaries["steady"]["total_score"] == 120
 
 
 @pytest.mark.asyncio

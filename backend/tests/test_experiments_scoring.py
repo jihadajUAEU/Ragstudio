@@ -1,6 +1,7 @@
 import pytest
+from sqlalchemy import select
 
-from ragstudio.db.models import Run
+from ragstudio.db.models import Experiment, Run
 from ragstudio.schemas.evaluation import EvaluationCaseIn
 from ragstudio.services.scoring_service import ScoringService
 
@@ -77,6 +78,10 @@ async def test_create_experiment_runs_cases_and_persists_runs(client):
     assert len(payload["runs"]) == 1
     assert payload["runs"][0]["status"] == "succeeded"
     assert "alpha" in payload["runs"][0]["answer"].lower()
+    assert len(payload["scores"]) == 1
+    assert payload["scores"][0]["run_id"] == payload["runs"][0]["id"]
+    assert payload["scores"][0]["total"] == 100
+    assert payload["scores"][0]["details"]["expected_hits"] == ["alpha", "beta"]
 
     runs = await client.get("/api/runs")
     assert runs.json()["total"] == 1
@@ -99,7 +104,7 @@ async def test_create_experiment_missing_evaluation_set_returns_404(client):
 
 
 @pytest.mark.asyncio
-async def test_create_experiment_relies_on_query_validation_for_missing_variant(client):
+async def test_create_experiment_prevalidates_missing_variant_without_persisting_rows(client):
     upload = await client.post(
         "/api/documents",
         files={"file": ("validation.txt", b"alpha beta answer", "text/plain")},
@@ -129,3 +134,47 @@ async def test_create_experiment_relies_on_query_validation_for_missing_variant(
     )
 
     assert response.status_code == 404
+
+    transport = client._transport
+    async with transport.app.state.session_factory() as session:
+        experiments = await session.execute(select(Experiment).where(Experiment.name == "Bad variant"))
+        runs = await session.execute(select(Run).where(Run.experiment_id.is_not(None)))
+
+    assert experiments.scalars().all() == []
+    assert runs.scalars().all() == []
+
+
+@pytest.mark.asyncio
+async def test_create_experiment_prevalidates_missing_document_without_persisting_rows(client):
+    variant = await client.post("/api/variants", json={"name": "Balanced", "preset": "balanced", "parameters": {}})
+    evaluation = await client.post(
+        "/api/evaluation-sets/import?name=MissingDocument",
+        files={
+            "file": (
+                "cases.csv",
+                b"id,query,expected_answer\none,alpha,alpha beta\n",
+                "text/csv",
+            )
+        },
+    )
+
+    response = await client.post(
+        "/api/experiments",
+        json={
+            "name": "Bad document",
+            "document_ids": ["missing-document"],
+            "evaluation_set_id": evaluation.json()["id"],
+            "variant_ids": [variant.json()["id"]],
+            "objective": {},
+        },
+    )
+
+    assert response.status_code == 404
+
+    transport = client._transport
+    async with transport.app.state.session_factory() as session:
+        experiments = await session.execute(select(Experiment).where(Experiment.name == "Bad document"))
+        runs = await session.execute(select(Run).where(Run.experiment_id.is_not(None)))
+
+    assert experiments.scalars().all() == []
+    assert runs.scalars().all() == []
