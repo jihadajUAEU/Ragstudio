@@ -151,6 +151,8 @@ The recommended frontend stack is React, TypeScript, Vite, shadcn/ui, TanStack, 
 
 Use shadcn/ui and Radix UI for accessible, composable primitives such as dialogs, sheets, tabs, popovers, tooltips, dropdowns, accordions, command menus, forms, and toasts. Use Tailwind CSS for styling and design tokens.
 
+Tailwind CSS is the locked CSS framework. Styling should use Tailwind utilities, shadcn/ui theme tokens, and CSS variables for app-specific tokens such as pipeline stage status, score bands, graph colors, run states, and evidence/source highlights. Do not add a second general-purpose CSS framework such as Bootstrap, Bulma, or Foundation.
+
 Use TanStack Query for API fetching, mutation state, job polling, run polling, cache invalidation, retries, and optimistic UI where appropriate. Use TanStack Table for dense data views such as documents, chunks, variants, runs, scores, and evaluation cases.
 
 Use React Flow for the visual RAG pipeline builder and pipeline-stage traces. Use Cytoscape.js for larger knowledge-graph inspection if React Flow becomes too constrained for graph exploration. Use Monaco Editor for JSON, YAML, prompt, and advanced variant configuration editing. Use React Hook Form with Zod for settings, variant forms, evaluation import validation, and optimizer objective forms.
