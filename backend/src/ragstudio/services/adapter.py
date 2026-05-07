@@ -31,7 +31,9 @@ class RAGAnythingAdapter:
     async def index_document(self, artifact_path: str | Path) -> list[AdapterChunk]:
         return self._line_split_index(Path(artifact_path))
 
-    async def query(self, query: str, chunks: list[AdapterChunk], limit: int = 10) -> dict[str, Any]:
+    async def query(
+        self, query: str, chunks: list[AdapterChunk], limit: int = 10
+    ) -> dict[str, Any]:
         selected = chunks[:limit]
         return {
             "answer": self._simple_answer(query, selected),

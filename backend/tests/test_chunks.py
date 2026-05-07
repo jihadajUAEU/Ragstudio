@@ -105,7 +105,10 @@ async def test_reindex_replaces_existing_chunks(client):
 
     assert first_index_response.status_code == 200
     assert second_index_response.status_code == 200
-    assert [chunk["text"] for chunk in second_index_response.json()] == ["first line", "second line"]
+    assert [chunk["text"] for chunk in second_index_response.json()] == [
+        "first line",
+        "second line",
+    ]
 
     search_response = await client.post(
         "/api/chunks/search",

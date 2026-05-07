@@ -1,8 +1,5 @@
 from pathlib import Path
 
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from ragstudio.db.models import Document, EvaluationSet, Experiment, Run, Variant
 from ragstudio.schemas.evaluation import EvaluationCaseIn
 from ragstudio.schemas.experiments import ExperimentIn, ExperimentOut, ExperimentScoreOut
@@ -10,6 +7,8 @@ from ragstudio.schemas.query import QueryIn
 from ragstudio.schemas.runs import RunOut
 from ragstudio.services.query_service import QueryResourceNotFoundError, QueryService
 from ragstudio.services.scoring_service import ScoringService
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class EvaluationSetNotFoundError(LookupError):
@@ -81,7 +80,9 @@ class ExperimentService:
         if missing_documents:
             raise QueryResourceNotFoundError("Document", missing_documents)
 
-    async def _missing_ids(self, model: type[Document] | type[Variant], ids: list[str]) -> list[str]:
+    async def _missing_ids(
+        self, model: type[Document] | type[Variant], ids: list[str]
+    ) -> list[str]:
         if not ids:
             return []
         requested_ids = list(dict.fromkeys(ids))

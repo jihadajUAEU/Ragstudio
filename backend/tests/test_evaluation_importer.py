@@ -1,15 +1,14 @@
 import json
 
 import pytest
-
 from ragstudio.services.evaluation_importer import EvaluationImportError, parse_evaluation_cases
 
 
 def test_import_csv_normalizes_pipe_delimited_list_fields():
     content = (
-        "id,query,documents,expected_sources,must_include,must_avoid,expected_answer\n"
-        "pricing,What is pricing?,doc-a|doc-b,source-a|source-b,alpha| beta,bad|worse,Use tiers\n"
-    ).encode()
+        b"id,query,documents,expected_sources,must_include,must_avoid,expected_answer\n"
+        b"pricing,What is pricing?,doc-a|doc-b,source-a|source-b,alpha| beta,bad|worse,Use tiers\n"
+    )
 
     cases = parse_evaluation_cases("cases.csv", content)
 

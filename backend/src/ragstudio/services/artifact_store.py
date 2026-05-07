@@ -22,7 +22,9 @@ class ArtifactStore:
 
         temp_path = None
         try:
-            with tempfile.NamedTemporaryFile(dir=self.uploads_dir, prefix=f".{digest}.", delete=False) as temp_file:
+            with tempfile.NamedTemporaryFile(
+                dir=self.uploads_dir, prefix=f".{digest}.", delete=False
+            ) as temp_file:
                 temp_file.write(content)
                 temp_path = Path(temp_file.name)
             os.link(temp_path, target)

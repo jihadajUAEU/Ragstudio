@@ -1,10 +1,9 @@
 from collections.abc import Sequence
 from typing import TypeVar
 
+from ragstudio.db.base import Base
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-
-from ragstudio.db.base import Base
 
 ModelT = TypeVar("ModelT", bound=Base)
 

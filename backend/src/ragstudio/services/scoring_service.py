@@ -1,10 +1,9 @@
 import re
 from typing import Any
 
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from ragstudio.db.models import Run, Score
 from ragstudio.schemas.evaluation import EvaluationCaseIn
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class ScoringService:

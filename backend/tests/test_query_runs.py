@@ -16,7 +16,11 @@ async def test_query_creates_run_with_answer_and_chunk_trace(client):
 
     response = await client.post(
         "/api/query",
-        json={"query": "alpha?", "document_ids": [document_id], "variant_ids": [variant.json()["id"]]},
+        json={
+            "query": "alpha?",
+            "document_ids": [document_id],
+            "variant_ids": [variant.json()["id"]],
+        },
     )
 
     assert response.status_code == 200
@@ -42,7 +46,11 @@ async def test_list_runs_returns_persisted_query_runs(client):
     )
     query = await client.post(
         "/api/query",
-        json={"query": "history", "document_ids": [document_id], "variant_ids": [variant.json()["id"]]},
+        json={
+            "query": "history",
+            "document_ids": [document_id],
+            "variant_ids": [variant.json()["id"]],
+        },
     )
     run_id = query.json()["runs"][0]["id"]
 
@@ -66,7 +74,11 @@ async def test_query_invalid_variant_id_returns_error_without_persisting_runs(cl
 
     response = await client.post(
         "/api/query",
-        json={"query": "missing variant", "document_ids": [document_id], "variant_ids": ["missing-variant"]},
+        json={
+            "query": "missing variant",
+            "document_ids": [document_id],
+            "variant_ids": ["missing-variant"],
+        },
     )
 
     assert response.status_code == 404
@@ -83,7 +95,11 @@ async def test_query_invalid_document_id_returns_error_without_persisting_runs(c
 
     response = await client.post(
         "/api/query",
-        json={"query": "missing document", "document_ids": ["missing-document"], "variant_ids": [variant.json()["id"]]},
+        json={
+            "query": "missing document",
+            "document_ids": ["missing-document"],
+            "variant_ids": [variant.json()["id"]],
+        },
     )
 
     assert response.status_code == 404
@@ -99,8 +115,12 @@ async def test_query_creates_one_run_per_variant(client):
     )
     document_id = upload.json()["id"]
     await client.post(f"/api/chunks/index/{document_id}")
-    first = await client.post("/api/variants", json={"name": "First", "preset": "balanced", "parameters": {}})
-    second = await client.post("/api/variants", json={"name": "Second", "preset": "balanced", "parameters": {}})
+    first = await client.post(
+        "/api/variants", json={"name": "First", "preset": "balanced", "parameters": {}}
+    )
+    second = await client.post(
+        "/api/variants", json={"name": "Second", "preset": "balanced", "parameters": {}}
+    )
     variant_ids = [first.json()["id"], second.json()["id"]]
 
     response = await client.post(

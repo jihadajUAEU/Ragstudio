@@ -1,14 +1,13 @@
 from pathlib import Path
 
-from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from ragstudio.db.models import Document
 from ragstudio.schemas.common import StageStatus
 from ragstudio.schemas.documents import DocumentOut
 from ragstudio.services.artifact_store import ArtifactStore
 from ragstudio.services.job_worker import JobWorker
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class DocumentService:

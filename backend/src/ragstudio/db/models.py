@@ -1,18 +1,19 @@
 from datetime import datetime
 from typing import Any
 
+from ragstudio.db.base import Base
+from ragstudio.schemas.common import new_id, now_utc
 from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.ext.mutable import MutableDict, MutableList
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.types import JSON
 
-from ragstudio.db.base import Base
-from ragstudio.schemas.common import new_id, now_utc
-
 
 class TimestampMixin:
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, onupdate=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now_utc, onupdate=now_utc
+    )
 
 
 class SettingsProfile(Base, TimestampMixin):
@@ -34,7 +35,9 @@ class Document(Base, TimestampMixin):
     sha256: Mapped[str] = mapped_column(String, unique=True)
     artifact_path: Mapped[str] = mapped_column(String)
     status: Mapped[str] = mapped_column(String, default="ready")
-    chunks: Mapped[list["Chunk"]] = relationship(back_populates="document", cascade="all, delete-orphan")
+    chunks: Mapped[list["Chunk"]] = relationship(
+        back_populates="document", cascade="all, delete-orphan"
+    )
 
 
 class Chunk(Base, TimestampMixin):
@@ -43,8 +46,12 @@ class Chunk(Base, TimestampMixin):
     id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
     document_id: Mapped[str] = mapped_column(ForeignKey("documents.id"))
     text: Mapped[str] = mapped_column(Text)
-    source_location: Mapped[dict[str, Any]] = mapped_column(MutableDict.as_mutable(JSON), default=dict)
-    metadata_json: Mapped[dict[str, Any]] = mapped_column(MutableDict.as_mutable(JSON), default=dict)
+    source_location: Mapped[dict[str, Any]] = mapped_column(
+        MutableDict.as_mutable(JSON), default=dict
+    )
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(
+        MutableDict.as_mutable(JSON), default=dict
+    )
     document: Mapped[Document] = relationship(back_populates="chunks")
 
 
@@ -97,8 +104,12 @@ class Run(Base, TimestampMixin):
     query: Mapped[str] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String, default="ready")
     answer: Mapped[str] = mapped_column(Text, default="")
-    sources: Mapped[list[dict[str, Any]]] = mapped_column(MutableList.as_mutable(JSON), default=list)
-    chunk_traces: Mapped[list[dict[str, Any]]] = mapped_column(MutableList.as_mutable(JSON), default=list)
+    sources: Mapped[list[dict[str, Any]]] = mapped_column(
+        MutableList.as_mutable(JSON), default=list
+    )
+    chunk_traces: Mapped[list[dict[str, Any]]] = mapped_column(
+        MutableList.as_mutable(JSON), default=list
+    )
     timings: Mapped[dict[str, Any]] = mapped_column(MutableDict.as_mutable(JSON), default=dict)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
 

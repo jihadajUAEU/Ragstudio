@@ -2,9 +2,6 @@ from pathlib import Path
 from time import perf_counter
 from typing import Any
 
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from ragstudio.db.models import Document, Run, Variant
 from ragstudio.schemas.chunks import ChunkOut, ChunkSearchIn
 from ragstudio.schemas.common import StageStatus
@@ -12,6 +9,8 @@ from ragstudio.schemas.query import QueryIn, QueryOut
 from ragstudio.schemas.runs import RunOut
 from ragstudio.services.adapter import AdapterChunk, RAGAnythingAdapter
 from ragstudio.services.chunk_service import ChunkService
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class QueryResourceNotFoundError(LookupError):
@@ -53,7 +52,9 @@ class QueryService:
             try:
                 adapter_chunks = [self._adapter_chunk(chunk) for chunk in search.items]
                 query_started_at = perf_counter()
-                result = await self.adapter.query(payload.query, adapter_chunks, limit=payload.limit)
+                result = await self.adapter.query(
+                    payload.query, adapter_chunks, limit=payload.limit
+                )
                 query_ms = self._elapsed_ms(query_started_at)
 
                 result_timings = result.get("timings", {})
@@ -61,7 +62,9 @@ class QueryService:
                     result_timings = {}
                 run.status = StageStatus.SUCCEEDED.value
                 run.answer = str(result.get("answer", ""))
-                run.sources = self._result_list(result.get("sources")) or [self._source(chunk) for chunk in search.items]
+                run.sources = self._result_list(result.get("sources")) or [
+                    self._source(chunk) for chunk in search.items
+                ]
                 run.chunk_traces = self._result_list(result.get("chunk_traces"))
                 run.timings = {
                     **result_timings,
@@ -97,7 +100,9 @@ class QueryService:
         if missing_documents:
             raise QueryResourceNotFoundError("Document", missing_documents)
 
-    async def _missing_ids(self, model: type[Document] | type[Variant], ids: list[str]) -> list[str]:
+    async def _missing_ids(
+        self, model: type[Document] | type[Variant], ids: list[str]
+    ) -> list[str]:
         if not ids:
             return []
         requested_ids = list(dict.fromkeys(ids))
@@ -107,7 +112,9 @@ class QueryService:
 
     def _adapter_chunk(self, chunk: ChunkOut) -> AdapterChunk:
         metadata = {**chunk.metadata, "chunk_id": chunk.id, "document_id": chunk.document_id}
-        return AdapterChunk(text=chunk.text, source_location=chunk.source_location, metadata=metadata)
+        return AdapterChunk(
+            text=chunk.text, source_location=chunk.source_location, metadata=metadata
+        )
 
     def _source(self, chunk: ChunkOut) -> dict[str, Any]:
         return {

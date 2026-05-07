@@ -1,9 +1,8 @@
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from ragstudio.db.models import Job
 from ragstudio.schemas.common import StageStatus
 from ragstudio.schemas.jobs import JobOut
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class JobWorker:

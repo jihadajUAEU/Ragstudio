@@ -1,5 +1,4 @@
 import pytest
-
 from ragstudio.db.models import Experiment, Run, Score
 
 
@@ -11,8 +10,12 @@ async def test_optimizer_recommends_best_variant_from_experiment_runs(client):
     )
     document_id = upload.json()["id"]
     await client.post(f"/api/chunks/index/{document_id}")
-    first = await client.post("/api/variants", json={"name": "First", "preset": "balanced", "parameters": {}})
-    second = await client.post("/api/variants", json={"name": "Second", "preset": "balanced", "parameters": {}})
+    first = await client.post(
+        "/api/variants", json={"name": "First", "preset": "balanced", "parameters": {}}
+    )
+    second = await client.post(
+        "/api/variants", json={"name": "Second", "preset": "balanced", "parameters": {}}
+    )
     evaluation = await client.post(
         "/api/evaluation-sets/import?name=Optimizer",
         files={
@@ -34,7 +37,9 @@ async def test_optimizer_recommends_best_variant_from_experiment_runs(client):
         },
     )
 
-    response = await client.post("/api/optimizer", json={"experiment_id": experiment.json()["id"], "objective": {}})
+    response = await client.post(
+        "/api/optimizer", json={"experiment_id": experiment.json()["id"], "objective": {}}
+    )
 
     assert response.status_code == 200
     payload = response.json()
@@ -57,10 +62,34 @@ async def test_optimizer_aggregates_scores_per_variant_across_runs(client):
         session.add(experiment)
         await session.flush()
         runs = [
-            Run(variant_id="spiky", experiment_id=experiment.id, query="q1", status="succeeded", answer="great"),
-            Run(variant_id="spiky", experiment_id=experiment.id, query="q2", status="succeeded", answer="poor"),
-            Run(variant_id="steady", experiment_id=experiment.id, query="q1", status="succeeded", answer="good"),
-            Run(variant_id="steady", experiment_id=experiment.id, query="q2", status="succeeded", answer="good"),
+            Run(
+                variant_id="spiky",
+                experiment_id=experiment.id,
+                query="q1",
+                status="succeeded",
+                answer="great",
+            ),
+            Run(
+                variant_id="spiky",
+                experiment_id=experiment.id,
+                query="q2",
+                status="succeeded",
+                answer="poor",
+            ),
+            Run(
+                variant_id="steady",
+                experiment_id=experiment.id,
+                query="q1",
+                status="succeeded",
+                answer="good",
+            ),
+            Run(
+                variant_id="steady",
+                experiment_id=experiment.id,
+                query="q2",
+                status="succeeded",
+                answer="good",
+            ),
         ]
         session.add_all(runs)
         await session.flush()
@@ -75,7 +104,9 @@ async def test_optimizer_aggregates_scores_per_variant_across_runs(client):
         await session.commit()
         experiment_id = experiment.id
 
-    response = await client.post("/api/optimizer", json={"experiment_id": experiment_id, "objective": {}})
+    response = await client.post(
+        "/api/optimizer", json={"experiment_id": experiment_id, "objective": {}}
+    )
 
     assert response.status_code == 200
     payload = response.json()

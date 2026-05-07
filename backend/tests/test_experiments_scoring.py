@@ -1,9 +1,8 @@
 import pytest
-from sqlalchemy import select
-
 from ragstudio.db.models import Experiment, Run
 from ragstudio.schemas.evaluation import EvaluationCaseIn
 from ragstudio.services.scoring_service import ScoringService
+from sqlalchemy import select
 
 
 def test_scoring_service_scores_expected_include_and_avoid_terms():
@@ -49,13 +48,16 @@ async def test_create_experiment_runs_cases_and_persists_runs(client):
     )
     document_id = upload.json()["id"]
     await client.post(f"/api/chunks/index/{document_id}")
-    variant = await client.post("/api/variants", json={"name": "Balanced", "preset": "balanced", "parameters": {}})
+    variant = await client.post(
+        "/api/variants", json={"name": "Balanced", "preset": "balanced", "parameters": {}}
+    )
     evaluation = await client.post(
         "/api/evaluation-sets/import?name=Experiment",
         files={
             "file": (
                 "cases.csv",
-                b"id,query,expected_answer,must_include,must_avoid\none,alpha,alpha beta,alpha,forbidden\n",
+                b"id,query,expected_answer,must_include,must_avoid\n"
+                b"one,alpha,alpha beta,alpha,forbidden\n",
                 "text/csv",
             )
         },
@@ -137,7 +139,9 @@ async def test_create_experiment_prevalidates_missing_variant_without_persisting
 
     transport = client._transport
     async with transport.app.state.session_factory() as session:
-        experiments = await session.execute(select(Experiment).where(Experiment.name == "Bad variant"))
+        experiments = await session.execute(
+            select(Experiment).where(Experiment.name == "Bad variant")
+        )
         runs = await session.execute(select(Run).where(Run.experiment_id.is_not(None)))
 
     assert experiments.scalars().all() == []
@@ -146,7 +150,9 @@ async def test_create_experiment_prevalidates_missing_variant_without_persisting
 
 @pytest.mark.asyncio
 async def test_create_experiment_prevalidates_missing_document_without_persisting_rows(client):
-    variant = await client.post("/api/variants", json={"name": "Balanced", "preset": "balanced", "parameters": {}})
+    variant = await client.post(
+        "/api/variants", json={"name": "Balanced", "preset": "balanced", "parameters": {}}
+    )
     evaluation = await client.post(
         "/api/evaluation-sets/import?name=MissingDocument",
         files={
@@ -173,7 +179,9 @@ async def test_create_experiment_prevalidates_missing_document_without_persistin
 
     transport = client._transport
     async with transport.app.state.session_factory() as session:
-        experiments = await session.execute(select(Experiment).where(Experiment.name == "Bad document"))
+        experiments = await session.execute(
+            select(Experiment).where(Experiment.name == "Bad document")
+        )
         runs = await session.execute(select(Run).where(Run.experiment_id.is_not(None)))
 
     assert experiments.scalars().all() == []

@@ -1,8 +1,7 @@
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from ragstudio.db.models import Variant
 from ragstudio.schemas.variants import VariantIn, VariantOut, VariantPage
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class VariantService:

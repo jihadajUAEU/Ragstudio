@@ -1,8 +1,7 @@
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from ragstudio.db.models import Experiment, OptimizationSession, Run, Score
 from ragstudio.schemas.optimizer import OptimizerCandidateSummary, OptimizerIn, OptimizerOut
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class ExperimentNotFoundError(LookupError):
@@ -19,7 +18,9 @@ class OptimizerService:
             raise ExperimentNotFoundError(payload.experiment_id)
 
         runs_result = await self.session.execute(
-            select(Run).where(Run.experiment_id == payload.experiment_id).order_by(Run.created_at.asc())
+            select(Run)
+            .where(Run.experiment_id == payload.experiment_id)
+            .order_by(Run.created_at.asc())
         )
         runs = list(runs_result.scalars().all())
         tried_variant_ids = list(dict.fromkeys(run.variant_id for run in runs))
@@ -37,10 +38,15 @@ class OptimizerService:
             await self.session.refresh(session)
             return self._out(session, selected_run_id=None)
 
-        scores_result = await self.session.execute(select(Score).where(Score.run_id.in_([run.id for run in runs])))
+        scores_result = await self.session.execute(
+            select(Score).where(Score.run_id.in_([run.id for run in runs]))
+        )
         scores_by_run_id = {score.run_id: score for score in scores_result.scalars().all()}
         candidate_summaries = self._summarize_candidates(runs, scores_by_run_id)
-        selected_summary = max(candidate_summaries, key=lambda item: (item.average_score, item.total_score, item.run_count))
+        selected_summary = max(
+            candidate_summaries,
+            key=lambda item: (item.average_score, item.total_score, item.run_count),
+        )
         selected_run_id = selected_summary.best_run_id
         session = OptimizationSession(
             experiment_id=payload.experiment_id,
@@ -56,14 +62,18 @@ class OptimizerService:
         self.session.add(session)
         await self.session.commit()
         await self.session.refresh(session)
-        return self._out(session, selected_run_id=selected_run_id, candidate_summaries=candidate_summaries)
+        return self._out(
+            session, selected_run_id=selected_run_id, candidate_summaries=candidate_summaries
+        )
 
     def _summarize_candidates(
         self, runs: list[Run], scores_by_run_id: dict[str, Score]
     ) -> list[OptimizerCandidateSummary]:
         grouped: dict[str, list[tuple[Run, float]]] = {}
         for run in runs:
-            grouped.setdefault(run.variant_id, []).append((run, self._run_score(run, scores_by_run_id.get(run.id))))
+            grouped.setdefault(run.variant_id, []).append(
+                (run, self._run_score(run, scores_by_run_id.get(run.id)))
+            )
 
         summaries: list[OptimizerCandidateSummary] = []
         for variant_id, scored_runs in grouped.items():

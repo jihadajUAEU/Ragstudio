@@ -14,7 +14,9 @@ async def index_document_chunks(
     request: Request,
     session: AsyncSession = Depends(get_session),
 ) -> list[ChunkOut]:
-    chunks = await ChunkService(session, request.app.state.settings.data_dir).index_document(document_id)
+    chunks = await ChunkService(session, request.app.state.settings.data_dir).index_document(
+        document_id
+    )
     if chunks is None:
         raise HTTPException(status_code=404, detail="Document not found")
     return chunks

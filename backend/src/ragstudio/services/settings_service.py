@@ -1,7 +1,6 @@
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from ragstudio.db.models import SettingsProfile
 from ragstudio.schemas.settings import SettingsProfileIn, SettingsProfileOut
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class SettingsService:

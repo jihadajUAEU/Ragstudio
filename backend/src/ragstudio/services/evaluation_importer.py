@@ -7,11 +7,10 @@ from typing import Any
 
 import yaml
 from pydantic import ValidationError
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from ragstudio.db.models import EvaluationSet
 from ragstudio.schemas.evaluation import EvaluationCaseIn, EvaluationSetOut, EvaluationSetPage
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 LIST_FIELDS = {"documents", "expected_sources", "must_include", "must_avoid"}
 DICT_FIELDS = {"expected_structure", "rubric", "objective"}
@@ -116,7 +115,9 @@ def _normalize_case(raw: dict[str, Any], index: int) -> EvaluationCaseIn:
     try:
         return EvaluationCaseIn.model_validate(data)
     except ValidationError as exc:
-        raise EvaluationImportError(f"Case {data['id']} is invalid: {exc.errors()[0]['msg']}") from exc
+        raise EvaluationImportError(
+            f"Case {data['id']} is invalid: {exc.errors()[0]['msg']}"
+        ) from exc
 
 
 def _apply_aliases(data: dict[str, Any]) -> None:

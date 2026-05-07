@@ -2,12 +2,11 @@ import re
 from pathlib import Path, PureWindowsPath
 from typing import Any
 
-from sqlalchemy import delete, select
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from ragstudio.db.models import Chunk, Document
 from ragstudio.schemas.chunks import ChunkOut, ChunkSearchIn, ChunkSearchOut
 from ragstudio.services.adapter import RAGAnythingAdapter
+from sqlalchemy import delete, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class ChunkService:
@@ -50,11 +49,16 @@ class ChunkService:
         statement = select(Chunk)
         if search_in.document_ids:
             statement = statement.where(Chunk.document_id.in_(search_in.document_ids))
-        result = await self.session.execute(statement.order_by(Chunk.created_at.asc(), Chunk.id.asc()))
+        result = await self.session.execute(
+            statement.order_by(Chunk.created_at.asc(), Chunk.id.asc())
+        )
         chunks = list(result.scalars().all())
 
         ranked = sorted(
-            ((self._score(search_in.query, chunk), source_order, chunk) for source_order, chunk in enumerate(chunks)),
+            (
+                (self._score(search_in.query, chunk), source_order, chunk)
+                for source_order, chunk in enumerate(chunks)
+            ),
             key=lambda item: (
                 -item[0],
                 self._source_order(item[2], item[1]),
@@ -75,7 +79,8 @@ class ChunkService:
         safe = {
             key: value
             for key, value in metadata.items()
-            if key not in {"artifact_path", "path", "file_path"} and not self._is_absolute_path_value(value)
+            if key not in {"artifact_path", "path", "file_path"}
+            and not self._is_absolute_path_value(value)
         }
         safe["document_id"] = document_id
         return safe

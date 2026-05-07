@@ -2,12 +2,11 @@ import asyncio
 from hashlib import sha256
 
 import pytest
-from sqlalchemy import select
-
 from ragstudio.db.engine import init_db, make_engine, make_session_factory
 from ragstudio.db.models import Document
 from ragstudio.services import document_service
 from ragstudio.services.document_service import DocumentService
+from sqlalchemy import select
 
 
 @pytest.mark.asyncio
@@ -24,7 +23,9 @@ async def test_upload_document_creates_document_and_index_job(client):
     jobs_response = await client.get("/api/jobs")
     assert jobs_response.status_code == 200
     jobs = jobs_response.json()["items"]
-    assert any(job["type"] == "index_document" and job["target_id"] == document["id"] for job in jobs)
+    assert any(
+        job["type"] == "index_document" and job["target_id"] == document["id"] for job in jobs
+    )
 
 
 @pytest.mark.asyncio
