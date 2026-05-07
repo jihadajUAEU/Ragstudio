@@ -1,9 +1,9 @@
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ragstudio.api.deps import get_session
 from ragstudio.schemas.query import QueryIn, QueryOut
-from ragstudio.services.query_service import QueryService
+from ragstudio.services.query_service import QueryResourceNotFoundError, QueryService
 
 router = APIRouter(prefix="/api/query", tags=["query"])
 
@@ -14,4 +14,7 @@ async def query(
     request: Request,
     session: AsyncSession = Depends(get_session),
 ) -> QueryOut:
-    return await QueryService(session, request.app.state.settings.data_dir).run_query(payload)
+    try:
+        return await QueryService(session, request.app.state.settings.data_dir).run_query(payload)
+    except QueryResourceNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc

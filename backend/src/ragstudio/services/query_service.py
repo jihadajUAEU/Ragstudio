@@ -5,13 +5,20 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ragstudio.db.models import Run
+from ragstudio.db.models import Document, Run, Variant
 from ragstudio.schemas.chunks import ChunkOut, ChunkSearchIn
 from ragstudio.schemas.common import StageStatus
 from ragstudio.schemas.query import QueryIn, QueryOut
 from ragstudio.schemas.runs import RunOut
 from ragstudio.services.adapter import AdapterChunk, RAGAnythingAdapter
 from ragstudio.services.chunk_service import ChunkService
+
+
+class QueryResourceNotFoundError(LookupError):
+    def __init__(self, resource: str, missing_ids: list[str]):
+        self.resource = resource
+        self.missing_ids = missing_ids
+        super().__init__(f"{resource} not found: {', '.join(missing_ids)}")
 
 
 class QueryService:
@@ -26,7 +33,8 @@ class QueryService:
         self.adapter = adapter or RAGAnythingAdapter()
 
     async def run_query(self, payload: QueryIn) -> QueryOut:
-        runs: list[RunOut] = []
+        await self._validate_query_inputs(payload)
+        runs: list[Run] = []
         for variant_id in payload.variant_ids:
             started_at = perf_counter()
             search_started_at = perf_counter()
@@ -69,14 +77,33 @@ class QueryService:
                     "total_ms": self._elapsed_ms(started_at),
                 }
 
-            await self.session.commit()
+            runs.append(run)
+
+        await self.session.commit()
+        for run in runs:
             await self.session.refresh(run)
-            runs.append(RunOut.model_validate(run))
-        return QueryOut(runs=runs)
+        return QueryOut(runs=[RunOut.model_validate(run) for run in runs])
 
     async def list_runs(self) -> list[RunOut]:
         result = await self.session.execute(select(Run).order_by(Run.created_at.desc()))
         return [RunOut.model_validate(item) for item in result.scalars().all()]
+
+    async def _validate_query_inputs(self, payload: QueryIn) -> None:
+        missing_variants = await self._missing_ids(Variant, payload.variant_ids)
+        if missing_variants:
+            raise QueryResourceNotFoundError("Variant", missing_variants)
+
+        missing_documents = await self._missing_ids(Document, payload.document_ids)
+        if missing_documents:
+            raise QueryResourceNotFoundError("Document", missing_documents)
+
+    async def _missing_ids(self, model: type[Document] | type[Variant], ids: list[str]) -> list[str]:
+        if not ids:
+            return []
+        requested_ids = list(dict.fromkeys(ids))
+        result = await self.session.execute(select(model.id).where(model.id.in_(requested_ids)))
+        found_ids = set(result.scalars().all())
+        return [item_id for item_id in requested_ids if item_id not in found_ids]
 
     def _adapter_chunk(self, chunk: ChunkOut) -> AdapterChunk:
         metadata = {**chunk.metadata, "chunk_id": chunk.id, "document_id": chunk.document_id}
