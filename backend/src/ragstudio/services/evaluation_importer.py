@@ -5,6 +5,7 @@ from io import StringIO
 from pathlib import Path
 from typing import Any
 
+import yaml
 from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -44,20 +45,30 @@ class EvaluationImporter:
 
 def parse_evaluation_cases(filename: str, content: bytes) -> list[EvaluationCaseIn]:
     suffix = Path(filename).suffix.lower()
-    text = content.decode("utf-8-sig")
+    try:
+        text = content.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise EvaluationImportError("Evaluation import must be valid UTF-8") from exc
 
-    if suffix == ".csv":
-        rows = list(csv.DictReader(StringIO(text)))
-    elif suffix == ".json":
-        rows = _extract_cases(json.loads(text))
-    elif suffix in {".jsonl", ".ndjson"}:
-        rows = [json.loads(line) for line in text.splitlines() if line.strip()]
-    elif suffix in {".yaml", ".yml"}:
-        rows = _extract_cases(_parse_simple_yaml(text))
-    else:
-        raise EvaluationImportError(f"Unsupported evaluation set file type: {suffix or 'unknown'}")
+    try:
+        if suffix == ".csv":
+            rows = list(csv.DictReader(StringIO(text)))
+        elif suffix == ".json":
+            rows = _extract_cases(json.loads(text))
+        elif suffix in {".jsonl", ".ndjson"}:
+            rows = [json.loads(line) for line in text.splitlines() if line.strip()]
+        elif suffix in {".yaml", ".yml"}:
+            rows = _extract_cases(yaml.safe_load(text) or [])
+        else:
+            raise EvaluationImportError(
+                f"Unsupported evaluation set file type: {suffix or 'unknown'}"
+            )
 
-    cases = [_normalize_case(row, index) for index, row in enumerate(rows, start=1)]
+        cases = [_normalize_case(row, index) for index, row in enumerate(rows, start=1)]
+    except EvaluationImportError:
+        raise
+    except (json.JSONDecodeError, yaml.YAMLError, ValidationError, TypeError, ValueError) as exc:
+        raise EvaluationImportError(f"Evaluation import could not be parsed: {exc}") from exc
     if not cases:
         raise EvaluationImportError("Evaluation import requires at least one case")
     return cases
@@ -188,67 +199,3 @@ def _parse_json_cell(value: str) -> Any:
         return json.loads(value)
     except json.JSONDecodeError as exc:
         raise EvaluationImportError("Structured fields must contain valid JSON") from exc
-
-
-def _parse_simple_yaml(text: str) -> Any:
-    lines = [
-        line.rstrip()
-        for line in text.splitlines()
-        if line.strip() and not line.lstrip().startswith("#")
-    ]
-    if lines and lines[0].strip() == "cases:":
-        lines = lines[1:]
-    if not lines:
-        return []
-    if lines[0].lstrip().startswith("- "):
-        return _parse_yaml_list(lines)
-    return _parse_yaml_mapping(lines)
-
-
-def _parse_yaml_list(lines: list[str]) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    current: dict[str, Any] | None = None
-    for line in lines:
-        stripped = line.strip()
-        if stripped.startswith("- "):
-            current = {}
-            rows.append(current)
-            rest = stripped[2:].strip()
-            if rest:
-                key, value = _split_yaml_pair(rest)
-                current[key] = _parse_yaml_scalar(value)
-        elif current is not None:
-            key, value = _split_yaml_pair(stripped)
-            current[key] = _parse_yaml_scalar(value)
-        else:
-            raise EvaluationImportError("YAML import must contain a list of cases")
-    return rows
-
-
-def _parse_yaml_mapping(lines: list[str]) -> dict[str, Any]:
-    mapping: dict[str, Any] = {}
-    for line in lines:
-        key, value = _split_yaml_pair(line.strip())
-        mapping[key] = _parse_yaml_scalar(value)
-    return mapping
-
-
-def _split_yaml_pair(line: str) -> tuple[str, str]:
-    if ":" not in line:
-        raise EvaluationImportError("YAML import supports key: value pairs")
-    key, value = line.split(":", 1)
-    return key.strip(), value.strip()
-
-
-def _parse_yaml_scalar(value: str) -> Any:
-    if value in {"", "null", "Null", "NULL", "~"}:
-        return None
-    if value in {"[]", "{}"}:
-        return json.loads(value)
-    if value.startswith(("[", "{")):
-        return json.loads(value)
-    if (value.startswith('"') and value.endswith('"')) or (
-        value.startswith("'") and value.endswith("'")
-    ):
-        return value[1:-1]
-    return value

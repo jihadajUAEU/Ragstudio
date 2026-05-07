@@ -67,6 +67,34 @@ def test_import_yaml_reads_case_list():
     assert cases[0].must_include == ["yaml", "json"]
 
 
+def test_import_yaml_reads_native_lists_and_maps():
+    content = b"""
+cases:
+  - id: yaml-native
+    query: What is supported?
+    must_include:
+      - yaml
+      - nested lists
+    expected_structure:
+      answer:
+        type: string
+      citations:
+        min_items: 1
+    rubric:
+      accuracy: Mentions native YAML structures.
+"""
+
+    cases = parse_evaluation_cases("cases.yaml", content)
+
+    assert cases[0].id == "yaml-native"
+    assert cases[0].must_include == ["yaml", "nested lists"]
+    assert cases[0].expected_structure == {
+        "answer": {"type": "string"},
+        "citations": {"min_items": 1},
+    }
+    assert cases[0].rubric == {"accuracy": "Mentions native YAML structures."}
+
+
 def test_import_rejects_cases_without_expected_output_signal():
     content = b'[{"id":"empty","query":"What now?","documents":"doc-a|doc-b"}]'
 
@@ -96,3 +124,18 @@ async def test_import_evaluation_set_endpoint_and_list(client):
     payload = list_response.json()
     assert payload["total"] == 1
     assert payload["items"][0]["id"] == evaluation_set["id"]
+
+
+@pytest.mark.asyncio
+async def test_import_evaluation_set_endpoint_rejects_malformed_json(client):
+    files = {
+        "file": (
+            "cases.json",
+            b'{"cases": [{"id": "broken", "query": "What?", "expected_answer": "Answer",}]}',
+            "application/json",
+        )
+    }
+
+    response = await client.post("/api/evaluation-sets/import?name=Broken", files=files)
+
+    assert response.status_code == 400
