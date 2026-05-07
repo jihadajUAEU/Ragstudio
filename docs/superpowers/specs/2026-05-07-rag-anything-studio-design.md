@@ -122,6 +122,37 @@ Primary screens:
 - Knowledge Graph: graph view for a document, variant, or run when available.
 - Diagnostics and API: health, adapter capabilities, dependency status, logs, and endpoint status.
 
+## Frontend Component Stack
+
+The recommended frontend stack is React, TypeScript, Vite, shadcn/ui, TanStack, React Flow, and Monaco. The implementation must use the latest stable versions available at implementation time, because frontend packages move quickly. As of 2026-05-07, current npm metadata shows:
+
+- React `19.2.6`
+- React DOM `19.2.6`
+- Vite `8.0.11`
+- `@vitejs/plugin-react` `6.0.1`
+- Tailwind CSS `4.2.4`
+- shadcn CLI `4.7.0`
+- Radix dialog package `@radix-ui/react-dialog` `1.1.15`
+- TanStack Query `5.100.9`
+- TanStack Table `8.21.3`
+- React Flow package `@xyflow/react` `12.10.2`
+- Monaco Editor `0.55.1`
+- Zod `4.4.3`
+- React Hook Form `7.75.0`
+- Zustand `5.0.13`
+- Lucide React `1.14.0`
+- Recharts `3.8.1`
+- Cytoscape `3.33.3`
+- React Cytoscape.js `2.0.0`
+
+Use shadcn/ui and Radix UI for accessible, composable primitives such as dialogs, sheets, tabs, popovers, tooltips, dropdowns, accordions, command menus, forms, and toasts. Use Tailwind CSS for styling and design tokens.
+
+Use TanStack Query for API fetching, mutation state, job polling, run polling, cache invalidation, retries, and optimistic UI where appropriate. Use TanStack Table for dense data views such as documents, chunks, variants, runs, scores, and evaluation cases.
+
+Use React Flow for the visual RAG pipeline builder and pipeline-stage traces. Use Cytoscape.js for larger knowledge-graph inspection if React Flow becomes too constrained for graph exploration. Use Monaco Editor for JSON, YAML, prompt, and advanced variant configuration editing. Use React Hook Form with Zod for settings, variant forms, evaluation import validation, and optimizer objective forms.
+
+The UI should feel like a modern technical workbench: dense, responsive, inspectable, keyboard-friendly, and professional. It should avoid a marketing-page feel. Tables, inspectors, split panes, drawers, command menus, tabs, resizable panels, and canvas-based flow views are preferred over decorative cards.
+
 ## Parameter Modes
 
 Studio supports three parameter modes.
@@ -304,7 +335,6 @@ The implementation plan should choose concrete tooling for:
 - Python package management and project layout.
 - Local persistence backend: SQLite is preferred if it fits the final stack; JSON files are acceptable only for low-risk metadata.
 - Background job execution model.
-- Frontend component and styling approach.
 - How to package and serve frontend assets from FastAPI.
 - The exact subset of RAG-Anything APIs available through the adapter in Phase 2.
 
