@@ -1,9 +1,10 @@
 from pathlib import Path
 
-from ragstudio.db.models import Document
+from ragstudio.db.models import Chunk, Document, Job
 from ragstudio.schemas.common import StageStatus
 from ragstudio.schemas.documents import DocumentOut
 from ragstudio.services.artifact_store import ArtifactStore
+from ragstudio.services.chunk_service import ChunkService
 from ragstudio.services.job_worker import JobWorker
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -19,6 +20,7 @@ class DocumentService:
         digest, artifact_path = self.store.prepare_upload(filename, content)
         existing = await self.session.scalar(select(Document).where(Document.sha256 == digest))
         if existing is not None:
+            await self._ensure_indexed(existing)
             return DocumentOut.model_validate(existing)
 
         _, artifact_path = self.store.write_upload(filename, content)
@@ -32,7 +34,10 @@ class DocumentService:
         self.session.add(document)
         try:
             await self.session.flush()
-            self.session.add(JobWorker.build("index_document", document.id))
+            job = JobWorker.build("index_document", document.id)
+            self.session.add(job)
+            await self.session.flush()
+            await self._index_document_for_job(document, job)
             await self.session.commit()
         except IntegrityError:
             await self.session.rollback()
@@ -49,3 +54,38 @@ class DocumentService:
     async def list(self) -> list[DocumentOut]:
         result = await self.session.execute(select(Document).order_by(Document.created_at.desc()))
         return [DocumentOut.model_validate(item) for item in result.scalars().all()]
+
+    async def _ensure_indexed(self, document: Document) -> None:
+        existing_chunk_id = await self.session.scalar(
+            select(Chunk.id).where(Chunk.document_id == document.id).limit(1)
+        )
+        if existing_chunk_id is not None:
+            return
+
+        existing_job = await self.session.scalar(
+            select(Job)
+            .where(Job.type == "index_document", Job.target_id == document.id)
+            .order_by(Job.created_at.desc())
+            .limit(1)
+        )
+        job = existing_job or JobWorker.build("index_document", document.id)
+        if existing_job is None:
+            self.session.add(job)
+            await self.session.flush()
+        await self._index_document_for_job(document, job)
+        await self.session.commit()
+        await self.session.refresh(document)
+
+    async def _index_document_for_job(self, document: Document, job: Job) -> None:
+        job.status = StageStatus.RUNNING.value
+        job.progress = 50
+        job.logs = [*job.logs, "Indexing document chunks."]
+        chunks = await ChunkService(self.session, self.store.root).index_document(
+            document.id, commit=False
+        )
+        chunk_count = len(chunks or [])
+        document.status = StageStatus.SUCCEEDED.value
+        job.status = StageStatus.SUCCEEDED.value
+        job.progress = 100
+        job.result = {"document_id": document.id, "chunk_count": chunk_count}
+        job.logs = [*job.logs, f"Indexed {chunk_count} chunks."]

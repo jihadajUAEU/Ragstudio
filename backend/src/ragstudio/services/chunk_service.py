@@ -20,7 +20,9 @@ class ChunkService:
         self.data_dir = data_dir
         self.adapter = adapter or RAGAnythingAdapter()
 
-    async def index_document(self, document_id: str) -> list[ChunkOut] | None:
+    async def index_document(
+        self, document_id: str, *, commit: bool = True
+    ) -> list[ChunkOut] | None:
         document = await self.session.get(Document, document_id)
         if document is None:
             return None
@@ -38,7 +40,10 @@ class ChunkService:
             for adapter_chunk in adapter_chunks
         ]
         self.session.add_all(chunks)
-        await self.session.commit()
+        if commit:
+            await self.session.commit()
+        else:
+            await self.session.flush()
 
         for chunk in chunks:
             await self.session.refresh(chunk)

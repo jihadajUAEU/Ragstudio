@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ragstudio.api.deps import get_session
+from ragstudio.api.upload_utils import read_upload_file
 from ragstudio.schemas.evaluation import EvaluationSetOut, EvaluationSetPage
 from ragstudio.services.evaluation_importer import EvaluationImporter, EvaluationImportError
 
@@ -14,7 +15,7 @@ async def import_evaluation_set(
     file: UploadFile,
     session: AsyncSession = Depends(get_session),
 ) -> EvaluationSetOut:
-    content = await file.read()
+    content = await read_upload_file(file)
     try:
         return await EvaluationImporter(session).import_file(
             name=name,

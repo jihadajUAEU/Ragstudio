@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, Request, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ragstudio.api.deps import get_session
+from ragstudio.api.upload_utils import read_upload_file
 from ragstudio.schemas.documents import DocumentOut
 from ragstudio.services.document_service import DocumentService
 
@@ -14,7 +15,7 @@ async def upload_document(
     file: UploadFile,
     session: AsyncSession = Depends(get_session),
 ) -> DocumentOut:
-    content = await file.read()
+    content = await read_upload_file(file)
     return await DocumentService(session, request.app.state.settings.data_dir).upload(
         filename=file.filename or "upload.bin",
         content_type=file.content_type or "application/octet-stream",

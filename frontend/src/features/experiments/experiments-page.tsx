@@ -241,7 +241,10 @@ export function ExperimentsPage() {
 
         <div className="mt-4 flex items-center justify-between gap-3">
           <p className="min-h-5 min-w-0 flex-1 truncate text-sm text-[#62717a]" role="status">
-            {formError || choiceError || createExperiment.error?.message || (createExperiment.isSuccess ? "Experiment complete" : "")}
+            {formError ||
+              choiceError ||
+              createExperiment.error?.message ||
+              (createExperiment.data ? `Experiment complete: ${createExperiment.data.id}` : "")}
           </p>
           <Button type="submit" disabled={!canRun}>
             {createExperiment.isPending ? (
@@ -277,8 +280,9 @@ export function ExperimentsPage() {
           />
         ) : createExperiment.data ? (
           <div className="space-y-4">
-            <div className="grid gap-4 sm:grid-cols-3">
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
               <Metric label="Experiment" value={createExperiment.data.name} />
+              <Metric label="Experiment ID" value={createExperiment.data.id} />
               <Metric label="Runs" value={formatCount(createExperiment.data.runs.length)} />
               <Metric label="Scores" value={formatCount(createExperiment.data.scores.length)} />
             </div>

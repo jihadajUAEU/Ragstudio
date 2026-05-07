@@ -68,6 +68,7 @@ function run(id: string, answer: string): RunOut {
   return {
     id,
     variant_id: "variant-1",
+    experiment_id: null,
     query: `Query ${id}`,
     status: "succeeded",
     answer,

@@ -20,6 +20,7 @@ export function OptimizerPage() {
   const runsQuery = useQuery({ queryKey: queryKeys.runs, queryFn: apiClient.runs });
   const variantsQuery = useQuery({ queryKey: queryKeys.variants, queryFn: apiClient.variants });
   const [experimentId, setExperimentId] = useState("");
+  const [hasEditedExperimentId, setHasEditedExperimentId] = useState(false);
   const [objectiveText, setObjectiveText] = useState("{\n  \"metric\": \"total\"\n}");
   const [formError, setFormError] = useState("");
 
@@ -32,6 +33,11 @@ export function OptimizerPage() {
     () => new Map((variantsQuery.data?.items ?? []).map((variant) => [variant.id, variant])),
     [variantsQuery.data?.items],
   );
+  const recentExperimentId = useMemo(
+    () => (runsQuery.data?.items ?? []).find((run) => run.experiment_id)?.experiment_id ?? "",
+    [runsQuery.data?.items],
+  );
+  const activeExperimentId = hasEditedExperimentId ? experimentId : recentExperimentId;
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -40,11 +46,11 @@ export function OptimizerPage() {
       setFormError(objective.message);
       return;
     }
-    if (!experimentId.trim()) {
+    if (!activeExperimentId.trim()) {
       setFormError("Enter an experiment id.");
       return;
     }
-    optimize.mutate({ experiment_id: experimentId.trim(), objective: objective.value });
+    optimize.mutate({ experiment_id: activeExperimentId.trim(), objective: objective.value });
   };
 
   const runColumns = useMemo<ColumnDef<RunOut>[]>(
@@ -61,6 +67,15 @@ export function OptimizerPage() {
           <span className="truncate">
             {variantById.get(row.original.variant_id)?.name ?? row.original.variant_id}
           </span>
+        ),
+      },
+      {
+        accessorKey: "experiment_id",
+        header: "Experiment",
+        cell: ({ row }) => (
+          <code className="block max-w-40 truncate text-xs text-[#62717a]">
+            {row.original.experiment_id ?? "manual"}
+          </code>
         ),
       },
       {
@@ -121,12 +136,34 @@ export function OptimizerPage() {
           <span className="mb-1.5 block truncate">Experiment ID</span>
           <input
             type="text"
-            value={experimentId}
-            onChange={(event) => setExperimentId(event.target.value)}
+            value={activeExperimentId}
+            onChange={(event) => {
+              setHasEditedExperimentId(true);
+              setExperimentId(event.target.value);
+            }}
             className="h-10 w-full rounded-md border border-[#cfd8dd] bg-white px-3 text-sm text-[#1f2933] outline-none focus:border-[#176b87] focus:ring-2 focus:ring-[#176b87]/20"
             disabled={optimize.isPending}
           />
         </label>
+        {recentExperimentId ? (
+          <div className="mt-2 flex items-center justify-between gap-3 rounded-md border border-[#e1e7ea] bg-[#f8fafb] px-3 py-2 text-xs text-[#62717a]">
+            <span className="min-w-0 truncate">
+              Recent experiment: <code>{recentExperimentId}</code>
+            </span>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={() => {
+                setHasEditedExperimentId(true);
+                setExperimentId(recentExperimentId);
+              }}
+              disabled={optimize.isPending}
+            >
+              Use
+            </Button>
+          </div>
+        ) : null}
 
         <label className="mt-4 block text-sm font-medium text-[#3a4a53]">
           <span className="mb-1.5 block truncate">Objective JSON</span>
@@ -140,14 +177,14 @@ export function OptimizerPage() {
 
         <div className="mt-4 grid gap-3 sm:grid-cols-2">
           <Metric label="Recorded runs" value={formatCount(runsQuery.data?.total)} />
-          <Metric label="Experiment scope" value={experimentId.trim() || "Required"} />
+          <Metric label="Experiment ID" value={activeExperimentId.trim() || "Required"} />
         </div>
 
         <div className="mt-4 flex items-center justify-between gap-3">
           <p className="min-h-5 min-w-0 flex-1 truncate text-sm text-[#62717a]" role="status">
             {formError || optimize.error?.message || (optimize.isSuccess ? "Recommendation ready" : "")}
           </p>
-          <Button type="submit" disabled={optimize.isPending || !experimentId.trim()}>
+          <Button type="submit" disabled={optimize.isPending || !activeExperimentId.trim()}>
             {optimize.isPending ? (
               <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
             ) : (

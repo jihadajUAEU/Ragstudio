@@ -159,6 +159,7 @@ export interface OptimizerOut {
 export interface RunOut {
   id: string;
   variant_id: string;
+  experiment_id: string | null;
   query: string;
   status: StageStatus;
   answer: string;
