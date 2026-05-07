@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ragstudio.db.models import Document
@@ -30,9 +31,16 @@ class DocumentService:
             status=StageStatus.READY.value,
         )
         self.session.add(document)
-        await self.session.flush()
-        self.session.add(JobWorker.build("index_document", document.id))
-        await self.session.commit()
+        try:
+            await self.session.flush()
+            self.session.add(JobWorker.build("index_document", document.id))
+            await self.session.commit()
+        except IntegrityError:
+            await self.session.rollback()
+            existing = await self.session.scalar(select(Document).where(Document.sha256 == digest))
+            if existing is not None:
+                return DocumentOut.model_validate(existing)
+            raise
         await self.session.refresh(document)
         return DocumentOut.model_validate(document)
 

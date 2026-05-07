@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 from sqlalchemy import select
 
@@ -47,6 +49,32 @@ async def test_upload_document_is_idempotent_by_content_hash(client):
     index_jobs = [job for job in jobs_response.json()["items"] if job["type"] == "index_document"]
     assert len(index_jobs) == 1
     assert index_jobs[0]["target_id"] == first_response.json()["id"]
+
+
+@pytest.mark.asyncio
+async def test_concurrent_duplicate_uploads_are_idempotent(client):
+    async def upload_copy(index: int):
+        return await client.post(
+            "/api/documents",
+            files={"file": (f"copy-{index}.txt", b"concurrent bytes", "text/plain")},
+        )
+
+    responses = await asyncio.gather(*(upload_copy(index) for index in range(8)))
+
+    assert {response.status_code for response in responses} == {201}
+    document_ids = {response.json()["id"] for response in responses}
+    assert len(document_ids) == 1
+
+    documents_response = await client.get("/api/documents")
+    assert documents_response.status_code == 200
+    documents = documents_response.json()["items"]
+    assert len(documents) == 1
+
+    jobs_response = await client.get("/api/jobs")
+    assert jobs_response.status_code == 200
+    index_jobs = [job for job in jobs_response.json()["items"] if job["type"] == "index_document"]
+    assert len(index_jobs) == 1
+    assert index_jobs[0]["target_id"] == responses[0].json()["id"]
 
 
 @pytest.mark.asyncio
