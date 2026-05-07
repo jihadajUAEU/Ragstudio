@@ -22,3 +22,8 @@ class EvaluationSetOut(StudioModel):
     id: str
     name: str
     cases: list[EvaluationCaseIn]
+
+
+class EvaluationSetPage(StudioModel):
+    items: list[EvaluationSetOut]
+    total: int
