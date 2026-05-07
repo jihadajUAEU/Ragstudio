@@ -1,3 +1,3 @@
-from ragstudio.api.routes import health
+from ragstudio.api.routes import health, settings, variants
 
-ROUTERS = [health.router]
+ROUTERS = [health.router, settings.router, variants.router]
