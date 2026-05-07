@@ -6,6 +6,7 @@ from sqlalchemy import select
 
 from ragstudio.db.engine import init_db, make_engine, make_session_factory
 from ragstudio.db.models import Document
+from ragstudio.services import document_service
 from ragstudio.services.document_service import DocumentService
 
 
@@ -99,6 +100,31 @@ async def test_concurrent_duplicate_uploads_are_idempotent(client):
     index_jobs = [job for job in jobs_response.json()["items"] if job["type"] == "index_document"]
     assert len(index_jobs) == 1
     assert index_jobs[0]["target_id"] == responses[0].json()["id"]
+
+
+@pytest.mark.asyncio
+async def test_upload_failure_preserves_content_addressed_artifact(tmp_path, monkeypatch):
+    engine = make_engine(f"sqlite+aiosqlite:///{tmp_path / 'studio.sqlite3'}")
+    session_factory = make_session_factory(engine)
+    await init_db(engine)
+
+    content = b"preserve canonical artifact"
+    digest = sha256(content).hexdigest()
+
+    def fail_build(job_type, target_id):
+        raise RuntimeError("job enqueue failed")
+
+    monkeypatch.setattr(document_service.JobWorker, "build", fail_build)
+
+    async with session_factory() as session:
+        with pytest.raises(RuntimeError, match="job enqueue failed"):
+            await DocumentService(session, tmp_path).upload("sample.txt", "text/plain", content)
+        documents = (await session.execute(select(Document))).scalars().all()
+
+    await engine.dispose()
+
+    assert documents == []
+    assert (tmp_path / "uploads" / digest).read_bytes() == content
 
 
 @pytest.mark.asyncio

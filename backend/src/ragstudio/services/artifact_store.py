@@ -15,10 +15,10 @@ class ArtifactStore:
         target = self.uploads_dir / digest
         return digest, target
 
-    def write_upload(self, filename: str, content: bytes) -> tuple[str, Path, bool]:
+    def write_upload(self, filename: str, content: bytes) -> tuple[str, Path]:
         digest, target = self.prepare_upload(filename, content)
         if target.exists():
-            return digest, target, False
+            return digest, target
 
         temp_path = None
         try:
@@ -26,9 +26,9 @@ class ArtifactStore:
                 temp_file.write(content)
                 temp_path = Path(temp_file.name)
             os.link(temp_path, target)
-            return digest, target, True
+            return digest, target
         except FileExistsError:
-            return digest, target, False
+            return digest, target
         finally:
             if temp_path is not None:
                 temp_path.unlink(missing_ok=True)
