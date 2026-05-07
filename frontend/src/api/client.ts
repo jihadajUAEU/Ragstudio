@@ -121,21 +121,12 @@ export const apiClient = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     }),
-  optimize: async (payload: OptimizerIn) => {
-    const init = {
+  optimize: (payload: OptimizerIn) =>
+    request<OptimizerOut>("/api/optimizer", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
-    };
-    try {
-      return await request<OptimizerOut>("/api/optimizer/recommend", init);
-    } catch (error) {
-      if (error instanceof ApiError && error.status === 404) {
-        return request<OptimizerOut>("/api/optimizer", init);
-      }
-      throw error;
-    }
-  },
+    }),
   runs: () => request<Page<RunOut>>("/api/runs"),
   diagnostics: () => request<DiagnosticsOut>("/api/diagnostics"),
   graph: () => request<GraphOut>("/api/graph"),

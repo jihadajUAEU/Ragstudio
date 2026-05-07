@@ -21,7 +21,6 @@ export function OptimizerPage() {
   const variantsQuery = useQuery({ queryKey: queryKeys.variants, queryFn: apiClient.variants });
   const [experimentId, setExperimentId] = useState("");
   const [objectiveText, setObjectiveText] = useState("{\n  \"metric\": \"total\"\n}");
-  const [selectedRunIds, setSelectedRunIds] = useState<string[]>([]);
   const [formError, setFormError] = useState("");
 
   const optimize = useMutation({
@@ -33,7 +32,6 @@ export function OptimizerPage() {
     () => new Map((variantsQuery.data?.items ?? []).map((variant) => [variant.id, variant])),
     [variantsQuery.data?.items],
   );
-  const selectedRuns = (runsQuery.data?.items ?? []).filter((run) => selectedRunIds.includes(run.id));
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -51,21 +49,6 @@ export function OptimizerPage() {
 
   const runColumns = useMemo<ColumnDef<RunOut>[]>(
     () => [
-      {
-        id: "selected",
-        header: "Review",
-        cell: ({ row }) => (
-          <input
-            type="checkbox"
-            className="h-4 w-4 accent-[#176b87]"
-            checked={selectedRunIds.includes(row.original.id)}
-            onChange={(event) =>
-              setSelectedRunIds((ids) => toggleId(ids, row.original.id, event.target.checked))
-            }
-            aria-label={`Review run ${row.original.id}`}
-          />
-        ),
-      },
       {
         accessorKey: "query",
         header: "Query",
@@ -86,7 +69,7 @@ export function OptimizerPage() {
         cell: ({ row }) => <StatusBadge status={row.original.status} />,
       },
     ],
-    [selectedRunIds, variantById],
+    [variantById],
   );
 
   const candidateColumns = useMemo<ColumnDef<OptimizerCandidateSummary>[]>(
@@ -157,7 +140,7 @@ export function OptimizerPage() {
 
         <div className="mt-4 grid gap-3 sm:grid-cols-2">
           <Metric label="Recorded runs" value={formatCount(runsQuery.data?.total)} />
-          <Metric label="Review set" value={formatCount(selectedRuns.length)} />
+          <Metric label="Experiment scope" value={experimentId.trim() || "Required"} />
         </div>
 
         <div className="mt-4 flex items-center justify-between gap-3">
@@ -224,7 +207,7 @@ export function OptimizerPage() {
 
         <div>
           <div className="mb-3 flex items-center justify-between gap-3">
-            <h3 className="truncate text-base font-semibold text-[#1f2933]">Runs for review</h3>
+            <h3 className="truncate text-base font-semibold text-[#1f2933]">Recorded runs</h3>
             <Button variant="secondary" size="sm" onClick={refresh} disabled={runsQuery.isFetching}>
               <RefreshCcw className="h-4 w-4" aria-hidden="true" />
               Refresh
@@ -267,13 +250,6 @@ function selectedVariantName(id: string | null, variants: Map<string, VariantOut
     return "No variant selected";
   }
   return variants.get(id)?.name ?? id;
-}
-
-function toggleId(ids: string[], id: string, checked: boolean) {
-  if (checked) {
-    return ids.includes(id) ? ids : [...ids, id];
-  }
-  return ids.filter((existingId) => existingId !== id);
 }
 
 function parseObject(text: string): { ok: true; value: Record<string, unknown> } | { ok: false; message: string } {

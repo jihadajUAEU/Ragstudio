@@ -199,6 +199,7 @@ export function ExperimentsPage() {
                 label={document.filename}
                 detail={`${titleCase(document.status)} - ${document.content_type}`}
                 checked={selectedDocumentIds.includes(document.id)}
+                disabled={createExperiment.isPending}
                 onChange={(checked) =>
                   setSelectedDocumentIds((ids) => toggleId(ids, document.id, checked))
                 }
@@ -219,6 +220,7 @@ export function ExperimentsPage() {
                 label={variant.name}
                 detail={titleCase(variant.preset)}
                 checked={selectedVariantIds.includes(variant.id)}
+                disabled={createExperiment.isPending}
                 onChange={(checked) =>
                   setSelectedVariantIds((ids) => toggleId(ids, variant.id, checked))
                 }
@@ -346,19 +348,22 @@ function CheckboxRow({
   label,
   detail,
   checked,
+  disabled = false,
   onChange,
 }: {
   label: string;
   detail: string;
   checked: boolean;
+  disabled?: boolean;
   onChange: (checked: boolean) => void;
 }) {
   return (
-    <label className="flex min-h-12 cursor-pointer items-center gap-3 rounded-md border border-[#e1e7ea] bg-[#f8fafb] px-3 py-2 text-sm">
+    <label className="flex min-h-12 cursor-pointer items-center gap-3 rounded-md border border-[#e1e7ea] bg-[#f8fafb] px-3 py-2 text-sm has-disabled:cursor-not-allowed has-disabled:opacity-65">
       <input
         type="checkbox"
         className="h-4 w-4 accent-[#176b87]"
         checked={checked}
+        disabled={disabled}
         onChange={(event) => onChange(event.target.checked)}
       />
       <span className="min-w-0">

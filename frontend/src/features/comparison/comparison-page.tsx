@@ -19,12 +19,14 @@ export function ComparisonPage() {
   const runsQuery = useQuery({ queryKey: queryKeys.runs, queryFn: apiClient.runs });
   const variantsQuery = useQuery({ queryKey: queryKeys.variants, queryFn: apiClient.variants });
   const [selectedRunIds, setSelectedRunIds] = useState<string[]>([]);
+  const [hasEditedSelection, setHasEditedSelection] = useState(false);
 
-  const runs = runsQuery.data?.items ?? [];
-  const selectedRuns = selectedRunIds
+  const runs = useMemo(() => runsQuery.data?.items ?? [], [runsQuery.data?.items]);
+  const defaultRunIds = useMemo(() => runs.slice(0, 2).map((run) => run.id), [runs]);
+  const effectiveSelectedRunIds = hasEditedSelection ? selectedRunIds : defaultRunIds;
+  const runsForComparison = effectiveSelectedRunIds
     .map((id) => runs.find((run) => run.id === id))
     .filter((run): run is RunOut => Boolean(run));
-  const runsForComparison = selectedRuns.length ? selectedRuns : runs.slice(0, 2);
 
   const variantById = useMemo(
     () => new Map((variantsQuery.data?.items ?? []).map((variant) => [variant.id, variant])),
@@ -40,10 +42,11 @@ export function ComparisonPage() {
           <input
             type="checkbox"
             className="h-4 w-4 accent-[#176b87]"
-            checked={selectedRunIds.includes(row.original.id)}
-            onChange={(event) =>
-              setSelectedRunIds((ids) => toggleId(ids, row.original.id, event.target.checked))
-            }
+            checked={effectiveSelectedRunIds.includes(row.original.id)}
+            onChange={(event) => {
+              setHasEditedSelection(true);
+              setSelectedRunIds(toggleId(effectiveSelectedRunIds, row.original.id, event.target.checked));
+            }}
             aria-label={`Compare run ${row.original.id}`}
           />
         ),
@@ -68,7 +71,7 @@ export function ComparisonPage() {
         cell: ({ row }) => <StatusBadge status={row.original.status} />,
       },
     ],
-    [selectedRunIds, variantById],
+    [effectiveSelectedRunIds, variantById],
   );
 
   const refresh = () => {
