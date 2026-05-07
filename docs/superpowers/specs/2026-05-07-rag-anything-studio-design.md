@@ -44,6 +44,8 @@ The adapter exposes capability-oriented methods such as:
 - `validate_variant`
 - `index_document`
 - `query`
+- `search_chunks`
+- `get_chunk`
 - `inspect_content`
 - `get_graph`
 - `run_variant`
@@ -59,6 +61,10 @@ A local Studio workspace containing documents, settings, variants, evaluation se
 ### Document
 
 An uploaded source file plus metadata, content hashes, parse/index state, extracted content references, and media artifacts.
+
+### Chunk
+
+A retrievable content unit produced by parsing, chunking, or multimodal extraction. A chunk stores source document, location metadata, text or media preview references, chunking strategy, embedding/index status, and retrieval metadata when returned by a run.
 
 ### Variant
 
@@ -78,7 +84,7 @@ A comparison plan combining documents, an evaluation set, candidate variants, an
 
 ### Run
 
-Execution result for one variant on one query or evaluation case. It stores answer text, retrieved sources, media evidence, graph evidence, timing, errors, token or cost metadata when available, and raw trace metadata.
+Execution result for one variant on one query or evaluation case. It stores answer text, retrieved sources, retrieved chunks, prompt-included chunks, media evidence, graph evidence, timing, errors, token or cost metadata when available, and raw trace metadata.
 
 ### Score
 
@@ -107,6 +113,7 @@ Primary screens:
 - Dashboard: readiness, recent documents, recent experiments, and quick pipeline status.
 - Settings: provider, model, storage, and connection tests.
 - Documents: upload, parse/index jobs, content inspection, and media inspection.
+- Chunk Inspector: search indexed chunks, ask a retrieval-only question, inspect ranked chunk contents, and compare chunk selection across variants.
 - Pipeline Builder: visual flow, presets, advanced stage parameters, and save-as-variant.
 - Query: run one variant or compare variants for an ad hoc query.
 - Evaluation Sets: import, validate, inspect, and edit expected-output cases.
@@ -132,6 +139,37 @@ Every preset can be opened into detailed controls. Initial override categories a
 Users define an objective such as best source grounding, fastest acceptable answer, best multimodal evidence, or highest structured-output match. Studio generates candidate variants, runs experiments, scores outputs against expected results, ranks methods, and recommends a best variant with explanation.
 
 The guided optimizer is designed now but implemented in phases.
+
+## Chunk Inspection
+
+Studio must let users ask specific questions to inspect chunk contents without forcing answer generation. Chunk inspection supports two related workflows.
+
+Direct chunk search:
+
+1. User selects documents, a variant, and a retrieval mode.
+2. User asks a retrieval-only question or enters a keyword/vector search query.
+3. Studio returns ranked chunks without generating an answer.
+4. User inspects chunk text, source document, page or section, media preview, retrieval score, and rerank score when available.
+
+Run-level chunk trace:
+
+1. User runs a query or experiment.
+2. Studio records candidate chunks returned by retrieval.
+3. Studio records reranked chunks and final prompt-included chunks when available.
+4. The result view shows which chunks supported the answer, which chunks were ignored, and which answer sentences cite or depend on each chunk when citation data is available.
+
+Chunk Inspector should expose:
+
+- chunk text or media preview
+- source document, page, section, bounding box, or time range when available
+- chunk ID and parent document ID
+- chunking strategy and variant that produced it
+- retrieval score, similarity score, and rerank score when available
+- inclusion status: candidate, reranked, prompt-included, answer-cited, or ignored
+- neighboring chunks before and after the selected chunk
+- filters for document, source type, score range, variant, and run
+
+This makes retrieval debuggable. Users can verify whether the right evidence was indexed, retrieved, reranked, and used before judging the final answer.
 
 ## Evaluation File Formats
 
@@ -179,6 +217,7 @@ Initial API groups:
 - `/api/health`: service health and readiness.
 - `/api/settings`: provider, model, storage, and default configuration.
 - `/api/documents`: upload, list, inspect, and document state.
+- `/api/chunks`: search chunks, fetch chunk details, inspect neighboring chunks, and fetch chunk traces by run.
 - `/api/jobs`: async job lifecycle, progress, and logs.
 - `/api/variants`: create, update, list, validate, and duplicate saved variants.
 - `/api/evaluation-sets`: import, validate, list, edit, and export evaluation cases.
@@ -194,12 +233,13 @@ Initial API groups:
 2. User uploads documents. Studio registers files with hashes and metadata.
 3. User builds variants through presets, advanced overrides, optimizer hints, or imported evaluation objectives.
 4. User indexes documents through async jobs.
-5. User imports evaluation files. Studio validates and normalizes them into evaluation cases.
-6. User creates an experiment from documents, an evaluation set, candidate variants, and an objective.
-7. Studio runs variants against cases and stores run outputs.
-8. Studio scores outputs against expected results.
-9. Studio ranks variants and recommends the best method with explanation.
-10. Later optimizer phases generate new variants based on score gaps and rerun selected cases.
+5. User can inspect indexed chunks directly by asking retrieval-only questions.
+6. User imports evaluation files. Studio validates and normalizes them into evaluation cases.
+7. User creates an experiment from documents, an evaluation set, candidate variants, and an objective.
+8. Studio runs variants against cases and stores run outputs plus chunk traces.
+9. Studio scores outputs against expected results.
+10. Studio ranks variants and recommends the best method with explanation.
+11. Later optimizer phases generate new variants based on score gaps and rerun selected cases.
 
 ## Error Handling
 
@@ -218,14 +258,17 @@ Backend tests:
 - settings validation
 - variant schema validation
 - evaluation file import and normalization for CSV, JSON, YAML, and JSONL
+- chunk search and chunk trace schema validation
 - scoring helpers
 - job state transitions
 - adapter capability handling
 - API behavior for health, settings, documents, variants, evaluation sets, experiments, runs, and query
+- API behavior for chunk search, chunk detail, neighboring chunks, and run chunk traces
 
 Integration tests:
 
 - mocked adapter happy path for upload, index, query, and compare
+- mocked adapter happy path for retrieval-only chunk search
 - unsupported capability path
 - import validation failures
 - FastAPI starts and serves built frontend assets
@@ -236,15 +279,15 @@ Frontend tests are added where state complexity justifies them, especially Pipel
 
 ### Phase 1: Production Foundation
 
-Create the repo scaffold, backend contracts, typed schemas, local persistence, settings, documents, jobs, variants, evaluation import schema, and a basic React shell with navigation.
+Create the repo scaffold, backend contracts, typed schemas, local persistence, settings, documents, chunks, jobs, variants, evaluation import schema, and a basic React shell with navigation.
 
 ### Phase 2: Real RAG Execution
 
-Integrate the RAG-Anything adapter for single-variant upload, index, query, traces, readiness, graph inspection, and content inspection where available.
+Integrate the RAG-Anything adapter for single-variant upload, index, query, retrieval-only chunk search, chunk traces, readiness, graph inspection, and content inspection where available.
 
 ### Phase 3: Comparison Workspace
 
-Implement experiments, multi-variant runs, side-by-side comparison, deterministic scoring against expected outputs, and reportable run history.
+Implement experiments, multi-variant runs, side-by-side comparison, chunk-selection comparison, deterministic scoring against expected outputs, and reportable run history.
 
 ### Phase 4: Guided Optimizer
 
