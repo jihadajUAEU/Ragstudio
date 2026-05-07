@@ -10,8 +10,12 @@ class JobWorker:
     def __init__(self, session: AsyncSession):
         self.session = session
 
+    @staticmethod
+    def build(job_type: str, target_id: str | None) -> Job:
+        return Job(type=job_type, target_id=target_id, status=StageStatus.READY.value, progress=0)
+
     async def enqueue(self, job_type: str, target_id: str | None) -> JobOut:
-        job = Job(type=job_type, target_id=target_id, status=StageStatus.READY.value, progress=0)
+        job = self.build(job_type, target_id)
         self.session.add(job)
         await self.session.commit()
         await self.session.refresh(job)

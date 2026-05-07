@@ -1,4 +1,9 @@
 import pytest
+from sqlalchemy import select
+
+from ragstudio.db.engine import init_db, make_engine, make_session_factory
+from ragstudio.db.models import Document
+from ragstudio.services.document_service import DocumentService
 
 
 @pytest.mark.asyncio
@@ -16,3 +21,51 @@ async def test_upload_document_creates_document_and_index_job(client):
     assert jobs_response.status_code == 200
     jobs = jobs_response.json()["items"]
     assert any(job["type"] == "index_document" and job["target_id"] == document["id"] for job in jobs)
+
+
+@pytest.mark.asyncio
+async def test_upload_document_is_idempotent_by_content_hash(client):
+    files = {"file": ("sample.txt", b"same bytes", "text/plain")}
+
+    first_response = await client.post("/api/documents", files=files)
+    second_response = await client.post(
+        "/api/documents",
+        files={"file": ("copy.txt", b"same bytes", "text/plain")},
+    )
+
+    assert first_response.status_code == 201
+    assert second_response.status_code == 201
+    assert second_response.json()["id"] == first_response.json()["id"]
+
+    documents_response = await client.get("/api/documents")
+    assert documents_response.status_code == 200
+    documents = documents_response.json()["items"]
+    assert len(documents) == 1
+
+    jobs_response = await client.get("/api/jobs")
+    assert jobs_response.status_code == 200
+    index_jobs = [job for job in jobs_response.json()["items"] if job["type"] == "index_document"]
+    assert len(index_jobs) == 1
+    assert index_jobs[0]["target_id"] == first_response.json()["id"]
+
+
+@pytest.mark.asyncio
+async def test_upload_document_sanitizes_artifact_path_for_unsafe_filename(tmp_path):
+    engine = make_engine(f"sqlite+aiosqlite:///{tmp_path / 'studio.sqlite3'}")
+    session_factory = make_session_factory(engine)
+    await init_db(engine)
+
+    async with session_factory() as session:
+        document_out = await DocumentService(session, tmp_path).upload(
+            filename="../sample.txt",
+            content_type="text/plain",
+            content=b"traversal check",
+        )
+        document = await session.scalar(select(Document).where(Document.id == document_out.id))
+
+    await engine.dispose()
+
+    assert document is not None
+    artifact_name = document.artifact_path.split("/")[-1]
+    assert "/" not in artifact_name
+    assert ".." not in artifact_name

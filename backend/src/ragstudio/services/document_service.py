@@ -16,7 +16,12 @@ class DocumentService:
         self.store = ArtifactStore(data_dir)
 
     async def upload(self, filename: str, content_type: str, content: bytes) -> DocumentOut:
-        digest, artifact_path = self.store.write_upload(filename, content)
+        digest, artifact_path = self.store.prepare_upload(filename, content)
+        existing = await self.session.scalar(select(Document).where(Document.sha256 == digest))
+        if existing is not None:
+            return DocumentOut.model_validate(existing)
+
+        artifact_path.write_bytes(content)
         document = Document(
             filename=filename,
             content_type=content_type,
@@ -25,9 +30,10 @@ class DocumentService:
             status=StageStatus.READY.value,
         )
         self.session.add(document)
+        await self.session.flush()
+        self.session.add(JobWorker.build("index_document", document.id))
         await self.session.commit()
         await self.session.refresh(document)
-        await JobWorker(self.session).enqueue("index_document", document.id)
         return DocumentOut.model_validate(document)
 
     async def list(self) -> list[DocumentOut]:
