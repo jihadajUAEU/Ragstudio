@@ -36,6 +36,10 @@ Studio will be a standalone full-stack app.
 - `frontend/`: React, TypeScript, and Vite single-page app.
 - `tests/`: backend unit and API tests first, with adapter behavior mocked where needed.
 
+The backend language is Python. It should use Python typing throughout and Pydantic schemas for API contracts, validation, and persisted records where appropriate.
+
+The frontend language is TypeScript. React components, API clients, UI state, forms, pipeline schemas, and evaluation import models should be typed. Shared contracts should be generated from or kept consistent with the backend schemas during planning and implementation.
+
 The backend serves the API and, after frontend build, can serve the static frontend so users can run Studio from one local command.
 
 The adapter exposes capability-oriented methods such as:
