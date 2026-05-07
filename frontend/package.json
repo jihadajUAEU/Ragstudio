@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "test": "vitest",
+    "test": "vitest --passWithNoTests",
     "generate:api": "openapi-typescript http://127.0.0.1:8000/openapi.json -o src/api/generated.ts"
   },
   "dependencies": {
@@ -31,6 +31,7 @@
     "eslint": "latest",
     "eslint-plugin-react-hooks": "latest",
     "globals": "^17.6.0",
+    "jsdom": "^29.1.1",
     "openapi-typescript": "latest",
     "tailwindcss": "latest",
     "typescript": "latest",
