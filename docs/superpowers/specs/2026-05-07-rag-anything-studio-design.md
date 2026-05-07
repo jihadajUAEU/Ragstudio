@@ -42,6 +42,96 @@ The frontend language is TypeScript. React components, API clients, UI state, fo
 
 The backend serves the API and, after frontend build, can serve the static frontend so users can run Studio from one local command.
 
+## Implementation Technology Stack
+
+Use the latest stable versions available at implementation time. The versions below were checked against package metadata on 2026-05-07 and should be treated as the current baseline, not permanent pins.
+
+### Runtime And Package Management
+
+- Backend runtime: Python `>=3.12,<3.15`. Python 3.12 is the compatibility floor; newer versions are allowed if RAG-Anything and transitive dependencies support them.
+- Backend package manager: `uv` for Python dependency management, lockfiles, virtual environments, and scripts. Current package metadata shows `uv` `0.11.11`.
+- Frontend runtime: Node.js LTS, `>=22`. Avoid depending on non-LTS-only Node behavior.
+- Frontend package manager: `npm`, because it is bundled with Node and avoids extra package-manager bootstrap issues. Current local metadata shows Node `25.9.0` and npm `11.13.0`, but implementation should target Node LTS compatibility.
+- Upstream RAG package: `raganything`, isolated behind the Studio adapter. Current package metadata shows `raganything` `1.3.0`.
+
+### Backend Stack
+
+- API framework: FastAPI. Current package metadata shows `fastapi` `0.136.1`.
+- ASGI server: Uvicorn. Current package metadata shows `uvicorn` `0.46.0`.
+- Schema and validation: Pydantic v2. Current package metadata shows `pydantic` `2.13.4`.
+- Persistence: SQLite for the local-first Studio database.
+- ORM/database toolkit: SQLAlchemy 2.x. Current package metadata shows `sqlalchemy` `2.0.49`.
+- Migrations: Alembic. Current package metadata shows `alembic` `1.18.4`.
+- Async SQLite driver: `aiosqlite`. Current package metadata shows `aiosqlite` `0.22.1`.
+- Upload handling: `python-multipart`. Current package metadata shows `python-multipart` `0.0.27`.
+- HTTP client and API tests: HTTPX. Current package metadata shows `httpx` `0.28.1`.
+- YAML import support: PyYAML. Current package metadata shows `pyyaml` `6.0.3`.
+- JSON performance: `orjson`. Current package metadata shows `orjson` `3.11.9`.
+- Structured logging: `structlog`. Current package metadata shows `structlog` `25.5.0`.
+- Async foundation: AnyIO where direct async primitives are needed. Current package metadata shows `anyio` `4.13.0`.
+
+The first implementation should use an in-process async job worker backed by persisted SQLite job records. This keeps local setup simple while preserving durable job state, progress, logs, and retries. Do not add Redis, Celery, or a distributed queue in the initial implementation. Revisit that only if multi-process or remote execution becomes a real requirement.
+
+Uploaded files and derived artifacts should live in a local app data directory managed by Studio. SQLite stores metadata and references; the filesystem stores original uploads, extracted media, generated artifacts, and larger trace payloads when appropriate.
+
+### Frontend Stack
+
+- App framework: React with TypeScript and Vite.
+- Component system: shadcn/ui plus Radix UI primitives.
+- Styling: Tailwind CSS, shadcn/ui theme tokens, and CSS variables. Tailwind is the only general-purpose CSS framework.
+- Data fetching and server state: TanStack Query.
+- Tables and dense grids: TanStack Table.
+- Pipeline builder and stage trace canvas: React Flow package `@xyflow/react`.
+- Advanced editors: Monaco Editor.
+- Forms and validation: React Hook Form plus Zod.
+- Local UI/workspace state: Zustand.
+- Icons: Lucide React.
+- Charts: Recharts.
+- Large knowledge graph visualization: Cytoscape.js with React Cytoscape.js when React Flow is too constrained.
+
+Current npm metadata checked on 2026-05-07:
+
+- TypeScript `6.0.3`
+- React `19.2.6`
+- React DOM `19.2.6`
+- Vite `8.0.11`
+- `@vitejs/plugin-react` `6.0.1`
+- Tailwind CSS `4.2.4`
+- shadcn CLI `4.7.0`
+- Radix dialog package `@radix-ui/react-dialog` `1.1.15`
+- TanStack Query `5.100.9`
+- TanStack Table `8.21.3`
+- React Flow package `@xyflow/react` `12.10.2`
+- Monaco Editor `0.55.1`
+- Zod `4.4.3`
+- React Hook Form `7.75.0`
+- Zustand `5.0.13`
+- Lucide React `1.14.0`
+- Recharts `3.8.1`
+- Cytoscape `3.33.3`
+- React Cytoscape.js `2.0.0`
+
+### API Contracts
+
+FastAPI OpenAPI output is the source of truth for HTTP contracts. Generate TypeScript API types from OpenAPI rather than hand-copying backend models. Use `openapi-typescript` or `@hey-api/openapi-ts`; current npm metadata shows `openapi-typescript` `7.13.0` and `@hey-api/openapi-ts` `0.97.1`.
+
+### Testing And Quality Tools
+
+- Backend tests: pytest and pytest-asyncio. Current package metadata shows `pytest` `9.0.3` and `pytest-asyncio` `1.3.0`.
+- Backend lint and formatting: Ruff. Current package metadata shows `ruff` `0.15.12`.
+- Backend type checking: Pyright. Current package metadata shows `pyright` `1.1.409`.
+- Frontend unit/component tests: Vitest and Testing Library React. Current npm metadata shows `vitest` `4.1.5` and `@testing-library/react` `16.3.2`.
+- Frontend browser/E2E tests: Playwright for critical flows once the UI shell exists. Current npm metadata shows `playwright` `1.59.1`.
+- Frontend lint/format: ESLint and Prettier. Current npm metadata shows `eslint` `10.3.0`, `@eslint/js` `10.0.1`, and `prettier` `3.8.3`.
+
+### Deliberately Excluded For Initial Implementation
+
+- No Bootstrap, Bulma, Foundation, or second broad CSS framework.
+- No Redux unless Zustand proves insufficient.
+- No Celery, Redis, RabbitMQ, or external queue in the local-first foundation.
+- No separate Next.js/SSR framework; Studio is an app shell served by FastAPI after build.
+- No direct RAG-Anything imports outside the adapter.
+
 The adapter exposes capability-oriented methods such as:
 
 - `get_capabilities`
@@ -128,26 +218,7 @@ Primary screens:
 
 ## Frontend Component Stack
 
-The recommended frontend stack is React, TypeScript, Vite, shadcn/ui, TanStack, React Flow, and Monaco. The implementation must use the latest stable versions available at implementation time, because frontend packages move quickly. As of 2026-05-07, current npm metadata shows:
-
-- React `19.2.6`
-- React DOM `19.2.6`
-- Vite `8.0.11`
-- `@vitejs/plugin-react` `6.0.1`
-- Tailwind CSS `4.2.4`
-- shadcn CLI `4.7.0`
-- Radix dialog package `@radix-ui/react-dialog` `1.1.15`
-- TanStack Query `5.100.9`
-- TanStack Table `8.21.3`
-- React Flow package `@xyflow/react` `12.10.2`
-- Monaco Editor `0.55.1`
-- Zod `4.4.3`
-- React Hook Form `7.75.0`
-- Zustand `5.0.13`
-- Lucide React `1.14.0`
-- Recharts `3.8.1`
-- Cytoscape `3.33.3`
-- React Cytoscape.js `2.0.0`
+The finalized frontend stack is React, TypeScript, Vite, shadcn/ui, TanStack, React Flow, and Monaco. Version baselines are recorded in the Implementation Technology Stack section.
 
 Use shadcn/ui and Radix UI for accessible, composable primitives such as dialogs, sheets, tabs, popovers, tooltips, dropdowns, accordions, command menus, forms, and toasts. Use Tailwind CSS for styling and design tokens.
 
