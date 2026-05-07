@@ -1,14 +1,17 @@
-import { useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 
 import { AppShell } from "./components/app-shell";
 import { ChunkInspector } from "./features/chunks/chunk-inspector";
 import { DashboardPage } from "./features/dashboard/dashboard-page";
 import { DocumentsPage } from "./features/documents/documents-page";
 import { GraphPage } from "./features/graph/graph-page";
-import { PipelineBuilder } from "./features/pipeline/pipeline-builder";
 import { QueryPage } from "./features/query/query-page";
 import { SettingsPage } from "./features/settings/settings-page";
 import { VariantsPage } from "./features/variants/variants-page";
+
+const PipelineBuilder = lazy(() =>
+  import("./features/pipeline/pipeline-builder").then((module) => ({ default: module.PipelineBuilder })),
+);
 
 const pageTitles: Record<string, string> = {
   "/": "Studio Dashboard",
@@ -62,7 +65,7 @@ export default function App() {
 
   return (
     <AppShell activePath={route} title={pageTitles[route]} onNavigate={navigate}>
-      {page}
+      <Suspense fallback={<div className="text-sm text-[#62717a]">Loading pipeline builder...</div>}>{page}</Suspense>
     </AppShell>
   );
 }

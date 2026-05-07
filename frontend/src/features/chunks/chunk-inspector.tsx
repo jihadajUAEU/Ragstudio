@@ -11,32 +11,63 @@ import {
 } from "lucide-react";
 
 import { apiClient } from "../../api/client";
-import type { ChunkOut } from "../../api/generated";
+import type { ChunkOut, ChunkSearchIn, ChunkSearchOut } from "../../api/generated";
 import { EmptyState } from "../../components/empty-state";
 import { Button } from "../../components/ui/button";
 import { titleCase } from "../../lib/utils";
 
 const queryKeys = {
   documents: ["documents"],
-  variants: ["variants"],
 } as const;
+
+interface SearchResult {
+  filters: ChunkSearchIn;
+  indexVersion: number;
+  data: ChunkSearchOut;
+}
+
+interface SearchRequest {
+  filters: ChunkSearchIn;
+  indexVersion: number;
+}
 
 export function ChunkInspector() {
   const documentsQuery = useQuery({ queryKey: queryKeys.documents, queryFn: apiClient.documents });
-  const variantsQuery = useQuery({ queryKey: queryKeys.variants, queryFn: apiClient.variants });
   const [queryText, setQueryText] = useState("");
   const [selectedDocumentIds, setSelectedDocumentIds] = useState<string[]>([]);
-  const [variantId, setVariantId] = useState("");
   const [limit, setLimit] = useState(10);
   const [formError, setFormError] = useState("");
+  const [searchResult, setSearchResult] = useState<SearchResult | null>(null);
+  const [indexVersion, setIndexVersion] = useState(0);
 
-  const searchChunks = useMutation({ mutationFn: apiClient.searchChunks });
-  const indexDocument = useMutation({ mutationFn: apiClient.indexDocumentChunks });
+  const currentSearchFilters = useMemo(
+    () => normalizeSearchFilters({ query: queryText.trim(), document_ids: selectedDocumentIds, limit }),
+    [limit, queryText, selectedDocumentIds],
+  );
+
+  const searchChunks = useMutation({
+    mutationFn: (request: SearchRequest) => apiClient.searchChunks(request.filters),
+    onSuccess: (data, variables) => {
+      setSearchResult({ filters: normalizeSearchFilters(variables.filters), indexVersion: variables.indexVersion, data });
+    },
+  });
+  const indexDocument = useMutation({
+    mutationFn: apiClient.indexDocumentChunks,
+    onSuccess: () => {
+      setIndexVersion((version) => version + 1);
+      setSearchResult(null);
+    },
+  });
 
   const selectedDocuments = useMemo(
     () => (documentsQuery.data?.items ?? []).filter((document) => selectedDocumentIds.includes(document.id)),
     [documentsQuery.data?.items, selectedDocumentIds],
   );
+
+  const activeSearchResult =
+    searchResult && searchResult.indexVersion === indexVersion && filtersEqual(searchResult.filters, currentSearchFilters)
+      ? searchResult.data
+      : null;
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -45,12 +76,7 @@ export function ChunkInspector() {
       return;
     }
     setFormError("");
-    searchChunks.mutate({
-      query: queryText.trim(),
-      document_ids: selectedDocumentIds,
-      variant_id: variantId || null,
-      limit,
-    });
+    searchChunks.mutate({ filters: currentSearchFilters, indexVersion });
   };
 
   return (
@@ -70,22 +96,24 @@ export function ChunkInspector() {
               <SmallState icon={AlertCircle} text={documentsQuery.error.message} />
             ) : documentsQuery.data?.items.length ? (
               documentsQuery.data.items.map((document) => (
-                <label
+                <div
                   key={document.id}
-                  className="flex cursor-pointer items-start gap-3 rounded-md border border-[#e1e7ea] bg-[#f8fafb] p-3 text-sm"
+                  className="flex items-start gap-3 rounded-md border border-[#e1e7ea] bg-[#f8fafb] p-3 text-sm"
                 >
-                  <input
-                    type="checkbox"
-                    className="mt-1 h-4 w-4 accent-[#176b87]"
-                    checked={selectedDocumentIds.includes(document.id)}
-                    onChange={(event) =>
-                      setSelectedDocumentIds((ids) => toggleId(ids, document.id, event.target.checked))
-                    }
-                  />
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate font-medium text-[#24313a]">{document.filename}</span>
-                    <span className="block truncate text-xs text-[#62717a]">{titleCase(document.status)}</span>
-                  </span>
+                  <label className="flex min-w-0 flex-1 cursor-pointer items-start gap-3">
+                    <input
+                      type="checkbox"
+                      className="mt-1 h-4 w-4 accent-[#176b87]"
+                      checked={selectedDocumentIds.includes(document.id)}
+                      onChange={(event) =>
+                        setSelectedDocumentIds((ids) => toggleId(ids, document.id, event.target.checked))
+                      }
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate font-medium text-[#24313a]">{document.filename}</span>
+                      <span className="block truncate text-xs text-[#62717a]">{titleCase(document.status)}</span>
+                    </span>
+                  </label>
                   <Button
                     type="button"
                     variant="secondary"
@@ -104,7 +132,7 @@ export function ChunkInspector() {
                     )}
                     Index
                   </Button>
-                </label>
+                </div>
               ))
             ) : (
               <SmallState icon={FileText} text="No documents uploaded" />
@@ -121,22 +149,6 @@ export function ChunkInspector() {
               onChange={(event) => setQueryText(event.target.value)}
               placeholder="Search within selected document chunks."
             />
-          </label>
-
-          <label className="block min-w-0 text-sm font-medium text-[#3a4a53]">
-            <span className="mb-1.5 block truncate">Variant context</span>
-            <select
-              className="h-10 w-full rounded-md border border-[#cfd8dd] bg-white px-3 text-sm text-[#1f2933] outline-none focus:border-[#176b87] focus:ring-2 focus:ring-[#176b87]/20"
-              value={variantId}
-              onChange={(event) => setVariantId(event.target.value)}
-            >
-              <option value="">No variant</option>
-              {(variantsQuery.data?.items ?? []).map((variant) => (
-                <option key={variant.id} value={variant.id}>
-                  {variant.name}
-                </option>
-              ))}
-            </select>
           </label>
 
           <div className="flex items-end gap-3">
@@ -196,13 +208,13 @@ export function ChunkInspector() {
 
         {searchChunks.isPending ? (
           <EmptyState icon={Loader2} title="Searching chunks" description="Ranking selected document chunks." />
-        ) : searchChunks.data?.items.length ? (
+        ) : activeSearchResult?.items.length ? (
           <div className="grid gap-3">
-            {searchChunks.data.items.map((chunk) => (
+            {activeSearchResult.items.map((chunk) => (
               <ChunkCard key={chunk.id} chunk={chunk} />
             ))}
           </div>
-        ) : searchChunks.data ? (
+        ) : activeSearchResult ? (
           <EmptyState icon={Search} title="No chunks matched" description="Try another question or index selected documents." />
         ) : (
           <EmptyState
@@ -265,6 +277,22 @@ function formatValue(value: unknown) {
     return value;
   }
   return "n/a";
+}
+
+function normalizeSearchFilters(filters: ChunkSearchIn): ChunkSearchIn {
+  return {
+    query: filters.query.trim(),
+    document_ids: [...filters.document_ids],
+    limit: filters.limit,
+  };
+}
+
+function filtersEqual(left: ChunkSearchIn, right: ChunkSearchIn) {
+  return stringifySearchFilters(left) === stringifySearchFilters(right);
+}
+
+function stringifySearchFilters(filters: ChunkSearchIn) {
+  return JSON.stringify(normalizeSearchFilters(filters));
 }
 
 function toggleId(ids: string[], id: string, checked: boolean) {
