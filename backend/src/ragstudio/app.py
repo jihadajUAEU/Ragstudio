@@ -9,6 +9,7 @@ from ragstudio.api.routes import ROUTERS
 from ragstudio.config import AppSettings
 from ragstudio.db.engine import init_db, make_engine, make_session_factory
 from ragstudio.logging import configure_logging
+from ragstudio.static import mount_frontend
 
 
 def create_app(data_dir: Path | None = None) -> FastAPI:
@@ -33,6 +34,7 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
     app.state.session_factory = session_factory
     for router in ROUTERS:
         app.include_router(router)
+    mount_frontend(app)
     return app
 
 
