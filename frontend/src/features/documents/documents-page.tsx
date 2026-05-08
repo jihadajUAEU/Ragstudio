@@ -25,6 +25,7 @@ export function DocumentsPage() {
     parser_mode: "local_fallback",
     domain_metadata: { domain: "generic", document_type: "document", tags: [] },
   });
+  const [metadataValid, setMetadataValid] = useState(true);
   const documentsQuery = useQuery({ queryKey: queryKeys.documents, queryFn: apiClient.documents });
   const jobsQuery = useQuery({ queryKey: queryKeys.jobs, queryFn: apiClient.jobs });
   const profilesQuery = useQuery({
@@ -171,6 +172,7 @@ export function DocumentsPage() {
               value={indexOptions}
               onChange={setIndexOptions}
               disabled={uploadDocument.isPending}
+              onValidityChange={setMetadataValid}
               suggestContext={
                 file
                   ? {
@@ -181,7 +183,7 @@ export function DocumentsPage() {
               }
             />
           </div>
-          <Button type="submit" disabled={!file || uploadDocument.isPending}>
+          <Button type="submit" disabled={!file || !metadataValid || uploadDocument.isPending}>
             {uploadDocument.isPending ? (
               <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
             ) : (

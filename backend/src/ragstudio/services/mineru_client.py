@@ -128,19 +128,20 @@ class MinerUClient:
     ) -> list[AdapterChunk]:
         self._extract_safe(artifact_zip, extract_dir)
         manifest = self._read_manifest(extract_dir)
-        related_artifacts = self._related_artifacts(manifest)
+        related_artifacts = self._related_artifacts(manifest, extract_dir)
         chunks: list[AdapterChunk] = []
         for index, item in enumerate(self._manifest_entries(manifest, extract_dir)):
             rel_path = str(item.get("path") or "")
             if not rel_path:
                 continue
-            artifact_path = extract_dir / rel_path
+            artifact_path = self._safe_manifest_path(extract_dir, rel_path)
             if not artifact_path.exists() or artifact_path.is_dir():
                 continue
+            safe_rel_path = artifact_path.relative_to(extract_dir.resolve()).as_posix()
             text = artifact_path.read_text(encoding="utf-8", errors="replace").strip()
             if not text:
                 continue
-            source_location: dict[str, Any] = {"artifact": rel_path}
+            source_location: dict[str, Any] = {"artifact": safe_rel_path}
             for source_key, manifest_key in (
                 ("page", "pageNumber"),
                 ("page", "page"),
@@ -163,7 +164,7 @@ class MinerUClient:
                             "source_id": manifest.get("sourceId"),
                             "sha256": manifest.get("sha256"),
                             "parser": manifest.get("parser"),
-                            "artifact_ref": rel_path,
+                            "artifact_ref": safe_rel_path,
                             "content_type": str(
                                 item.get("contentType") or item.get("kind") or "text"
                             ),
@@ -219,8 +220,12 @@ class MinerUClient:
             for path in sorted(extract_dir.rglob("*.md"))
         ]
 
-    def _related_artifacts(self, manifest: dict[str, Any]) -> list[dict[str, str]]:
-        raw_entries = manifest.get("files") or []
+    def _related_artifacts(
+        self,
+        manifest: dict[str, Any],
+        extract_dir: Path,
+    ) -> list[dict[str, str]]:
+        raw_entries = manifest.get("files") or manifest.get("items") or []
         related: list[dict[str, str]] = []
         text_kinds = {"text", "markdown", "md"}
         for item in raw_entries:
@@ -230,5 +235,18 @@ class MinerUClient:
             kind = str(item.get("kind") or item.get("contentType") or "")
             if not path or kind.lower() in text_kinds or path == "manifest.json":
                 continue
-            related.append({"path": path, "kind": kind})
+            safe_path = self._safe_manifest_path(extract_dir, path)
+            related.append(
+                {
+                    "path": safe_path.relative_to(extract_dir.resolve()).as_posix(),
+                    "kind": kind,
+                }
+            )
         return related
+
+    def _safe_manifest_path(self, extract_dir: Path, rel_path: str) -> Path:
+        root = extract_dir.resolve()
+        target = (extract_dir / rel_path).resolve()
+        if root not in target.parents and target != root:
+            raise MinerUArtifactError(f"Unsafe manifest artifact path: {rel_path}")
+        return target

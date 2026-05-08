@@ -49,6 +49,7 @@ export function ChunkInspector() {
     parser_mode: "local_fallback",
     domain_metadata: { domain: "generic", document_type: "document", tags: [] },
   });
+  const [metadataValid, setMetadataValid] = useState(true);
   const profilesQuery = useQuery({
     queryKey: ["domain-profiles"],
     queryFn: apiClient.domainProfiles,
@@ -133,7 +134,7 @@ export function ChunkInspector() {
                     variant="secondary"
                     size="sm"
                     className="shrink-0"
-                    disabled={indexDocument.isPending}
+                    disabled={indexDocument.isPending || !metadataValid}
                     onClick={(event) => {
                       event.preventDefault();
                       indexDocument.mutate(document.id);
@@ -160,6 +161,7 @@ export function ChunkInspector() {
             value={indexOptions}
             onChange={setIndexOptions}
             disabled={indexDocument.isPending}
+            onValidityChange={setMetadataValid}
             suggestContext={
               selectedDocuments[0]
                 ? {

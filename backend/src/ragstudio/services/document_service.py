@@ -48,11 +48,9 @@ class DocumentService:
             try:
                 await self._index_document_for_job(document, job, options)
             except Exception as exc:
-                document.status = StageStatus.FAILED.value
-                job.status = StageStatus.FAILED.value
-                job.progress = 100
-                job.logs = [*job.logs, str(exc)]
-                job.result = {"document_id": document.id, "error": str(exc)}
+                if not self._should_persist_index_failure(options):
+                    raise
+                self._mark_index_failed(document, job, exc)
             await self.session.commit()
         except IntegrityError:
             await self.session.rollback()
@@ -91,7 +89,12 @@ class DocumentService:
         if existing_job is None:
             self.session.add(job)
             await self.session.flush()
-        await self._index_document_for_job(document, job, options)
+        try:
+            await self._index_document_for_job(document, job, options)
+        except Exception as exc:
+            if not self._should_persist_index_failure(options):
+                raise
+            self._mark_index_failed(document, job, exc)
         await self.session.commit()
         await self.session.refresh(document)
 
@@ -115,3 +118,13 @@ class DocumentService:
         job.progress = 100
         job.result = {"document_id": document.id, "chunk_count": chunk_count}
         job.logs = [*job.logs, f"Indexed {chunk_count} chunks."]
+
+    def _should_persist_index_failure(self, options: IndexDocumentIn | None) -> bool:
+        return options is not None and options.parser_mode == "mineru_strict"
+
+    def _mark_index_failed(self, document: Document, job: Job, exc: Exception) -> None:
+        document.status = StageStatus.FAILED.value
+        job.status = StageStatus.FAILED.value
+        job.progress = 100
+        job.logs = [*job.logs, str(exc)]
+        job.result = {"document_id": document.id, "error": str(exc)}

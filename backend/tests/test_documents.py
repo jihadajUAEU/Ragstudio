@@ -78,3 +78,51 @@ async def test_upload_mineru_strict_failure_persists_failed_job(client, monkeypa
     assert len(jobs) == 1
     assert jobs[0]["status"] == "failed"
     assert jobs[0]["result"]["error"] == "MinerU parse failed"
+
+
+@pytest.mark.asyncio
+async def test_duplicate_upload_mineru_strict_failure_persists_failed_job(client, monkeypatch):
+    first_response = await client.post(
+        "/api/documents",
+        files={"file": ("paper.pdf", b"%PDF fake", "application/pdf")},
+    )
+
+    async def fail_index(self, document_id, *, options, commit=True):
+        raise RuntimeError("MinerU parse failed")
+
+    monkeypatch.setattr(
+        "ragstudio.services.document_service.ChunkService.index_document",
+        fail_index,
+    )
+
+    second_response = await client.post(
+        "/api/documents",
+        data={"parser_mode": "mineru_strict", "domain_metadata": "{}"},
+        files={"file": ("paper-copy.pdf", b"%PDF fake", "application/pdf")},
+    )
+    jobs_response = await client.get("/api/jobs")
+
+    assert second_response.status_code == 201
+    assert second_response.json()["id"] == first_response.json()["id"]
+    assert second_response.json()["status"] == "failed"
+    failed_jobs = [job for job in jobs_response.json()["items"] if job["status"] == "failed"]
+    assert failed_jobs
+    assert failed_jobs[0]["result"]["error"] == "MinerU parse failed"
+
+
+@pytest.mark.asyncio
+async def test_upload_local_fallback_index_failure_propagates(client, monkeypatch):
+    async def fail_index(self, document_id, *, options, commit=True):
+        raise RuntimeError("local index bug")
+
+    monkeypatch.setattr(
+        "ragstudio.services.document_service.ChunkService.index_document",
+        fail_index,
+    )
+
+    with pytest.raises(RuntimeError, match="local index bug"):
+        await client.post(
+            "/api/documents",
+            data={"parser_mode": "local_fallback", "domain_metadata": "{}"},
+            files={"file": ("paper.txt", b"text", "text/plain")},
+        )

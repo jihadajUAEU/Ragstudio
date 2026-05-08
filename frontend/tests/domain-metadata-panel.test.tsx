@@ -90,6 +90,7 @@ describe("DomainMetadataPanel", () => {
     expect(mocks.suggestDomainMetadata).toHaveBeenCalledWith({
       filename: "policy.pdf",
       content_type: "application/pdf",
+      profile_id: null,
       sample_text: "",
     });
     expect(onChange).toHaveBeenCalledWith(
@@ -108,5 +109,78 @@ describe("DomainMetadataPanel", () => {
         }),
       }),
     );
+  });
+
+  it("passes the selected profile to auto-suggest", async () => {
+    mocks.suggestDomainMetadata.mockResolvedValueOnce({
+      domain_metadata: { domain: "hadith", document_type: "collection" },
+    });
+    render(
+      <DomainMetadataPanel
+        profiles={[
+          {
+            id: "hadith",
+            name: "Hadith",
+            description: "Hadith collection",
+            metadata: { domain: "hadith", document_type: "collection" },
+          },
+        ]}
+        value={{
+          parser_mode: "local_fallback",
+          domain_metadata: { domain: "generic", document_type: "document" },
+        }}
+        onChange={vi.fn()}
+        suggestContext={{ filename: "hadith.pdf", content_type: "application/pdf" }}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText("Domain profile"), {
+      target: { value: "hadith" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Auto-suggest/i }));
+
+    expect(mocks.suggestDomainMetadata).toHaveBeenCalledWith(
+      expect.objectContaining({ profile_id: "hadith" }),
+    );
+  });
+
+  it("keeps custom JSON synchronized with profile selection and reports validity", () => {
+    const onChange = vi.fn();
+    const onValidityChange = vi.fn();
+    render(
+      <DomainMetadataPanel
+        profiles={[
+          {
+            id: "hadith",
+            name: "Hadith",
+            description: "Hadith collection",
+            metadata: {
+              domain: "hadith",
+              document_type: "collection",
+              custom_json: { collection_slug: "bukhari" },
+            },
+          },
+        ]}
+        value={{
+          parser_mode: "local_fallback",
+          domain_metadata: { domain: "generic", document_type: "document", custom_json: {} },
+        }}
+        onChange={onChange}
+        onValidityChange={onValidityChange}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText("Domain profile"), {
+      target: { value: "hadith" },
+    });
+
+    expect(screen.getByDisplayValue(/collection_slug/)).toBeVisible();
+
+    fireEvent.change(screen.getByLabelText("Custom JSON"), {
+      target: { value: "{bad-json" },
+    });
+
+    expect(screen.getByText("Custom JSON must be valid JSON.")).toBeVisible();
+    expect(onValidityChange).toHaveBeenCalledWith(false);
   });
 });

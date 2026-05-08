@@ -50,6 +50,26 @@ def test_mineru_client_rejects_unsafe_zip_paths(tmp_path):
         )
 
 
+def test_mineru_client_rejects_unsafe_manifest_paths(tmp_path):
+    artifact_zip = tmp_path / "unsafe-manifest.zip"
+    with ZipFile(artifact_zip, "w") as archive:
+        archive.writestr(
+            "manifest.json",
+            json.dumps({"files": [{"path": "../secret.md", "kind": "markdown"}]}),
+        )
+
+    client = MinerUClient(base_url="http://mineru.test", timeout_ms=1000, poll_interval_ms=100)
+
+    with pytest.raises(MinerUArtifactError):
+        client.normalize_artifact_zip(
+            artifact_zip=artifact_zip,
+            extract_dir=tmp_path / "extract",
+            document_id="doc-1",
+            parser_mode="mineru_strict",
+            parse_job_id="job-1",
+        )
+
+
 @pytest.mark.asyncio
 async def test_mineru_client_submits_pdf_mime_and_metadata(tmp_path, monkeypatch):
     requests = []
@@ -148,4 +168,34 @@ async def test_mineru_client_preserves_files_manifest_page_ranges_and_artifacts(
     assert parser_metadata["related_artifacts"] == [
         {"path": "images/page-1.png", "kind": "image"},
         {"path": "tables/table-1.json", "kind": "json"},
+    ]
+
+
+def test_mineru_client_collects_related_artifacts_from_items_manifest(tmp_path):
+    artifact_zip = tmp_path / "items.zip"
+    with ZipFile(artifact_zip, "w") as archive:
+        archive.writestr(
+            "manifest.json",
+            json.dumps(
+                {
+                    "items": [
+                        {"path": "pages/page-1.md", "contentType": "text"},
+                        {"path": "images/page-1.png", "contentType": "image"},
+                    ]
+                }
+            ),
+        )
+        archive.writestr("pages/page-1.md", "Alpha")
+
+    client = MinerUClient(base_url="http://mineru.test", timeout_ms=1000, poll_interval_ms=100)
+    chunks = client.normalize_artifact_zip(
+        artifact_zip=artifact_zip,
+        extract_dir=tmp_path / "extract",
+        document_id="doc-1",
+        parser_mode="mineru_strict",
+        parse_job_id="job-1",
+    )
+
+    assert chunks[0].metadata["parser_metadata"]["related_artifacts"] == [
+        {"path": "images/page-1.png", "kind": "image"}
     ]

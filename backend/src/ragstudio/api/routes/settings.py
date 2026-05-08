@@ -65,11 +65,26 @@ async def test_mineru_settings(payload: SettingsProfileIn) -> MinerUConnectionTe
                 latency_ms=latency_ms,
                 detail=f"MinerU health check returned HTTP {response.status_code}.",
             )
+        detail = "MinerU health check succeeded."
+        try:
+            health_payload = response.json()
+            if isinstance(health_payload, dict):
+                detail_value = (
+                    health_payload.get("detail")
+                    or health_payload.get("status")
+                    or health_payload.get("service")
+                    or health_payload.get("version")
+                )
+                if detail_value:
+                    detail = str(detail_value)
+        except (AttributeError, ValueError):
+            if response.text.strip():
+                detail = response.text.strip()
         return MinerUConnectionTestOut(
             ok=True,
             base_url=base_url,
             latency_ms=latency_ms,
-            detail="MinerU health check succeeded.",
+            detail=detail,
         )
     except httpx.HTTPError as exc:
         latency_ms = int((time.perf_counter() - started) * 1000)

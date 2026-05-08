@@ -105,6 +105,8 @@ class ChunkService:
         settings = await self.session.get(SettingsProfile, "default")
         if settings is None or not settings.mineru_base_url:
             raise RuntimeError("MinerU base URL is not configured.")
+        if not settings.mineru_enabled:
+            raise RuntimeError("MinerU is disabled in settings.")
         client = MinerUClient(
             base_url=settings.mineru_base_url,
             timeout_ms=settings.mineru_timeout_ms or 1_800_000,

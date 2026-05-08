@@ -22,6 +22,7 @@ export function DomainMetadataPanel({
   onChange,
   disabled = false,
   suggestContext,
+  onValidityChange,
 }: {
   profiles: DomainProfileOut[];
   value: IndexDocumentIn;
@@ -31,16 +32,19 @@ export function DomainMetadataPanel({
     filename: string;
     content_type: string;
   };
+  onValidityChange?: (isValid: boolean) => void;
 }) {
   const metadata = value.domain_metadata ?? {};
-  const [customJsonText, setCustomJsonText] = useState(
-    JSON.stringify(metadata.custom_json ?? {}, null, 2),
-  );
+  const [selectedProfileId, setSelectedProfileId] = useState("");
+  const [customJsonDraft, setCustomJsonDraft] = useState<string | null>(null);
   const [customJsonError, setCustomJsonError] = useState("");
   const [suggestState, setSuggestState] = useState<"idle" | "loading" | "error">("idle");
+  const customJsonText =
+    customJsonDraft ?? JSON.stringify(metadata.custom_json ?? {}, null, 2);
   const setMetadata = (patch: DomainMetadata) => {
     onChange({ ...value, domain_metadata: { ...metadata, ...patch } });
   };
+
   const suggest = async () => {
     if (!suggestContext) {
       return;
@@ -50,27 +54,33 @@ export function DomainMetadataPanel({
       const response = await apiClient.suggestDomainMetadata({
         filename: suggestContext.filename,
         content_type: suggestContext.content_type,
+        profile_id: selectedProfileId || null,
         sample_text: "",
       });
       onChange({ ...value, domain_metadata: response.domain_metadata });
-      setCustomJsonText(JSON.stringify(response.domain_metadata.custom_json ?? {}, null, 2));
+      setCustomJsonDraft(JSON.stringify(response.domain_metadata.custom_json ?? {}, null, 2));
+      setCustomJsonError("");
+      onValidityChange?.(true);
       setSuggestState("idle");
     } catch {
       setSuggestState("error");
     }
   };
   const applyCustomJson = (nextValue: string) => {
-    setCustomJsonText(nextValue);
+    setCustomJsonDraft(nextValue);
     try {
       const parsed = JSON.parse(nextValue || "{}");
       if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
         setCustomJsonError("Custom JSON must be an object.");
+        onValidityChange?.(false);
         return;
       }
       setCustomJsonError("");
+      onValidityChange?.(true);
       setMetadata({ custom_json: parsed as Record<string, unknown> });
     } catch {
       setCustomJsonError("Custom JSON must be valid JSON.");
+      onValidityChange?.(false);
     }
   };
 
@@ -119,10 +129,15 @@ export function DomainMetadataPanel({
             aria-label="Domain profile"
             className="h-10 w-full rounded-md border border-[#cfd8dd] bg-white px-3 text-sm"
             disabled={disabled}
+            value={selectedProfileId}
             onChange={(event) => {
+              setSelectedProfileId(event.target.value);
               const profile = profiles.find((item) => item.id === event.target.value);
               if (profile) {
+                setCustomJsonDraft(JSON.stringify(profile.metadata.custom_json ?? {}, null, 2));
                 onChange({ ...value, domain_metadata: profile.metadata });
+                setCustomJsonError("");
+                onValidityChange?.(true);
               }
             }}
           >
