@@ -11,7 +11,6 @@ from ragstudio.schemas.parsing import (
     DomainProfileOut,
 )
 
-
 BUILTIN_PROFILES: list[DomainProfileOut] = [
     DomainProfileOut(
         id="generic",

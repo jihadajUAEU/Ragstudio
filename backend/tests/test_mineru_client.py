@@ -1,7 +1,6 @@
 from zipfile import ZipFile
 
 import pytest
-
 from ragstudio.services.mineru_client import MinerUArtifactError, MinerUClient
 
 

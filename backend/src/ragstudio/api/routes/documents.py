@@ -1,4 +1,5 @@
 import json
+from typing import cast
 
 from fastapi import APIRouter, Depends, Form, Request, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -6,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ragstudio.api.deps import get_session
 from ragstudio.api.upload_utils import read_upload_file
 from ragstudio.schemas.documents import DocumentOut
-from ragstudio.schemas.parsing import DomainMetadata, IndexDocumentIn
+from ragstudio.schemas.parsing import DomainMetadata, IndexDocumentIn, ParserMode
 from ragstudio.services.document_service import DocumentService
 
 router = APIRouter(prefix="/api/documents", tags=["documents"])
@@ -22,7 +23,10 @@ async def upload_document(
 ) -> DocumentOut:
     content = await read_upload_file(file)
     metadata = DomainMetadata.model_validate(json.loads(domain_metadata or "{}"))
-    options = IndexDocumentIn(parser_mode=parser_mode, domain_metadata=metadata)
+    options = IndexDocumentIn(
+        parser_mode=cast(ParserMode, parser_mode),
+        domain_metadata=metadata,
+    )
     return await DocumentService(session, request.app.state.settings.data_dir).upload(
         filename=file.filename or "upload.bin",
         content_type=file.content_type or "application/octet-stream",

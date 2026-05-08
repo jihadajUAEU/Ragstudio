@@ -63,7 +63,11 @@ class ChunkService:
             await self.session.refresh(chunk)
         return [ChunkOut.model_validate(chunk) for chunk in chunks]
 
-    async def _adapter_chunks(self, document: Document, options: IndexDocumentIn) -> list[AdapterChunk]:
+    async def _adapter_chunks(
+        self,
+        document: Document,
+        options: IndexDocumentIn,
+    ) -> list[AdapterChunk]:
         if options.parser_mode == "local_fallback":
             return await self.adapter.index_document(document.artifact_path)
         try:

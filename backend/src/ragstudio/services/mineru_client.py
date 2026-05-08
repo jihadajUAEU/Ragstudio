@@ -9,7 +9,6 @@ from typing import Any
 from zipfile import ZipFile
 
 import httpx
-
 from ragstudio.schemas.parsing import ParserMode
 from ragstudio.services.adapter import AdapterChunk
 
@@ -76,7 +75,9 @@ class MinerUClient:
             if status == "ready":
                 return payload
             if status == "failed":
-                detail = str(payload.get("error") or payload.get("detail") or "MinerU parse failed.")
+                detail = str(
+                    payload.get("error") or payload.get("detail") or "MinerU parse failed."
+                )
                 raise RuntimeError(detail)
             if time.monotonic() >= deadline:
                 raise TimeoutError(f"MinerU parse timed out for job {parse_job_id}.")
