@@ -12,10 +12,18 @@ from ragstudio.logging import configure_logging
 from ragstudio.static import mount_frontend
 
 
-def create_app(data_dir: Path | None = None) -> FastAPI:
+def create_app(data_dir: Path | None = None, database_url: str | None = None) -> FastAPI:
     configure_logging()
-    settings = AppSettings(data_dir=data_dir or Path(".ragstudio").resolve())
+    settings = AppSettings()
+    if data_dir is not None or database_url is not None:
+        update: dict[str, object] = {}
+        if data_dir is not None:
+            update["data_dir"] = data_dir
+        if database_url is not None:
+            update["database_url"] = database_url
+        settings = settings.model_copy(update=update)
     settings.data_dir.mkdir(parents=True, exist_ok=True)
+    settings.resolved_runtime_working_dir.mkdir(parents=True, exist_ok=True)
     engine = make_engine(settings.resolved_database_url)
     session_factory = make_session_factory(engine)
 

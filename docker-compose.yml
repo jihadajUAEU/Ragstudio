@@ -1,0 +1,44 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    container_name: ragstudio-postgres
+    environment:
+      POSTGRES_DB: ragstudio
+      POSTGRES_USER: ragstudio
+      POSTGRES_PASSWORD: ragstudio
+    ports:
+      - "55432:5432"
+    volumes:
+      - ragstudio-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ragstudio -d ragstudio"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  neo4j:
+    image: neo4j:5-community
+    container_name: ragstudio-neo4j
+    environment:
+      NEO4J_AUTH: neo4j/ragstudio-password
+      NEO4J_dbms_security_auth__enabled: "true"
+    ports:
+      - "57474:7474"
+      - "57687:7687"
+    volumes:
+      - ragstudio-neo4j-data:/data
+      - ragstudio-neo4j-logs:/logs
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget --quiet --tries=1 --spider http://127.0.0.1:7474 || exit 1",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  ragstudio-postgres-data:
+  ragstudio-neo4j-data:
+  ragstudio-neo4j-logs:
