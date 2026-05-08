@@ -1,5 +1,5 @@
 import { useMemo, useState, type FormEvent, type ReactNode } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertCircle,
   Database,
@@ -24,27 +24,26 @@ import { DomainMetadataPanel } from "../domain-metadata/domain-metadata-panel";
 
 const queryKeys = {
   documents: ["documents"],
+  jobs: ["jobs"],
 } as const;
 
 interface SearchResult {
   filters: ChunkSearchIn;
-  indexVersion: number;
   data: ChunkSearchOut;
 }
 
 interface SearchRequest {
   filters: ChunkSearchIn;
-  indexVersion: number;
 }
 
 export function ChunkInspector() {
+  const queryClient = useQueryClient();
   const documentsQuery = useQuery({ queryKey: queryKeys.documents, queryFn: apiClient.documents });
   const [queryText, setQueryText] = useState("");
   const [selectedDocumentIds, setSelectedDocumentIds] = useState<string[]>([]);
   const [limit, setLimit] = useState(10);
   const [formError, setFormError] = useState("");
   const [searchResult, setSearchResult] = useState<SearchResult | null>(null);
-  const [indexVersion, setIndexVersion] = useState(0);
   const [indexOptions, setIndexOptions] = useState<IndexDocumentIn>({
     parser_mode: "local_fallback",
     domain_metadata: { domain: "generic", document_type: "document", tags: [] },
@@ -63,14 +62,14 @@ export function ChunkInspector() {
   const searchChunks = useMutation({
     mutationFn: (request: SearchRequest) => apiClient.searchChunks(request.filters),
     onSuccess: (data, variables) => {
-      setSearchResult({ filters: normalizeSearchFilters(variables.filters), indexVersion: variables.indexVersion, data });
+      setSearchResult({ filters: normalizeSearchFilters(variables.filters), data });
     },
   });
-  const indexDocument = useMutation({
-    mutationFn: (documentId: string) => apiClient.indexDocumentChunks(documentId, indexOptions),
+  const indexDocumentJob = useMutation({
+    mutationFn: (documentId: string) => apiClient.createIndexDocumentJob(documentId, indexOptions),
     onSuccess: () => {
-      setIndexVersion((version) => version + 1);
       setSearchResult(null);
+      void queryClient.invalidateQueries({ queryKey: queryKeys.jobs });
     },
   });
 
@@ -80,7 +79,7 @@ export function ChunkInspector() {
   );
 
   const activeSearchResult =
-    searchResult && searchResult.indexVersion === indexVersion && filtersEqual(searchResult.filters, currentSearchFilters)
+    searchResult && filtersEqual(searchResult.filters, currentSearchFilters)
       ? searchResult.data
       : null;
 
@@ -91,7 +90,7 @@ export function ChunkInspector() {
       return;
     }
     setFormError("");
-    searchChunks.mutate({ filters: currentSearchFilters, indexVersion });
+    searchChunks.mutate({ filters: currentSearchFilters });
   };
 
   return (
@@ -134,13 +133,13 @@ export function ChunkInspector() {
                     variant="secondary"
                     size="sm"
                     className="shrink-0"
-                    disabled={indexDocument.isPending || !metadataValid}
+                    disabled={indexDocumentJob.isPending || !metadataValid}
                     onClick={(event) => {
                       event.preventDefault();
-                      indexDocument.mutate(document.id);
+                      indexDocumentJob.mutate(document.id);
                     }}
                   >
-                    {indexDocument.isPending && indexDocument.variables === document.id ? (
+                    {indexDocumentJob.isPending && indexDocumentJob.variables === document.id ? (
                       <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
                     ) : (
                       <Wand2 className="h-4 w-4" aria-hidden="true" />
@@ -160,7 +159,7 @@ export function ChunkInspector() {
             profiles={profilesQuery.data?.items ?? []}
             value={indexOptions}
             onChange={setIndexOptions}
-            disabled={indexDocument.isPending}
+            disabled={indexDocumentJob.isPending}
             onValidityChange={setMetadataValid}
             suggestContext={
               selectedDocuments[0]
@@ -209,9 +208,9 @@ export function ChunkInspector() {
 
         <p className="mt-4 min-h-5 text-sm text-[#62717a]" role="status">
           {formError ||
-            indexDocument.error?.message ||
+            indexDocumentJob.error?.message ||
             searchChunks.error?.message ||
-            (indexDocument.isSuccess ? `Indexed ${indexDocument.data.length} chunks` : "")}
+            (indexDocumentJob.isSuccess ? `Index job queued: ${indexDocumentJob.data.id}` : "")}
         </p>
       </aside>
 

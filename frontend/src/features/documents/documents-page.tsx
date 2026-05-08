@@ -27,7 +27,11 @@ export function DocumentsPage() {
   });
   const [metadataValid, setMetadataValid] = useState(true);
   const documentsQuery = useQuery({ queryKey: queryKeys.documents, queryFn: apiClient.documents });
-  const jobsQuery = useQuery({ queryKey: queryKeys.jobs, queryFn: apiClient.jobs });
+  const jobsQuery = useQuery({
+    queryKey: queryKeys.jobs,
+    queryFn: apiClient.jobs,
+    refetchInterval: (query) => (hasActiveJobs(query.state.data?.items ?? []) ? 2000 : false),
+  });
   const profilesQuery = useQuery({
     queryKey: ["domain-profiles"],
     queryFn: apiClient.domainProfiles,
@@ -115,11 +119,18 @@ export function DocumentsPage() {
       {
         accessorKey: "logs",
         header: "Latest log",
-        cell: ({ row }) => (
-          <span className="line-clamp-2 text-xs text-[#62717a]">
-            {row.original.logs.at(-1) ?? "No logs"}
-          </span>
-        ),
+        cell: ({ row }) => {
+          const mineruStatus = formatMinerUResult(row.original.result);
+
+          return (
+            <div className="min-w-0 space-y-1 text-xs text-[#62717a]">
+              {mineruStatus ? (
+                <p className="truncate font-medium text-[#3a4a53]">MinerU: {mineruStatus}</p>
+              ) : null}
+              <p className="line-clamp-2">{row.original.logs.at(-1) ?? "No logs"}</p>
+            </div>
+          );
+        },
       },
     ],
     [],
@@ -254,6 +265,27 @@ export function DocumentsPage() {
       </section>
     </div>
   );
+}
+
+function hasActiveJobs(jobs: JobOut[]): boolean {
+  return jobs.some((job) => job.status === "ready" || job.status === "running");
+}
+
+function formatMinerUResult(result: Record<string, unknown>): string | null {
+  const mineru = result.mineru;
+  if (!isRecord(mineru)) {
+    return null;
+  }
+
+  const status = typeof mineru.status === "string" ? titleCase(mineru.status) : null;
+  const progress = typeof mineru.progress === "number" ? `${mineru.progress}%` : null;
+  const detail = typeof mineru.detail === "string" && mineru.detail.length > 0 ? mineru.detail : null;
+
+  return [status, progress, detail].filter(Boolean).join(" · ") || null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function Panel({
