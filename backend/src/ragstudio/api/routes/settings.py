@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ragstudio.api.deps import get_session
 from ragstudio.schemas.settings import (
     EmbeddingConnectionTestOut,
+    LlmConnectionTestOut,
     MinerUConnectionTestOut,
     ProviderSyncPreviewIn,
     ProviderSyncPreviewOut,
@@ -14,6 +15,7 @@ from ragstudio.schemas.settings import (
     SettingsProfileOut,
 )
 from ragstudio.services.embedding_connection_service import EmbeddingConnectionService
+from ragstudio.services.llm_connection_service import LlmConnectionService
 from ragstudio.services.provider_manifest_service import (
     ProviderManifestError,
     ProviderManifestService,
@@ -59,6 +61,15 @@ async def test_embedding_settings(
 ) -> EmbeddingConnectionTestOut:
     resolved_payload = await SettingsService(session).resolve_embedding_test_payload(payload)
     return await EmbeddingConnectionService().test(resolved_payload)
+
+
+@router.post("/default/test-llm", response_model=LlmConnectionTestOut)
+async def test_llm_settings(
+    payload: SettingsProfileIn,
+    session: AsyncSession = Depends(get_session),
+) -> LlmConnectionTestOut:
+    resolved_payload = await SettingsService(session).resolve_llm_test_payload(payload)
+    return await LlmConnectionService().test(resolved_payload)
 
 
 @router.post("/default/test-mineru", response_model=MinerUConnectionTestOut)

@@ -118,6 +118,14 @@ class EmbeddingConnectionTestOut(StudioModel):
     detail: str
 
 
+class LlmConnectionTestOut(StudioModel):
+    ok: bool
+    provider: str
+    model: str
+    latency_ms: int
+    detail: str
+
+
 class MinerUConnectionTestOut(StudioModel):
     ok: bool
     base_url: str

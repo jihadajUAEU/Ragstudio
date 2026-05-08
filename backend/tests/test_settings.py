@@ -340,6 +340,122 @@ async def test_provider_sync_preview_rejects_invalid_manifest_url(client):
 
 
 @pytest.mark.asyncio
+async def test_llm_connection_test_calls_chat_completions(client, monkeypatch):
+    requests = []
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"choices": [{"message": {"content": "ok"}}]}
+
+    class FakeAsyncClient:
+        def __init__(self, timeout):
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return None
+
+        async def post(self, url, headers, json):
+            requests.append({"url": url, "headers": headers, "json": json, "timeout": self.timeout})
+            return FakeResponse()
+
+    monkeypatch.setattr(
+        "ragstudio.services.llm_connection_service.httpx.AsyncClient",
+        FakeAsyncClient,
+    )
+    payload = {
+        "provider": "openai",
+        "llm_provider": "openai_compatible",
+        "llm_model": "QuantTrio/Qwen3-VL-32B-Instruct-AWQ",
+        "llm_base_url": "http://10.10.9.195:8004/v1",
+        "llm_api_key": "secret-token",
+        "llm_timeout_ms": 5000,
+        "llm_capabilities": ["text", "vision", "reasoning"],
+        "embedding_model": "text-embedding-3-large",
+        "storage_backend": "sqlite",
+    }
+
+    response = await client.post("/api/settings/default/test-llm", json=payload)
+
+    assert response.status_code == 200
+    assert response.json()["ok"] is True
+    assert requests == [
+        {
+            "url": "http://10.10.9.195:8004/v1/chat/completions",
+            "headers": {
+                "content-type": "application/json",
+                "authorization": "Bearer secret-token",
+            },
+            "json": {
+                "model": "QuantTrio/Qwen3-VL-32B-Instruct-AWQ",
+                "messages": [{"role": "user", "content": "Ragstudio LLM connection test"}],
+                "max_tokens": 8,
+                "temperature": 0,
+            },
+            "timeout": 5.0,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_llm_connection_test_uses_saved_api_key_when_blank(client, monkeypatch):
+    requests = []
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"choices": [{"message": {"content": "ok"}}]}
+
+    class FakeAsyncClient:
+        def __init__(self, timeout):
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return None
+
+        async def post(self, url, headers, json):
+            requests.append({"headers": headers})
+            return FakeResponse()
+
+    monkeypatch.setattr(
+        "ragstudio.services.llm_connection_service.httpx.AsyncClient",
+        FakeAsyncClient,
+    )
+    saved_payload = {
+        "provider": "openai",
+        "llm_provider": "openai_compatible",
+        "llm_model": "Qwen/Qwen3-32B",
+        "llm_base_url": "http://10.10.9.195:8004/v1",
+        "llm_api_key": "saved-llm-secret",
+        "embedding_model": "text-embedding-3-large",
+        "storage_backend": "sqlite",
+    }
+    test_payload = {key: value for key, value in saved_payload.items() if key != "llm_api_key"}
+
+    save_response = await client.put("/api/settings/default", json=saved_payload)
+    response = await client.post("/api/settings/default/test-llm", json=test_payload)
+
+    assert save_response.status_code == 200
+    assert response.status_code == 200
+    assert requests == [
+        {
+            "headers": {
+                "content-type": "application/json",
+                "authorization": "Bearer saved-llm-secret",
+            }
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_settings_profile_saves_mineru_config(client):
     payload = {
         "provider": "openai",
