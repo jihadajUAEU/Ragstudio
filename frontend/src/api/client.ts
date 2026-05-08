@@ -103,6 +103,10 @@ export const apiClient = {
       body: formData,
     });
   },
+  deleteDocument: (documentId: string) =>
+    request<void>(`/api/documents/${encodeURIComponent(documentId)}`, {
+      method: "DELETE",
+    }),
   jobs: () => request<Page<JobOut>>("/api/jobs"),
   variants: () => request<Page<VariantOut>>("/api/variants"),
   createVariant: (payload: VariantIn) =>

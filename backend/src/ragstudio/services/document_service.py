@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from ragstudio.db.models import Chunk, Document, Job
 from ragstudio.schemas.common import StageStatus
@@ -8,9 +8,11 @@ from ragstudio.schemas.parsing import IndexDocumentIn
 from ragstudio.services.artifact_store import ArtifactStore
 from ragstudio.services.chunk_service import ChunkService
 from ragstudio.services.job_worker import JobWorker
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+
+DeleteDocumentResult = Literal["deleted", "not_found", "active_job"]
 
 
 class DocumentService:
@@ -69,6 +71,30 @@ class DocumentService:
     async def list(self) -> list[DocumentOut]:
         result = await self.session.execute(select(Document).order_by(Document.created_at.desc()))
         return [DocumentOut.model_validate(item) for item in result.scalars().all()]
+
+    async def delete_document(self, document_id: str) -> DeleteDocumentResult:
+        document = await self.session.get(Document, document_id)
+        if document is None:
+            return "not_found"
+
+        active_job_id = await self.session.scalar(
+            select(Job.id)
+            .where(
+                Job.type == "index_document",
+                Job.target_id == document.id,
+                Job.status.in_([StageStatus.READY.value, StageStatus.RUNNING.value]),
+            )
+            .limit(1)
+        )
+        if active_job_id is not None:
+            return "active_job"
+
+        artifact_path = Path(document.artifact_path)
+        await self.session.execute(delete(Job).where(Job.target_id == document.id))
+        await self.session.delete(document)
+        await self.session.commit()
+        artifact_path.unlink(missing_ok=True)
+        return "deleted"
 
     async def create_index_job(self, document_id: str) -> Job | None:
         document = await self.session.get(Document, document_id)

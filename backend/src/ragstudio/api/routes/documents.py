@@ -1,6 +1,6 @@
 import json
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, Form, HTTPException, Request, Response, UploadFile, status
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -64,3 +64,19 @@ async def list_documents(
 ) -> dict[str, object]:
     items = await DocumentService(session, request.app.state.settings.data_dir).list()
     return {"items": items, "total": len(items)}
+
+
+@router.delete("/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_document(
+    document_id: str,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+) -> Response:
+    result = await DocumentService(session, request.app.state.settings.data_dir).delete_document(
+        document_id
+    )
+    if result == "not_found":
+        raise HTTPException(status_code=404, detail="Document not found")
+    if result == "active_job":
+        raise HTTPException(status_code=409, detail="Document has an active indexing job")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

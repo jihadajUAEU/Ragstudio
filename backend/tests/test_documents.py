@@ -1,6 +1,9 @@
 import json
+from pathlib import Path
 
 import pytest
+from ragstudio.db.models import Document, Job
+from ragstudio.schemas.common import StageStatus
 
 
 @pytest.mark.asyncio
@@ -150,3 +153,89 @@ async def test_upload_local_fallback_index_failure_propagates(client, monkeypatc
             data={"parser_mode": "local_fallback", "domain_metadata": "{}"},
             files={"file": ("paper.txt", b"text", "text/plain")},
         )
+
+
+@pytest.mark.asyncio
+async def test_delete_document_removes_document_chunks_jobs_and_artifact(client):
+    upload_response = await client.post(
+        "/api/documents",
+        files={"file": ("delete-me.txt", b"alpha beta\ngamma delta", "text/plain")},
+    )
+    assert upload_response.status_code == 201
+    document_id = upload_response.json()["id"]
+    session_factory = client._transport.app.state.session_factory
+    async with session_factory() as session:
+        document = await session.get(Document, document_id)
+        assert document is not None
+        artifact_path = Path(document.artifact_path)
+
+    search_before = await client.post(
+        "/api/chunks/search",
+        json={"query": "", "document_ids": [document_id], "limit": 10},
+    )
+    assert search_before.status_code == 200
+    assert search_before.json()["total"] == 2
+    assert artifact_path.exists()
+
+    delete_response = await client.delete(f"/api/documents/{document_id}")
+
+    assert delete_response.status_code == 204
+    assert delete_response.content == b""
+    assert not artifact_path.exists()
+
+    documents_response = await client.get("/api/documents")
+    assert documents_response.status_code == 200
+    assert documents_response.json()["items"] == []
+
+    jobs_response = await client.get("/api/jobs")
+    assert jobs_response.status_code == 200
+    assert jobs_response.json()["items"] == []
+
+    search_after = await client.post(
+        "/api/chunks/search",
+        json={"query": "", "document_ids": [document_id], "limit": 10},
+    )
+    assert search_after.status_code == 200
+    assert search_after.json()["total"] == 0
+
+
+@pytest.mark.asyncio
+async def test_delete_missing_document_returns_404(client):
+    response = await client.delete("/api/documents/missing-document")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Document not found"
+
+
+@pytest.mark.asyncio
+async def test_delete_document_with_active_index_job_returns_409(client, tmp_path):
+    session_factory = client._transport.app.state.session_factory
+    async with session_factory() as session:
+        artifact = tmp_path / "uploads" / "active-delete-sha"
+        artifact.parent.mkdir(parents=True, exist_ok=True)
+        artifact.write_text("alpha", encoding="utf-8")
+        document = Document(
+            filename="active.txt",
+            content_type="text/plain",
+            sha256="active-delete-sha",
+            artifact_path=str(artifact),
+            status=StageStatus.RUNNING.value,
+        )
+        session.add(document)
+        await session.flush()
+        session.add(
+            Job(
+                type="index_document",
+                target_id=document.id,
+                status=StageStatus.RUNNING.value,
+                progress=10,
+            )
+        )
+        await session.commit()
+        document_id = document.id
+
+    response = await client.delete(f"/api/documents/{document_id}")
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Document has an active indexing job"
+    assert artifact.exists()

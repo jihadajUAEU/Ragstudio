@@ -1,7 +1,7 @@
-import { useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
-import { AlertCircle, FileUp, Loader2, RefreshCcw, Upload } from "lucide-react";
+import { AlertCircle, FileUp, Loader2, RefreshCcw, Trash2, Upload } from "lucide-react";
 
 import { apiClient } from "../../api/client";
 import type { DocumentOut, IndexDocumentIn, JobOut } from "../../api/generated";
@@ -21,6 +21,7 @@ export function DocumentsPage() {
   const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
+  const [deletedFilename, setDeletedFilename] = useState("");
   const [indexOptions, setIndexOptions] = useState<IndexDocumentIn>({
     parser_mode: "local_fallback",
     domain_metadata: { domain: "generic", document_type: "document", tags: [] },
@@ -48,6 +49,30 @@ export function DocumentsPage() {
       void queryClient.invalidateQueries({ queryKey: queryKeys.jobs });
     },
   });
+  const deleteDocument = useMutation({
+    mutationFn: apiClient.deleteDocument,
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.documents }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.jobs }),
+        queryClient.invalidateQueries({ queryKey: ["chunks"] }),
+      ]);
+    },
+  });
+
+  const confirmAndDeleteDocument = useCallback(
+    (document: DocumentOut) => {
+      const confirmed = window.confirm(
+        `Delete ${document.filename} and all indexed chunks? This cannot be undone.`,
+      );
+      if (!confirmed) {
+        return;
+      }
+      setDeletedFilename(document.filename);
+      deleteDocument.mutate(document.id);
+    },
+    [deleteDocument],
+  );
 
   const refresh = () => {
     void documentsQuery.refetch();
@@ -78,8 +103,34 @@ export function DocumentsPage() {
           <code className="block truncate text-xs text-[#62717a]">{row.original.sha256}</code>
         ),
       },
+      {
+        id: "actions",
+        header: "Actions",
+        cell: ({ row }) => {
+          const document = row.original;
+          const isDeleting = deleteDocument.isPending && deleteDocument.variables === document.id;
+
+          return (
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={() => confirmAndDeleteDocument(document)}
+              disabled={isDeleting}
+              aria-label={`Delete ${document.filename}`}
+            >
+              {isDeleting ? (
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+              ) : (
+                <Trash2 className="h-4 w-4" aria-hidden="true" />
+              )}
+              Delete
+            </Button>
+          );
+        },
+      },
     ],
-    [],
+    [confirmAndDeleteDocument, deleteDocument.isPending, deleteDocument.variables],
   );
 
   const jobColumns = useMemo<ColumnDef<JobOut>[]>(
@@ -212,32 +263,39 @@ export function DocumentsPage() {
 
       <section className="grid gap-4 xl:grid-cols-[minmax(0,1.3fr)_minmax(360px,0.7fr)]">
         <Panel title="Documents" icon={FileUp}>
-          {documentsQuery.isLoading ? (
-            <EmptyState
-              icon={Loader2}
-              title="Loading documents"
-              description="Fetching uploaded files."
-            />
-          ) : documentsQuery.isError ? (
-            <EmptyState
-              icon={AlertCircle}
-              title="Documents unavailable"
-              description={documentsQuery.error.message}
-              action={
-                <Button variant="secondary" onClick={() => void documentsQuery.refetch()}>
-                  <RefreshCcw className="h-4 w-4" aria-hidden="true" />
-                  Retry
-                </Button>
-              }
-            />
-          ) : (
-            <DataTable
-              columns={documentColumns}
-              data={documentsQuery.data?.items ?? []}
-              emptyTitle="No documents"
-              emptyDescription="Uploaded files will appear here."
-            />
-          )}
+          <div className="space-y-3">
+            {documentsQuery.isLoading ? (
+              <EmptyState
+                icon={Loader2}
+                title="Loading documents"
+                description="Fetching uploaded files."
+              />
+            ) : documentsQuery.isError ? (
+              <EmptyState
+                icon={AlertCircle}
+                title="Documents unavailable"
+                description={documentsQuery.error.message}
+                action={
+                  <Button variant="secondary" onClick={() => void documentsQuery.refetch()}>
+                    <RefreshCcw className="h-4 w-4" aria-hidden="true" />
+                    Retry
+                  </Button>
+                }
+              />
+            ) : (
+              <DataTable
+                columns={documentColumns}
+                data={documentsQuery.data?.items ?? []}
+                emptyTitle="No documents"
+                emptyDescription="Uploaded files will appear here."
+              />
+            )}
+            <p className="min-h-5 text-sm text-[#62717a]" role="status">
+              {deleteDocument.isSuccess
+                ? `Deleted ${deletedFilename}`
+                : deleteDocument.error?.message}
+            </p>
+          </div>
         </Panel>
 
         <Panel title="Jobs" icon={RefreshCcw}>
