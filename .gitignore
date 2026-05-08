@@ -16,3 +16,4 @@ backend/src/ragstudio/static/dist/
 frontend/src/api/generated.ts
 .worktrees/
 .gstack/
+.superpowers/
