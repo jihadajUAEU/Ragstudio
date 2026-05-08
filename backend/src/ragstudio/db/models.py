@@ -9,7 +9,6 @@ from sqlalchemy.ext.mutable import MutableDict, MutableList
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.types import JSON
 
-
 JsonType = JSON().with_variant(JSONB, "postgresql")
 
 
