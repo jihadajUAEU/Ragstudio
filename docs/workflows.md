@@ -59,13 +59,19 @@ Use the Diagnostics page to verify the active mode. It shows Capabilities, Depen
 Open **Settings** to edit the default runtime profile. The form fields are:
 
 - Provider
-- Storage backend
+- Runtime mode and storage backend
+- PGVector schema and table prefix
+- Neo4j URI, username, and optional password
 - LLM provider, model, base URL, optional API key, timeout, and read-only capabilities
+- Vision model, base URL, optional API key, and timeout
+- Reranker provider, model, base URL, optional API key, and timeout
 - Embedding provider
 - Embedding model
 - Embedding base URL
 - Optional embedding API key
 - Embedding timeout, dimensions, batch size, and TLS verification
+- Parser, parse method, chunk sizing, and context controls
+- Query defaults, rerank toggle, cache flags, and concurrency limits
 
 Use **Provider sync** to preview a hosted HPC provider manifest before saving runtime changes. Enter a manifest URL such as `https://updates.jihadaj.com/providers.json`, click **Sync**, and review the updated LLM, embeddings, and MinerU fields. Sync only updates the form preview. Click **Save** to persist the reviewed settings.
 
@@ -77,7 +83,7 @@ Click **Test connection** to validate a vLLM/OpenAI-compatible embeddings endpoi
 
 Click **Save** to persist the default profile through `PUT /api/settings/default`. Saved LLM and embedding API keys are masked in responses. Click **Reload** to refetch the saved profile. If no profile exists yet, the page shows `No default profile saved`.
 
-These defaults are stored as the `default` settings profile. The current backend persists the profile but query execution is still driven by selected documents, variants, and adapter behavior.
+These defaults are stored as the `default` settings profile. Runtime indexing and query execution use that profile when backend settings are available; direct fallback behavior remains explicit through `runtime_mode="fallback"` or through legacy paths that are called without runtime settings.
 
 For UAEU HPC vLLM embeddings, prefer the Meeting Copilot/model-training pattern: run the vLLM job on the cluster, expose the service through an SSH tunnel or stable internal alias, then configure Studio with a local URL such as `http://127.0.0.1:8001/v1` and the served model name.
 
@@ -349,6 +355,8 @@ Open **Graph** to inspect the graph payload returned by `/api/graph`. The page s
 
 Open **Diagnostics** to inspect runtime capability and dependency status. The page shows:
 
+- Overall runtime status and mode
+- Runtime health checks
 - Capabilities
 - Dependencies
 - Warnings

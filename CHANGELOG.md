@@ -2,6 +2,12 @@
 
 All notable changes to RAG-Anything Studio will be documented in this file.
 
+## Unreleased
+
+### Added
+
+- Added the production runtime foundation for RAG-Anything: Postgres/PGVector defaults, Neo4j local runtime service, runtime profile fields, health diagnostics, mirrored chunk metadata, destructive runtime reindex seams, and runtime-backed query traces.
+
 ## [0.1.0.0] - 2026-05-08
 
 ### Added
