@@ -77,12 +77,12 @@ class DocumentService:
         existing_chunk_id = await self.session.scalar(
             select(Chunk.id).where(Chunk.document_id == document.id).limit(1)
         )
-        if existing_chunk_id is not None and self._is_idempotent_existing_upload(options):
+        if existing_chunk_id is not None and options is None:
             return
 
         job = JobWorker.build("index_document", document.id)
         add_job = True
-        if self._is_idempotent_existing_upload(options):
+        if options is None:
             existing_job = await self.session.scalar(
                 select(Job)
                 .where(Job.type == "index_document", Job.target_id == document.id)
@@ -127,10 +127,6 @@ class DocumentService:
 
     def _should_persist_index_failure(self, options: IndexDocumentIn | None) -> bool:
         return options is not None and options.parser_mode == "mineru_strict"
-
-    def _is_idempotent_existing_upload(self, options: IndexDocumentIn | None) -> bool:
-        default_options = IndexDocumentIn()
-        return options is None or options == default_options
 
     def _mark_index_failed(self, document: Document, job: Job, exc: Exception) -> None:
         document.status = StageStatus.FAILED.value

@@ -209,17 +209,19 @@ def test_mineru_client_collects_related_artifacts_from_files_and_items(tmp_path)
             json.dumps(
                 {
                     "files": [
-                        {"path": "tables/table-1.json", "kind": "json"},
+                        {"path": "tables/table-1.json", "kind": "application/json"},
                         {"path": "images/page-1.png", "kind": "image"},
                     ],
                     "items": [
-                        {"path": "pages/page-1.md", "contentType": "text"},
-                        {"path": "images/page-1.png", "contentType": "image"},
+                        {"path": "pages/page-1.md", "contentType": "text/markdown"},
+                        {"path": "pages/page-2.txt", "contentType": "text/plain"},
+                        {"path": "images/page-1.png", "contentType": "image/png"},
                     ],
                 }
             ),
         )
         archive.writestr("pages/page-1.md", "Alpha")
+        archive.writestr("pages/page-2.txt", "Beta")
 
     client = MinerUClient(base_url="http://mineru.test", timeout_ms=1000, poll_interval_ms=100)
     chunks = client.normalize_artifact_zip(
@@ -230,7 +232,8 @@ def test_mineru_client_collects_related_artifacts_from_files_and_items(tmp_path)
         parse_job_id="job-1",
     )
 
+    assert [chunk.text for chunk in chunks] == ["Alpha", "Beta"]
     assert chunks[0].metadata["parser_metadata"]["related_artifacts"] == [
-        {"path": "tables/table-1.json", "kind": "json"},
+        {"path": "tables/table-1.json", "kind": "application/json"},
         {"path": "images/page-1.png", "kind": "image"},
     ]

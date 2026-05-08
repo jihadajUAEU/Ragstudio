@@ -207,12 +207,7 @@ class MinerUClient:
     ) -> list[dict[str, Any]]:
         raw_entries = manifest.get("items") or manifest.get("files") or []
         entries = [item for item in raw_entries if isinstance(item, dict)]
-        text_kinds = {"text", "markdown", "md"}
-        filtered = [
-            item
-            for item in entries
-            if str(item.get("contentType") or item.get("kind") or "").lower() in text_kinds
-        ]
+        filtered = [item for item in entries if self._is_text_artifact(item)]
         if filtered:
             return filtered
         return [
@@ -228,23 +223,32 @@ class MinerUClient:
         raw_entries = [*self._raw_manifest_entries(manifest, "files")]
         raw_entries.extend(self._raw_manifest_entries(manifest, "items"))
         related: list[dict[str, str]] = []
-        seen: set[tuple[str, str]] = set()
-        text_kinds = {"text", "markdown", "md"}
+        seen: set[str] = set()
         for item in raw_entries:
             if not isinstance(item, dict):
                 continue
             path = str(item.get("path") or "")
             kind = str(item.get("kind") or item.get("contentType") or "")
-            if not path or kind.lower() in text_kinds or path == "manifest.json":
+            if not path or self._is_text_artifact(item) or path == "manifest.json":
                 continue
             safe_path = self._safe_manifest_path(extract_dir, path)
             safe_ref = safe_path.relative_to(extract_dir.resolve()).as_posix()
-            key = (safe_ref, kind)
-            if key in seen:
+            if safe_ref in seen:
                 continue
-            seen.add(key)
+            seen.add(safe_ref)
             related.append({"path": safe_ref, "kind": kind})
         return related
+
+    def _is_text_artifact(self, item: dict[str, Any]) -> bool:
+        path = str(item.get("path") or "").lower()
+        kind = str(item.get("contentType") or item.get("kind") or "").lower()
+        text_extensions = (".md", ".markdown", ".txt")
+        return (
+            kind in {"text", "markdown", "md"}
+            or kind.startswith("text/")
+            or "markdown" in kind
+            or path.endswith(text_extensions)
+        )
 
     def _raw_manifest_entries(self, manifest: dict[str, Any], key: str) -> list[dict[str, Any]]:
         value = manifest.get(key)

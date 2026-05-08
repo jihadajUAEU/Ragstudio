@@ -17,11 +17,15 @@ router = APIRouter(prefix="/api/documents", tags=["documents"])
 async def upload_document(
     request: Request,
     file: UploadFile,
-    parser_mode: str = Form(default="local_fallback"),
-    domain_metadata: str = Form(default="{}"),
+    parser_mode: str | None = Form(default=None),
+    domain_metadata: str | None = Form(default=None),
     session: AsyncSession = Depends(get_session),
 ) -> DocumentOut:
-    options = _parse_index_options(parser_mode, domain_metadata)
+    options = (
+        _parse_index_options(parser_mode, domain_metadata)
+        if parser_mode is not None or domain_metadata is not None
+        else None
+    )
     content = await read_upload_file(file)
     return await DocumentService(session, request.app.state.settings.data_dir).upload(
         filename=file.filename or "upload.bin",
@@ -31,7 +35,10 @@ async def upload_document(
     )
 
 
-def _parse_index_options(parser_mode: str, domain_metadata: str) -> IndexDocumentIn:
+def _parse_index_options(
+    parser_mode: str | None,
+    domain_metadata: str | None,
+) -> IndexDocumentIn:
     try:
         metadata_payload = json.loads(domain_metadata or "{}")
     except json.JSONDecodeError as exc:
@@ -41,7 +48,10 @@ def _parse_index_options(parser_mode: str, domain_metadata: str) -> IndexDocumen
         ) from exc
     try:
         return IndexDocumentIn.model_validate(
-            {"parser_mode": parser_mode, "domain_metadata": metadata_payload}
+            {
+                "parser_mode": parser_mode or "local_fallback",
+                "domain_metadata": metadata_payload,
+            }
         )
     except ValidationError as exc:
         raise HTTPException(status_code=422, detail=exc.errors()) from exc

@@ -115,6 +115,26 @@ async def test_duplicate_upload_mineru_strict_failure_persists_failed_job(client
 
 
 @pytest.mark.asyncio
+async def test_duplicate_upload_with_explicit_default_options_creates_new_job(client):
+    first_response = await client.post(
+        "/api/documents",
+        files={"file": ("notes.txt", b"same bytes", "text/plain")},
+    )
+    second_response = await client.post(
+        "/api/documents",
+        data={"parser_mode": "local_fallback", "domain_metadata": "{}"},
+        files={"file": ("notes-copy.txt", b"same bytes", "text/plain")},
+    )
+    jobs_response = await client.get("/api/jobs")
+
+    assert second_response.status_code == 201
+    assert second_response.json()["id"] == first_response.json()["id"]
+    jobs = [job for job in jobs_response.json()["items"] if job["type"] == "index_document"]
+    assert len(jobs) == 2
+    assert {job["status"] for job in jobs} == {"succeeded"}
+
+
+@pytest.mark.asyncio
 async def test_upload_local_fallback_index_failure_propagates(client, monkeypatch):
     async def fail_index(self, document_id, *, options, commit=True):
         raise RuntimeError("local index bug")
