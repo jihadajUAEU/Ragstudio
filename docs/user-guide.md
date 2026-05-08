@@ -1,27 +1,276 @@
+<!-- generated-by: gsd-doc-writer -->
 # RAG-Anything Studio User Guide
 
-RAG-Anything Studio is a local workbench for configuring retrieval pipelines, uploading source material, comparing variants, and evaluating answer quality.
+RAG-Anything Studio is a local workbench for uploading source material, indexing chunks, creating retrieval variants, asking grounded questions, importing evaluation sets, scoring experiment runs, comparing answers, and checking runtime diagnostics.
 
-## Core Flow
+The app is designed for local RAG pipeline development. It stores state under `.ragstudio/` by default, serves the backend at `http://127.0.0.1:8000`, and serves the Vite frontend at `http://127.0.0.1:5173` when started with the project dev script.
 
-1. Configure provider, model, embedding, and storage defaults in Settings.
-2. Upload source files in Documents.
-3. Index or inspect chunks from the Chunk Inspector after ingestion.
-4. Create variants for different retrieval and generation strategies.
-5. Ask questions in Query and review the answer, retrieved chunks, and evidence.
-6. Import evaluation files in Evaluation.
-7. Run Experiments to compare variants against an evaluation set.
-8. Review outputs and scores in Comparison.
-9. Use Optimizer to recommend stronger variant settings from recorded runs.
-10. Check Graph and Diagnostics when pipeline state or feature support is unclear.
+## Setup and Running
+
+Prerequisites:
+
+- Python `>=3.12,<3.15`
+- npm, for the frontend dependencies in `frontend/package.json`
+
+Install backend and frontend dependencies from the repository root:
+
+```bash
+./scripts/setup.sh
+```
+
+The setup script runs:
+
+```bash
+python -m pip install -e "backend[dev]"
+npm --prefix frontend install
+```
+
+Start the full local app:
+
+```bash
+./scripts/dev.sh
+```
+
+The dev script starts:
+
+- FastAPI with `python -m uvicorn ragstudio.app:create_app --factory --reload --app-dir backend/src --host 127.0.0.1 --port 8000`
+- Vite with `npm run dev -- --host 127.0.0.1 --port 5173`
+
+Open the Studio UI at:
+
+```text
+http://127.0.0.1:5173
+```
+
+Run the full project test suite with:
+
+```bash
+./scripts/test-all.sh
+```
+
+## First Successful Workflow
+
+Use this path to get from an empty local workspace to a completed answer and inspectable result:
+
+1. Open `Settings`, fill `Provider`, `LLM model`, `Embedding model`, and `Storage backend`, then click `Save`.
+2. Open `Variants`, create a variant with `Name`, `Preset`, and a JSON `Parameters` object. The default example is:
+
+   ```json
+   {
+     "top_k": 5,
+     "temperature": 0.2
+   }
+   ```
+
+3. Open `Documents`, choose a source file in `Upload file`, then click `Upload`.
+4. Wait for the document row and the `Jobs` panel to show a succeeded indexing job.
+5. Open `Chunks`, select the document, optionally click `Index`, enter `Question or search text`, set `Limit`, then click `Search`.
+6. Open `Query`, enter a `Question`, select at least one document and one variant, set `Chunk limit`, then click `Run`.
+7. Review the `Answers and traces` result: answer text, `Sources`, `Chunk traces`, and `Timings`.
+8. Open `Comparison` to compare recorded runs, or import an evaluation set in `Evaluation` and run a scored experiment from `Experiments`.
+
+## Pages
+
+### Dashboard
+
+`Dashboard` is the operational overview. It shows API health, uploaded document count, recorded run count, graph node and edge counts, diagnostics warnings, recent documents, jobs, variants, and runs. Use `Refresh` when another page has changed state and you want a current snapshot.
+
+### Pipeline
+
+`Pipeline` shows the RAG flow from source files to grounded answers. The canvas stages are `Documents`, `Chunking`, `Variants`, `Retrieval`, `Generation`, `Graph`, and `Answer`. The `Stage checklist` summarizes document count, chunk indexing, variant count, scoped retrieval, recorded runs, answer traces, and graph edges.
+
+### Documents
+
+`Documents` is for source file upload and ingestion status.
+
+Fields and controls:
+
+- `Upload file`: local file chooser.
+- `Upload`: sends the file to the backend.
+- `Refresh`: reloads documents and jobs.
+
+Tables:
+
+- `Documents`: `Document`, `Status`, and `SHA-256`.
+- `Jobs`: `Job`, `Progress`, `Status`, and `Latest log`.
+
+Duplicate uploads are detected by SHA-256. If a duplicate document is missing chunks, Studio re-indexes it.
+
+### Chunks
+
+`Chunks` is the chunk inspector. Use it to inspect RAGed results before running generation.
+
+Controls:
+
+- `Documents`: select one or more uploaded documents.
+- `Index`: re-indexes a selected document.
+- `Question or search text`: text used to rank chunks.
+- `Limit`: maximum returned chunks, from `1` to `100`.
+- `Search`: searches selected document chunks.
+
+Results show each chunk's `id`, `document_id`, `score`, chunk text, `Source location`, and `Metadata`.
+
+Chunk search is scoped by selected document IDs. If you submit without a document selected, the UI shows `Select at least one document to avoid searching every chunk.`
+
+### Query
+
+`Query` asks questions against chunk contents and records runs.
+
+Fields and controls:
+
+- `Question`: the question to ask.
+- `Documents`: one or more uploaded documents to scope retrieval.
+- `Variants`: one or more variants to run.
+- `Chunk limit`: maximum chunks passed into each run, from `0` to `50`; default is `8`.
+- `Run`: executes the query once per selected variant.
+
+Results appear under `Answers and traces`:
+
+- Answer text, or the run error if generation failed.
+- `Sources`: source chunk objects used for the answer.
+- `Chunk traces`: adapter trace objects, including inclusion status when available.
+- `Timings`: measured `search_ms`, `query_ms`, and `total_ms`, plus adapter timings when provided.
+
+When the local fallback adapter is active, a generated answer is the question followed by selected chunk excerpts. This is useful for validating indexing, search, and trace plumbing even without a full `raganything` backend.
+
+### Evaluation
+
+`Evaluation` imports and inspects evaluation sets.
+
+Fields and controls:
+
+- `Set name`: display name for the imported set. If blank at submit time, the file name is used.
+- `Upload evaluation file`: accepts `.csv`, `.json`, `.yaml`, `.yml`, and `.jsonl`.
+- `Import`: imports the file.
+- `Refresh`: reloads imported sets.
+
+The `Sets` table shows `Set`, `Cases`, and `ID`. Click a set name to inspect its `Cases`. Case cards show the query, case ID, document count, expected answer when present, `Include` and `Avoid` chips, and expandable JSON `Details`.
+
+### Experiments
+
+`Experiments` runs evaluation cases across selected variants and documents.
+
+Fields and controls:
+
+- `Name`: experiment name.
+- `Evaluation set`: imported evaluation set to run.
+- `Documents`: fallback document scope for cases that do not specify their own `documents`.
+- `Variants`: variants to compare.
+- `Objective JSON`: JSON object stored with the experiment. The default is:
+
+  ```json
+  {
+    "metric": "total"
+  }
+  ```
+
+- `Run`: executes every evaluation case across every selected variant.
+
+The `Runs and scores` area shows experiment metadata, returned runs, and score rows. Scores are generated by comparing answer text against evaluation signals. `expected_answer` contributes expected term hits, `must_include` contributes required phrase hits, and `must_avoid` penalizes avoided phrase hits.
+
+### Comparison
+
+`Comparison` compares recorded query and experiment runs.
+
+The `Runs` table shows `Compare`, `Query`, `Variant`, and `Status`. The first two runs are selected by default until you edit the selection. Selected runs appear under `Answers, sources, and traces`, where each card shows the answer or error plus expandable `Sources`, `Traces`, and `Timings`.
+
+### Optimizer
+
+`Optimizer` recommends the strongest variant for an experiment.
+
+Fields and controls:
+
+- `Experiment ID`: experiment to optimize. If recent experiment runs exist, the page shows `Recent experiment` with a `Use` button.
+- `Objective JSON`: JSON object for the optimization objective. The default is:
+
+  ```json
+  {
+    "metric": "total"
+  }
+  ```
+
+- `Recommend`: creates an optimization recommendation.
+
+The recommendation shows `Selected variant`, an explanation, candidate summaries, and expandable `Recommendation details`. Candidate summaries include variant, run count, average score, and best score. If persisted scores are unavailable for a run, the optimizer falls back to a run-derived score: failed runs score `0`, and successful runs score `min(100, 50 + 10 * source_count)`.
+
+### Variants
+
+`Variants` manages retrieval and generation variants.
+
+Fields and controls:
+
+- `Name`: required variant name.
+- `Preset`: one of `Balanced`, `Precise`, `Broad`, or `Fast`.
+- `Parameters`: JSON object. The page requires valid object JSON.
+- `Create`: saves the variant.
+- `Refresh`: reloads variants.
+
+The `Variant matrix` table lists each variant name, ID, preset, and parameter key/value chips.
+
+### Graph
+
+`Graph` reads `/api/graph` and exposes the returned graph payload for debugging graph-backed retrieval.
+
+It shows node and edge counts, then previews up to 50 `Nodes` and 50 `Edges`. In fallback mode, the graph service returns no nodes or edges, so the page shows `Graph is empty`.
+
+### Diagnostics
+
+`Diagnostics` reports backend capabilities and dependency status.
+
+It shows:
+
+- `Capabilities`: flags such as `raganything_available`, `fallback_active`, `indexing`, `query`, and `graph`.
+- `Dependencies`: values such as `raganything`, `active_backend`, `indexing`, `query`, and `graph`.
+- `Warnings`: active runtime warnings.
+- `Raw diagnostics`: expandable full JSON payload.
+
+If `raganything` is not installed in the active Python environment, Diagnostics reports a warning and Studio uses the local fallback adapter. Run `./scripts/setup.sh` or `python -m pip install -e 'backend[dev]'` to install the backend with its declared dependencies, including `raganything[all]`.
+
+### Settings
+
+`Settings` manages the default runtime profile.
+
+Fields:
+
+- `Provider`
+- `LLM model`
+- `Embedding model`
+- `Storage backend`
+
+Controls:
+
+- `Reload`: refetches the saved default profile.
+- `Reset`: resets unsaved form edits.
+- `Save`: writes the default profile.
+
+If no profile exists, the page shows `No default profile saved`.
 
 ## Evaluation File Formats
 
-Studio accepts JSONL, JSON, YAML, and CSV evaluation imports. JSONL is the canonical repeatable format.
+Studio accepts JSONL, NDJSON, JSON, YAML, YML, and CSV evaluation imports. JSONL is the canonical repeatable format.
 
-Every evaluation case needs an `id`, a `query`, and at least one expected-output signal such as `expected_answer`, `expected_sources`, `must_include`, `expected_structure`, `rubric`, or `expected_media`.
+Every imported case must have a `query` and at least one expected-output signal. If `id` is missing, Studio assigns `case-1`, `case-2`, and so on.
 
-### JSONL
+Accepted case fields:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `id` | string | Optional in import files; generated when omitted. |
+| `query` | string | Required question text. Aliases: `question`, `prompt`. |
+| `documents` | string list | Optional document IDs. If present, experiments use these instead of the experiment-level document selection for that case. |
+| `expected_answer` | string | Expected answer text. Aliases: `expected_output`, `expected`, `answer`. |
+| `expected_sources` | string list | Expected source identifiers. Alias: `sources`. |
+| `must_include` | string list | Phrases that should appear in the answer. |
+| `must_avoid` | string list | Phrases that should not appear in the answer. |
+| `expected_media` | list of objects | Structured media expectations. |
+| `expected_structure` | object | Structured answer-shape expectations. |
+| `rubric` | object with string values | Rubric metadata. |
+| `objective` | object | Case-level objective metadata. |
+| `variant_hints` | object of string lists | Variant-specific hints. |
+
+Expected-output signals are `expected_answer`, `expected_sources`, `must_include`, `must_avoid`, `expected_media`, `expected_structure`, `rubric`, or `objective`. A case with none of these signals is rejected.
+
+### JSONL and NDJSON
 
 Use one evaluation case object per line:
 
@@ -32,7 +281,7 @@ Use one evaluation case object per line:
 
 ### JSON
 
-Use either an array of cases or an object with a `cases` array:
+Use an array of cases, an object with a `cases` array, an object with an `items` array, or a single case object:
 
 ```json
 {
@@ -46,9 +295,9 @@ Use either an array of cases or an object with a `cases` array:
 }
 ```
 
-### YAML
+### YAML and YML
 
-YAML follows the same shape as JSON:
+YAML follows the same shapes as JSON:
 
 ```yaml
 cases:
@@ -61,9 +310,166 @@ cases:
 
 ### CSV
 
-CSV imports map columns into evaluation case fields. Use simple scalar columns for `id`, `query`, and `expected_answer`; list-like fields such as `must_include`, `must_avoid`, `expected_sources`, and `documents` use pipe-delimited values inside a cell.
+CSV imports map columns into evaluation case fields. Use simple scalar columns for `id`, `query`, and `expected_answer`.
+
+List-like fields use pipe-delimited values inside a cell:
+
+- `documents`
+- `expected_sources`
+- `must_include`
+- `must_avoid`
+
+Structured fields must contain valid JSON inside the cell:
+
+- `expected_media`
+- `expected_structure`
+- `rubric`
+- `objective`
+- `variant_hints`
+
+Example:
 
 ```csv
 id,query,expected_answer,must_include,expected_sources
 case-1,What changed in the contract?,The renewal term changed.,renewal term|effective date,contract.pdf
 ```
+
+Example with a structured rubric:
+
+```csv
+id,query,rubric,expected_structure
+case-2,Summarize the timeline,"{""accuracy"":""Dates must match the source.""}","{""format"":""bullet-list""}"
+```
+
+## Inspecting RAGed Results
+
+Use `Chunks` before `Query` when you need to understand what will be available to generation:
+
+1. Select the uploaded document.
+2. Click `Index` if you want to rebuild chunks.
+3. Enter a focused phrase or question in `Question or search text`.
+4. Set `Limit`.
+5. Click `Search`.
+
+The returned chunk cards show:
+
+- `score`: search score added by Studio.
+- `text`: chunk content.
+- `Source location`: adapter-provided location data, such as a line number in fallback mode.
+- `Metadata`: safe metadata with absolute file paths removed.
+
+Fallback search scores use term overlap, term density, and a phrase bonus. An empty search query returns chunks in source order with score `1.0`.
+
+## Asking Questions Against Chunk Contents
+
+Use `Query` when you want Studio to retrieve chunks and create recorded run results.
+
+Required inputs:
+
+- Non-empty `Question`.
+- At least one selected document.
+- At least one selected variant.
+
+For each selected variant, Studio:
+
+1. Validates the selected document and variant IDs.
+2. Searches chunks scoped to selected documents.
+3. Sends selected chunks to the active adapter.
+4. Records a run with status, answer, sources, chunk traces, timings, and any error.
+
+The returned runs are also available in `Comparison`, `Optimizer`, and the `Dashboard`.
+
+## Diagnostics and Fallback Behavior
+
+Studio has a safe adapter boundary around the optional `raganything` integration.
+
+When `raganything` is available, Diagnostics reports `raganything_available: true` and clears the missing-dependency warning. The current adapter can still report fallback execution for paths not yet wired to upstream RAG-Anything APIs. When `raganything` is unavailable, the backend still runs with fallback behavior:
+
+- `active_backend`: `fallback`
+- `indexing`: `line_split_fallback`
+- `query`: `simple_fallback`
+- `graph`: `placeholder`
+
+Fallback indexing reads uploaded bytes as UTF-8 with replacement for invalid characters, splits content into non-empty lines, and creates one chunk per non-empty line. If the file has no line breaks but has text, it creates one chunk from the stripped content.
+
+Fallback query uses the selected chunks directly. If chunks are present, the answer is the stripped query followed by the selected chunk text. If no chunks are selected, the answer is empty.
+
+Fallback graph returns an empty graph payload. This is why `Graph` may show `Graph is empty` even when document upload, chunk search, and query runs work.
+
+## Troubleshooting
+
+### The frontend cannot reach the backend
+
+Start the app with:
+
+```bash
+./scripts/dev.sh
+```
+
+The backend must be available on `127.0.0.1:8000` for the default frontend API calls. If you run the frontend separately against another backend URL, set `VITE_API_BASE_URL` for Vite before starting it.
+
+### Diagnostics says `raganything` is missing
+
+Install the backend dependencies:
+
+```bash
+./scripts/setup.sh
+```
+
+or:
+
+```bash
+python -m pip install -e "backend[dev]"
+```
+
+That backend install includes the declared `raganything[all]` dependency.
+
+The app still works in fallback mode, but graph output is a placeholder and query answers are simple chunk excerpts.
+
+### Settings shows `No default profile saved`
+
+Open `Settings`, enter all four fields, and click `Save`. The form requires `Provider`, `LLM model`, `Embedding model`, and `Storage backend`.
+
+### Query cannot run
+
+Check that:
+
+- `Question` is not empty.
+- At least one document is selected.
+- At least one variant is selected.
+- The selected document has been uploaded and indexed.
+
+If a selected document or variant no longer exists, the backend returns a `404` with a message like `Document not found: ...` or `Variant not found: ...`.
+
+### Chunk search returns no matches
+
+Try one of these:
+
+- Click `Index` for the selected document.
+- Search for a term that appears directly in the source file.
+- Increase `Limit`.
+- Use an empty `Question or search text` to inspect chunks in source order.
+
+### Evaluation import fails
+
+Check that:
+
+- The file is valid UTF-8.
+- The extension is `.csv`, `.json`, `.yaml`, `.yml`, `.jsonl`, or `.ndjson`.
+- JSON and YAML cases are objects, arrays of objects, or wrapped in `cases` or `items`.
+- Every case has a `query`.
+- Every case has at least one expected-output signal.
+- CSV list fields use `|` as the separator.
+- CSV structured fields contain valid JSON.
+
+### Experiment fails before running cases
+
+Check that the selected evaluation set exists, at least one document and one variant are selected, and `Objective JSON` is valid object JSON. If a case includes `documents`, those document IDs must exist because they override the experiment-level document selection for that case.
+
+### Optimizer says `Experiment not found`
+
+Run an experiment first from `Experiments`, then copy the returned experiment ID into `Optimizer`. If recent experiment runs exist, use the `Use` button next to `Recent experiment`.
+
+### Graph is empty
+
+An empty graph is expected in fallback mode. Confirm `Diagnostics` first. If `graph` reports `placeholder`, graph-backed retrieval data is not available from the current adapter.
