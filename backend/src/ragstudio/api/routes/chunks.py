@@ -1,5 +1,3 @@
-from pathlib import Path
-
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -11,6 +9,7 @@ from ragstudio.schemas.jobs import JobOut
 from ragstudio.schemas.parsing import IndexDocumentIn
 from ragstudio.services.chunk_service import ChunkService
 from ragstudio.services.document_service import DocumentService
+from ragstudio.services.index_lifecycle_service import IndexLifecycleService
 
 router = APIRouter(prefix="/api/chunks", tags=["chunks"])
 
@@ -33,7 +32,7 @@ async def create_index_document_job(
         raise HTTPException(status_code=404, detail="Document not found")
     background_tasks.add_task(
         _run_index_document_job,
-        request.app.state.settings.data_dir,
+        request.app.state.settings,
         document_id,
         job.id,
         options,
@@ -48,12 +47,13 @@ async def index_document_chunks(
     options: IndexDocumentIn | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> list[ChunkOut]:
-    chunks = await ChunkService(session, request.app.state.settings.data_dir).index_document(
+    chunks = await IndexLifecycleService(session, request.app.state.settings).reindex_document(
         document_id,
         options=options or IndexDocumentIn(),
     )
     if chunks is None:
         raise HTTPException(status_code=404, detail="Document not found")
+    await session.commit()
     return chunks
 
 
@@ -67,17 +67,20 @@ async def search_chunks(
 
 
 async def _run_index_document_job(
-    data_dir: Path,
+    settings: AppSettings,
     document_id: str,
     job_id: str,
     options: IndexDocumentIn,
 ) -> None:
-    settings = AppSettings(data_dir=data_dir)
     engine = make_engine(settings.resolved_database_url)
     factory = make_session_factory(engine)
     try:
         async with factory() as background_session:
-            await DocumentService(background_session, data_dir).run_index_job(
+            await DocumentService(
+                background_session,
+                settings.data_dir,
+                settings=settings,
+            ).run_index_job(
                 document_id,
                 job_id,
                 options,

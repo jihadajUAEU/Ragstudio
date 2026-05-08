@@ -1,12 +1,14 @@
 from pathlib import Path
 from typing import Any, Literal
 
+from ragstudio.config import AppSettings
 from ragstudio.db.models import Chunk, Document, Job
 from ragstudio.schemas.common import StageStatus
 from ragstudio.schemas.documents import DocumentOut
 from ragstudio.schemas.parsing import IndexDocumentIn
 from ragstudio.services.artifact_store import ArtifactStore
 from ragstudio.services.chunk_service import ChunkService
+from ragstudio.services.index_lifecycle_service import IndexLifecycleService
 from ragstudio.services.job_worker import JobWorker
 from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
@@ -16,9 +18,10 @@ DeleteDocumentResult = Literal["deleted", "not_found", "active_job"]
 
 
 class DocumentService:
-    def __init__(self, session: AsyncSession, data_dir: Path):
+    def __init__(self, session: AsyncSession, data_dir: Path, settings: AppSettings | None = None):
         self.session = session
         self.store = ArtifactStore(data_dir)
+        self.settings = settings
 
     async def upload(
         self,
@@ -158,12 +161,18 @@ class DocumentService:
         job.status = StageStatus.RUNNING.value
         job.progress = 50
         job.logs = [*job.logs, "Indexing document chunks."]
-        chunks = await ChunkService(self.session, self.store.root).index_document(
-            document.id,
-            options=options,
-            commit=False,
-            on_mineru_status=on_mineru_status,
-        )
+        if self.settings is not None:
+            chunks = await IndexLifecycleService(
+                self.session,
+                self.settings,
+            ).reindex_document(document.id, options=options)
+        else:
+            chunks = await ChunkService(self.session, self.store.root).index_document(
+                document.id,
+                options=options,
+                commit=False,
+                on_mineru_status=on_mineru_status,
+            )
         chunk_count = len(chunks or [])
         document.status = StageStatus.SUCCEEDED.value
         job.status = StageStatus.SUCCEEDED.value

@@ -1,4 +1,25 @@
 import pytest
+import pytest_asyncio
+from ragstudio.db.models import SettingsProfile
+from ragstudio.schemas.parsing import IndexDocumentIn
+from ragstudio.services.chunk_service import ChunkService
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def fallback_runtime_profile(client):
+    app = client._transport.app
+    async with app.state.session_factory() as session:
+        session.add(
+            SettingsProfile(
+                id="default",
+                provider="fallback",
+                llm_model="fallback",
+                embedding_model="fallback",
+                storage_backend="fallback_local",
+                runtime_mode="fallback",
+            )
+        )
+        await session.commit()
 
 
 @pytest.mark.asyncio
@@ -181,16 +202,18 @@ async def test_index_mineru_strict_uses_adapter_chunks(client, monkeypatch):
         fake_index_document,
     )
 
-    response = await client.post(
-        f"/api/chunks/index/{document_id}",
-        json={
-            "parser_mode": "mineru_strict",
-            "domain_metadata": {"domain": "research", "document_type": "paper"},
-        },
-    )
+    app = client._transport.app
+    async with app.state.session_factory() as session:
+        chunks = await ChunkService(session, app.state.settings.data_dir).index_document(
+            document_id,
+            options=IndexDocumentIn(
+                parser_mode="mineru_strict",
+                domain_metadata={"domain": "research", "document_type": "paper"},
+            ),
+        )
 
-    assert response.status_code == 200
-    chunk = response.json()[0]
-    assert chunk["text"] == "MinerU text"
-    assert chunk["metadata"]["domain_metadata"]["domain"] == "research"
-    assert chunk["metadata"]["parser_metadata"]["backend"] == "mineru"
+    assert chunks is not None
+    chunk = chunks[0]
+    assert chunk.text == "MinerU text"
+    assert chunk.metadata["domain_metadata"]["domain"] == "research"
+    assert chunk.metadata["parser_metadata"]["backend"] == "mineru"

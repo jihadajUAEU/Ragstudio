@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Any
 
 from pydantic import AliasChoices, Field
@@ -14,6 +15,11 @@ class ChunkOut(StudioModel):
         validation_alias=AliasChoices("metadata_json", "metadata"),
         serialization_alias="metadata",
     )
+    runtime_profile_id: str | None = None
+    runtime_source_id: str | None = None
+    content_type: str = "text"
+    preview_ref: str | None = None
+    indexed_at: datetime | None = None
 
 
 class ChunkSearchIn(StudioModel):
