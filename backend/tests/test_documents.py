@@ -218,6 +218,68 @@ async def test_upload_uses_runtime_index_lifecycle_when_profile_exists(client, m
 
 
 @pytest.mark.asyncio
+async def test_runtime_blocked_mineru_strict_upload_returns_conflict(client):
+    app = client._transport.app
+    async with app.state.session_factory() as session:
+        session.add(
+            SettingsProfile(
+                id="default",
+                provider="openai-compatible",
+                llm_model="gpt-4o",
+                llm_base_url="http://127.0.0.1:8004/v1",
+                embedding_model="text-embedding-3-large",
+                embedding_base_url="http://127.0.0.1:8001/v1",
+                storage_backend="postgres_pgvector_neo4j",
+                runtime_mode="runtime",
+            )
+        )
+        await session.commit()
+
+    response = await client.post(
+        "/api/documents",
+        data={"parser_mode": "mineru_strict", "domain_metadata": "{}"},
+        files={"file": ("runtime-strict.pdf", b"%PDF fake", "application/pdf")},
+    )
+
+    assert response.status_code == 409
+    assert "native_runtime_adapter" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_duplicate_runtime_blocked_mineru_strict_upload_returns_conflict(client):
+    first_response = await client.post(
+        "/api/documents",
+        files={"file": ("runtime-strict.pdf", b"%PDF fake", "application/pdf")},
+    )
+    assert first_response.status_code == 201
+
+    app = client._transport.app
+    async with app.state.session_factory() as session:
+        session.add(
+            SettingsProfile(
+                id="default",
+                provider="openai-compatible",
+                llm_model="gpt-4o",
+                llm_base_url="http://127.0.0.1:8004/v1",
+                embedding_model="text-embedding-3-large",
+                embedding_base_url="http://127.0.0.1:8001/v1",
+                storage_backend="postgres_pgvector_neo4j",
+                runtime_mode="runtime",
+            )
+        )
+        await session.commit()
+
+    second_response = await client.post(
+        "/api/documents",
+        data={"parser_mode": "mineru_strict", "domain_metadata": "{}"},
+        files={"file": ("runtime-strict-copy.pdf", b"%PDF fake", "application/pdf")},
+    )
+
+    assert second_response.status_code == 409
+    assert "native_runtime_adapter" in second_response.json()["detail"]
+
+
+@pytest.mark.asyncio
 async def test_upload_local_fallback_index_failure_propagates(client, monkeypatch):
     async def fail_index(self, document_id, *, options, commit=True, on_mineru_status=None):
         raise RuntimeError("local index bug")

@@ -242,3 +242,49 @@ async def test_query_route_uses_runtime_profile_when_configured(client, monkeypa
     assert run["query_config"]["parser"] == "mineru"
     assert run["reranker_traces"][0]["score"] == 0.75
     assert run["token_metadata"]["prompt_tokens"] == 9
+
+
+@pytest.mark.asyncio
+async def test_query_route_returns_failed_run_when_runtime_health_blocks(client):
+    app = client._transport.app
+    async with app.state.session_factory() as session:
+        session.add(
+            SettingsProfile(
+                id="default",
+                provider="openai-compatible",
+                llm_model="gpt-4o",
+                llm_base_url="http://127.0.0.1:8004/v1",
+                embedding_model="text-embedding-3-large",
+                embedding_base_url="http://127.0.0.1:8001/v1",
+                storage_backend="postgres_pgvector_neo4j",
+                runtime_mode="runtime",
+            )
+        )
+        document = Document(
+            filename="runtime-blocked-query.txt",
+            content_type="text/plain",
+            sha256="runtime-blocked-query",
+            artifact_path=str(app.state.settings.data_dir / "runtime-blocked-query.txt"),
+            status=StageStatus.SUCCEEDED.value,
+        )
+        variant = Variant(name="Runtime Blocked", preset="balanced", parameters={})
+        session.add_all([document, variant])
+        await session.commit()
+        document_id = document.id
+        variant_id = variant.id
+
+    response = await client.post(
+        "/api/query",
+        json={
+            "query": "runtime blocked?",
+            "document_ids": [document_id],
+            "variant_ids": [variant_id],
+        },
+    )
+
+    assert response.status_code == 200
+    run = response.json()["runs"][0]
+    assert run["status"] == "failed"
+    assert run["runtime_profile_id"] == "default"
+    assert run["error_type"] == "runtime_health_blocked"
+    assert "native_runtime_adapter" in run["error"]

@@ -78,8 +78,15 @@ async def test_index_uploaded_document_creates_line_chunks(client):
     assert chunks[0]["metadata"]["document_id"] == document_id
     assert chunks[0]["metadata"]["parser_metadata"]["backend"] == "fallback"
     assert chunks[0]["metadata"]["parser_metadata"]["artifact_ref"]
+    assert chunks[0]["runtime_profile_id"] is None
     assert "artifact_path" not in chunks[0]["metadata"]
     assert not chunks[0]["metadata"]["parser_metadata"]["artifact_ref"].startswith("/")
+    app = client._transport.app
+    async with app.state.session_factory() as session:
+        record = await session.scalar(
+            select(IndexRecord).where(IndexRecord.document_id == document_id)
+        )
+    assert record is None
 
 
 @pytest.mark.asyncio
@@ -341,3 +348,24 @@ async def test_runtime_index_route_reports_blocking_health_as_conflict(client):
 
     assert response.status_code == 409
     assert "native_runtime_adapter" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_saved_fallback_profile_uses_legacy_chunk_indexing(client):
+    upload_response = await client.post(
+        "/api/documents",
+        files={"file": ("saved-fallback.txt", b"fallback profile text\n", "text/plain")},
+    )
+    document_id = upload_response.json()["id"]
+
+    response = await client.post(f"/api/chunks/index/{document_id}")
+
+    assert response.status_code == 200
+    chunk = response.json()[0]
+    assert chunk["runtime_profile_id"] is None
+    assert chunk["metadata"]["parser_metadata"]["backend"] == "fallback"
+    async with client._transport.app.state.session_factory() as session:
+        record = await session.scalar(
+            select(IndexRecord).where(IndexRecord.document_id == document_id)
+        )
+    assert record is None

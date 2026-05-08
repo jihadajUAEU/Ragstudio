@@ -8,9 +8,16 @@ from ragstudio.schemas.documents import DocumentOut
 from ragstudio.schemas.parsing import IndexDocumentIn
 from ragstudio.services.artifact_store import ArtifactStore
 from ragstudio.services.chunk_service import ChunkService
-from ragstudio.services.index_lifecycle_service import IndexLifecycleService
+from ragstudio.services.index_lifecycle_service import (
+    IndexLifecycleService,
+    RuntimeHealthBlockedError,
+)
 from ragstudio.services.job_worker import JobWorker
-from ragstudio.services.runtime_profile_service import RuntimeProfileNotConfiguredError
+from ragstudio.services.runtime_factory import RuntimeUnavailableError
+from ragstudio.services.runtime_profile_service import (
+    RuntimeProfileNotConfiguredError,
+    RuntimeProfileService,
+)
 from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -55,7 +62,7 @@ class DocumentService:
             try:
                 await self._index_document_for_job(document, job, options)
             except Exception as exc:
-                if not self._should_persist_index_failure(options):
+                if not self._should_persist_index_failure(options, exc):
                     raise
                 self._mark_index_failed(document, job, exc)
             await self.session.commit()
@@ -149,7 +156,7 @@ class DocumentService:
         try:
             await self._index_document_for_job(document, job, options)
         except Exception as exc:
-            if not self._should_persist_index_failure(options):
+            if not self._should_persist_index_failure(options, exc):
                 raise
             self._mark_index_failed(document, job, exc)
         await self.session.commit()
@@ -165,19 +172,12 @@ class DocumentService:
         job.status = StageStatus.RUNNING.value
         job.progress = 50
         job.logs = [*job.logs, "Indexing document chunks."]
-        if self.settings is not None:
-            try:
-                chunks = await IndexLifecycleService(
-                    self.session,
-                    self.settings,
-                ).reindex_document(document.id, options=options)
-            except RuntimeProfileNotConfiguredError:
-                chunks = await ChunkService(self.session, self.store.root).index_document(
-                    document.id,
-                    options=options,
-                    commit=False,
-                    on_mineru_status=on_mineru_status,
-                )
+        if await self._should_use_runtime_lifecycle():
+            assert self.settings is not None
+            chunks = await IndexLifecycleService(
+                self.session,
+                self.settings,
+            ).reindex_document(document.id, options=options)
         else:
             chunks = await ChunkService(self.session, self.store.root).index_document(
                 document.id,
@@ -192,8 +192,31 @@ class DocumentService:
         job.result = {**job.result, "document_id": document.id, "chunk_count": chunk_count}
         job.logs = [*job.logs, f"Indexed {chunk_count} chunks."]
 
-    def _should_persist_index_failure(self, options: IndexDocumentIn | None) -> bool:
-        return options is not None and options.parser_mode == "mineru_strict"
+    async def _should_use_runtime_lifecycle(self) -> bool:
+        if self.settings is None:
+            return False
+        try:
+            profile = await RuntimeProfileService(
+                self.session,
+                self.settings,
+            ).get_active_profile()
+        except RuntimeProfileNotConfiguredError:
+            return False
+        return profile.runtime_mode != "fallback"
+
+    def _should_persist_index_failure(
+        self,
+        options: IndexDocumentIn | None,
+        exc: Exception,
+    ) -> bool:
+        return (
+            not self._is_runtime_blocker(exc)
+            and options is not None
+            and options.parser_mode == "mineru_strict"
+        )
+
+    def _is_runtime_blocker(self, exc: Exception) -> bool:
+        return isinstance(exc, (RuntimeHealthBlockedError, RuntimeUnavailableError))
 
     def _mark_index_failed(self, document: Document, job: Job, exc: Exception) -> None:
         document.status = StageStatus.FAILED.value
