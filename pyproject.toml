@@ -1,0 +1,26 @@
+[project]
+name = "rag-anything-studio-workspace"
+version = "0.1.0"
+requires-python = ">=3.12,<3.15"
+description = "Workspace wrapper for RAG-Anything Studio"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "RUF"]
+ignore = [
+  # FastAPI intentionally uses Depends(...) in route function defaults.
+  "B008",
+  # Pydantic models copy mutable defaults; default_factory is preferable, but this
+  # project treats schema defaults as declarative API shape.
+  "RUF012",
+]
+
+[tool.pyright]
+pythonVersion = "3.12"
+typeCheckingMode = "basic"
+include = ["backend/src"]
+exclude = ["backend/tests"]
+reportMissingTypeStubs = false

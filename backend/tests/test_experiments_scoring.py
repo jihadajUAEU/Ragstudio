@@ -1,0 +1,188 @@
+import pytest
+from ragstudio.db.models import Experiment, Run
+from ragstudio.schemas.evaluation import EvaluationCaseIn
+from ragstudio.services.scoring_service import ScoringService
+from sqlalchemy import select
+
+
+def test_scoring_service_scores_expected_include_and_avoid_terms():
+    case = EvaluationCaseIn(
+        id="case-1",
+        query="What is included?",
+        expected_answer="alpha beta",
+        must_include=["alpha"],
+        must_avoid=["forbidden"],
+    )
+    run = Run(id="run-1", variant_id="variant-1", query=case.query, answer="Alpha beta answer")
+
+    score = ScoringService().score(run, case)
+
+    assert score.total == 100
+    assert score.details["expected_hits"] == ["alpha", "beta"]
+    assert score.details["must_include_missing"] == []
+    assert score.details["must_avoid_hits"] == []
+
+
+def test_scoring_service_penalizes_missing_and_avoided_terms():
+    case = EvaluationCaseIn(
+        id="case-1",
+        query="What is included?",
+        expected_answer="alpha beta",
+        must_include=["gamma"],
+        must_avoid=["forbidden"],
+    )
+    run = Run(id="run-1", variant_id="variant-1", query=case.query, answer="Alpha forbidden answer")
+
+    score = ScoringService().score(run, case)
+
+    assert score.total < 50
+    assert score.details["must_include_missing"] == ["gamma"]
+    assert score.details["must_avoid_hits"] == ["forbidden"]
+
+
+@pytest.mark.asyncio
+async def test_create_experiment_runs_cases_and_persists_runs(client):
+    upload = await client.post(
+        "/api/documents",
+        files={"file": ("experiment.txt", b"alpha beta answer", "text/plain")},
+    )
+    document_id = upload.json()["id"]
+    await client.post(f"/api/chunks/index/{document_id}")
+    variant = await client.post(
+        "/api/variants", json={"name": "Balanced", "preset": "balanced", "parameters": {}}
+    )
+    evaluation = await client.post(
+        "/api/evaluation-sets/import?name=Experiment",
+        files={
+            "file": (
+                "cases.csv",
+                b"id,query,expected_answer,must_include,must_avoid\n"
+                b"one,alpha,alpha beta,alpha,forbidden\n",
+                "text/csv",
+            )
+        },
+    )
+
+    response = await client.post(
+        "/api/experiments",
+        json={
+            "name": "Smoke experiment",
+            "document_ids": [document_id],
+            "evaluation_set_id": evaluation.json()["id"],
+            "variant_ids": [variant.json()["id"]],
+            "objective": {"metric": "total"},
+        },
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["name"] == "Smoke experiment"
+    assert len(payload["runs"]) == 1
+    assert payload["runs"][0]["status"] == "succeeded"
+    assert "alpha" in payload["runs"][0]["answer"].lower()
+    assert len(payload["scores"]) == 1
+    assert payload["scores"][0]["run_id"] == payload["runs"][0]["id"]
+    assert payload["scores"][0]["total"] == 100
+    assert payload["scores"][0]["details"]["expected_hits"] == ["alpha", "beta"]
+
+    runs = await client.get("/api/runs")
+    assert runs.json()["total"] == 1
+
+
+@pytest.mark.asyncio
+async def test_create_experiment_missing_evaluation_set_returns_404(client):
+    response = await client.post(
+        "/api/experiments",
+        json={
+            "name": "Missing eval",
+            "document_ids": [],
+            "evaluation_set_id": "missing",
+            "variant_ids": [],
+            "objective": {},
+        },
+    )
+
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_create_experiment_prevalidates_missing_variant_without_persisting_rows(client):
+    upload = await client.post(
+        "/api/documents",
+        files={"file": ("validation.txt", b"alpha beta answer", "text/plain")},
+    )
+    document_id = upload.json()["id"]
+    await client.post(f"/api/chunks/index/{document_id}")
+    evaluation = await client.post(
+        "/api/evaluation-sets/import?name=Validation",
+        files={
+            "file": (
+                "cases.csv",
+                b"id,query,expected_answer\none,alpha,alpha beta\n",
+                "text/csv",
+            )
+        },
+    )
+
+    response = await client.post(
+        "/api/experiments",
+        json={
+            "name": "Bad variant",
+            "document_ids": [document_id],
+            "evaluation_set_id": evaluation.json()["id"],
+            "variant_ids": ["missing-variant"],
+            "objective": {},
+        },
+    )
+
+    assert response.status_code == 404
+
+    transport = client._transport
+    async with transport.app.state.session_factory() as session:
+        experiments = await session.execute(
+            select(Experiment).where(Experiment.name == "Bad variant")
+        )
+        runs = await session.execute(select(Run).where(Run.experiment_id.is_not(None)))
+
+    assert experiments.scalars().all() == []
+    assert runs.scalars().all() == []
+
+
+@pytest.mark.asyncio
+async def test_create_experiment_prevalidates_missing_document_without_persisting_rows(client):
+    variant = await client.post(
+        "/api/variants", json={"name": "Balanced", "preset": "balanced", "parameters": {}}
+    )
+    evaluation = await client.post(
+        "/api/evaluation-sets/import?name=MissingDocument",
+        files={
+            "file": (
+                "cases.csv",
+                b"id,query,expected_answer\none,alpha,alpha beta\n",
+                "text/csv",
+            )
+        },
+    )
+
+    response = await client.post(
+        "/api/experiments",
+        json={
+            "name": "Bad document",
+            "document_ids": ["missing-document"],
+            "evaluation_set_id": evaluation.json()["id"],
+            "variant_ids": [variant.json()["id"]],
+            "objective": {},
+        },
+    )
+
+    assert response.status_code == 404
+
+    transport = client._transport
+    async with transport.app.state.session_factory() as session:
+        experiments = await session.execute(
+            select(Experiment).where(Experiment.name == "Bad document")
+        )
+        runs = await session.execute(select(Run).where(Run.experiment_id.is_not(None)))
+
+    assert experiments.scalars().all() == []
+    assert runs.scalars().all() == []
