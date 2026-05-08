@@ -1,6 +1,7 @@
 from typing import cast
 
 from ragstudio.db.models import SettingsProfile
+from ragstudio.schemas.runtime import QueryMode, RerankerProvider, RuntimeMode, StorageBackend
 from ragstudio.schemas.settings import (
     EmbeddingProvider,
     LlmCapability,
@@ -23,7 +24,15 @@ class SettingsService:
 
     async def upsert_default(self, data: SettingsProfileIn) -> SettingsProfileOut:
         profile = await self.session.get(SettingsProfile, "default")
-        values = data.model_dump(exclude={"embedding_api_key", "llm_api_key"})
+        values = data.model_dump(
+            exclude={
+                "embedding_api_key",
+                "llm_api_key",
+                "vision_api_key",
+                "reranker_api_key",
+                "neo4j_password",
+            }
+        )
         if profile is None:
             profile = SettingsProfile(id="default", **values)
             self.session.add(profile)
@@ -34,6 +43,12 @@ class SettingsService:
             profile.embedding_api_key = data.embedding_api_key or None
         if data.llm_api_key is not None:
             profile.llm_api_key = data.llm_api_key or None
+        if data.vision_api_key is not None:
+            profile.vision_api_key = data.vision_api_key or None
+        if data.reranker_api_key is not None:
+            profile.reranker_api_key = data.reranker_api_key or None
+        if data.neo4j_password is not None:
+            profile.neo4j_password = data.neo4j_password or None
         await self.session.commit()
         await self.session.refresh(profile)
         return self._to_out(profile)
@@ -59,6 +74,9 @@ class SettingsService:
         return data.model_copy(update={"llm_api_key": profile.llm_api_key})
 
     def _to_out(self, profile: SettingsProfile) -> SettingsProfileOut:
+        def default_bool(value: bool | None, default: bool) -> bool:
+            return default if value is None else bool(value)
+
         return SettingsProfileOut(
             id=profile.id,
             provider=profile.provider,
@@ -76,7 +94,10 @@ class SettingsService:
                 if capability in {"text", "vision", "reasoning"}
             ],
             embedding_model=profile.embedding_model,
-            storage_backend=profile.storage_backend,
+            storage_backend=cast(
+                StorageBackend,
+                profile.storage_backend if profile.storage_backend else "postgres_pgvector_neo4j",
+            ),
             embedding_provider=cast(
                 EmbeddingProvider,
                 profile.embedding_provider if profile.embedding_provider else "fallback",
@@ -86,9 +107,55 @@ class SettingsService:
             embedding_timeout_ms=profile.embedding_timeout_ms or 10000,
             embedding_dimensions=profile.embedding_dimensions or 1536,
             embedding_batch_size=profile.embedding_batch_size or 16,
-            embedding_tls_verify=bool(profile.embedding_tls_verify),
+            embedding_tls_verify=default_bool(profile.embedding_tls_verify, True),
             mineru_enabled=bool(profile.mineru_enabled),
             mineru_base_url=profile.mineru_base_url,
             mineru_timeout_ms=profile.mineru_timeout_ms or 1_800_000,
             mineru_poll_interval_ms=profile.mineru_poll_interval_ms or 1_000,
+            runtime_mode=cast(RuntimeMode, profile.runtime_mode or "runtime"),
+            vision_model=profile.vision_model,
+            vision_base_url=profile.vision_base_url,
+            has_vision_api_key=bool(profile.vision_api_key),
+            vision_timeout_ms=profile.vision_timeout_ms or 10000,
+            reranker_provider=cast(
+                RerankerProvider,
+                profile.reranker_provider if profile.reranker_provider else "disabled",
+            ),
+            reranker_model=profile.reranker_model,
+            reranker_base_url=profile.reranker_base_url,
+            has_reranker_api_key=bool(profile.reranker_api_key),
+            reranker_timeout_ms=profile.reranker_timeout_ms or 10000,
+            pgvector_schema=profile.pgvector_schema or "public",
+            pgvector_table_prefix=profile.pgvector_table_prefix or "ragstudio",
+            neo4j_uri=profile.neo4j_uri,
+            neo4j_username=profile.neo4j_username,
+            has_neo4j_password=bool(profile.neo4j_password),
+            parser=profile.parser or "mineru",
+            parse_method=profile.parse_method or "auto",
+            chunk_token_size=profile.chunk_token_size or 1200,
+            chunk_overlap_token_size=profile.chunk_overlap_token_size or 100,
+            enable_image_processing=default_bool(profile.enable_image_processing, True),
+            enable_table_processing=default_bool(profile.enable_table_processing, True),
+            enable_equation_processing=default_bool(profile.enable_equation_processing, True),
+            context_window=profile.context_window or 1,
+            context_mode=profile.context_mode or "page",
+            max_context_tokens=profile.max_context_tokens or 2000,
+            include_headers=default_bool(profile.include_headers, True),
+            include_captions=default_bool(profile.include_captions, True),
+            query_mode=cast(QueryMode, profile.query_mode or "mix"),
+            top_k=profile.top_k or 40,
+            chunk_top_k=profile.chunk_top_k or 20,
+            enable_rerank=default_bool(profile.enable_rerank, True),
+            cosine_better_than_threshold=profile.cosine_better_than_threshold or 0.2,
+            max_total_tokens=profile.max_total_tokens or 30000,
+            max_entity_tokens=profile.max_entity_tokens or 6000,
+            max_relation_tokens=profile.max_relation_tokens or 8000,
+            enable_llm_cache=default_bool(profile.enable_llm_cache, True),
+            enable_llm_cache_for_entity_extract=default_bool(
+                profile.enable_llm_cache_for_entity_extract,
+                True,
+            ),
+            llm_model_max_async=profile.llm_model_max_async or 4,
+            embedding_func_max_async=profile.embedding_func_max_async or 8,
+            max_parallel_insert=profile.max_parallel_insert or 2,
         )

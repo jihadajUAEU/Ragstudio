@@ -3,7 +3,7 @@ from typing import Any
 
 from ragstudio.db.base import Base
 from ragstudio.schemas.common import new_id, now_utc
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.mutable import MutableDict, MutableList
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -45,6 +45,46 @@ class SettingsProfile(Base, TimestampMixin):
     mineru_base_url: Mapped[str | None] = mapped_column(String, nullable=True)
     mineru_timeout_ms: Mapped[int] = mapped_column(Integer, default=1_800_000)
     mineru_poll_interval_ms: Mapped[int] = mapped_column(Integer, default=1_000)
+    runtime_mode: Mapped[str] = mapped_column(String, default="runtime")
+    vision_model: Mapped[str | None] = mapped_column(String, nullable=True)
+    vision_base_url: Mapped[str | None] = mapped_column(String, nullable=True)
+    vision_api_key: Mapped[str | None] = mapped_column(String, nullable=True)
+    vision_timeout_ms: Mapped[int] = mapped_column(Integer, default=10000)
+    reranker_provider: Mapped[str] = mapped_column(String, default="disabled")
+    reranker_model: Mapped[str | None] = mapped_column(String, nullable=True)
+    reranker_base_url: Mapped[str | None] = mapped_column(String, nullable=True)
+    reranker_api_key: Mapped[str | None] = mapped_column(String, nullable=True)
+    reranker_timeout_ms: Mapped[int] = mapped_column(Integer, default=10000)
+    pgvector_schema: Mapped[str] = mapped_column(String, default="public")
+    pgvector_table_prefix: Mapped[str] = mapped_column(String, default="ragstudio")
+    neo4j_uri: Mapped[str | None] = mapped_column(String, nullable=True)
+    neo4j_username: Mapped[str | None] = mapped_column(String, nullable=True)
+    neo4j_password: Mapped[str | None] = mapped_column(String, nullable=True)
+    parser: Mapped[str] = mapped_column(String, default="mineru")
+    parse_method: Mapped[str] = mapped_column(String, default="auto")
+    chunk_token_size: Mapped[int] = mapped_column(Integer, default=1200)
+    chunk_overlap_token_size: Mapped[int] = mapped_column(Integer, default=100)
+    enable_image_processing: Mapped[bool] = mapped_column(Boolean, default=True)
+    enable_table_processing: Mapped[bool] = mapped_column(Boolean, default=True)
+    enable_equation_processing: Mapped[bool] = mapped_column(Boolean, default=True)
+    context_window: Mapped[int] = mapped_column(Integer, default=1)
+    context_mode: Mapped[str] = mapped_column(String, default="page")
+    max_context_tokens: Mapped[int] = mapped_column(Integer, default=2000)
+    include_headers: Mapped[bool] = mapped_column(Boolean, default=True)
+    include_captions: Mapped[bool] = mapped_column(Boolean, default=True)
+    query_mode: Mapped[str] = mapped_column(String, default="mix")
+    top_k: Mapped[int] = mapped_column(Integer, default=40)
+    chunk_top_k: Mapped[int] = mapped_column(Integer, default=20)
+    enable_rerank: Mapped[bool] = mapped_column(Boolean, default=True)
+    cosine_better_than_threshold: Mapped[float] = mapped_column(Float, default=0.2)
+    max_total_tokens: Mapped[int] = mapped_column(Integer, default=30000)
+    max_entity_tokens: Mapped[int] = mapped_column(Integer, default=6000)
+    max_relation_tokens: Mapped[int] = mapped_column(Integer, default=8000)
+    enable_llm_cache: Mapped[bool] = mapped_column(Boolean, default=True)
+    enable_llm_cache_for_entity_extract: Mapped[bool] = mapped_column(Boolean, default=True)
+    llm_model_max_async: Mapped[int] = mapped_column(Integer, default=4)
+    embedding_func_max_async: Mapped[int] = mapped_column(Integer, default=8)
+    max_parallel_insert: Mapped[int] = mapped_column(Integer, default=2)
 
 
 class Document(Base, TimestampMixin):

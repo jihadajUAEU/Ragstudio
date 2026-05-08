@@ -7,7 +7,7 @@ async def test_settings_profile_round_trip(client):
         "provider": "openai",
         "llm_model": "gpt-4.1",
         "embedding_model": "text-embedding-3-large",
-        "storage_backend": "sqlite",
+        "storage_backend": "postgres_pgvector_neo4j",
     }
 
     create_response = await client.put("/api/settings/default", json=payload)
@@ -16,7 +16,10 @@ async def test_settings_profile_round_trip(client):
     read_response = await client.get("/api/settings/default")
     assert read_response.status_code == 200
     assert read_response.json()["provider"] == "openai"
-    assert read_response.json()["storage_backend"] == "sqlite"
+    assert read_response.json()["storage_backend"] == "postgres_pgvector_neo4j"
+    assert read_response.json()["runtime_mode"] == "runtime"
+    assert read_response.json()["query_mode"] == "mix"
+    assert read_response.json()["top_k"] == 40
 
 
 @pytest.mark.asyncio
@@ -30,7 +33,7 @@ async def test_settings_profile_saves_llm_config_without_returning_secret(client
         "llm_timeout_ms": 15000,
         "llm_capabilities": ["text", "vision", "reasoning"],
         "embedding_model": "text-embedding-3-large",
-        "storage_backend": "sqlite",
+        "storage_backend": "postgres_pgvector_neo4j",
     }
 
     create_response = await client.put("/api/settings/default", json=payload)
@@ -51,7 +54,7 @@ async def test_settings_profile_saves_vllm_embedding_config_without_returning_se
         "provider": "openai",
         "llm_model": "gpt-4.1",
         "embedding_model": "Qwen/Qwen3-Embedding-8B",
-        "storage_backend": "sqlite",
+        "storage_backend": "postgres_pgvector_neo4j",
         "embedding_provider": "vllm_openai",
         "embedding_base_url": "http://127.0.0.1:8001/v1/",
         "embedding_api_key": "secret-token",
@@ -106,7 +109,7 @@ async def test_embedding_connection_test_validates_vector_dimensions(client, mon
         "provider": "openai",
         "llm_model": "gpt-4.1",
         "embedding_model": "Qwen/Qwen3-Embedding-8B",
-        "storage_backend": "sqlite",
+        "storage_backend": "postgres_pgvector_neo4j",
         "embedding_provider": "vllm_openai",
         "embedding_base_url": "http://127.0.0.1:8001/v1",
         "embedding_api_key": "secret-token",
@@ -174,7 +177,7 @@ async def test_embedding_connection_test_uses_saved_api_key_when_blank(
         "provider": "openai",
         "llm_model": "gpt-4.1",
         "embedding_model": "Qwen/Qwen3-Embedding-8B",
-        "storage_backend": "sqlite",
+        "storage_backend": "postgres_pgvector_neo4j",
         "embedding_provider": "vllm_openai",
         "embedding_base_url": "http://127.0.0.1:8001/v1",
         "embedding_api_key": "saved-secret-token",
@@ -256,7 +259,7 @@ async def test_provider_sync_preview_maps_manifest_without_persisting(client, mo
             "provider": "openai",
             "llm_model": "gpt-4.1",
             "embedding_model": "text-embedding-3-large",
-            "storage_backend": "sqlite",
+            "storage_backend": "postgres_pgvector_neo4j",
         },
     )
 
@@ -426,7 +429,7 @@ async def test_llm_connection_test_calls_chat_completions(client, monkeypatch):
         "llm_timeout_ms": 5000,
         "llm_capabilities": ["text", "vision", "reasoning"],
         "embedding_model": "text-embedding-3-large",
-        "storage_backend": "sqlite",
+        "storage_backend": "postgres_pgvector_neo4j",
     }
 
     response = await client.post("/api/settings/default/test-llm", json=payload)
@@ -486,7 +489,7 @@ async def test_llm_connection_test_uses_saved_api_key_when_blank(client, monkeyp
         "llm_base_url": "http://10.10.9.195:8004/v1",
         "llm_api_key": "saved-llm-secret",
         "embedding_model": "text-embedding-3-large",
-        "storage_backend": "sqlite",
+        "storage_backend": "postgres_pgvector_neo4j",
     }
     test_payload = {key: value for key, value in saved_payload.items() if key != "llm_api_key"}
 
@@ -511,7 +514,7 @@ async def test_settings_profile_saves_mineru_config(client):
         "provider": "openai",
         "llm_model": "gpt-4.1",
         "embedding_model": "text-embedding-3-large",
-        "storage_backend": "sqlite",
+        "storage_backend": "postgres_pgvector_neo4j",
         "mineru_enabled": True,
         "mineru_base_url": "http://127.0.0.1:8765/",
         "mineru_timeout_ms": 120000,
@@ -555,7 +558,7 @@ async def test_mineru_connection_test(client, monkeypatch):
         "provider": "openai",
         "llm_model": "gpt-4.1",
         "embedding_model": "text-embedding-3-large",
-        "storage_backend": "sqlite",
+        "storage_backend": "postgres_pgvector_neo4j",
         "mineru_enabled": True,
         "mineru_base_url": "http://127.0.0.1:8765",
         "mineru_timeout_ms": 2000,
