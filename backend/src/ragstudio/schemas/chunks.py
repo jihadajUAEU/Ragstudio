@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any
 
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, Field, field_validator
 
 from ragstudio.schemas.common import StudioModel
 
@@ -20,6 +20,11 @@ class ChunkOut(StudioModel):
     content_type: str = "text"
     preview_ref: str | None = None
     indexed_at: datetime | None = None
+
+    @field_validator("content_type", mode="before")
+    @classmethod
+    def _default_content_type(cls, value: Any) -> Any:
+        return "text" if value is None or value == "" else value
 
 
 class ChunkSearchIn(StudioModel):
