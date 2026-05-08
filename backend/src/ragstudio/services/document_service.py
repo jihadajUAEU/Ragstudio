@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Any
 
 from ragstudio.db.models import Chunk, Document, Job
 from ragstudio.schemas.common import StageStatus
@@ -109,6 +110,7 @@ class DocumentService:
         document: Document,
         job: Job,
         options: IndexDocumentIn | None = None,
+        on_mineru_status=None,
     ) -> None:
         job.status = StageStatus.RUNNING.value
         job.progress = 50
@@ -117,6 +119,7 @@ class DocumentService:
             document.id,
             options=options,
             commit=False,
+            on_mineru_status=on_mineru_status,
         )
         chunk_count = len(chunks or [])
         document.status = StageStatus.SUCCEEDED.value
@@ -134,3 +137,56 @@ class DocumentService:
         job.progress = 100
         job.logs = [*job.logs, str(exc)]
         job.result = {"document_id": document.id, "error": str(exc)}
+
+    async def run_index_job(
+        self,
+        document_id: str,
+        job_id: str,
+        options: IndexDocumentIn,
+    ) -> None:
+        document = await self.session.get(Document, document_id)
+        job = await self.session.get(Job, job_id)
+        if document is None or job is None:
+            return
+
+        async def on_mineru_status(payload: dict[str, Any]) -> None:
+            status = str(payload.get("status") or "unknown")
+            progress_value = payload.get("progress")
+            progress = progress_value if isinstance(progress_value, int) else None
+            remote_job_id = payload.get("jobId")
+            detail = str(payload.get("detail") or status)
+            job.result = {
+                **job.result,
+                "mineru": {
+                    "job_id": str(remote_job_id) if remote_job_id else None,
+                    "status": status,
+                    "progress": progress,
+                    "detail": detail,
+                    "updated_at": payload.get("updatedAt"),
+                },
+            }
+            if progress is not None:
+                job.progress = max(1, min(progress, 99))
+            job.logs = [*job.logs, f"MinerU {status}: {detail}"][-20:]
+            await self.session.commit()
+
+        try:
+            job.status = StageStatus.RUNNING.value
+            job.progress = max(job.progress, 1)
+            job.logs = [*job.logs, "Indexing document chunks."]
+            document.status = StageStatus.RUNNING.value
+            await self.session.commit()
+            await self._index_document_for_job(
+                document,
+                job,
+                options,
+                on_mineru_status=on_mineru_status,
+            )
+            await self.session.commit()
+        except Exception as exc:
+            document.status = StageStatus.FAILED.value
+            job.status = StageStatus.FAILED.value
+            job.progress = 100
+            job.logs = [*job.logs, str(exc)]
+            job.result = {**job.result, "document_id": document.id, "error": str(exc)}
+            await self.session.commit()

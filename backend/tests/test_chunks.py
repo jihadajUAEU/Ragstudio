@@ -158,7 +158,7 @@ async def test_index_mineru_strict_uses_adapter_chunks(client, monkeypatch):
     )
     document_id = upload_response.json()["id"]
 
-    async def fake_index_document(self, document_id, *, options):
+    async def fake_index_document(self, document_id, *, options, on_mineru_status=None):
         from ragstudio.services.adapter import AdapterChunk
 
         return [

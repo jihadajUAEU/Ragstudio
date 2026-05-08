@@ -57,7 +57,7 @@ async def test_upload_rejects_malformed_domain_metadata(client):
 
 @pytest.mark.asyncio
 async def test_upload_mineru_strict_failure_persists_failed_job(client, monkeypatch):
-    async def fail_index(self, document_id, *, options, commit=True):
+    async def fail_index(self, document_id, *, options, commit=True, on_mineru_status=None):
         raise RuntimeError("MinerU parse failed")
 
     monkeypatch.setattr(
@@ -87,7 +87,7 @@ async def test_duplicate_upload_mineru_strict_failure_persists_failed_job(client
         files={"file": ("paper.pdf", b"%PDF fake", "application/pdf")},
     )
 
-    async def fail_index(self, document_id, *, options, commit=True):
+    async def fail_index(self, document_id, *, options, commit=True, on_mineru_status=None):
         raise RuntimeError("MinerU parse failed")
 
     monkeypatch.setattr(
@@ -136,7 +136,7 @@ async def test_duplicate_upload_with_explicit_default_options_creates_new_job(cl
 
 @pytest.mark.asyncio
 async def test_upload_local_fallback_index_failure_propagates(client, monkeypatch):
-    async def fail_index(self, document_id, *, options, commit=True):
+    async def fail_index(self, document_id, *, options, commit=True, on_mineru_status=None):
         raise RuntimeError("local index bug")
 
     monkeypatch.setattr(
