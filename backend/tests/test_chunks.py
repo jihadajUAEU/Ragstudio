@@ -18,10 +18,10 @@ async def test_index_uploaded_document_creates_line_chunks(client):
     assert chunks[0]["source_location"] == {"line": 1}
     assert chunks[1]["source_location"] == {"line": 3}
     assert chunks[0]["metadata"]["document_id"] == document_id
-    assert chunks[0]["metadata"]["backend"] == "fallback"
-    assert chunks[0]["metadata"]["artifact_ref"]
+    assert chunks[0]["metadata"]["parser_metadata"]["backend"] == "fallback"
+    assert chunks[0]["metadata"]["parser_metadata"]["artifact_ref"]
     assert "artifact_path" not in chunks[0]["metadata"]
-    assert not chunks[0]["metadata"]["artifact_ref"].startswith("/")
+    assert not chunks[0]["metadata"]["parser_metadata"]["artifact_ref"].startswith("/")
 
 
 @pytest.mark.asyncio
@@ -117,3 +117,80 @@ async def test_reindex_replaces_existing_chunks(client):
 
     assert search_response.status_code == 200
     assert search_response.json()["total"] == 2
+
+
+@pytest.mark.asyncio
+async def test_index_local_chunks_copies_domain_metadata(client):
+    upload_response = await client.post(
+        "/api/documents",
+        files={"file": ("hadith.txt", b"Book 1, Hadith 1\n", "text/plain")},
+    )
+    document_id = upload_response.json()["id"]
+
+    response = await client.post(
+        f"/api/chunks/index/{document_id}",
+        json={
+            "parser_mode": "local_fallback",
+            "domain_metadata": {
+                "domain": "hadith",
+                "document_type": "collection",
+                "language": "mixed",
+                "tags": ["hadith"],
+                "collection": "Sahih al-Bukhari",
+                "metadata_sources": ["profile", "user"],
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    metadata = response.json()[0]["metadata"]
+    assert metadata["domain_metadata"]["domain"] == "hadith"
+    assert metadata["domain_metadata"]["collection"] == "Sahih al-Bukhari"
+    assert metadata["parser_metadata"]["backend"] == "fallback"
+    assert metadata["parser_metadata"]["parser_mode"] == "local_fallback"
+
+
+@pytest.mark.asyncio
+async def test_index_mineru_strict_uses_adapter_chunks(client, monkeypatch):
+    upload_response = await client.post(
+        "/api/documents",
+        files={"file": ("paper.pdf", b"%PDF fake", "application/pdf")},
+    )
+    document_id = upload_response.json()["id"]
+
+    async def fake_index_document(self, document_id, *, options):
+        from ragstudio.services.adapter import AdapterChunk
+
+        return [
+            AdapterChunk(
+                text="MinerU text",
+                source_location={"page": 1, "artifact": "pages/page-1.md"},
+                metadata={
+                    "parser_metadata": {
+                        "backend": "mineru",
+                        "parser_mode": "mineru_strict",
+                        "parse_job_id": "job-1",
+                        "content_type": "text",
+                    }
+                },
+            )
+        ]
+
+    monkeypatch.setattr(
+        "ragstudio.services.chunk_service.ChunkService._mineru_adapter_chunks",
+        fake_index_document,
+    )
+
+    response = await client.post(
+        f"/api/chunks/index/{document_id}",
+        json={
+            "parser_mode": "mineru_strict",
+            "domain_metadata": {"domain": "research", "document_type": "paper"},
+        },
+    )
+
+    assert response.status_code == 200
+    chunk = response.json()[0]
+    assert chunk["text"] == "MinerU text"
+    assert chunk["metadata"]["domain_metadata"]["domain"] == "research"
+    assert chunk["metadata"]["parser_metadata"]["backend"] == "mineru"

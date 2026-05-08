@@ -3,6 +3,7 @@ from pathlib import Path
 from ragstudio.db.models import Chunk, Document, Job
 from ragstudio.schemas.common import StageStatus
 from ragstudio.schemas.documents import DocumentOut
+from ragstudio.schemas.parsing import IndexDocumentIn
 from ragstudio.services.artifact_store import ArtifactStore
 from ragstudio.services.chunk_service import ChunkService
 from ragstudio.services.job_worker import JobWorker
@@ -16,11 +17,18 @@ class DocumentService:
         self.session = session
         self.store = ArtifactStore(data_dir)
 
-    async def upload(self, filename: str, content_type: str, content: bytes) -> DocumentOut:
+    async def upload(
+        self,
+        filename: str,
+        content_type: str,
+        content: bytes,
+        *,
+        options: IndexDocumentIn | None = None,
+    ) -> DocumentOut:
         digest, artifact_path = self.store.prepare_upload(filename, content)
         existing = await self.session.scalar(select(Document).where(Document.sha256 == digest))
         if existing is not None:
-            await self._ensure_indexed(existing)
+            await self._ensure_indexed(existing, options)
             return DocumentOut.model_validate(existing)
 
         _, artifact_path = self.store.write_upload(filename, content)
@@ -37,7 +45,7 @@ class DocumentService:
             job = JobWorker.build("index_document", document.id)
             self.session.add(job)
             await self.session.flush()
-            await self._index_document_for_job(document, job)
+            await self._index_document_for_job(document, job, options)
             await self.session.commit()
         except IntegrityError:
             await self.session.rollback()
@@ -55,11 +63,15 @@ class DocumentService:
         result = await self.session.execute(select(Document).order_by(Document.created_at.desc()))
         return [DocumentOut.model_validate(item) for item in result.scalars().all()]
 
-    async def _ensure_indexed(self, document: Document) -> None:
+    async def _ensure_indexed(
+        self,
+        document: Document,
+        options: IndexDocumentIn | None = None,
+    ) -> None:
         existing_chunk_id = await self.session.scalar(
             select(Chunk.id).where(Chunk.document_id == document.id).limit(1)
         )
-        if existing_chunk_id is not None:
+        if existing_chunk_id is not None and options is None:
             return
 
         existing_job = await self.session.scalar(
@@ -72,16 +84,23 @@ class DocumentService:
         if existing_job is None:
             self.session.add(job)
             await self.session.flush()
-        await self._index_document_for_job(document, job)
+        await self._index_document_for_job(document, job, options)
         await self.session.commit()
         await self.session.refresh(document)
 
-    async def _index_document_for_job(self, document: Document, job: Job) -> None:
+    async def _index_document_for_job(
+        self,
+        document: Document,
+        job: Job,
+        options: IndexDocumentIn | None = None,
+    ) -> None:
         job.status = StageStatus.RUNNING.value
         job.progress = 50
         job.logs = [*job.logs, "Indexing document chunks."]
         chunks = await ChunkService(self.session, self.store.root).index_document(
-            document.id, commit=False
+            document.id,
+            options=options,
+            commit=False,
         )
         chunk_count = len(chunks or [])
         document.status = StageStatus.SUCCEEDED.value

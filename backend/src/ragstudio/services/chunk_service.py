@@ -2,9 +2,11 @@ import re
 from pathlib import Path, PureWindowsPath
 from typing import Any
 
-from ragstudio.db.models import Chunk, Document
+from ragstudio.db.models import Chunk, Document, SettingsProfile
 from ragstudio.schemas.chunks import ChunkOut, ChunkSearchIn, ChunkSearchOut
-from ragstudio.services.adapter import RAGAnythingAdapter
+from ragstudio.schemas.parsing import DomainMetadata, IndexDocumentIn, ParserMode
+from ragstudio.services.adapter import AdapterChunk, RAGAnythingAdapter
+from ragstudio.services.mineru_client import MinerUClient
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,13 +23,18 @@ class ChunkService:
         self.adapter = adapter or RAGAnythingAdapter()
 
     async def index_document(
-        self, document_id: str, *, commit: bool = True
+        self,
+        document_id: str,
+        *,
+        options: IndexDocumentIn | None = None,
+        commit: bool = True,
     ) -> list[ChunkOut] | None:
         document = await self.session.get(Document, document_id)
         if document is None:
             return None
 
-        adapter_chunks = await self.adapter.index_document(document.artifact_path)
+        options = options or IndexDocumentIn()
+        adapter_chunks = await self._adapter_chunks(document, options)
         await self.session.execute(delete(Chunk).where(Chunk.document_id == document.id))
 
         chunks = [
@@ -35,7 +42,14 @@ class ChunkService:
                 document_id=document.id,
                 text=adapter_chunk.text,
                 source_location=adapter_chunk.source_location,
-                metadata_json=self._safe_metadata(adapter_chunk.metadata, document.id),
+                metadata_json=self._safe_metadata(
+                    self._merge_metadata(
+                        adapter_chunk.metadata,
+                        options.domain_metadata,
+                        options.parser_mode,
+                    ),
+                    document.id,
+                ),
             )
             for adapter_chunk in adapter_chunks
         ]
@@ -48,6 +62,63 @@ class ChunkService:
         for chunk in chunks:
             await self.session.refresh(chunk)
         return [ChunkOut.model_validate(chunk) for chunk in chunks]
+
+    async def _adapter_chunks(self, document: Document, options: IndexDocumentIn) -> list[AdapterChunk]:
+        if options.parser_mode == "local_fallback":
+            return await self.adapter.index_document(document.artifact_path)
+        try:
+            return await self._mineru_adapter_chunks(document.id, options=options)
+        except Exception as exc:
+            if options.parser_mode == "mineru_strict":
+                raise
+            chunks = await self.adapter.index_document(document.artifact_path)
+            return [
+                AdapterChunk(
+                    text=chunk.text,
+                    source_location=chunk.source_location,
+                    metadata={
+                        **chunk.metadata,
+                        "parser_metadata": {
+                            "backend": "fallback",
+                            "parser_mode": "mineru_with_fallback",
+                            "mineru_error": str(exc),
+                            "fallback_used": True,
+                        },
+                    },
+                )
+                for chunk in chunks
+            ]
+
+    async def _mineru_adapter_chunks(
+        self,
+        document_id: str,
+        *,
+        options: IndexDocumentIn,
+    ) -> list[AdapterChunk]:
+        document = await self.session.get(Document, document_id)
+        if document is None:
+            return []
+        settings = await self.session.get(SettingsProfile, "default")
+        if settings is None or not settings.mineru_base_url:
+            raise RuntimeError("MinerU base URL is not configured.")
+        client = MinerUClient(
+            base_url=settings.mineru_base_url,
+            timeout_ms=settings.mineru_timeout_ms or 1_800_000,
+            poll_interval_ms=settings.mineru_poll_interval_ms or 1_000,
+        )
+        artifact_dir = self.data_dir / "mineru-artifacts" / document.id
+        job_result = await client.parse_document(
+            artifact_path=document.artifact_path,
+            document_id=document.id,
+            artifact_dir=artifact_dir,
+        )
+        return client.normalize_artifact_zip(
+            artifact_zip=job_result.artifact_zip,
+            extract_dir=artifact_dir / "extracted",
+            document_id=document.id,
+            parser_mode=options.parser_mode,
+            parse_job_id=job_result.parse_job_id,
+        )
 
     async def search(self, search_in: ChunkSearchIn) -> ChunkSearchOut:
         limit = max(search_in.limit, 0)
@@ -89,6 +160,28 @@ class ChunkService:
         }
         safe["document_id"] = document_id
         return safe
+
+    def _merge_metadata(
+        self,
+        parser_metadata: dict[str, Any],
+        domain_metadata: DomainMetadata,
+        parser_mode: ParserMode,
+    ) -> dict[str, Any]:
+        metadata = dict(parser_metadata)
+        metadata["domain_metadata"] = domain_metadata.model_dump(exclude_none=True)
+        if "parser_metadata" not in metadata:
+            metadata["parser_metadata"] = {
+                "backend": metadata.get("backend", "fallback"),
+                "parser_mode": parser_mode,
+                "artifact_ref": metadata.get("artifact_ref"),
+                "chunk_index": metadata.get("chunk_index"),
+                "source_type": metadata.get("source_type"),
+            }
+        metadata.pop("backend", None)
+        metadata.pop("artifact_ref", None)
+        metadata.pop("chunk_index", None)
+        metadata.pop("source_type", None)
+        return metadata
 
     def _is_absolute_path_value(self, value: Any) -> bool:
         if not isinstance(value, str):
