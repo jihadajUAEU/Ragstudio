@@ -104,6 +104,68 @@ async def test_run_index_job_marks_strict_mineru_failure(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_run_index_job_preserves_mineru_status_on_success(tmp_path, monkeypatch):
+    engine = make_engine(f"sqlite+aiosqlite:///{tmp_path / 'studio.sqlite3'}")
+    session_factory = make_session_factory(engine)
+    await init_db(engine)
+
+    async with session_factory() as session:
+        artifact = tmp_path / "quran.pdf"
+        artifact.write_bytes(b"%PDF-1.4")
+        document = Document(
+            filename="quran_arabic_english.pdf",
+            content_type="application/pdf",
+            sha256="strict-success-sha",
+            artifact_path=str(artifact),
+            status="ready",
+        )
+        session.add(document)
+        await session.flush()
+        job = Job(type="index_document", target_id=document.id, status="ready", progress=0)
+        session.add(job)
+        await session.commit()
+
+        async def fake_index_document(
+            self,
+            document_id,
+            *,
+            options=None,
+            commit=True,
+            on_mineru_status=None,
+        ):
+            if on_mineru_status is not None:
+                await on_mineru_status(
+                    {
+                        "jobId": "remote-ready",
+                        "status": "ready",
+                        "progress": 100,
+                        "detail": "MinerU artifacts ready.",
+                        "updatedAt": "2026-05-08T09:00:00Z",
+                    }
+                )
+            return [object(), object(), object()]
+
+        monkeypatch.setattr(ChunkService, "index_document", fake_index_document)
+
+        service = DocumentService(session, tmp_path)
+        await service.run_index_job(
+            document.id,
+            job.id,
+            IndexDocumentIn(parser_mode="mineru_strict"),
+        )
+
+        refreshed_job = await session.get(Job, job.id)
+
+    await engine.dispose()
+
+    assert refreshed_job is not None
+    assert refreshed_job.status == "succeeded"
+    assert refreshed_job.result["chunk_count"] == 3
+    assert refreshed_job.result["mineru"]["job_id"] == "remote-ready"
+    assert refreshed_job.result["mineru"]["status"] == "ready"
+
+
+@pytest.mark.asyncio
 async def test_create_strict_reindex_job_returns_immediately(client, monkeypatch):
     upload_response = await client.post(
         "/api/documents",

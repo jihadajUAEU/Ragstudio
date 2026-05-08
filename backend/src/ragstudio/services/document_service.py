@@ -136,7 +136,7 @@ class DocumentService:
         document.status = StageStatus.SUCCEEDED.value
         job.status = StageStatus.SUCCEEDED.value
         job.progress = 100
-        job.result = {"document_id": document.id, "chunk_count": chunk_count}
+        job.result = {**job.result, "document_id": document.id, "chunk_count": chunk_count}
         job.logs = [*job.logs, f"Indexed {chunk_count} chunks."]
 
     def _should_persist_index_failure(self, options: IndexDocumentIn | None) -> bool:
