@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from ragstudio.config import AppSettings
 from ragstudio.db.models import Document, EvaluationSet, Experiment, Run, Variant
 from ragstudio.schemas.evaluation import EvaluationCaseIn
 from ragstudio.schemas.experiments import ExperimentIn, ExperimentOut, ExperimentScoreOut
@@ -16,9 +17,16 @@ class EvaluationSetNotFoundError(LookupError):
 
 
 class ExperimentService:
-    def __init__(self, session: AsyncSession, data_dir: Path):
+    def __init__(
+        self,
+        session: AsyncSession,
+        data_dir: Path,
+        *,
+        settings: AppSettings | None = None,
+    ):
         self.session = session
         self.data_dir = data_dir
+        self.settings = settings
 
     async def create(self, payload: ExperimentIn) -> ExperimentOut:
         evaluation_set = await self.session.get(EvaluationSet, payload.evaluation_set_id)
@@ -35,7 +43,7 @@ class ExperimentService:
 
         runs: list[RunOut] = []
         scores: list[ExperimentScoreOut] = []
-        query_service = QueryService(self.session, self.data_dir)
+        query_service = QueryService(self.session, self.data_dir, settings=self.settings)
         scoring_service = ScoringService(self.session)
 
         for case in cases:

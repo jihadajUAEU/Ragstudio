@@ -13,6 +13,8 @@ docker compose up -d postgres neo4j
 
 The backend setup installs `raganything[all]`. If you skip setup, Studio still runs
 with a local fallback adapter and the Diagnostics page will show a warning.
+Runtime mode currently lands the store/profile/health/index/query foundation; the
+native RAG-Anything adapter remains blocked in Diagnostics until implemented.
 
 ```bash
 ./scripts/dev.sh

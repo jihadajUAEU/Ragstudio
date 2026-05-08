@@ -30,16 +30,16 @@ The dev script starts FastAPI on `http://127.0.0.1:8000` and Vite on `http://127
 
 The backend targets local Postgres/PGVector and Neo4j runtime stores by default, while uploaded artifacts and runtime working files remain under `.ragstudio/`.
 
-## Fallback vs `raganything[all]`
+## Runtime Foundation vs Fallback
 
-Studio isolates upstream RAG-Anything calls behind `RAGAnythingAdapter`. The adapter checks whether the `raganything` Python package can be imported.
+Studio isolates upstream RAG-Anything calls behind a runtime adapter boundary. This branch provides the production store/profile/health/index/query seams, while the native upstream RAG-Anything adapter mapping is still intentionally blocked until it is implemented and verified.
 
 ```mermaid
 flowchart LR
   setup["./scripts/setup.sh"] --> deps["backend[dev]"]
-  deps --> package["raganything[all] dependency"]
+  deps --> package["raganything[all] and lightrag dependencies"]
   package --> diagnostics["Diagnostics page"]
-  diagnostics --> ready["raganything: available"]
+  diagnostics --> ready["runtime health checks"]
   diagnostics --> fallback["fallback_active: true"]
 ```
 
@@ -48,11 +48,11 @@ With the fallback adapter active:
 - Document indexing uses a line-splitting fallback and stores one chunk per non-empty line.
 - Query generation returns a simple answer built from selected chunks.
 - Graph responses are placeholder-backed and can return no nodes or edges.
-- Diagnostics reports `raganything` as `missing` and shows a warning with the install command.
+- Diagnostics reports missing or non-importable runtime dependencies and shows the relevant remediation.
 
-When `raganything` is installed, the dependency warning clears. The current adapter boundary can still report `active_backend: fallback` for execution paths that have not yet been wired to upstream RAG-Anything APIs.
+When `runtime_mode` is set to `runtime`, indexing and query routes use the saved runtime profile, runtime health checks, index readiness checks, and mirrored chunk/index records. Until the native RAG-Anything adapter is completed, Diagnostics reports `native_runtime_adapter` as a blocking check rather than silently running fallback behavior under a runtime label.
 
-Use the Diagnostics page to verify the active mode. It shows Capabilities, Dependencies, Warnings, and Raw diagnostics from `/api/diagnostics`.
+Use the Diagnostics page to verify the active mode. It shows runtime status, health checks, capabilities, dependency status, warnings, and raw diagnostics from `/api/diagnostics`.
 
 ## Configure Defaults
 
@@ -84,6 +84,8 @@ Click **Test connection** to validate a vLLM/OpenAI-compatible embeddings endpoi
 Click **Save** to persist the default profile through `PUT /api/settings/default`. Saved LLM and embedding API keys are masked in responses. Click **Reload** to refetch the saved profile. If no profile exists yet, the page shows `No default profile saved`.
 
 These defaults are stored as the `default` settings profile. Runtime indexing and query execution use that profile when backend settings are available; direct fallback behavior remains explicit through `runtime_mode="fallback"` or through legacy paths that are called without runtime settings.
+
+On a fresh install, Settings opens with editable defaults even before a profile has been saved. Save the first profile before enabling runtime indexing or runtime query paths.
 
 For UAEU HPC vLLM embeddings, prefer the Meeting Copilot/model-training pattern: run the vLLM job on the cluster, expose the service through an SSH tunnel or stable internal alias, then configure Studio with a local URL such as `http://127.0.0.1:8001/v1` and the served model name.
 
@@ -367,6 +369,7 @@ Use Diagnostics when:
 - The graph is empty and you need to know whether graph support is available.
 - Query or indexing behavior looks like fallback behavior.
 - You need to confirm whether `raganything` is available in the current Python environment.
+- You need to confirm whether runtime mode is blocked by the unfinished native adapter mapping.
 
 ## Use the Pipeline View
 

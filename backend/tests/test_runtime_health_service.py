@@ -82,6 +82,25 @@ async def test_runtime_health_skips_disabled_reranker():
 
 
 @pytest.mark.asyncio
+async def test_runtime_health_skips_native_checks_in_fallback_mode():
+    checks = await RuntimeHealthService().check(profile(runtime_mode="fallback"))
+
+    assert [item.name for item in checks] == ["runtime_mode"]
+    assert checks[0].status == "skipped"
+    assert RuntimeHealthService().blocking_failures(checks) == []
+
+
+@pytest.mark.asyncio
+async def test_runtime_health_blocks_until_native_adapter_is_implemented():
+    checks = await RuntimeHealthService().check(profile())
+
+    adapter = next(item for item in checks if item.name == "native_runtime_adapter")
+    assert adapter.status == "failed"
+    assert adapter.severity == "blocking"
+    assert adapter.error_type == "runtime_adapter_not_implemented"
+
+
+@pytest.mark.asyncio
 async def test_runtime_health_reports_missing_profile_as_blocking():
     checks = await RuntimeHealthService().check(None)
 

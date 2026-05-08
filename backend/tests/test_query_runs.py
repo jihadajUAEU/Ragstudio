@@ -1,4 +1,44 @@
 import pytest
+from ragstudio.db.models import Document, IndexRecord, SettingsProfile, Variant
+from ragstudio.schemas.common import StageStatus
+from ragstudio.services.runtime_types import RuntimeQueryResult
+
+
+class FakeRuntime:
+    async def query(self, query, *, document_ids, query_config):
+        return RuntimeQueryResult(
+            answer=f"runtime route: {query}",
+            sources=[{"document_id": document_ids[0]}],
+            chunk_traces=[{"rank": 1, "inclusion_status": "prompt-included"}],
+            reranker_traces=[{"rank": 1, "score": 0.75}],
+            timings={"runtime_query_ms": 3},
+            token_metadata={"prompt_tokens": 9},
+        )
+
+    async def index_document(self, artifact_path):
+        return []
+
+    async def delete_document_index(self, document_id):
+        return None
+
+    def capability_report(self):
+        return {"active_backend": "runtime", "raganything_available": True}
+
+
+class FakeRuntimeFactory:
+    def __init__(self):
+        self.runtime = FakeRuntime()
+
+    def build(self, profile):
+        return self.runtime
+
+
+class PassingHealthService:
+    async def check(self, profile):
+        return []
+
+    def blocking_failures(self, checks):
+        return []
 
 
 @pytest.mark.asyncio
@@ -135,3 +175,70 @@ async def test_query_creates_one_run_per_variant(client):
 
     persisted_runs = await client.get("/api/runs")
     assert persisted_runs.json()["total"] == 2
+
+
+@pytest.mark.asyncio
+async def test_query_route_uses_runtime_profile_when_configured(client, monkeypatch):
+    monkeypatch.setattr(
+        "ragstudio.services.query_service.RAGAnythingRuntimeFactory",
+        FakeRuntimeFactory,
+    )
+    monkeypatch.setattr(
+        "ragstudio.services.query_service.RuntimeHealthService",
+        PassingHealthService,
+    )
+    app = client._transport.app
+    async with app.state.session_factory() as session:
+        session.add(
+            SettingsProfile(
+                id="default",
+                provider="openai-compatible",
+                llm_model="gpt-4o",
+                llm_base_url="http://127.0.0.1:8004/v1",
+                embedding_model="text-embedding-3-large",
+                embedding_base_url="http://127.0.0.1:8001/v1",
+                storage_backend="postgres_pgvector_neo4j",
+                runtime_mode="runtime",
+            )
+        )
+        document = Document(
+            filename="runtime.txt",
+            content_type="text/plain",
+            sha256="runtime-route-query",
+            artifact_path=str(app.state.settings.data_dir / "runtime.txt"),
+            status=StageStatus.SUCCEEDED.value,
+        )
+        variant = Variant(name="Runtime Route", preset="balanced", parameters={"top_k": 7})
+        session.add_all([document, variant])
+        await session.flush()
+        session.add(
+            IndexRecord(
+                document_id=document.id,
+                runtime_profile_id="default",
+                status=StageStatus.SUCCEEDED.value,
+                index_shape={},
+                chunk_count=1,
+            )
+        )
+        await session.commit()
+        document_id = document.id
+        variant_id = variant.id
+
+    response = await client.post(
+        "/api/query",
+        json={
+            "query": "runtime question",
+            "document_ids": [document_id],
+            "variant_ids": [variant_id],
+        },
+    )
+
+    assert response.status_code == 200
+    run = response.json()["runs"][0]
+    assert run["status"] == "succeeded"
+    assert run["answer"] == "runtime route: runtime question"
+    assert run["runtime_profile_id"] == "default"
+    assert run["query_config"]["top_k"] == 7
+    assert run["query_config"]["parser"] == "mineru"
+    assert run["reranker_traces"][0]["score"] == 0.75
+    assert run["token_metadata"]["prompt_tokens"] == 9

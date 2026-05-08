@@ -8,9 +8,8 @@ from ragstudio.app import create_app
 
 @pytest_asyncio.fixture
 async def client(tmp_path) -> AsyncIterator[AsyncClient]:
-    database_url = os.environ.get(
-        "RAGSTUDIO_TEST_DATABASE_URL",
-        f"sqlite+aiosqlite:///{tmp_path / 'test.sqlite3'}",
+    database_url = os.environ.get("RAGSTUDIO_TEST_DATABASE_URL") or (
+        f"sqlite+aiosqlite:///{tmp_path / 'test.sqlite3'}"
     )
     app = create_app(data_dir=tmp_path, database_url=database_url)
     transport = ASGITransport(app=app)

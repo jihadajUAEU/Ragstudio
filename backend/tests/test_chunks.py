@@ -1,8 +1,45 @@
 import pytest
 import pytest_asyncio
-from ragstudio.db.models import SettingsProfile
+from ragstudio.db.models import Chunk, Document, IndexRecord, SettingsProfile
+from ragstudio.schemas.common import StageStatus
 from ragstudio.schemas.parsing import IndexDocumentIn
 from ragstudio.services.chunk_service import ChunkService
+from ragstudio.services.runtime_types import RuntimeChunk
+from sqlalchemy import select
+
+
+class FakeRuntime:
+    async def delete_document_index(self, document_id):
+        return None
+
+    async def index_document(self, artifact_path):
+        return [
+            RuntimeChunk(
+                text="runtime persisted chunk",
+                source_location={"page": 1},
+                metadata={"score": 1.0},
+                runtime_source_id="runtime-source-1",
+            )
+        ]
+
+    async def query(self, query, *, document_ids, query_config):
+        raise NotImplementedError
+
+    def capability_report(self):
+        return {"active_backend": "runtime", "raganything_available": True}
+
+
+class FakeRuntimeFactory:
+    def build(self, profile):
+        return FakeRuntime()
+
+
+class PassingHealthService:
+    async def check(self, profile):
+        return []
+
+    def blocking_failures(self, checks):
+        return []
 
 
 @pytest_asyncio.fixture(autouse=True)
@@ -217,3 +254,90 @@ async def test_index_mineru_strict_uses_adapter_chunks(client, monkeypatch):
     assert chunk.text == "MinerU text"
     assert chunk.metadata["domain_metadata"]["domain"] == "research"
     assert chunk.metadata["parser_metadata"]["backend"] == "mineru"
+
+
+@pytest.mark.asyncio
+async def test_runtime_index_route_persists_chunks_and_index_record(client, monkeypatch):
+    monkeypatch.setattr(
+        "ragstudio.services.index_lifecycle_service.RAGAnythingRuntimeFactory",
+        FakeRuntimeFactory,
+    )
+    monkeypatch.setattr(
+        "ragstudio.services.index_lifecycle_service.RuntimeHealthService",
+        PassingHealthService,
+    )
+    app = client._transport.app
+    artifact_path = app.state.settings.data_dir / "runtime-index.txt"
+    artifact_path.write_text("runtime text", encoding="utf-8")
+    async with app.state.session_factory() as session:
+        profile = await session.get(SettingsProfile, "default")
+        assert profile is not None
+        profile.provider = "openai-compatible"
+        profile.llm_model = "gpt-4o"
+        profile.llm_base_url = "http://127.0.0.1:8004/v1"
+        profile.embedding_model = "text-embedding-3-large"
+        profile.embedding_base_url = "http://127.0.0.1:8001/v1"
+        profile.storage_backend = "postgres_pgvector_neo4j"
+        profile.runtime_mode = "runtime"
+        document = Document(
+            filename="runtime-index.txt",
+            content_type="text/plain",
+            sha256="runtime-index-route",
+            artifact_path=str(artifact_path),
+            status=StageStatus.READY.value,
+        )
+        session.add(document)
+        await session.commit()
+        document_id = document.id
+
+    response = await client.post(f"/api/chunks/index/{document_id}")
+
+    assert response.status_code == 200
+    assert response.json()[0]["runtime_profile_id"] == "default"
+    async with app.state.session_factory() as session:
+        chunks = (
+            await session.execute(select(Chunk).where(Chunk.document_id == document_id))
+        ).scalars().all()
+        records = (
+            await session.execute(
+                select(IndexRecord).where(IndexRecord.document_id == document_id)
+            )
+        ).scalars().all()
+
+    assert [chunk.text for chunk in chunks] == ["runtime persisted chunk"]
+    assert chunks[0].runtime_source_id == "runtime-source-1"
+    assert len(records) == 1
+    assert records[0].runtime_profile_id == "default"
+    assert records[0].chunk_count == 1
+
+
+@pytest.mark.asyncio
+async def test_runtime_index_route_reports_blocking_health_as_conflict(client):
+    app = client._transport.app
+    artifact_path = app.state.settings.data_dir / "runtime-blocked.txt"
+    artifact_path.write_text("runtime text", encoding="utf-8")
+    async with app.state.session_factory() as session:
+        profile = await session.get(SettingsProfile, "default")
+        assert profile is not None
+        profile.provider = "openai-compatible"
+        profile.llm_model = "gpt-4o"
+        profile.llm_base_url = "http://127.0.0.1:8004/v1"
+        profile.embedding_model = "text-embedding-3-large"
+        profile.embedding_base_url = "http://127.0.0.1:8001/v1"
+        profile.storage_backend = "postgres_pgvector_neo4j"
+        profile.runtime_mode = "runtime"
+        document = Document(
+            filename="runtime-blocked.txt",
+            content_type="text/plain",
+            sha256="runtime-blocked-route",
+            artifact_path=str(artifact_path),
+            status=StageStatus.READY.value,
+        )
+        session.add(document)
+        await session.commit()
+        document_id = document.id
+
+    response = await client.post(f"/api/chunks/index/{document_id}")
+
+    assert response.status_code == 409
+    assert "native_runtime_adapter" in response.json()["detail"]

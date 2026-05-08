@@ -11,6 +11,63 @@ const queryKeys = {
 } as const;
 
 const DEFAULT_MANIFEST_URL = "https://updates.jihadaj.com/providers.json";
+const DEFAULT_FORM_VALUES: SettingsProfileIn = {
+  provider: "openai-compatible",
+  llm_provider: "openai_compatible",
+  llm_model: "gpt-4o-mini",
+  llm_base_url: "",
+  llm_timeout_ms: 10000,
+  llm_capabilities: [],
+  embedding_model: "fallback",
+  storage_backend: "postgres_pgvector_neo4j",
+  embedding_provider: "fallback",
+  embedding_base_url: "",
+  embedding_timeout_ms: 10000,
+  embedding_dimensions: 1536,
+  embedding_batch_size: 16,
+  embedding_tls_verify: true,
+  mineru_enabled: false,
+  mineru_base_url: "",
+  mineru_timeout_ms: 1_800_000,
+  mineru_poll_interval_ms: 1_000,
+  runtime_mode: "runtime",
+  vision_model: "",
+  vision_base_url: "",
+  vision_timeout_ms: 10000,
+  reranker_provider: "disabled",
+  reranker_model: "",
+  reranker_base_url: "",
+  reranker_timeout_ms: 10000,
+  pgvector_schema: "public",
+  pgvector_table_prefix: "ragstudio",
+  neo4j_uri: "bolt://127.0.0.1:57687",
+  neo4j_username: "neo4j",
+  parser: "mineru",
+  parse_method: "auto",
+  chunk_token_size: 1200,
+  chunk_overlap_token_size: 100,
+  enable_image_processing: true,
+  enable_table_processing: true,
+  enable_equation_processing: true,
+  context_window: 1,
+  context_mode: "page",
+  max_context_tokens: 2000,
+  include_headers: true,
+  include_captions: true,
+  query_mode: "mix",
+  top_k: 40,
+  chunk_top_k: 20,
+  enable_rerank: true,
+  cosine_better_than_threshold: 0.2,
+  max_total_tokens: 30000,
+  max_entity_tokens: 6000,
+  max_relation_tokens: 8000,
+  enable_llm_cache: true,
+  enable_llm_cache_for_entity_extract: true,
+  llm_model_max_async: 4,
+  embedding_func_max_async: 8,
+  max_parallel_insert: 2,
+};
 
 export function SettingsPage() {
   const queryClient = useQueryClient();
@@ -25,7 +82,13 @@ export function SettingsPage() {
       error instanceof ApiError && error.status === 404 ? false : failureCount < 2,
   });
 
-  const loadedValues = settingsQuery.data ? settingsToFormValues(settingsQuery.data) : null;
+  const settingsMissing =
+    settingsQuery.error instanceof ApiError && settingsQuery.error.status === 404;
+  const loadedValues = settingsQuery.data
+    ? settingsToFormValues(settingsQuery.data)
+    : settingsMissing
+      ? DEFAULT_FORM_VALUES
+      : null;
   const formValues = formOverride ?? loadedValues;
 
   const updateSettings = useMutation({

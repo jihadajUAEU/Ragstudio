@@ -2,7 +2,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from ragstudio.config import AppSettings
-from ragstudio.db.models import Chunk, Document, Job
+from ragstudio.db.models import Chunk, Document, IndexRecord, Job
 from ragstudio.schemas.common import StageStatus
 from ragstudio.schemas.documents import DocumentOut
 from ragstudio.schemas.parsing import IndexDocumentIn
@@ -10,6 +10,7 @@ from ragstudio.services.artifact_store import ArtifactStore
 from ragstudio.services.chunk_service import ChunkService
 from ragstudio.services.index_lifecycle_service import IndexLifecycleService
 from ragstudio.services.job_worker import JobWorker
+from ragstudio.services.runtime_profile_service import RuntimeProfileNotConfiguredError
 from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -96,6 +97,9 @@ class DocumentService:
         await self.session.execute(
             delete(Job).where(Job.type == "index_document", Job.target_id == document.id)
         )
+        await self.session.execute(
+            delete(IndexRecord).where(IndexRecord.document_id == document.id)
+        )
         await self.session.delete(document)
         try:
             artifact_path.unlink(missing_ok=True)
@@ -162,10 +166,18 @@ class DocumentService:
         job.progress = 50
         job.logs = [*job.logs, "Indexing document chunks."]
         if self.settings is not None:
-            chunks = await IndexLifecycleService(
-                self.session,
-                self.settings,
-            ).reindex_document(document.id, options=options)
+            try:
+                chunks = await IndexLifecycleService(
+                    self.session,
+                    self.settings,
+                ).reindex_document(document.id, options=options)
+            except RuntimeProfileNotConfiguredError:
+                chunks = await ChunkService(self.session, self.store.root).index_document(
+                    document.id,
+                    options=options,
+                    commit=False,
+                    on_mineru_status=on_mineru_status,
+                )
         else:
             chunks = await ChunkService(self.session, self.store.root).index_document(
                 document.id,

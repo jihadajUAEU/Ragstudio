@@ -2,10 +2,45 @@ import json
 from pathlib import Path
 
 import pytest
-from ragstudio.db.models import Document, Job
+from ragstudio.db.models import Document, IndexRecord, Job, SettingsProfile
 from ragstudio.schemas.common import StageStatus
 from ragstudio.services.document_service import DocumentService
+from ragstudio.services.runtime_types import RuntimeChunk
 from sqlalchemy import select
+
+
+class FakeRuntime:
+    async def delete_document_index(self, document_id):
+        return None
+
+    async def index_document(self, artifact_path):
+        return [
+            RuntimeChunk(
+                text="upload runtime chunk",
+                source_location={"page": 1},
+                metadata={},
+                runtime_source_id="upload-runtime-1",
+            )
+        ]
+
+    async def query(self, query, *, document_ids, query_config):
+        raise NotImplementedError
+
+    def capability_report(self):
+        return {"active_backend": "runtime", "raganything_available": True}
+
+
+class FakeRuntimeFactory:
+    def build(self, profile):
+        return FakeRuntime()
+
+
+class PassingHealthService:
+    async def check(self, profile):
+        return []
+
+    def blocking_failures(self, checks):
+        return []
 
 
 @pytest.mark.asyncio
@@ -140,6 +175,49 @@ async def test_duplicate_upload_with_explicit_default_options_creates_new_job(cl
 
 
 @pytest.mark.asyncio
+async def test_upload_uses_runtime_index_lifecycle_when_profile_exists(client, monkeypatch):
+    monkeypatch.setattr(
+        "ragstudio.services.index_lifecycle_service.RAGAnythingRuntimeFactory",
+        FakeRuntimeFactory,
+    )
+    monkeypatch.setattr(
+        "ragstudio.services.index_lifecycle_service.RuntimeHealthService",
+        PassingHealthService,
+    )
+    app = client._transport.app
+    async with app.state.session_factory() as session:
+        session.add(
+            SettingsProfile(
+                id="default",
+                provider="openai-compatible",
+                llm_model="gpt-4o",
+                llm_base_url="http://127.0.0.1:8004/v1",
+                embedding_model="text-embedding-3-large",
+                embedding_base_url="http://127.0.0.1:8001/v1",
+                storage_backend="postgres_pgvector_neo4j",
+                runtime_mode="runtime",
+            )
+        )
+        await session.commit()
+
+    response = await client.post(
+        "/api/documents",
+        files={"file": ("runtime-upload.txt", b"runtime upload", "text/plain")},
+    )
+
+    assert response.status_code == 201
+    document_id = response.json()["id"]
+    async with app.state.session_factory() as session:
+        record = await session.scalar(
+            select(IndexRecord).where(IndexRecord.document_id == document_id)
+        )
+
+    assert record is not None
+    assert record.runtime_profile_id == "default"
+    assert record.chunk_count == 1
+
+
+@pytest.mark.asyncio
 async def test_upload_local_fallback_index_failure_propagates(client, monkeypatch):
     async def fail_index(self, document_id, *, options, commit=True, on_mineru_status=None):
         raise RuntimeError("local index bug")
@@ -199,6 +277,44 @@ async def test_delete_document_removes_document_chunks_jobs_and_artifact(client)
     )
     assert search_after.status_code == 200
     assert search_after.json()["total"] == 0
+
+
+@pytest.mark.asyncio
+async def test_delete_document_removes_runtime_index_records(client, tmp_path):
+    session_factory = client._transport.app.state.session_factory
+    artifact = tmp_path / "uploads" / "indexed-delete-sha"
+    artifact.parent.mkdir(parents=True, exist_ok=True)
+    artifact.write_text("alpha", encoding="utf-8")
+    async with session_factory() as session:
+        document = Document(
+            filename="runtime-delete.txt",
+            content_type="text/plain",
+            sha256="indexed-delete-sha",
+            artifact_path=str(artifact),
+            status=StageStatus.SUCCEEDED.value,
+        )
+        session.add(document)
+        await session.flush()
+        session.add(
+            IndexRecord(
+                document_id=document.id,
+                runtime_profile_id="default",
+                status=StageStatus.SUCCEEDED.value,
+                index_shape={},
+                chunk_count=1,
+            )
+        )
+        await session.commit()
+        document_id = document.id
+
+    response = await client.delete(f"/api/documents/{document_id}")
+
+    assert response.status_code == 204
+    async with session_factory() as session:
+        record = await session.scalar(
+            select(IndexRecord).where(IndexRecord.document_id == document_id)
+        )
+    assert record is None
 
 
 @pytest.mark.asyncio

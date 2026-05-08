@@ -1,4 +1,4 @@
-from importlib.util import find_spec
+from importlib import import_module
 
 from ragstudio.schemas.runtime import RuntimeProfile
 from ragstudio.services.adapter import RAGAnythingAdapter
@@ -13,6 +13,14 @@ class RAGAnythingRuntimeFactory:
     def build(self, profile: RuntimeProfile) -> RuntimeAdapter:
         if profile.runtime_mode == "fallback":
             return RAGAnythingAdapter()
-        if find_spec("raganything") is None:
-            raise RuntimeUnavailableError("raganything package is not installed.")
-        return RAGAnythingAdapter()
+        try:
+            import_module("raganything")
+            import_module("lightrag")
+        except Exception as exc:
+            raise RuntimeUnavailableError(
+                "RAG-Anything runtime dependencies are not importable."
+            ) from exc
+        raise RuntimeUnavailableError(
+            "Native RAG-Anything runtime adapter is not implemented yet; "
+            "set runtime_mode='fallback' for local fallback behavior."
+        )

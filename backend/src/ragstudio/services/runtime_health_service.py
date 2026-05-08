@@ -1,5 +1,5 @@
 from collections.abc import Iterable
-from importlib.util import find_spec
+from importlib import import_module
 
 from ragstudio.schemas.runtime import RuntimeHealthCheck, RuntimeProfile
 
@@ -18,9 +18,32 @@ class RuntimeHealthService:
                 )
             ]
 
+        if profile.runtime_mode == "fallback":
+            return [
+                RuntimeHealthCheck(
+                    name="runtime_mode",
+                    status="skipped",
+                    detail=(
+                        "Explicit fallback mode is active; native RAG-Anything checks "
+                        "are skipped."
+                    ),
+                )
+            ]
+
         return [
             self._package_check("raganything", "RAG-Anything package"),
             self._package_check("lightrag", "LightRAG package"),
+            RuntimeHealthCheck(
+                name="native_runtime_adapter",
+                status="failed",
+                severity="blocking",
+                detail=(
+                    "Native RAG-Anything adapter mapping is not implemented yet; "
+                    "use fallback mode until the upstream adapter is completed."
+                ),
+                error_type="runtime_adapter_not_implemented",
+                remediation="Set runtime mode to fallback or implement the native adapter.",
+            ),
             self._required_url_check("llm", profile.llm_base_url, "LLM base URL"),
             self._vision_check(profile),
             self._required_url_check(
@@ -45,12 +68,14 @@ class RuntimeHealthService:
         ]
 
     def _package_check(self, module: str, label: str) -> RuntimeHealthCheck:
-        if find_spec(module) is None:
+        try:
+            import_module(module)
+        except Exception as exc:
             return RuntimeHealthCheck(
                 name=module,
                 status="failed",
                 severity="blocking",
-                detail=f"{label} is not installed in this Python environment.",
+                detail=f"{label} is not importable in this Python environment: {exc}",
                 error_type="dependency_import",
                 remediation="Run ./scripts/setup.sh.",
             )

@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { apiClient } from "../src/api/client";
+import { ApiError, apiClient } from "../src/api/client";
 import type { SettingsProfileOut } from "../src/api/generated";
 import { SettingsPage } from "../src/features/settings/settings-page";
 
@@ -17,7 +17,14 @@ vi.mock("../src/api/client", () => ({
     syncProviderPreview: vi.fn(),
   },
   ApiError: class ApiError extends Error {
-    status = 500;
+    readonly status: number;
+    readonly details: unknown;
+
+    constructor(message: string, status = 500, details: unknown = null) {
+      super(message);
+      this.status = status;
+      this.details = details;
+    }
   },
 }));
 
@@ -96,6 +103,7 @@ function renderSettings() {
 
 describe("SettingsPage provider sync", () => {
   beforeEach(() => {
+    vi.clearAllMocks();
     vi.mocked(apiClient.defaultSettings).mockResolvedValue(settings);
     vi.mocked(apiClient.updateDefaultSettings).mockResolvedValue(settings);
     vi.mocked(apiClient.syncProviderPreview).mockResolvedValue({
@@ -175,6 +183,31 @@ describe("SettingsPage provider sync", () => {
         embedding_provider: "vllm_openai",
         embedding_base_url: "http://10.10.9.192:8001/v1",
         mineru_base_url: "http://10.10.9.19:8765",
+      }),
+    );
+  });
+
+  it("allows saving the first profile when settings are missing", async () => {
+    vi.mocked(apiClient.defaultSettings).mockRejectedValueOnce(
+      new ApiError("No default profile saved", 404, { detail: "No default profile saved" }),
+    );
+    renderSettings();
+
+    expect(await screen.findByText("No default profile saved")).toBeVisible();
+    expect(screen.getByLabelText("Runtime mode")).toBeEnabled();
+    expect(screen.getByRole("button", { name: /^Save$/i })).toBeEnabled();
+
+    fireEvent.change(screen.getByLabelText("Provider"), {
+      target: { value: "first-provider" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^Save$/i }));
+
+    await waitFor(() => expect(apiClient.updateDefaultSettings).toHaveBeenCalled());
+    expect(vi.mocked(apiClient.updateDefaultSettings).mock.calls[0][0]).toEqual(
+      expect.objectContaining({
+        provider: "first-provider",
+        runtime_mode: "runtime",
+        storage_backend: "postgres_pgvector_neo4j",
       }),
     );
   });

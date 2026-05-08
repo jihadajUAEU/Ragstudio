@@ -54,8 +54,8 @@ class DiagnosticsService:
 
         if not raganything_available:
             warnings.append(
-                "raganything dependency is not installed in this Python environment; runtime "
-                "mode cannot execute."
+                "raganything runtime dependencies are not importable in this Python "
+                "environment; runtime mode cannot execute. Run ./scripts/setup.sh."
             )
 
         return DiagnosticsOut(
@@ -81,8 +81,8 @@ class DiagnosticsService:
         warnings = []
         if not raganything_available:
             warnings.append(
-                "raganything dependency is not installed in this Python environment; "
-                "running the local fallback adapter. Run ./scripts/setup.sh or "
+                "raganything runtime dependencies are not importable in this Python "
+                "environment; running the local fallback adapter. Run ./scripts/setup.sh or "
                 "python -m pip install -e 'backend[dev]' to enable the package."
             )
 

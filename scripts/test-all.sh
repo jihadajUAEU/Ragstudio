@@ -3,7 +3,6 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 export PYTHONPATH="${PYTHONPATH:-backend/src}"
-export RAGSTUDIO_TEST_DATABASE_URL="${RAGSTUDIO_TEST_DATABASE_URL:-}"
 python -m pytest backend/tests -q
 python -m ruff check backend/src backend/tests
 python -m pyright

@@ -15,6 +15,10 @@ async def query(
     session: AsyncSession = Depends(get_session),
 ) -> QueryOut:
     try:
-        return await QueryService(session, request.app.state.settings.data_dir).run_query(payload)
+        return await QueryService(
+            session,
+            request.app.state.settings.data_dir,
+            settings=request.app.state.settings,
+        ).run_query(payload)
     except QueryResourceNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc

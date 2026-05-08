@@ -16,7 +16,11 @@ async def create_experiment(
     session: AsyncSession = Depends(get_session),
 ) -> ExperimentOut:
     try:
-        return await ExperimentService(session, request.app.state.settings.data_dir).create(payload)
+        return await ExperimentService(
+            session,
+            request.app.state.settings.data_dir,
+            settings=request.app.state.settings,
+        ).create(payload)
     except EvaluationSetNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Evaluation set not found") from exc
     except QueryResourceNotFoundError as exc:

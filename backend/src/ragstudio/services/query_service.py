@@ -13,7 +13,10 @@ from ragstudio.services.adapter import AdapterChunk, RAGAnythingAdapter
 from ragstudio.services.chunk_service import ChunkService
 from ragstudio.services.runtime_factory import RAGAnythingRuntimeFactory
 from ragstudio.services.runtime_health_service import RuntimeHealthService
-from ragstudio.services.runtime_profile_service import RuntimeProfileService
+from ragstudio.services.runtime_profile_service import (
+    RuntimeProfileNotConfiguredError,
+    RuntimeProfileService,
+)
 from ragstudio.services.trace_normalizer import TraceNormalizer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -49,8 +52,19 @@ class QueryService:
     async def run_query(self, payload: QueryIn) -> QueryOut:
         await self._validate_query_inputs(payload)
         if self.settings is not None:
-            return await self._run_runtime_query(payload)
+            try:
+                profile = await RuntimeProfileService(
+                    self.session,
+                    self.settings,
+                ).get_active_profile()
+            except RuntimeProfileNotConfiguredError:
+                return await self._run_legacy_query(payload)
+            if profile.runtime_mode != "fallback":
+                return await self._run_runtime_query(payload, profile)
 
+        return await self._run_legacy_query(payload)
+
+    async def _run_legacy_query(self, payload: QueryIn) -> QueryOut:
         runs: list[Run] = []
         for variant_id in payload.variant_ids:
             started_at = perf_counter()
@@ -109,17 +123,13 @@ class QueryService:
         result = await self.session.execute(select(Run).order_by(Run.created_at.desc()))
         return [RunOut.model_validate(item) for item in result.scalars().all()]
 
-    async def _run_runtime_query(self, payload: QueryIn) -> QueryOut:
-        assert self.settings is not None
-        profile = await RuntimeProfileService(self.session, self.settings).get_active_profile()
+    async def _run_runtime_query(self, payload: QueryIn, profile: Any) -> QueryOut:
         checks = await self.health_service.check(profile)
         blocking = self.health_service.blocking_failures(checks)
-        if profile.runtime_mode != "fallback" and blocking:
+        if blocking:
             return await self._failed_runtime_runs(payload, profile.id, blocking)
-        if profile.runtime_mode != "fallback":
-            await self._validate_index_readiness(payload.document_ids, profile.id)
+        await self._validate_index_readiness(payload.document_ids, profile.id)
 
-        runtime = self.runtime_factory.build(profile)
         variants = await self._variants_by_id(payload.variant_ids)
         runs: list[Run] = []
         for variant_id in payload.variant_ids:
@@ -136,6 +146,7 @@ class QueryService:
             )
             self.session.add(run)
             try:
+                runtime = self.runtime_factory.build(profile)
                 runtime_result = await runtime.query(
                     payload.query,
                     document_ids=payload.document_ids,
@@ -190,24 +201,122 @@ class QueryService:
     def _query_config(self, profile: Any, variant: Variant, limit: int) -> dict[str, Any]:
         parameters = variant.parameters or {}
         return {
-            "mode": parameters.get("mode", profile.query_mode),
-            "top_k": int(parameters.get("top_k", profile.top_k)),
-            "chunk_top_k": int(parameters.get("chunk_top_k", profile.chunk_top_k)),
-            "enable_rerank": bool(parameters.get("enable_rerank", profile.enable_rerank)),
-            "max_total_tokens": int(
-                parameters.get("max_total_tokens", profile.max_total_tokens)
+            "mode": self._query_mode(parameters.get("mode"), profile.query_mode),
+            "parser": self._text_param(parameters.get("parser"), profile.parser),
+            "parse_method": self._text_param(parameters.get("parse_method"), profile.parse_method),
+            "chunk_token_size": self._int_param(
+                parameters.get("chunk_token_size"), profile.chunk_token_size
             ),
-            "max_context_tokens": int(
-                parameters.get("max_context_tokens", profile.max_context_tokens)
+            "chunk_overlap_token_size": self._int_param(
+                parameters.get("chunk_overlap_token_size"),
+                profile.chunk_overlap_token_size,
             ),
-            "cosine_better_than_threshold": float(
-                parameters.get(
-                    "cosine_better_than_threshold",
-                    profile.cosine_better_than_threshold,
-                )
+            "enable_image_processing": self._bool_param(
+                parameters.get("enable_image_processing"),
+                profile.enable_image_processing,
+            ),
+            "enable_table_processing": self._bool_param(
+                parameters.get("enable_table_processing"),
+                profile.enable_table_processing,
+            ),
+            "enable_equation_processing": self._bool_param(
+                parameters.get("enable_equation_processing"),
+                profile.enable_equation_processing,
+            ),
+            "context_window": self._int_param(
+                parameters.get("context_window"), profile.context_window
+            ),
+            "context_mode": self._text_param(
+                parameters.get("context_mode"), profile.context_mode
+            ),
+            "max_context_tokens": self._int_param(
+                parameters.get("max_context_tokens"), profile.max_context_tokens
+            ),
+            "include_headers": self._bool_param(
+                parameters.get("include_headers"), profile.include_headers
+            ),
+            "include_captions": self._bool_param(
+                parameters.get("include_captions"), profile.include_captions
+            ),
+            "top_k": self._int_param(parameters.get("top_k"), profile.top_k),
+            "chunk_top_k": self._int_param(
+                parameters.get("chunk_top_k"), profile.chunk_top_k
+            ),
+            "enable_rerank": self._bool_param(
+                parameters.get("enable_rerank"), profile.enable_rerank
+            ),
+            "max_total_tokens": self._int_param(
+                parameters.get("max_total_tokens"), profile.max_total_tokens
+            ),
+            "max_entity_tokens": self._int_param(
+                parameters.get("max_entity_tokens"), profile.max_entity_tokens
+            ),
+            "max_relation_tokens": self._int_param(
+                parameters.get("max_relation_tokens"), profile.max_relation_tokens
+            ),
+            "cosine_better_than_threshold": self._float_param(
+                parameters.get("cosine_better_than_threshold"),
+                profile.cosine_better_than_threshold,
+            ),
+            "enable_llm_cache": self._bool_param(
+                parameters.get("enable_llm_cache"), profile.enable_llm_cache
+            ),
+            "enable_llm_cache_for_entity_extract": self._bool_param(
+                parameters.get("enable_llm_cache_for_entity_extract"),
+                profile.enable_llm_cache_for_entity_extract,
+            ),
+            "llm_model_max_async": self._int_param(
+                parameters.get("llm_model_max_async"), profile.llm_model_max_async
+            ),
+            "embedding_func_max_async": self._int_param(
+                parameters.get("embedding_func_max_async"),
+                profile.embedding_func_max_async,
+            ),
+            "max_parallel_insert": self._int_param(
+                parameters.get("max_parallel_insert"), profile.max_parallel_insert
+            ),
+            "vlm_enhanced": self._bool_param(
+                parameters.get("vlm_enhanced"),
+                profile.enable_image_processing or "vision" in profile.llm_capabilities,
             ),
             "limit": limit,
         }
+
+    def _query_mode(self, value: Any, fallback: str) -> str:
+        mode = self._text_param(value, fallback)
+        return mode if mode in {"mix", "hybrid", "local", "global", "naive"} else fallback
+
+    def _text_param(self, value: Any, fallback: str) -> str:
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        return fallback
+
+    def _int_param(self, value: Any, fallback: int) -> int:
+        if isinstance(value, bool):
+            return fallback
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return fallback
+
+    def _float_param(self, value: Any, fallback: float) -> float:
+        if isinstance(value, bool):
+            return fallback
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return fallback
+
+    def _bool_param(self, value: Any, fallback: bool) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"1", "true", "yes", "on"}:
+                return True
+            if normalized in {"0", "false", "no", "off"}:
+                return False
+        return fallback
 
     async def _validate_index_readiness(
         self, document_ids: list[str], runtime_profile_id: str

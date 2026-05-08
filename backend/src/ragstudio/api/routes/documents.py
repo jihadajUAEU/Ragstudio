@@ -9,6 +9,8 @@ from ragstudio.api.upload_utils import read_upload_file
 from ragstudio.schemas.documents import DocumentOut
 from ragstudio.schemas.parsing import IndexDocumentIn
 from ragstudio.services.document_service import DocumentService
+from ragstudio.services.index_lifecycle_service import RuntimeHealthBlockedError
+from ragstudio.services.runtime_factory import RuntimeUnavailableError
 
 router = APIRouter(prefix="/api/documents", tags=["documents"])
 
@@ -27,12 +29,19 @@ async def upload_document(
         else None
     )
     content = await read_upload_file(file)
-    return await DocumentService(session, request.app.state.settings.data_dir).upload(
-        filename=file.filename or "upload.bin",
-        content_type=file.content_type or "application/octet-stream",
-        content=content,
-        options=options,
-    )
+    try:
+        return await DocumentService(
+            session,
+            request.app.state.settings.data_dir,
+            settings=request.app.state.settings,
+        ).upload(
+            filename=file.filename or "upload.bin",
+            content_type=file.content_type or "application/octet-stream",
+            content=content,
+            options=options,
+        )
+    except (RuntimeHealthBlockedError, RuntimeUnavailableError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 def _parse_index_options(
@@ -62,7 +71,11 @@ async def list_documents(
     request: Request,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, object]:
-    items = await DocumentService(session, request.app.state.settings.data_dir).list()
+    items = await DocumentService(
+        session,
+        request.app.state.settings.data_dir,
+        settings=request.app.state.settings,
+    ).list()
     return {"items": items, "total": len(items)}
 
 
@@ -72,9 +85,11 @@ async def delete_document(
     request: Request,
     session: AsyncSession = Depends(get_session),
 ) -> Response:
-    result = await DocumentService(session, request.app.state.settings.data_dir).delete_document(
-        document_id
-    )
+    result = await DocumentService(
+        session,
+        request.app.state.settings.data_dir,
+        settings=request.app.state.settings,
+    ).delete_document(document_id)
     if result == "not_found":
         raise HTTPException(status_code=404, detail="Document not found")
     if result == "active_job":

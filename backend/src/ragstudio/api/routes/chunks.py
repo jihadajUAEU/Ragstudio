@@ -9,7 +9,11 @@ from ragstudio.schemas.jobs import JobOut
 from ragstudio.schemas.parsing import IndexDocumentIn
 from ragstudio.services.chunk_service import ChunkService
 from ragstudio.services.document_service import DocumentService
-from ragstudio.services.index_lifecycle_service import IndexLifecycleService
+from ragstudio.services.index_lifecycle_service import (
+    IndexLifecycleService,
+    RuntimeHealthBlockedError,
+)
+from ragstudio.services.runtime_factory import RuntimeUnavailableError
 from ragstudio.services.runtime_profile_service import RuntimeProfileNotConfiguredError
 
 router = APIRouter(prefix="/api/chunks", tags=["chunks"])
@@ -27,7 +31,11 @@ async def create_index_document_job(
     request: Request,
     session: AsyncSession = Depends(get_session),
 ) -> JobOut:
-    service = DocumentService(session, request.app.state.settings.data_dir)
+    service = DocumentService(
+        session,
+        request.app.state.settings.data_dir,
+        settings=request.app.state.settings,
+    )
     job = await service.create_index_job(document_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Document not found")
@@ -65,8 +73,11 @@ async def index_document_chunks(
             document_id,
             options=resolved_options,
         )
+    except (RuntimeHealthBlockedError, RuntimeUnavailableError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     if chunks is None:
         raise HTTPException(status_code=404, detail="Document not found")
+    await session.commit()
     return chunks
 
 

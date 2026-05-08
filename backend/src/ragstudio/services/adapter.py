@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from importlib.util import find_spec
+from importlib import import_module
 from pathlib import Path
 from typing import Any, overload
 
@@ -13,7 +13,7 @@ class RAGAnythingAdapter:
     """Safe adapter boundary for optional raganything integration."""
 
     def __init__(self) -> None:
-        self._package_available = find_spec("raganything") is not None
+        self._package_available = self._can_import("raganything")
 
     def capability_report(self) -> dict[str, Any]:
         return {
@@ -126,3 +126,10 @@ class RAGAnythingAdapter:
             return ""
         excerpts = " ".join(chunk.text for chunk in chunks)
         return f"{query.strip()}: {excerpts}" if query.strip() else excerpts
+
+    def _can_import(self, module: str) -> bool:
+        try:
+            import_module(module)
+        except Exception:
+            return False
+        return True
