@@ -10,6 +10,7 @@ from ragstudio.schemas.parsing import IndexDocumentIn
 from ragstudio.services.chunk_service import ChunkService
 from ragstudio.services.document_service import DocumentService
 from ragstudio.services.index_lifecycle_service import IndexLifecycleService
+from ragstudio.services.runtime_profile_service import RuntimeProfileNotConfiguredError
 
 router = APIRouter(prefix="/api/chunks", tags=["chunks"])
 
@@ -47,13 +48,25 @@ async def index_document_chunks(
     options: IndexDocumentIn | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> list[ChunkOut]:
-    chunks = await IndexLifecycleService(session, request.app.state.settings).reindex_document(
-        document_id,
-        options=options or IndexDocumentIn(),
-    )
+    resolved_options = options or IndexDocumentIn()
+    try:
+        chunks = await IndexLifecycleService(
+            session,
+            request.app.state.settings,
+        ).reindex_document(
+            document_id,
+            options=resolved_options,
+        )
+    except RuntimeProfileNotConfiguredError:
+        chunks = await ChunkService(
+            session,
+            request.app.state.settings.data_dir,
+        ).index_document(
+            document_id,
+            options=resolved_options,
+        )
     if chunks is None:
         raise HTTPException(status_code=404, detail="Document not found")
-    await session.commit()
     return chunks
 
 
