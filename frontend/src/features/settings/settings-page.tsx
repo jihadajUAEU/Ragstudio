@@ -28,6 +28,9 @@ export function SettingsPage() {
   const testEmbedding = useMutation({
     mutationFn: apiClient.testEmbeddingSettings,
   });
+  const testMinerU = useMutation({
+    mutationFn: apiClient.testMinerUSettings,
+  });
 
   const buildPayload = (form: HTMLFormElement): SettingsProfileIn => {
     const formData = new FormData(form);
@@ -45,6 +48,10 @@ export function SettingsPage() {
       embedding_dimensions: Number(formData.get("embedding_dimensions") ?? 1536),
       embedding_batch_size: Number(formData.get("embedding_batch_size") ?? 16),
       embedding_tls_verify: formData.get("embedding_tls_verify") === "on",
+      mineru_enabled: formData.get("mineru_enabled") === "on",
+      mineru_base_url: String(formData.get("mineru_base_url") ?? ""),
+      mineru_timeout_ms: Number(formData.get("mineru_timeout_ms") ?? 1800000),
+      mineru_poll_interval_ms: Number(formData.get("mineru_poll_interval_ms") ?? 1000),
     };
     if (apiKey) {
       payload.embedding_api_key = apiKey;
@@ -63,6 +70,12 @@ export function SettingsPage() {
       testEmbedding.mutate(buildPayload(form));
     }
   };
+  const submitMinerUForTest = (event: MouseEvent<HTMLButtonElement>) => {
+    const form = event.currentTarget.form;
+    if (form?.reportValidity()) {
+      testMinerU.mutate(buildPayload(form));
+    }
+  };
 
   const message = getMessage(settingsQuery.error, updateSettings.error);
   const defaults: SettingsProfileIn = {
@@ -76,6 +89,10 @@ export function SettingsPage() {
     embedding_dimensions: settingsQuery.data?.embedding_dimensions ?? 1536,
     embedding_batch_size: settingsQuery.data?.embedding_batch_size ?? 16,
     embedding_tls_verify: settingsQuery.data?.embedding_tls_verify ?? true,
+    mineru_enabled: settingsQuery.data?.mineru_enabled ?? false,
+    mineru_base_url: settingsQuery.data?.mineru_base_url ?? "",
+    mineru_timeout_ms: settingsQuery.data?.mineru_timeout_ms ?? 1800000,
+    mineru_poll_interval_ms: settingsQuery.data?.mineru_poll_interval_ms ?? 1000,
   };
   const testMessage = testEmbedding.error
     ? testEmbedding.error.message
@@ -86,6 +103,11 @@ export function SettingsPage() {
       : settingsQuery.data?.has_embedding_api_key
         ? "Saved API key present"
         : "";
+  const mineruTestMessage = testMinerU.error
+    ? testMinerU.error.message
+    : testMinerU.data
+      ? `${testMinerU.data.ok ? "Connected" : "Failed"}: ${testMinerU.data.detail}`
+      : "";
 
   return (
     <div className="mx-auto flex max-w-5xl flex-col gap-6">
@@ -140,6 +162,66 @@ export function SettingsPage() {
               placeholder="local"
               disabled={updateSettings.isPending}
             />
+          </div>
+        </section>
+
+        <section className="rounded-md border border-[#d6dde1] bg-white p-4 sm:p-5">
+          <div className="mb-5 flex items-center gap-2">
+            <PlugZap className="h-4 w-4 text-[#176b87]" aria-hidden="true" />
+            <h3 className="truncate text-base font-semibold text-[#1f2933]">MinerU parser</h3>
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <label className="flex h-10 items-center gap-2 self-end rounded-md border border-[#cfd8dd] px-3 text-sm font-medium text-[#3a4a53]">
+              <input
+                name="mineru_enabled"
+                type="checkbox"
+                defaultChecked={defaults.mineru_enabled ?? false}
+                disabled={updateSettings.isPending}
+              />
+              Enable MinerU
+            </label>
+            <Field
+              label="MinerU base URL"
+              name="mineru_base_url"
+              defaultValue={defaults.mineru_base_url ?? ""}
+              placeholder="http://127.0.0.1:8765"
+              disabled={updateSettings.isPending}
+              required={false}
+            />
+            <Field
+              label="MinerU timeout (ms)"
+              name="mineru_timeout_ms"
+              defaultValue={String(defaults.mineru_timeout_ms ?? 1800000)}
+              placeholder="1800000"
+              disabled={updateSettings.isPending}
+              type="number"
+            />
+            <Field
+              label="MinerU poll interval (ms)"
+              name="mineru_poll_interval_ms"
+              defaultValue={String(defaults.mineru_poll_interval_ms ?? 1000)}
+              placeholder="1000"
+              disabled={updateSettings.isPending}
+              type="number"
+            />
+          </div>
+          <div className="mt-5 flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <p className="min-h-5 text-sm text-[#62717a]" role="status">
+              {mineruTestMessage}
+            </p>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={submitMinerUForTest}
+              disabled={testMinerU.isPending || updateSettings.isPending}
+            >
+              {testMinerU.isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+              ) : (
+                <PlugZap className="h-4 w-4" aria-hidden="true" />
+              )}
+              Test MinerU
+            </Button>
           </div>
         </section>
 

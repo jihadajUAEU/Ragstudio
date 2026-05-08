@@ -1,4 +1,4 @@
-import { useMemo, useState, type FormEvent } from "react";
+import { useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   AlertCircle,
@@ -11,10 +11,16 @@ import {
 } from "lucide-react";
 
 import { apiClient } from "../../api/client";
-import type { ChunkOut, ChunkSearchIn, ChunkSearchOut } from "../../api/generated";
+import type {
+  ChunkOut,
+  ChunkSearchIn,
+  ChunkSearchOut,
+  IndexDocumentIn,
+} from "../../api/generated";
 import { EmptyState } from "../../components/empty-state";
 import { Button } from "../../components/ui/button";
 import { titleCase } from "../../lib/utils";
+import { DomainMetadataPanel } from "../domain-metadata/domain-metadata-panel";
 
 const queryKeys = {
   documents: ["documents"],
@@ -39,6 +45,14 @@ export function ChunkInspector() {
   const [formError, setFormError] = useState("");
   const [searchResult, setSearchResult] = useState<SearchResult | null>(null);
   const [indexVersion, setIndexVersion] = useState(0);
+  const [indexOptions, setIndexOptions] = useState<IndexDocumentIn>({
+    parser_mode: "local_fallback",
+    domain_metadata: { domain: "generic", document_type: "document", tags: [] },
+  });
+  const profilesQuery = useQuery({
+    queryKey: ["domain-profiles"],
+    queryFn: apiClient.domainProfiles,
+  });
 
   const currentSearchFilters = useMemo(
     () => normalizeSearchFilters({ query: queryText.trim(), document_ids: selectedDocumentIds, limit }),
@@ -52,7 +66,7 @@ export function ChunkInspector() {
     },
   });
   const indexDocument = useMutation({
-    mutationFn: apiClient.indexDocumentChunks,
+    mutationFn: (documentId: string) => apiClient.indexDocumentChunks(documentId, indexOptions),
     onSuccess: () => {
       setIndexVersion((version) => version + 1);
       setSearchResult(null);
@@ -138,6 +152,15 @@ export function ChunkInspector() {
               <SmallState icon={FileText} text="No documents uploaded" />
             )}
           </div>
+        </div>
+
+        <div className="mt-5">
+          <DomainMetadataPanel
+            profiles={profilesQuery.data?.items ?? []}
+            value={indexOptions}
+            onChange={setIndexOptions}
+            disabled={indexDocument.isPending}
+          />
         </div>
 
         <form onSubmit={submit} className="mt-5 space-y-4">
@@ -236,9 +259,11 @@ function ChunkCard({ chunk }: { chunk: ChunkOut }) {
           <h3 className="truncate text-sm font-semibold text-[#1f2933]">{chunk.id}</h3>
           <p className="truncate text-xs text-[#62717a]">{chunk.document_id}</p>
         </div>
-        <span className="shrink-0 rounded-md bg-[#eef4f6] px-2 py-1 text-xs font-medium text-[#174657]">
-          score {formatValue(chunk.metadata.score)}
-        </span>
+        <div className="flex shrink-0 flex-wrap gap-2">
+          <Badge>score {formatValue(chunk.metadata.score)}</Badge>
+          <Badge>{metadataValue(chunk.metadata, ["parser_metadata", "backend"], "fallback")}</Badge>
+          <Badge>{metadataValue(chunk.metadata, ["domain_metadata", "domain"], "generic")}</Badge>
+        </div>
       </div>
       <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-[#24313a]">{chunk.text}</p>
       <div className="mt-4 grid gap-3 lg:grid-cols-2">
@@ -246,6 +271,14 @@ function ChunkCard({ chunk }: { chunk: ChunkOut }) {
         <JsonBlock title="Metadata" value={chunk.metadata} />
       </div>
     </article>
+  );
+}
+
+function Badge({ children }: { children: ReactNode }) {
+  return (
+    <span className="rounded-md bg-[#eef4f6] px-2 py-1 text-xs font-medium text-[#174657]">
+      {children}
+    </span>
   );
 }
 
@@ -277,6 +310,17 @@ function formatValue(value: unknown) {
     return value;
   }
   return "n/a";
+}
+
+function metadataValue(metadata: Record<string, unknown>, path: string[], fallback: string) {
+  let current: unknown = metadata;
+  for (const segment of path) {
+    if (typeof current !== "object" || current === null || !(segment in current)) {
+      return fallback;
+    }
+    current = (current as Record<string, unknown>)[segment];
+  }
+  return typeof current === "string" && current ? current : fallback;
 }
 
 function normalizeSearchFilters(filters: ChunkSearchIn): ChunkSearchIn {

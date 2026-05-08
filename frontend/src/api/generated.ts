@@ -36,6 +36,10 @@ export interface SettingsProfileIn {
   embedding_dimensions?: number;
   embedding_batch_size?: number;
   embedding_tls_verify?: boolean;
+  mineru_enabled?: boolean;
+  mineru_base_url?: string | null;
+  mineru_timeout_ms?: number;
+  mineru_poll_interval_ms?: number;
 }
 
 export interface SettingsProfileOut {
@@ -51,6 +55,10 @@ export interface SettingsProfileOut {
   embedding_dimensions: number;
   embedding_batch_size: number;
   embedding_tls_verify: boolean;
+  mineru_enabled: boolean;
+  mineru_base_url: string | null;
+  mineru_timeout_ms: number;
+  mineru_poll_interval_ms: number;
 }
 
 export interface EmbeddingConnectionTestOut {
@@ -60,6 +68,44 @@ export interface EmbeddingConnectionTestOut {
   dimensions: number | null;
   latency_ms: number;
   detail: string;
+}
+
+export interface MinerUConnectionTestOut {
+  ok: boolean;
+  base_url: string;
+  latency_ms: number;
+  detail: string;
+}
+
+export type ParserMode = "local_fallback" | "mineru_strict" | "mineru_with_fallback";
+
+export interface DomainMetadata {
+  domain?: string;
+  document_type?: string;
+  language?: string;
+  tags?: string[];
+  authority?: string | null;
+  source?: string | null;
+  collection?: string | null;
+  citation_style?: string | null;
+  expected_structure?: string | null;
+  custom_json?: Record<string, unknown>;
+  reference_pattern?: string | null;
+  script?: string | null;
+  content_role?: string | null;
+  metadata_sources?: string[];
+}
+
+export interface DomainProfileOut {
+  id: string;
+  name: string;
+  description: string;
+  metadata: DomainMetadata;
+}
+
+export interface IndexDocumentIn {
+  parser_mode?: ParserMode;
+  domain_metadata?: DomainMetadata;
 }
 
 export interface JobOut {

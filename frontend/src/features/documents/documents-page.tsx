@@ -4,11 +4,12 @@ import type { ColumnDef } from "@tanstack/react-table";
 import { AlertCircle, FileUp, Loader2, RefreshCcw, Upload } from "lucide-react";
 
 import { apiClient } from "../../api/client";
-import type { DocumentOut, JobOut } from "../../api/generated";
+import type { DocumentOut, IndexDocumentIn, JobOut } from "../../api/generated";
 import { DataTable } from "../../components/data-table";
 import { EmptyState } from "../../components/empty-state";
 import { StatusBadge } from "../../components/status-badge";
 import { Button } from "../../components/ui/button";
+import { DomainMetadataPanel } from "../domain-metadata/domain-metadata-panel";
 import { titleCase } from "../../lib/utils";
 
 const queryKeys = {
@@ -20,8 +21,16 @@ export function DocumentsPage() {
   const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
+  const [indexOptions, setIndexOptions] = useState<IndexDocumentIn>({
+    parser_mode: "local_fallback",
+    domain_metadata: { domain: "generic", document_type: "document", tags: [] },
+  });
   const documentsQuery = useQuery({ queryKey: queryKeys.documents, queryFn: apiClient.documents });
   const jobsQuery = useQuery({ queryKey: queryKeys.jobs, queryFn: apiClient.jobs });
+  const profilesQuery = useQuery({
+    queryKey: ["domain-profiles"],
+    queryFn: apiClient.domainProfiles,
+  });
 
   const uploadDocument = useMutation({
     mutationFn: apiClient.uploadDocument,
@@ -142,7 +151,7 @@ export function DocumentsPage() {
           onSubmit={(event) => {
             event.preventDefault();
             if (file) {
-              uploadDocument.mutate(file);
+              uploadDocument.mutate({ file, options: indexOptions });
             }
           }}
         >
@@ -156,6 +165,14 @@ export function DocumentsPage() {
               disabled={uploadDocument.isPending}
             />
           </label>
+          <div className="sm:col-span-2 sm:basis-full">
+            <DomainMetadataPanel
+              profiles={profilesQuery.data?.items ?? []}
+              value={indexOptions}
+              onChange={setIndexOptions}
+              disabled={uploadDocument.isPending}
+            />
+          </div>
           <Button type="submit" disabled={!file || uploadDocument.isPending}>
             {uploadDocument.isPending ? (
               <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />

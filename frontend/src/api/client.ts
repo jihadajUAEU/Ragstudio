@@ -1,6 +1,8 @@
 import type {
   DiagnosticsOut,
   DocumentOut,
+  DomainMetadata,
+  DomainProfileOut,
   EmbeddingConnectionTestOut,
   EvaluationSetOut,
   ExperimentIn,
@@ -8,6 +10,8 @@ import type {
   GraphOut,
   HealthOut,
   JobOut,
+  IndexDocumentIn,
+  MinerUConnectionTestOut,
   OptimizerIn,
   OptimizerOut,
   Page,
@@ -65,9 +69,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export const apiClient = {
   health: () => request<HealthOut>("/api/health"),
   documents: () => request<Page<DocumentOut>>("/api/documents"),
-  uploadDocument: (file: File) => {
+  uploadDocument: ({ file, options }: { file: File; options: IndexDocumentIn }) => {
     const formData = new FormData();
     formData.set("file", file);
+    formData.set("parser_mode", options.parser_mode ?? "local_fallback");
+    formData.set("domain_metadata", JSON.stringify(options.domain_metadata ?? {}));
     return request<DocumentOut>("/api/documents", {
       method: "POST",
       body: formData,
@@ -94,9 +100,29 @@ export const apiClient = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     }),
-  indexDocumentChunks: (documentId: string) =>
+  testMinerUSettings: (payload: SettingsProfileIn) =>
+    request<MinerUConnectionTestOut>("/api/settings/default/test-mineru", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }),
+  domainProfiles: () => request<Page<DomainProfileOut>>("/api/domain-profiles"),
+  suggestDomainMetadata: (payload: {
+    filename: string;
+    content_type: string;
+    profile_id?: string | null;
+    sample_text?: string;
+  }) =>
+    request<{ domain_metadata: DomainMetadata }>("/api/domain-profiles/suggest", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }),
+  indexDocumentChunks: (documentId: string, payload: IndexDocumentIn = {}) =>
     request<ChunkOut[]>(`/api/chunks/index/${encodeURIComponent(documentId)}`, {
       method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
     }),
   searchChunks: (payload: ChunkSearchIn) =>
     request<ChunkSearchOut>("/api/chunks/search", {
