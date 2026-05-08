@@ -247,16 +247,36 @@ Embeddings fields:
 - `Batch size`: planned maximum embedding batch size.
 - `Verify TLS`: TLS verification for HTTPS endpoints.
 
+MinerU parser fields:
+
+- `Enable MinerU`: marks MinerU as available for parser-mode choices.
+- `MinerU base URL`: URL for an already running MinerU/RAG-Anything service, normally `http://127.0.0.1:8765` through a local sidecar or SSH tunnel.
+- `MinerU timeout (ms)`: total parse polling timeout.
+- `MinerU poll interval (ms)`: delay between parse job status checks.
+
 Controls:
 
 - `Reload`: refetches the saved default profile.
 - `Test connection`: sends a one-text embedding request to `/embeddings` and validates vector dimensions.
+- `Test MinerU`: checks the configured MinerU `/health` endpoint.
 - `Reset`: resets unsaved form edits.
 - `Save`: writes the default profile.
 
 If no profile exists, the page shows `No default profile saved`.
 
 For UAEU HPC or another Slurm-hosted vLLM embedding job, use an SSH tunnel or stable internal alias and set `Base URL` to the local OpenAI-compatible endpoint, for example `http://127.0.0.1:8001/v1`. The model name must match the model served by vLLM, such as `Qwen/Qwen3-Embedding-8B`.
+
+### MinerU parser and domain metadata
+
+Settings includes a `MinerU parser` section for connecting to an already running MinerU/RAG-Anything service. Set the base URL, normally `http://127.0.0.1:8765` when using an SSH tunnel or local sidecar, then click `Test MinerU`.
+
+Upload and Index actions support three parser modes:
+
+- `Local fallback`: uses Studio's local line splitter.
+- `MinerU strict`: sends the document to MinerU and fails indexing if MinerU fails.
+- `MinerU with fallback`: tries MinerU first, then indexes locally if MinerU fails.
+
+Before parsing, choose or review domain metadata. This metadata is copied onto every resulting chunk, including local fallback chunks. MinerU adds parser metadata such as page numbers, artifact references, content type, and parse job id.
 
 ## Evaluation File Formats
 

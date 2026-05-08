@@ -97,6 +97,18 @@ flowchart TD
 
 The upload API is `POST /api/documents` with a multipart `file` field. Document listing uses `GET /api/documents`.
 
+## MinerU Parsing Workflow
+
+Ragstudio targets the Meeting Copilot MinerU contract:
+
+1. `POST /parse-async`
+2. `GET /parse-jobs/{job_id}`
+3. `GET /parse-jobs/{job_id}/artifacts`
+
+Artifacts are stored under `.ragstudio/mineru-artifacts/<document_id>/`. Ragstudio extracts the artifact zip safely, rejects unsafe paths, normalizes text/table/media entries into chunks, and keeps the `chunks` table as the source of truth for search, query, experiments, and comparison.
+
+Domain metadata is applied before parsing. Parser metadata is added after parsing. Chunk metadata therefore has two top-level groups: `domain_metadata` and `parser_metadata`.
+
 ## Inspect and Search Chunks
 
 Open **Chunks** to index individual documents again or search indexed chunks.
