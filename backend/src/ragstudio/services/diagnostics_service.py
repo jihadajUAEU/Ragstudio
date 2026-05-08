@@ -13,7 +13,11 @@ class DiagnosticsService:
         raganything_available = bool(report.get("raganything_available"))
         warnings = []
         if not raganything_available:
-            warnings.append("raganything dependency is not available; using fallback adapter.")
+            warnings.append(
+                "raganything dependency is not installed in this Python environment; "
+                "running the local fallback adapter. Run ./scripts/setup.sh or "
+                "python -m pip install -e 'backend[dev]' to enable the package."
+            )
 
         return DiagnosticsOut(
             capabilities={

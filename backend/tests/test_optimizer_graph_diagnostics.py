@@ -1,5 +1,6 @@
 import pytest
 from ragstudio.db.models import Experiment, Run, Score
+from ragstudio.services.diagnostics_service import DiagnosticsService
 
 
 @pytest.mark.asyncio
@@ -162,4 +163,22 @@ async def test_diagnostics_returns_capabilities_and_fallback_warning(client):
     assert "raganything_available" in payload["capabilities"]
     assert "fallback_active" in payload["capabilities"]
     assert "raganything" in payload["dependency_status"]
-    assert any("fallback" in warning.lower() for warning in payload["warnings"])
+    assert any("./scripts/setup.sh" in warning for warning in payload["warnings"])
+
+
+def test_diagnostics_suppresses_missing_dependency_warning_when_package_available():
+    class AvailableFallbackAdapter:
+        def capability_report(self):
+            return {
+                "raganything_available": True,
+                "active_backend": "fallback",
+                "indexing": "line_split_fallback",
+                "query": "simple_fallback",
+                "graph": "placeholder",
+            }
+
+    payload = DiagnosticsService(adapter=AvailableFallbackAdapter()).get_diagnostics()
+
+    assert payload.dependency_status["raganything"] == "available"
+    assert payload.capabilities["fallback_active"] is True
+    assert payload.warnings == []
