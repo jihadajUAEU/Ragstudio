@@ -111,3 +111,67 @@ async def test_embedding_connection_test_validates_vector_dimensions(client, mon
             "timeout": 5.0,
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_embedding_connection_test_uses_saved_api_key_when_blank(
+    client,
+    monkeypatch,
+):
+    requests = []
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"data": [{"index": 0, "embedding": [0.1, 0.2, 0.3]}]}
+
+    class FakeAsyncClient:
+        def __init__(self, timeout):
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return None
+
+        async def post(self, url, headers, json):
+            requests.append({"headers": headers})
+            return FakeResponse()
+
+    monkeypatch.setattr(
+        "ragstudio.services.embedding_connection_service.httpx.AsyncClient",
+        FakeAsyncClient,
+    )
+    saved_payload = {
+        "provider": "openai",
+        "llm_model": "gpt-4.1",
+        "embedding_model": "Qwen/Qwen3-Embedding-8B",
+        "storage_backend": "sqlite",
+        "embedding_provider": "vllm_openai",
+        "embedding_base_url": "http://127.0.0.1:8001/v1",
+        "embedding_api_key": "saved-secret-token",
+        "embedding_timeout_ms": 5000,
+        "embedding_dimensions": 3,
+        "embedding_batch_size": 16,
+        "embedding_tls_verify": True,
+    }
+    test_payload = {
+        key: value for key, value in saved_payload.items() if key != "embedding_api_key"
+    }
+
+    save_response = await client.put("/api/settings/default", json=saved_payload)
+    response = await client.post("/api/settings/default/test-embedding", json=test_payload)
+
+    assert save_response.status_code == 200
+    assert response.status_code == 200
+    assert response.json()["ok"] is True
+    assert requests == [
+        {
+            "headers": {
+                "content-type": "application/json",
+                "authorization": "Bearer saved-secret-token",
+            }
+        }
+    ]
