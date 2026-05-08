@@ -20,6 +20,32 @@ async def test_settings_profile_round_trip(client):
 
 
 @pytest.mark.asyncio
+async def test_settings_profile_saves_llm_config_without_returning_secret(client):
+    payload = {
+        "provider": "openai",
+        "llm_provider": "openai_compatible",
+        "llm_model": "QuantTrio/Qwen3-VL-32B-Instruct-AWQ",
+        "llm_base_url": "http://10.10.9.195:8004/v1/",
+        "llm_api_key": "llm-secret-token",
+        "llm_timeout_ms": 15000,
+        "llm_capabilities": ["text", "vision", "reasoning"],
+        "embedding_model": "text-embedding-3-large",
+        "storage_backend": "sqlite",
+    }
+
+    create_response = await client.put("/api/settings/default", json=payload)
+
+    assert create_response.status_code == 200
+    body = create_response.json()
+    assert body["llm_provider"] == "openai_compatible"
+    assert body["llm_base_url"] == "http://10.10.9.195:8004/v1"
+    assert body["llm_timeout_ms"] == 15000
+    assert body["llm_capabilities"] == ["text", "vision", "reasoning"]
+    assert body["has_llm_api_key"] is True
+    assert "llm_api_key" not in body
+
+
+@pytest.mark.asyncio
 async def test_settings_profile_saves_vllm_embedding_config_without_returning_secret(client):
     payload = {
         "provider": "openai",

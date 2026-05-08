@@ -6,11 +6,18 @@ from pydantic import Field, field_validator
 from ragstudio.schemas.common import StudioModel
 
 EmbeddingProvider = Literal["fallback", "vllm_openai"]
+LlmProvider = Literal["openai_compatible"]
+LlmCapability = Literal["text", "vision", "reasoning"]
 
 
 class SettingsProfileIn(StudioModel):
     provider: str
     llm_model: str
+    llm_provider: LlmProvider = "openai_compatible"
+    llm_base_url: str | None = None
+    llm_api_key: str | None = None
+    llm_timeout_ms: int = Field(default=10000, ge=100, le=1_800_000)
+    llm_capabilities: list[LlmCapability] = Field(default_factory=list)
     embedding_model: str
     storage_backend: str
     embedding_provider: EmbeddingProvider = "fallback"
@@ -24,6 +31,11 @@ class SettingsProfileIn(StudioModel):
     mineru_base_url: str | None = None
     mineru_timeout_ms: int = Field(default=1_800_000, ge=100, le=3_600_000)
     mineru_poll_interval_ms: int = Field(default=1_000, ge=100, le=60_000)
+
+    @field_validator("llm_base_url")
+    @classmethod
+    def validate_llm_base_url(cls, value: str | None) -> str | None:
+        return cls._validate_http_base_url(value, "LLM base URL")
 
     @field_validator("embedding_base_url")
     @classmethod
@@ -49,6 +61,13 @@ class SettingsProfileIn(StudioModel):
             raise ValueError(f"{label} must not include credentials")
         return normalized
 
+    @field_validator("llm_api_key")
+    @classmethod
+    def normalize_llm_api_key(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return value.strip()
+
     @field_validator("embedding_api_key")
     @classmethod
     def normalize_embedding_api_key(cls, value: str | None) -> str | None:
@@ -56,11 +75,25 @@ class SettingsProfileIn(StudioModel):
             return None
         return value.strip()
 
+    @field_validator("llm_capabilities")
+    @classmethod
+    def normalize_llm_capabilities(cls, value: list[LlmCapability]) -> list[LlmCapability]:
+        ordered: list[LlmCapability] = []
+        for capability in value:
+            if capability not in ordered:
+                ordered.append(capability)
+        return ordered
+
 
 class SettingsProfileOut(StudioModel):
     id: str
     provider: str
     llm_model: str
+    llm_provider: LlmProvider
+    llm_base_url: str | None
+    has_llm_api_key: bool
+    llm_timeout_ms: int
+    llm_capabilities: list[LlmCapability]
     embedding_model: str
     storage_backend: str
     embedding_provider: EmbeddingProvider

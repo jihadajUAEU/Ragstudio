@@ -22,6 +22,13 @@ class SettingsProfile(Base, TimestampMixin):
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: "default")
     provider: Mapped[str] = mapped_column(String)
     llm_model: Mapped[str] = mapped_column(String)
+    llm_provider: Mapped[str] = mapped_column(String, default="openai_compatible")
+    llm_base_url: Mapped[str | None] = mapped_column(String, nullable=True)
+    llm_api_key: Mapped[str | None] = mapped_column(String, nullable=True)
+    llm_timeout_ms: Mapped[int] = mapped_column(Integer, default=10000)
+    llm_capabilities: Mapped[list[str]] = mapped_column(
+        MutableList.as_mutable(JSON), default=list
+    )
     embedding_model: Mapped[str] = mapped_column(String)
     storage_backend: Mapped[str] = mapped_column(String)
     embedding_provider: Mapped[str] = mapped_column(String, default="fallback")

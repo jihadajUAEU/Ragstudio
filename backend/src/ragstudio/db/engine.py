@@ -32,6 +32,11 @@ def _ensure_settings_profile_columns(connection) -> None:
         return
     existing = {column["name"] for column in inspector.get_columns("settings_profiles")}
     additions = {
+        "llm_provider": "VARCHAR DEFAULT 'openai_compatible' NOT NULL",
+        "llm_base_url": "VARCHAR",
+        "llm_api_key": "VARCHAR",
+        "llm_timeout_ms": "INTEGER DEFAULT 10000 NOT NULL",
+        "llm_capabilities": "JSON DEFAULT '[]' NOT NULL",
         "embedding_provider": "VARCHAR DEFAULT 'fallback' NOT NULL",
         "embedding_base_url": "VARCHAR",
         "embedding_api_key": "VARCHAR",
