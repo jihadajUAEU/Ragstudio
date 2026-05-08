@@ -4,6 +4,7 @@ import type { ColumnDef } from "@tanstack/react-table";
 import { AlertCircle, AlertTriangle, CheckCircle2, Loader2, RefreshCcw, ServerCog, XCircle } from "lucide-react";
 
 import { apiClient } from "../../api/client";
+import type { RuntimeHealthCheck } from "../../api/generated";
 import { DataTable } from "../../components/data-table";
 import { EmptyState } from "../../components/empty-state";
 import { Button } from "../../components/ui/button";
@@ -93,6 +94,36 @@ export function DiagnosticsPage() {
     [],
   );
 
+  const checkColumns = useMemo<ColumnDef<RuntimeHealthCheck>[]>(
+    () => [
+      {
+        accessorKey: "name",
+        header: "Check",
+        cell: ({ row }) => <span className="truncate font-medium">{humanize(row.original.name)}</span>,
+      },
+      {
+        accessorKey: "status",
+        header: "Status",
+        cell: ({ row }) => <CheckStatus check={row.original} />,
+      },
+      {
+        accessorKey: "severity",
+        header: "Severity",
+        cell: ({ row }) => <span className="truncate">{titleCase(row.original.severity)}</span>,
+      },
+      {
+        accessorKey: "detail",
+        header: "Detail",
+        cell: ({ row }) => (
+          <span className="line-clamp-2" title={row.original.detail}>
+            {row.original.detail}
+          </span>
+        ),
+      },
+    ],
+    [],
+  );
+
   return (
     <div className="mx-auto flex max-w-7xl flex-col gap-6">
       <section className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
@@ -135,15 +166,15 @@ export function DiagnosticsPage() {
           <section className="grid gap-4 sm:grid-cols-3">
             <Metric
               icon={ServerCog}
-              label="Capabilities"
-              value={String(capabilityRows.filter((row) => row.enabled).length)}
-              detail={`${capabilityRows.length} reported`}
+              label="Overall status"
+              value={titleCase(diagnosticsQuery.data.overall_status)}
+              detail={titleCase(diagnosticsQuery.data.runtime_mode)}
             />
             <Metric
               icon={CheckCircle2}
-              label="Dependencies"
-              value={String(dependencyRows.length)}
-              detail="Status keys"
+              label="Checks"
+              value={String(diagnosticsQuery.data.checks.length)}
+              detail={`${dependencyRows.length} dependency keys`}
             />
             <Metric
               icon={AlertTriangle}
@@ -189,6 +220,15 @@ export function DiagnosticsPage() {
               />
             </Panel>
           </section>
+
+          <Panel title="Runtime checks">
+            <DataTable
+              columns={checkColumns}
+              data={diagnosticsQuery.data.checks}
+              emptyTitle="No runtime checks"
+              emptyDescription="Runtime health checks will appear when the backend reports them."
+            />
+          </Panel>
 
           <details className="rounded-md border border-[#d6dde1] bg-white p-4">
             <summary className="cursor-pointer text-sm font-semibold text-[#1f2933]">Raw diagnostics</summary>
@@ -265,6 +305,35 @@ function StatusValue({ value }: { value: unknown }) {
       {JSON.stringify(value)}
     </code>
   );
+}
+
+function CheckStatus({ check }: { check: RuntimeHealthCheck }) {
+  const isReady = check.status === "ok";
+  const isWarning = check.status === "warning" || check.status === "skipped";
+  return (
+    <span
+      className={
+        isReady
+          ? "inline-flex items-center gap-2 rounded-md bg-[#ecf8f0] px-2 py-1 text-xs font-medium text-[#24563a]"
+          : isWarning
+            ? "inline-flex items-center gap-2 rounded-md bg-[#fff8e6] px-2 py-1 text-xs font-medium text-[#8c6500]"
+            : "inline-flex items-center gap-2 rounded-md bg-[#fff0f0] px-2 py-1 text-xs font-medium text-[#8c2525]"
+      }
+    >
+      {isReady ? (
+        <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
+      ) : isWarning ? (
+        <AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />
+      ) : (
+        <XCircle className="h-3.5 w-3.5" aria-hidden="true" />
+      )}
+      {titleCase(check.status)}
+    </span>
+  );
+}
+
+function titleCase(value: string) {
+  return humanize(value).replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
 function humanize(value: string) {

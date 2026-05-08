@@ -33,7 +33,14 @@ vi.mock("@xyflow/react", () => ({
 
 vi.mock("../src/api/client", () => ({
   apiClient: {
-    diagnostics: vi.fn().mockResolvedValue({ capabilities: {}, dependency_status: {}, warnings: [] }),
+    diagnostics: vi.fn().mockResolvedValue({
+      capabilities: {},
+      dependency_status: {},
+      warnings: [],
+      runtime_mode: "runtime",
+      overall_status: "ready",
+      checks: [],
+    }),
     documents: vi.fn().mockResolvedValue({ items: [], total: 0 }),
     graph: vi.fn().mockResolvedValue({ nodes: [], edges: [] }),
     runs: vi.fn().mockResolvedValue({ items: [], total: 0 }),

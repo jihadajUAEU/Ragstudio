@@ -63,5 +63,11 @@ function run(id: string, experimentId: string): RunOut {
     chunk_traces: [],
     timings: {},
     error: null,
+    runtime_profile_id: "default",
+    document_ids: ["doc-1"],
+    query_config: { mode: "mix" },
+    reranker_traces: [],
+    token_metadata: {},
+    error_type: null,
   };
 }

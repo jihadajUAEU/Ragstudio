@@ -31,7 +31,7 @@ const settings: SettingsProfileOut = {
   llm_capabilities: [],
   has_llm_api_key: false,
   embedding_model: "text-embedding-3-large",
-  storage_backend: "local",
+  storage_backend: "postgres_pgvector_neo4j",
   embedding_provider: "fallback",
   embedding_base_url: "",
   embedding_timeout_ms: 10000,
@@ -43,6 +43,46 @@ const settings: SettingsProfileOut = {
   mineru_base_url: "http://127.0.0.1:8765",
   mineru_timeout_ms: 1800000,
   mineru_poll_interval_ms: 1000,
+  runtime_mode: "runtime",
+  vision_model: "vision-model",
+  vision_base_url: "http://127.0.0.1:8004/v1",
+  has_vision_api_key: false,
+  vision_timeout_ms: 10000,
+  reranker_provider: "disabled",
+  reranker_model: null,
+  reranker_base_url: null,
+  has_reranker_api_key: false,
+  reranker_timeout_ms: 10000,
+  pgvector_schema: "public",
+  pgvector_table_prefix: "ragstudio",
+  neo4j_uri: "bolt://127.0.0.1:57687",
+  neo4j_username: "neo4j",
+  has_neo4j_password: false,
+  parser: "mineru",
+  parse_method: "auto",
+  chunk_token_size: 1200,
+  chunk_overlap_token_size: 100,
+  enable_image_processing: true,
+  enable_table_processing: true,
+  enable_equation_processing: true,
+  context_window: 1,
+  context_mode: "page",
+  max_context_tokens: 2000,
+  include_headers: true,
+  include_captions: true,
+  query_mode: "mix",
+  top_k: 40,
+  chunk_top_k: 20,
+  enable_rerank: true,
+  cosine_better_than_threshold: 0.2,
+  max_total_tokens: 30000,
+  max_entity_tokens: 6000,
+  max_relation_tokens: 8000,
+  enable_llm_cache: true,
+  enable_llm_cache_for_entity_extract: true,
+  llm_model_max_async: 4,
+  embedding_func_max_async: 8,
+  max_parallel_insert: 2,
 };
 
 function renderSettings() {
@@ -89,6 +129,8 @@ describe("SettingsPage provider sync", () => {
 
     expect(await screen.findByText("MinerU parser")).toBeVisible();
     expect(screen.getByText("LLM generation")).toBeVisible();
+    expect(screen.getByLabelText("Runtime mode")).toBeVisible();
+    expect(await screen.findByDisplayValue("bolt://127.0.0.1:57687")).toBeVisible();
     expect(screen.getByRole("button", { name: /Test LLM/i })).toBeVisible();
     expect(await screen.findByDisplayValue("http://127.0.0.1:8765")).toBeVisible();
   });

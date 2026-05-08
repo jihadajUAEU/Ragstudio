@@ -221,7 +221,7 @@ export function ChunkInspector() {
             <p className="truncate text-sm text-[#62717a]">
               {selectedDocuments.length
                 ? selectedDocuments.map((document) => document.filename).join(", ")
-                : "Select documents to inspect scoped chunks."}
+                : "Select documents to inspect mirrored chunks and snapshots."}
             </p>
           </div>
           <Button
@@ -251,8 +251,8 @@ export function ChunkInspector() {
         ) : (
           <EmptyState
             icon={Database}
-            title="Inspect selected chunks"
-            description="Index documents when needed, then search or ask a specific question."
+            title="Inspect mirrored chunks"
+            description="Index documents when needed, then search mirrored snapshots."
           />
         )}
       </section>
@@ -270,6 +270,9 @@ function ChunkCard({ chunk }: { chunk: ChunkOut }) {
         </div>
         <div className="flex shrink-0 flex-wrap gap-2">
           <Badge>score {formatValue(chunk.metadata.score)}</Badge>
+          <Badge>profile {chunk.runtime_profile_id ?? "n/a"}</Badge>
+          <Badge>{chunk.content_type}</Badge>
+          <Badge>snapshot {metadataValue(chunk.metadata, ["mirrored_snapshot"], "false")}</Badge>
           <Badge>{metadataValue(chunk.metadata, ["parser_metadata", "backend"], "fallback")}</Badge>
           <Badge>{metadataValue(chunk.metadata, ["domain_metadata", "domain"], "generic")}</Badge>
         </div>
@@ -277,7 +280,7 @@ function ChunkCard({ chunk }: { chunk: ChunkOut }) {
       <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-[#24313a]">{chunk.text}</p>
       <div className="mt-4 grid gap-3 lg:grid-cols-2">
         <JsonBlock title="Source location" value={chunk.source_location} />
-        <JsonBlock title="Metadata" value={chunk.metadata} />
+        <JsonBlock title="Snapshot metadata" value={chunk.metadata} />
       </div>
     </article>
   );
@@ -329,7 +332,13 @@ function metadataValue(metadata: Record<string, unknown>, path: string[], fallba
     }
     current = (current as Record<string, unknown>)[segment];
   }
-  return typeof current === "string" && current ? current : fallback;
+  if (typeof current === "string" && current) {
+    return current;
+  }
+  if (typeof current === "boolean") {
+    return current ? "true" : "false";
+  }
+  return fallback;
 }
 
 function normalizeSearchFilters(filters: ChunkSearchIn): ChunkSearchIn {

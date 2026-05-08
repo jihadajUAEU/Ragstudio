@@ -69,6 +69,9 @@ export function SettingsPage() {
     const formData = new FormData(form);
     const embeddingApiKey = String(formData.get("embedding_api_key") ?? "").trim();
     const llmApiKey = String(formData.get("llm_api_key") ?? "").trim();
+    const visionApiKey = String(formData.get("vision_api_key") ?? "").trim();
+    const rerankerApiKey = String(formData.get("reranker_api_key") ?? "").trim();
+    const neo4jPassword = String(formData.get("neo4j_password") ?? "").trim();
     const payload: SettingsProfileIn = {
       ...formValues,
       llm_provider: formValues.llm_provider ?? "openai_compatible",
@@ -76,12 +79,53 @@ export function SettingsPage() {
       embedding_provider: formValues.embedding_provider ?? "fallback",
       embedding_tls_verify: formValues.embedding_tls_verify ?? true,
       mineru_enabled: formValues.mineru_enabled ?? false,
+      runtime_mode: formValues.runtime_mode ?? "runtime",
+      storage_backend: formValues.storage_backend ?? "postgres_pgvector_neo4j",
+      vision_timeout_ms: formValues.vision_timeout_ms ?? 10000,
+      reranker_provider: formValues.reranker_provider ?? "disabled",
+      reranker_timeout_ms: formValues.reranker_timeout_ms ?? 10000,
+      pgvector_schema: formValues.pgvector_schema ?? "public",
+      pgvector_table_prefix: formValues.pgvector_table_prefix ?? "ragstudio",
+      parser: formValues.parser ?? "mineru",
+      parse_method: formValues.parse_method ?? "auto",
+      chunk_token_size: formValues.chunk_token_size ?? 1200,
+      chunk_overlap_token_size: formValues.chunk_overlap_token_size ?? 100,
+      enable_image_processing: formValues.enable_image_processing ?? true,
+      enable_table_processing: formValues.enable_table_processing ?? true,
+      enable_equation_processing: formValues.enable_equation_processing ?? true,
+      context_window: formValues.context_window ?? 1,
+      context_mode: formValues.context_mode ?? "page",
+      max_context_tokens: formValues.max_context_tokens ?? 2000,
+      include_headers: formValues.include_headers ?? true,
+      include_captions: formValues.include_captions ?? true,
+      query_mode: formValues.query_mode ?? "mix",
+      top_k: formValues.top_k ?? 40,
+      chunk_top_k: formValues.chunk_top_k ?? 20,
+      enable_rerank: formValues.enable_rerank ?? true,
+      cosine_better_than_threshold: formValues.cosine_better_than_threshold ?? 0.2,
+      max_total_tokens: formValues.max_total_tokens ?? 30000,
+      max_entity_tokens: formValues.max_entity_tokens ?? 6000,
+      max_relation_tokens: formValues.max_relation_tokens ?? 8000,
+      enable_llm_cache: formValues.enable_llm_cache ?? true,
+      enable_llm_cache_for_entity_extract: formValues.enable_llm_cache_for_entity_extract ?? true,
+      llm_model_max_async: formValues.llm_model_max_async ?? 4,
+      embedding_func_max_async: formValues.embedding_func_max_async ?? 8,
+      max_parallel_insert: formValues.max_parallel_insert ?? 2,
     };
     if (embeddingApiKey) {
       payload.embedding_api_key = embeddingApiKey;
     }
     if (llmApiKey) {
       payload.llm_api_key = llmApiKey;
+    }
+    if (visionApiKey) {
+      payload.vision_api_key = visionApiKey;
+    }
+    if (rerankerApiKey) {
+      payload.reranker_api_key = rerankerApiKey;
+    }
+    if (neo4jPassword) {
+      payload.neo4j_password = neo4jPassword;
     }
     return payload;
   };
@@ -211,13 +255,165 @@ export function SettingsPage() {
               disabled={busy}
               onChange={(value) => updateField("provider", value)}
             />
-            <Field
+            <SelectField
+              label="Runtime mode"
+              name="runtime_mode"
+              value={formValues?.runtime_mode ?? "runtime"}
+              disabled={busy}
+              onChange={(value) => updateField("runtime_mode", value as SettingsProfileIn["runtime_mode"])}
+              options={[
+                { value: "runtime", label: "Runtime" },
+                { value: "fallback", label: "Fallback" },
+                { value: "degraded", label: "Degraded" },
+              ]}
+            />
+            <SelectField
               label="Storage backend"
               name="storage_backend"
-              value={formValues?.storage_backend ?? ""}
-              placeholder="local"
+              value={formValues?.storage_backend ?? "postgres_pgvector_neo4j"}
               disabled={busy}
-              onChange={(value) => updateField("storage_backend", value)}
+              onChange={(value) => updateField("storage_backend", value as SettingsProfileIn["storage_backend"])}
+              options={[
+                { value: "postgres_pgvector_neo4j", label: "Postgres / PGVector / Neo4j" },
+                { value: "fallback_local", label: "Fallback local" },
+              ]}
+            />
+            <Field
+              label="PGVector schema"
+              name="pgvector_schema"
+              value={formValues?.pgvector_schema ?? "public"}
+              placeholder="public"
+              disabled={busy}
+              onChange={(value) => updateField("pgvector_schema", value)}
+            />
+            <Field
+              label="PGVector table prefix"
+              name="pgvector_table_prefix"
+              value={formValues?.pgvector_table_prefix ?? "ragstudio"}
+              placeholder="ragstudio"
+              disabled={busy}
+              onChange={(value) => updateField("pgvector_table_prefix", value)}
+            />
+            <Field
+              label="Neo4j URI"
+              name="neo4j_uri"
+              value={formValues?.neo4j_uri ?? ""}
+              placeholder="bolt://127.0.0.1:57687"
+              disabled={busy}
+              required={false}
+              onChange={(value) => updateField("neo4j_uri", value)}
+            />
+            <Field
+              label="Neo4j username"
+              name="neo4j_username"
+              value={formValues?.neo4j_username ?? ""}
+              placeholder="neo4j"
+              disabled={busy}
+              required={false}
+              onChange={(value) => updateField("neo4j_username", value)}
+            />
+            <Field
+              label="Neo4j password"
+              name="neo4j_password"
+              value=""
+              placeholder={settingsQuery.data?.has_neo4j_password ? "Saved password present" : "optional"}
+              disabled={busy}
+              required={false}
+              type="password"
+            />
+          </div>
+        </section>
+
+        <section className="rounded-md border border-[#d6dde1] bg-white p-4 sm:p-5">
+          <div className="mb-5 flex items-center gap-2">
+            <PlugZap className="h-4 w-4 text-[#176b87]" aria-hidden="true" />
+            <h3 className="truncate text-base font-semibold text-[#1f2933]">Vision and reranker</h3>
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field
+              label="Vision model"
+              name="vision_model"
+              value={formValues?.vision_model ?? ""}
+              placeholder="optional"
+              disabled={busy}
+              required={false}
+              onChange={(value) => updateField("vision_model", value)}
+            />
+            <Field
+              label="Vision base URL"
+              name="vision_base_url"
+              value={formValues?.vision_base_url ?? ""}
+              placeholder="http://127.0.0.1:8004/v1"
+              disabled={busy}
+              required={false}
+              onChange={(value) => updateField("vision_base_url", value)}
+            />
+            <Field
+              label="Vision API key"
+              name="vision_api_key"
+              value=""
+              placeholder={settingsQuery.data?.has_vision_api_key ? "Saved key present" : "optional"}
+              disabled={busy}
+              required={false}
+              type="password"
+            />
+            <Field
+              label="Vision timeout (ms)"
+              name="vision_timeout_ms"
+              value={String(formValues?.vision_timeout_ms ?? 10000)}
+              placeholder="10000"
+              disabled={busy}
+              type="number"
+              onChange={(value) => updateField("vision_timeout_ms", Number(value))}
+            />
+            <SelectField
+              label="Reranker provider"
+              name="reranker_provider"
+              value={formValues?.reranker_provider ?? "disabled"}
+              disabled={busy}
+              onChange={(value) => updateField("reranker_provider", value as SettingsProfileIn["reranker_provider"])}
+              options={[
+                { value: "disabled", label: "Disabled" },
+                { value: "cohere_compatible", label: "Cohere-compatible" },
+                { value: "jina_compatible", label: "Jina-compatible" },
+                { value: "generic_http", label: "Generic HTTP" },
+              ]}
+            />
+            <Field
+              label="Reranker model"
+              name="reranker_model"
+              value={formValues?.reranker_model ?? ""}
+              placeholder="optional"
+              disabled={busy}
+              required={false}
+              onChange={(value) => updateField("reranker_model", value)}
+            />
+            <Field
+              label="Reranker base URL"
+              name="reranker_base_url"
+              value={formValues?.reranker_base_url ?? ""}
+              placeholder="http://127.0.0.1:8005/v1"
+              disabled={busy}
+              required={false}
+              onChange={(value) => updateField("reranker_base_url", value)}
+            />
+            <Field
+              label="Reranker API key"
+              name="reranker_api_key"
+              value=""
+              placeholder={settingsQuery.data?.has_reranker_api_key ? "Saved key present" : "optional"}
+              disabled={busy}
+              required={false}
+              type="password"
+            />
+            <Field
+              label="Reranker timeout (ms)"
+              name="reranker_timeout_ms"
+              value={String(formValues?.reranker_timeout_ms ?? 10000)}
+              placeholder="10000"
+              disabled={busy}
+              type="number"
+              onChange={(value) => updateField("reranker_timeout_ms", Number(value))}
             />
           </div>
         </section>
@@ -366,6 +562,235 @@ export function SettingsPage() {
               )}
               Test MinerU
             </Button>
+          </div>
+        </section>
+
+        <section className="rounded-md border border-[#d6dde1] bg-white p-4 sm:p-5">
+          <div className="mb-5 flex items-center gap-2">
+            <Settings className="h-4 w-4 text-[#176b87]" aria-hidden="true" />
+            <h3 className="truncate text-base font-semibold text-[#1f2933]">Parser, chunking, and context</h3>
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field
+              label="Parser"
+              name="parser"
+              value={formValues?.parser ?? "mineru"}
+              placeholder="mineru"
+              disabled={busy}
+              onChange={(value) => updateField("parser", value)}
+            />
+            <Field
+              label="Parse method"
+              name="parse_method"
+              value={formValues?.parse_method ?? "auto"}
+              placeholder="auto"
+              disabled={busy}
+              onChange={(value) => updateField("parse_method", value)}
+            />
+            <Field
+              label="Chunk token size"
+              name="chunk_token_size"
+              value={String(formValues?.chunk_token_size ?? 1200)}
+              placeholder="1200"
+              disabled={busy}
+              type="number"
+              onChange={(value) => updateField("chunk_token_size", Number(value))}
+            />
+            <Field
+              label="Chunk overlap tokens"
+              name="chunk_overlap_token_size"
+              value={String(formValues?.chunk_overlap_token_size ?? 100)}
+              placeholder="100"
+              disabled={busy}
+              type="number"
+              onChange={(value) => updateField("chunk_overlap_token_size", Number(value))}
+            />
+            <CheckboxField
+              label="Process images"
+              name="enable_image_processing"
+              checked={formValues?.enable_image_processing ?? true}
+              disabled={busy}
+              onChange={(checked) => updateField("enable_image_processing", checked)}
+            />
+            <CheckboxField
+              label="Process tables"
+              name="enable_table_processing"
+              checked={formValues?.enable_table_processing ?? true}
+              disabled={busy}
+              onChange={(checked) => updateField("enable_table_processing", checked)}
+            />
+            <CheckboxField
+              label="Process equations"
+              name="enable_equation_processing"
+              checked={formValues?.enable_equation_processing ?? true}
+              disabled={busy}
+              onChange={(checked) => updateField("enable_equation_processing", checked)}
+            />
+            <CheckboxField
+              label="Include headers"
+              name="include_headers"
+              checked={formValues?.include_headers ?? true}
+              disabled={busy}
+              onChange={(checked) => updateField("include_headers", checked)}
+            />
+            <CheckboxField
+              label="Include captions"
+              name="include_captions"
+              checked={formValues?.include_captions ?? true}
+              disabled={busy}
+              onChange={(checked) => updateField("include_captions", checked)}
+            />
+            <Field
+              label="Context window"
+              name="context_window"
+              value={String(formValues?.context_window ?? 1)}
+              placeholder="1"
+              disabled={busy}
+              type="number"
+              onChange={(value) => updateField("context_window", Number(value))}
+            />
+            <Field
+              label="Context mode"
+              name="context_mode"
+              value={formValues?.context_mode ?? "page"}
+              placeholder="page"
+              disabled={busy}
+              onChange={(value) => updateField("context_mode", value)}
+            />
+            <Field
+              label="Max context tokens"
+              name="max_context_tokens"
+              value={String(formValues?.max_context_tokens ?? 2000)}
+              placeholder="2000"
+              disabled={busy}
+              type="number"
+              onChange={(value) => updateField("max_context_tokens", Number(value))}
+            />
+          </div>
+        </section>
+
+        <section className="rounded-md border border-[#d6dde1] bg-white p-4 sm:p-5">
+          <div className="mb-5 flex items-center gap-2">
+            <Settings className="h-4 w-4 text-[#176b87]" aria-hidden="true" />
+            <h3 className="truncate text-base font-semibold text-[#1f2933]">Query defaults, cache, and concurrency</h3>
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <SelectField
+              label="Query mode"
+              name="query_mode"
+              value={formValues?.query_mode ?? "mix"}
+              disabled={busy}
+              onChange={(value) => updateField("query_mode", value as SettingsProfileIn["query_mode"])}
+              options={[
+                { value: "mix", label: "Mix" },
+                { value: "hybrid", label: "Hybrid" },
+                { value: "local", label: "Local" },
+                { value: "global", label: "Global" },
+                { value: "naive", label: "Naive" },
+              ]}
+            />
+            <Field
+              label="Top K"
+              name="top_k"
+              value={String(formValues?.top_k ?? 40)}
+              placeholder="40"
+              disabled={busy}
+              type="number"
+              onChange={(value) => updateField("top_k", Number(value))}
+            />
+            <Field
+              label="Chunk top K"
+              name="chunk_top_k"
+              value={String(formValues?.chunk_top_k ?? 20)}
+              placeholder="20"
+              disabled={busy}
+              type="number"
+              onChange={(value) => updateField("chunk_top_k", Number(value))}
+            />
+            <Field
+              label="Cosine threshold"
+              name="cosine_better_than_threshold"
+              value={String(formValues?.cosine_better_than_threshold ?? 0.2)}
+              placeholder="0.2"
+              disabled={busy}
+              type="number"
+              onChange={(value) => updateField("cosine_better_than_threshold", Number(value))}
+            />
+            <Field
+              label="Max total tokens"
+              name="max_total_tokens"
+              value={String(formValues?.max_total_tokens ?? 30000)}
+              placeholder="30000"
+              disabled={busy}
+              type="number"
+              onChange={(value) => updateField("max_total_tokens", Number(value))}
+            />
+            <Field
+              label="Max entity tokens"
+              name="max_entity_tokens"
+              value={String(formValues?.max_entity_tokens ?? 6000)}
+              placeholder="6000"
+              disabled={busy}
+              type="number"
+              onChange={(value) => updateField("max_entity_tokens", Number(value))}
+            />
+            <Field
+              label="Max relation tokens"
+              name="max_relation_tokens"
+              value={String(formValues?.max_relation_tokens ?? 8000)}
+              placeholder="8000"
+              disabled={busy}
+              type="number"
+              onChange={(value) => updateField("max_relation_tokens", Number(value))}
+            />
+            <CheckboxField
+              label="Enable rerank"
+              name="enable_rerank"
+              checked={formValues?.enable_rerank ?? true}
+              disabled={busy}
+              onChange={(checked) => updateField("enable_rerank", checked)}
+            />
+            <CheckboxField
+              label="LLM cache"
+              name="enable_llm_cache"
+              checked={formValues?.enable_llm_cache ?? true}
+              disabled={busy}
+              onChange={(checked) => updateField("enable_llm_cache", checked)}
+            />
+            <CheckboxField
+              label="Entity cache"
+              name="enable_llm_cache_for_entity_extract"
+              checked={formValues?.enable_llm_cache_for_entity_extract ?? true}
+              disabled={busy}
+              onChange={(checked) => updateField("enable_llm_cache_for_entity_extract", checked)}
+            />
+            <Field
+              label="LLM max async"
+              name="llm_model_max_async"
+              value={String(formValues?.llm_model_max_async ?? 4)}
+              placeholder="4"
+              disabled={busy}
+              type="number"
+              onChange={(value) => updateField("llm_model_max_async", Number(value))}
+            />
+            <Field
+              label="Embedding max async"
+              name="embedding_func_max_async"
+              value={String(formValues?.embedding_func_max_async ?? 8)}
+              placeholder="8"
+              disabled={busy}
+              type="number"
+              onChange={(value) => updateField("embedding_func_max_async", Number(value))}
+            />
+            <Field
+              label="Max parallel insert"
+              name="max_parallel_insert"
+              value={String(formValues?.max_parallel_insert ?? 2)}
+              placeholder="2"
+              disabled={busy}
+              type="number"
+              onChange={(value) => updateField("max_parallel_insert", Number(value))}
+            />
           </div>
         </section>
 
@@ -574,6 +999,33 @@ function SelectField({
   );
 }
 
+function CheckboxField({
+  label,
+  name,
+  checked,
+  disabled,
+  onChange,
+}: {
+  label: string;
+  name: keyof SettingsProfileIn;
+  checked: boolean;
+  disabled: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <label className="flex h-10 items-center gap-2 self-end rounded-md border border-[#cfd8dd] px-3 text-sm font-medium text-[#3a4a53]">
+      <input
+        name={name}
+        type="checkbox"
+        checked={checked}
+        onChange={(event) => onChange(event.target.checked)}
+        disabled={disabled}
+      />
+      {label}
+    </label>
+  );
+}
+
 function formatCapability(capability: string) {
   return capability === "text" ? "Text" : capability === "vision" ? "Vision" : "Reasoning";
 }
@@ -598,6 +1050,43 @@ function settingsToFormValues(settings: SettingsProfileOut): SettingsProfileIn {
     mineru_base_url: settings.mineru_base_url ?? "",
     mineru_timeout_ms: settings.mineru_timeout_ms,
     mineru_poll_interval_ms: settings.mineru_poll_interval_ms,
+    runtime_mode: settings.runtime_mode,
+    vision_model: settings.vision_model ?? "",
+    vision_base_url: settings.vision_base_url ?? "",
+    vision_timeout_ms: settings.vision_timeout_ms,
+    reranker_provider: settings.reranker_provider,
+    reranker_model: settings.reranker_model ?? "",
+    reranker_base_url: settings.reranker_base_url ?? "",
+    reranker_timeout_ms: settings.reranker_timeout_ms,
+    pgvector_schema: settings.pgvector_schema,
+    pgvector_table_prefix: settings.pgvector_table_prefix,
+    neo4j_uri: settings.neo4j_uri ?? "",
+    neo4j_username: settings.neo4j_username ?? "",
+    parser: settings.parser,
+    parse_method: settings.parse_method,
+    chunk_token_size: settings.chunk_token_size,
+    chunk_overlap_token_size: settings.chunk_overlap_token_size,
+    enable_image_processing: settings.enable_image_processing,
+    enable_table_processing: settings.enable_table_processing,
+    enable_equation_processing: settings.enable_equation_processing,
+    context_window: settings.context_window,
+    context_mode: settings.context_mode,
+    max_context_tokens: settings.max_context_tokens,
+    include_headers: settings.include_headers,
+    include_captions: settings.include_captions,
+    query_mode: settings.query_mode,
+    top_k: settings.top_k,
+    chunk_top_k: settings.chunk_top_k,
+    enable_rerank: settings.enable_rerank,
+    cosine_better_than_threshold: settings.cosine_better_than_threshold,
+    max_total_tokens: settings.max_total_tokens,
+    max_entity_tokens: settings.max_entity_tokens,
+    max_relation_tokens: settings.max_relation_tokens,
+    enable_llm_cache: settings.enable_llm_cache,
+    enable_llm_cache_for_entity_extract: settings.enable_llm_cache_for_entity_extract,
+    llm_model_max_async: settings.llm_model_max_async,
+    embedding_func_max_async: settings.embedding_func_max_async,
+    max_parallel_insert: settings.max_parallel_insert,
   };
 }
 

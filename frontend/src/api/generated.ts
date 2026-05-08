@@ -16,6 +16,28 @@ export interface HealthOut {
   service: string;
 }
 
+export type RuntimeMode = "runtime" | "fallback" | "degraded";
+export type RuntimeOverallStatus = "ready" | "degraded" | "failed" | "fallback";
+export type RuntimeCheckStatus = "ok" | "warning" | "failed" | "skipped";
+export type RuntimeCheckSeverity = "info" | "warning" | "blocking";
+export type StorageBackend = "postgres_pgvector_neo4j" | "fallback_local";
+export type RerankerProvider =
+  | "disabled"
+  | "cohere_compatible"
+  | "jina_compatible"
+  | "generic_http";
+export type QueryMode = "mix" | "hybrid" | "local" | "global" | "naive";
+
+export interface RuntimeHealthCheck {
+  name: string;
+  status: RuntimeCheckStatus;
+  severity: RuntimeCheckSeverity;
+  latency_ms?: number | null;
+  detail: string;
+  error_type?: string | null;
+  remediation?: string | null;
+}
+
 export interface DocumentOut {
   id: string;
   filename: string;
@@ -33,7 +55,7 @@ export interface SettingsProfileIn {
   llm_timeout_ms?: number;
   llm_capabilities?: Array<"text" | "vision" | "reasoning">;
   embedding_model: string;
-  storage_backend: string;
+  storage_backend: StorageBackend;
   embedding_provider?: "fallback" | "vllm_openai";
   embedding_base_url?: string | null;
   embedding_api_key?: string | null;
@@ -45,6 +67,46 @@ export interface SettingsProfileIn {
   mineru_base_url?: string | null;
   mineru_timeout_ms?: number;
   mineru_poll_interval_ms?: number;
+  runtime_mode?: RuntimeMode;
+  vision_model?: string | null;
+  vision_base_url?: string | null;
+  vision_api_key?: string | null;
+  vision_timeout_ms?: number;
+  reranker_provider?: RerankerProvider;
+  reranker_model?: string | null;
+  reranker_base_url?: string | null;
+  reranker_api_key?: string | null;
+  reranker_timeout_ms?: number;
+  pgvector_schema?: string;
+  pgvector_table_prefix?: string;
+  neo4j_uri?: string | null;
+  neo4j_username?: string | null;
+  neo4j_password?: string | null;
+  parser?: string;
+  parse_method?: string;
+  chunk_token_size?: number;
+  chunk_overlap_token_size?: number;
+  enable_image_processing?: boolean;
+  enable_table_processing?: boolean;
+  enable_equation_processing?: boolean;
+  context_window?: number;
+  context_mode?: string;
+  max_context_tokens?: number;
+  include_headers?: boolean;
+  include_captions?: boolean;
+  query_mode?: QueryMode;
+  top_k?: number;
+  chunk_top_k?: number;
+  enable_rerank?: boolean;
+  cosine_better_than_threshold?: number;
+  max_total_tokens?: number;
+  max_entity_tokens?: number;
+  max_relation_tokens?: number;
+  enable_llm_cache?: boolean;
+  enable_llm_cache_for_entity_extract?: boolean;
+  llm_model_max_async?: number;
+  embedding_func_max_async?: number;
+  max_parallel_insert?: number;
 }
 
 export interface SettingsProfileOut {
@@ -57,7 +119,7 @@ export interface SettingsProfileOut {
   llm_timeout_ms: number;
   llm_capabilities: Array<"text" | "vision" | "reasoning">;
   embedding_model: string;
-  storage_backend: string;
+  storage_backend: StorageBackend;
   embedding_provider: "fallback" | "vllm_openai";
   embedding_base_url: string | null;
   has_embedding_api_key: boolean;
@@ -69,6 +131,46 @@ export interface SettingsProfileOut {
   mineru_base_url: string | null;
   mineru_timeout_ms: number;
   mineru_poll_interval_ms: number;
+  runtime_mode: RuntimeMode;
+  vision_model: string | null;
+  vision_base_url: string | null;
+  has_vision_api_key: boolean;
+  vision_timeout_ms: number;
+  reranker_provider: RerankerProvider;
+  reranker_model: string | null;
+  reranker_base_url: string | null;
+  has_reranker_api_key: boolean;
+  reranker_timeout_ms: number;
+  pgvector_schema: string;
+  pgvector_table_prefix: string;
+  neo4j_uri: string | null;
+  neo4j_username: string | null;
+  has_neo4j_password: boolean;
+  parser: string;
+  parse_method: string;
+  chunk_token_size: number;
+  chunk_overlap_token_size: number;
+  enable_image_processing: boolean;
+  enable_table_processing: boolean;
+  enable_equation_processing: boolean;
+  context_window: number;
+  context_mode: string;
+  max_context_tokens: number;
+  include_headers: boolean;
+  include_captions: boolean;
+  query_mode: QueryMode;
+  top_k: number;
+  chunk_top_k: number;
+  enable_rerank: boolean;
+  cosine_better_than_threshold: number;
+  max_total_tokens: number;
+  max_entity_tokens: number;
+  max_relation_tokens: number;
+  enable_llm_cache: boolean;
+  enable_llm_cache_for_entity_extract: boolean;
+  llm_model_max_async: number;
+  embedding_func_max_async: number;
+  max_parallel_insert: number;
 }
 
 export interface EmbeddingConnectionTestOut {
@@ -170,6 +272,11 @@ export interface ChunkOut {
   text: string;
   source_location: Record<string, unknown>;
   metadata: Record<string, unknown>;
+  runtime_profile_id?: string | null;
+  runtime_source_id?: string | null;
+  content_type: string;
+  preview_ref?: string | null;
+  indexed_at?: string | null;
 }
 
 export interface ChunkSearchIn {
@@ -273,12 +380,21 @@ export interface RunOut {
   chunk_traces: Record<string, unknown>[];
   timings: Record<string, unknown>;
   error: string | null;
+  runtime_profile_id?: string | null;
+  document_ids: string[];
+  query_config: Record<string, unknown>;
+  reranker_traces: Record<string, unknown>[];
+  token_metadata: Record<string, unknown>;
+  error_type?: string | null;
 }
 
 export interface DiagnosticsOut {
   capabilities: Record<string, boolean>;
   dependency_status: Record<string, unknown>;
   warnings: string[];
+  runtime_mode: string;
+  overall_status: RuntimeOverallStatus;
+  checks: RuntimeHealthCheck[];
 }
 
 export interface GraphOut {

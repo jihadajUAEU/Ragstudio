@@ -269,9 +269,15 @@ function RunResult({ run, variant }: { run: RunOut; variant?: VariantOut }) {
         </div>
         <StatusBadge status={run.status} className="shrink-0" />
       </div>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <Badge>profile {run.runtime_profile_id ?? "n/a"}</Badge>
+        <Badge>documents {run.document_ids.length}</Badge>
+        {run.error_type ? <Badge>{run.error_type}</Badge> : null}
+      </div>
 
       {run.error ? (
         <p className="mt-3 rounded-md border border-[#e19a9a] bg-[#fff0f0] p-3 text-sm text-[#8c2525]">
+          {run.error_type ? `${run.error_type}: ` : ""}
           {run.error}
         </p>
       ) : (
@@ -281,9 +287,20 @@ function RunResult({ run, variant }: { run: RunOut; variant?: VariantOut }) {
       <div className="mt-4 grid gap-3 lg:grid-cols-2">
         <JsonPanel title="Sources" items={run.sources} />
         <JsonPanel title="Chunk traces" items={run.chunk_traces} />
+        <JsonPanel title="Query config" items={[run.query_config]} />
+        <JsonPanel title="Reranker traces" items={run.reranker_traces} />
+        <JsonPanel title="Token metadata" items={[run.token_metadata]} />
       </div>
       <JsonPanel title="Timings" items={[run.timings]} compact />
     </article>
+  );
+}
+
+function Badge({ children }: { children: ReactNode }) {
+  return (
+    <span className="rounded-md bg-[#eef4f6] px-2 py-1 text-xs font-medium text-[#174657]">
+      {children}
+    </span>
   );
 }
 

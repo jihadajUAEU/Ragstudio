@@ -7,6 +7,7 @@ Standalone local Studio for RAG-Anything. The app provides document upload, pipe
 Install backend and frontend dependencies first:
 
 ```bash
+docker compose up -d postgres neo4j
 ./scripts/setup.sh
 ```
 

@@ -28,7 +28,7 @@ Start the local backend and Vite frontend:
 
 The dev script starts FastAPI on `http://127.0.0.1:8000` and Vite on `http://127.0.0.1:5173`. The FastAPI app also serves a built frontend from `frontend/dist` or the packaged static directory when those files exist.
 
-The backend stores local state under `.ragstudio/` by default, including the SQLite database at `.ragstudio/studio.sqlite3` and uploaded artifacts.
+The backend targets local Postgres/PGVector and Neo4j runtime stores by default, while uploaded artifacts and runtime working files remain under `.ragstudio/`.
 
 ## Fallback vs `raganything[all]`
 
