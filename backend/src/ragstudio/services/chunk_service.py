@@ -115,6 +115,9 @@ class ChunkService:
             artifact_path=document.artifact_path,
             document_id=document.id,
             artifact_dir=artifact_dir,
+            content_type=document.content_type,
+            sha256=document.sha256,
+            domain_metadata=options.domain_metadata.model_dump(exclude_none=True),
         )
         return client.normalize_artifact_zip(
             artifact_zip=job_result.artifact_zip,

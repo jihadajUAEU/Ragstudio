@@ -160,6 +160,14 @@ export function ChunkInspector() {
             value={indexOptions}
             onChange={setIndexOptions}
             disabled={indexDocument.isPending}
+            suggestContext={
+              selectedDocuments[0]
+                ? {
+                    filename: selectedDocuments[0].filename,
+                    content_type: selectedDocuments[0].content_type,
+                  }
+                : undefined
+            }
           />
         </div>
 

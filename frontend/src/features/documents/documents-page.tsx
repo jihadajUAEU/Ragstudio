@@ -171,6 +171,14 @@ export function DocumentsPage() {
               value={indexOptions}
               onChange={setIndexOptions}
               disabled={uploadDocument.isPending}
+              suggestContext={
+                file
+                  ? {
+                      filename: file.name,
+                      content_type: file.type || "application/octet-stream",
+                    }
+                  : undefined
+              }
             />
           </div>
           <Button type="submit" disabled={!file || uploadDocument.isPending}>

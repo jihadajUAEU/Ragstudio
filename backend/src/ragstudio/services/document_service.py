@@ -45,7 +45,14 @@ class DocumentService:
             job = JobWorker.build("index_document", document.id)
             self.session.add(job)
             await self.session.flush()
-            await self._index_document_for_job(document, job, options)
+            try:
+                await self._index_document_for_job(document, job, options)
+            except Exception as exc:
+                document.status = StageStatus.FAILED.value
+                job.status = StageStatus.FAILED.value
+                job.progress = 100
+                job.logs = [*job.logs, str(exc)]
+                job.result = {"document_id": document.id, "error": str(exc)}
             await self.session.commit()
         except IntegrityError:
             await self.session.rollback()

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import shutil
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -35,8 +36,17 @@ class MinerUClient:
         artifact_path: str | Path,
         document_id: str,
         artifact_dir: Path,
+        content_type: str = "application/octet-stream",
+        sha256: str | None = None,
+        domain_metadata: dict[str, Any] | None = None,
     ) -> MinerUJobResult:
-        parse_job_id = await self.submit_parse(artifact_path, document_id)
+        parse_job_id = await self.submit_parse(
+            artifact_path,
+            document_id,
+            content_type=content_type,
+            sha256=sha256,
+            domain_metadata=domain_metadata,
+        )
         ready_job = await self.poll_until_ready(parse_job_id)
         artifact_zip = await self.download_artifacts(
             str(ready_job.get("jobId") or parse_job_id),
@@ -44,18 +54,34 @@ class MinerUClient:
         )
         return MinerUJobResult(parse_job_id=parse_job_id, artifact_zip=artifact_zip)
 
-    async def submit_parse(self, artifact_path: str | Path, document_id: str) -> str:
+    async def submit_parse(
+        self,
+        artifact_path: str | Path,
+        document_id: str,
+        *,
+        content_type: str = "application/octet-stream",
+        sha256: str | None = None,
+        domain_metadata: dict[str, Any] | None = None,
+    ) -> str:
         path = Path(artifact_path)
+        metadata = {
+            "mimeType": content_type,
+            "domainMetadata": domain_metadata or {},
+        }
+        form_data = {
+            "sourceId": document_id,
+            "sourceType": "uploaded_document",
+            "title": path.name,
+            "metadata": json.dumps(metadata),
+        }
+        if sha256:
+            form_data["sha256"] = sha256
         async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
             with path.open("rb") as file_obj:
                 response = await client.post(
                     f"{self.base_url}/parse-async",
-                    files={"file": (path.name, file_obj, "application/octet-stream")},
-                    data={
-                        "sourceId": document_id,
-                        "sourceType": "uploaded_document",
-                        "title": path.name,
-                    },
+                    files={"file": (path.name, file_obj, content_type)},
+                    data=form_data,
                 )
         response.raise_for_status()
         payload = response.json()
@@ -102,6 +128,7 @@ class MinerUClient:
     ) -> list[AdapterChunk]:
         self._extract_safe(artifact_zip, extract_dir)
         manifest = self._read_manifest(extract_dir)
+        related_artifacts = self._related_artifacts(manifest)
         chunks: list[AdapterChunk] = []
         for index, item in enumerate(self._manifest_entries(manifest, extract_dir)):
             rel_path = str(item.get("path") or "")
@@ -113,10 +140,16 @@ class MinerUClient:
             text = artifact_path.read_text(encoding="utf-8", errors="replace").strip()
             if not text:
                 continue
-            page_number = item.get("pageNumber") or item.get("page")
             source_location: dict[str, Any] = {"artifact": rel_path}
-            if isinstance(page_number, int):
-                source_location["page"] = page_number
+            for source_key, manifest_key in (
+                ("page", "pageNumber"),
+                ("page", "page"),
+                ("page_start", "pageStart"),
+                ("page_end", "pageEnd"),
+            ):
+                page_value = item.get(manifest_key)
+                if isinstance(page_value, int):
+                    source_location[source_key] = page_value
             chunks.append(
                 AdapterChunk(
                     text=text,
@@ -126,12 +159,17 @@ class MinerUClient:
                             "backend": "mineru",
                             "parser_mode": parser_mode,
                             "parse_job_id": parse_job_id,
+                            "parse_method": manifest.get("parseMethod"),
+                            "source_id": manifest.get("sourceId"),
+                            "sha256": manifest.get("sha256"),
+                            "parser": manifest.get("parser"),
                             "artifact_ref": rel_path,
                             "content_type": str(
                                 item.get("contentType") or item.get("kind") or "text"
                             ),
                             "chunk_index": index,
                             "document_id": document_id,
+                            "related_artifacts": related_artifacts,
                         }
                     },
                 )
@@ -139,13 +177,15 @@ class MinerUClient:
         return chunks
 
     def _extract_safe(self, artifact_zip: Path, extract_dir: Path) -> None:
-        extract_dir.mkdir(parents=True, exist_ok=True)
         root = extract_dir.resolve()
         with ZipFile(artifact_zip) as archive:
             for member in archive.infolist():
                 target = (extract_dir / member.filename).resolve()
                 if root not in target.parents and target != root:
                     raise MinerUArtifactError(f"Unsafe artifact path: {member.filename}")
+            if extract_dir.exists():
+                shutil.rmtree(extract_dir)
+            extract_dir.mkdir(parents=True, exist_ok=True)
             archive.extractall(extract_dir)
 
     def _read_manifest(self, extract_dir: Path) -> dict[str, Any]:
@@ -178,3 +218,17 @@ class MinerUClient:
             {"path": path.relative_to(extract_dir).as_posix(), "kind": "markdown"}
             for path in sorted(extract_dir.rglob("*.md"))
         ]
+
+    def _related_artifacts(self, manifest: dict[str, Any]) -> list[dict[str, str]]:
+        raw_entries = manifest.get("files") or []
+        related: list[dict[str, str]] = []
+        text_kinds = {"text", "markdown", "md"}
+        for item in raw_entries:
+            if not isinstance(item, dict):
+                continue
+            path = str(item.get("path") or "")
+            kind = str(item.get("kind") or item.get("contentType") or "")
+            if not path or kind.lower() in text_kinds or path == "manifest.json":
+                continue
+            related.append({"path": path, "kind": kind})
+        return related
