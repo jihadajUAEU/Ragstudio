@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Loader2, Wand2 } from "lucide-react";
+import { Braces, Loader2, Wand2 } from "lucide-react";
 
 import { apiClient } from "../../api/client";
 import type {
@@ -15,6 +15,17 @@ const parserOptions: Array<{ value: ParserMode; label: string }> = [
   { value: "mineru_strict", label: "MinerU strict" },
   { value: "mineru_with_fallback", label: "MinerU with fallback" },
 ];
+
+const sampleCustomJson = {
+  source_system: "library_upload",
+  audience: "research",
+  citation_style: "surah_ayah",
+  extraction_notes: "Preserve Arabic text, English translation, and verse references.",
+  review: {
+    owner: "domain-expert",
+    priority: "high",
+  },
+};
 
 export function DomainMetadataPanel({
   profiles,
@@ -38,9 +49,11 @@ export function DomainMetadataPanel({
   const [selectedProfileId, setSelectedProfileId] = useState("");
   const [customJsonDraft, setCustomJsonDraft] = useState<string | null>(null);
   const [customJsonError, setCustomJsonError] = useState("");
+  const [showCustomJsonSample, setShowCustomJsonSample] = useState(false);
   const [suggestState, setSuggestState] = useState<"idle" | "loading" | "error">("idle");
   const customJsonText =
     customJsonDraft ?? JSON.stringify(metadata.custom_json ?? {}, null, 2);
+  const sampleCustomJsonText = JSON.stringify(sampleCustomJson, null, 2);
   const setMetadata = (patch: DomainMetadata) => {
     onChange({ ...value, domain_metadata: { ...metadata, ...patch } });
   };
@@ -181,15 +194,35 @@ export function DomainMetadataPanel({
             setMetadata({ tags: tags.split(",").map((tag) => tag.trim()).filter(Boolean) })
           }
         />
-        <label className="text-sm font-medium text-[#3a4a53] sm:col-span-2">
-          <span className="mb-1.5 block">Custom JSON</span>
+        <div className="text-sm font-medium text-[#3a4a53] sm:col-span-2">
+          <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
+            <span id="custom-json-label">Custom JSON</span>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={() => setShowCustomJsonSample((isVisible) => !isVisible)}
+            >
+              <Braces className="h-4 w-4" aria-hidden="true" />
+              {showCustomJsonSample ? "Hide sample" : "View sample"}
+            </Button>
+          </div>
           <textarea
+            aria-labelledby="custom-json-label"
             className="min-h-24 w-full rounded-md border border-[#cfd8dd] bg-white px-3 py-2 font-mono text-xs"
             value={customJsonText}
             disabled={disabled}
             onChange={(event) => applyCustomJson(event.target.value)}
           />
-        </label>
+        </div>
+        {showCustomJsonSample ? (
+          <div className="rounded-md border border-[#cfd8dd] bg-[#f7fafb] p-3 sm:col-span-2">
+            <p className="mb-2 text-sm font-medium text-[#3a4a53]">Sample custom JSON</p>
+            <pre className="max-h-56 overflow-auto whitespace-pre-wrap rounded-md bg-white p-3 font-mono text-xs text-[#1f2933]">
+              {sampleCustomJsonText}
+            </pre>
+          </div>
+        ) : null}
       </div>
       <p className="mt-2 min-h-5 text-sm text-[#62717a]" role="status">
         {customJsonError || (suggestState === "error" ? "Metadata suggestion failed." : "")}

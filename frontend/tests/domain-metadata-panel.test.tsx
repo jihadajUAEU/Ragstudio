@@ -183,4 +183,27 @@ describe("DomainMetadataPanel", () => {
     expect(screen.getByText("Custom JSON must be valid JSON.")).toBeVisible();
     expect(onValidityChange).toHaveBeenCalledWith(false);
   });
+
+  it("shows and hides a sample custom JSON object", () => {
+    render(
+      <DomainMetadataPanel
+        profiles={[]}
+        value={{
+          parser_mode: "local_fallback",
+          domain_metadata: { domain: "generic", document_type: "document", custom_json: {} },
+        }}
+        onChange={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /view sample/i }));
+
+    expect(screen.getByText("Sample custom JSON")).toBeVisible();
+    expect(screen.getByText(/source_system/)).toBeVisible();
+    expect(screen.getByText(/citation_style/)).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: /hide sample/i }));
+
+    expect(screen.queryByText("Sample custom JSON")).not.toBeInTheDocument();
+  });
 });
