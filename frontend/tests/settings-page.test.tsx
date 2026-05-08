@@ -187,6 +187,40 @@ describe("SettingsPage provider sync", () => {
     );
   });
 
+  it("submits newly typed secret values", async () => {
+    renderSettings();
+
+    await screen.findByText("LLM generation");
+    await screen.findByDisplayValue("gpt-4.1");
+    fireEvent.change(screen.getByLabelText("LLM API key"), {
+      target: { value: "llm-secret" },
+    });
+    fireEvent.change(screen.getByLabelText("Vision API key"), {
+      target: { value: "vision-secret" },
+    });
+    fireEvent.change(screen.getByLabelText("Reranker API key"), {
+      target: { value: "reranker-secret" },
+    });
+    fireEvent.change(screen.getByLabelText("API key"), {
+      target: { value: "embedding-secret" },
+    });
+    fireEvent.change(screen.getByLabelText("Neo4j password"), {
+      target: { value: "neo4j-secret" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^Save$/i }));
+
+    await waitFor(() => expect(apiClient.updateDefaultSettings).toHaveBeenCalled());
+    expect(vi.mocked(apiClient.updateDefaultSettings).mock.calls[0][0]).toEqual(
+      expect.objectContaining({
+        llm_api_key: "llm-secret",
+        vision_api_key: "vision-secret",
+        reranker_api_key: "reranker-secret",
+        embedding_api_key: "embedding-secret",
+        neo4j_password: "neo4j-secret",
+      }),
+    );
+  });
+
   it("allows saving the first profile when settings are missing", async () => {
     vi.mocked(apiClient.defaultSettings).mockRejectedValueOnce(
       new ApiError("No default profile saved", 404, { detail: "No default profile saved" }),

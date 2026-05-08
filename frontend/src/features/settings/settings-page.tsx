@@ -1,4 +1,4 @@
-import { type FormEvent, useState } from "react";
+import { type ChangeEvent, type FormEvent, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2, PlugZap, RefreshCcw, RotateCcw, Save, Settings } from "lucide-react";
 
@@ -1034,6 +1034,13 @@ function Field({
   type?: string;
   onChange?: (value: string) => void;
 }) {
+  const valueProps = onChange
+    ? {
+        value,
+        onChange: (event: ChangeEvent<HTMLInputElement>) => onChange(event.target.value),
+      }
+    : { defaultValue: value };
+
   return (
     <label className="min-w-0 text-sm font-medium text-[#3a4a53]">
       <span className="mb-1.5 block truncate">{label}</span>
@@ -1041,11 +1048,10 @@ function Field({
         className="h-10 w-full rounded-md border border-[#cfd8dd] bg-white px-3 text-sm text-[#1f2933] outline-none focus:border-[#176b87] focus:ring-2 focus:ring-[#176b87]/20 disabled:bg-[#f4f7f8]"
         type={type}
         name={name}
-        value={value}
+        {...valueProps}
         placeholder={placeholder}
         disabled={disabled}
         required={required}
-        onChange={(event) => onChange?.(event.target.value)}
       />
     </label>
   );
