@@ -1,7 +1,7 @@
-from typing import Literal
+from typing import Literal, Self
 from urllib.parse import urlparse
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 
 from ragstudio.schemas.common import StudioModel
 from ragstudio.schemas.runtime import (
@@ -77,6 +77,12 @@ class SettingsProfileIn(StudioModel):
     llm_model_max_async: int = Field(default=4, ge=1, le=128)
     embedding_func_max_async: int = Field(default=8, ge=1, le=128)
     max_parallel_insert: int = Field(default=2, ge=1, le=64)
+
+    @model_validator(mode="after")
+    def normalize_runtime_storage_pair(self) -> Self:
+        if self.storage_backend == "fallback_local":
+            self.runtime_mode = "fallback"
+        return self
 
     @field_validator("llm_base_url")
     @classmethod

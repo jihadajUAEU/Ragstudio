@@ -64,6 +64,28 @@ class QueryService:
 
         return await self._run_legacy_query(payload)
 
+    async def preflight_runtime_readiness(self, payload: QueryIn) -> None:
+        await self._validate_query_inputs(payload)
+        if self.settings is None:
+            return
+        try:
+            profile = await RuntimeProfileService(
+                self.session,
+                self.settings,
+            ).get_active_profile()
+        except RuntimeProfileNotConfiguredError:
+            return
+        if profile.runtime_mode == "fallback":
+            return
+        checks = await self.health_service.check(profile)
+        if self.health_service.blocking_failures(checks):
+            return
+        await self._validate_index_readiness(
+            payload.document_ids,
+            profile.id,
+            profile.index_shape,
+        )
+
     async def _run_legacy_query(self, payload: QueryIn) -> QueryOut:
         runs: list[Run] = []
         for variant_id in payload.variant_ids:

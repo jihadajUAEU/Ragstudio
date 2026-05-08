@@ -23,6 +23,24 @@ async def test_settings_profile_round_trip(client):
 
 
 @pytest.mark.asyncio
+async def test_settings_profile_forces_fallback_mode_for_fallback_storage(client):
+    payload = {
+        "provider": "openai",
+        "runtime_mode": "runtime",
+        "llm_model": "gpt-4.1",
+        "embedding_model": "fallback",
+        "storage_backend": "fallback_local",
+    }
+
+    response = await client.put("/api/settings/default", json=payload)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["storage_backend"] == "fallback_local"
+    assert body["runtime_mode"] == "fallback"
+
+
+@pytest.mark.asyncio
 async def test_settings_profile_saves_llm_config_without_returning_secret(client):
     payload = {
         "provider": "openai",

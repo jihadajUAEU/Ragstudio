@@ -1,7 +1,14 @@
 import pytest
+from ragstudio.config import AppSettings
 from ragstudio.db.engine import init_db, is_postgres_url, make_engine, make_session_factory
+from ragstudio.db.models import IndexRecord, Variant
+from ragstudio.schemas.query import QueryIn
+from ragstudio.services.diagnostics_service import DiagnosticsService
+from ragstudio.services.document_service import DocumentService
+from ragstudio.services.query_service import QueryService
+from ragstudio.services.runtime_profile_service import RuntimeProfileService
 from ragstudio.services.settings_service import SettingsService
-from sqlalchemy import inspect, text
+from sqlalchemy import inspect, select, text
 
 
 def test_is_postgres_url_detects_asyncpg_url():
@@ -126,14 +133,12 @@ async def test_init_db_backfills_runtime_columns_for_existing_sqlite_tables(tmp_
             )
         ).mappings().one()
 
-    await engine.dispose()
-
     assert "runtime_mode" in columns["settings_profiles"]
     assert "neo4j_uri" in columns["settings_profiles"]
     assert "content_type" in columns["chunks"]
     assert "runtime_profile_id" in columns["runs"]
     assert "document_id" in columns["index_records"]
-    assert settings_row["runtime_mode"] == "runtime"
+    assert settings_row["runtime_mode"] == "fallback"
     assert settings_row["storage_backend"] == "fallback_local"
     assert settings_row["pgvector_schema"] == "public"
     assert settings_row["enable_image_processing"] in (1, True)
@@ -141,9 +146,45 @@ async def test_init_db_backfills_runtime_columns_for_existing_sqlite_tables(tmp_
     assert run_row["document_ids"] == "[]"
     assert run_row["query_config"] == "{}"
 
+    settings_obj = AppSettings(
+        data_dir=tmp_path,
+        database_url=f"sqlite+aiosqlite:///{tmp_path / 'legacy.sqlite3'}",
+    )
     factory = make_session_factory(engine)
     async with factory() as session:
         settings = await SettingsService(session).get_default()
+        runtime_profile = await RuntimeProfileService(session, settings_obj).get_active_profile()
+        diagnostics = await DiagnosticsService(session, settings_obj).get_diagnostics()
+        document = await DocumentService(session, tmp_path, settings=settings_obj).upload(
+            "legacy.txt",
+            "text/plain",
+            b"legacy fallback answer",
+        )
+        variant = Variant(name="Legacy Fallback", preset="balanced", parameters={})
+        session.add(variant)
+        await session.commit()
+        await session.refresh(variant)
+        query = await QueryService(session, tmp_path, settings=settings_obj).run_query(
+            QueryIn(
+                query="legacy",
+                document_ids=[document.id],
+                variant_ids=[variant.id],
+            )
+        )
+        index_records = (
+            await session.execute(select(IndexRecord).where(IndexRecord.document_id == document.id))
+        ).scalars().all()
 
     assert settings is not None
     assert settings.storage_backend == "fallback_local"
+    assert settings.runtime_mode == "fallback"
+    assert runtime_profile.storage_backend == "fallback_local"
+    assert runtime_profile.runtime_mode == "fallback"
+    assert diagnostics.capabilities["indexing"] is True
+    assert diagnostics.capabilities["query"] is True
+    assert diagnostics.overall_status == "fallback"
+    assert query.runs[0].status == "succeeded"
+    assert "legacy fallback answer" in query.runs[0].answer
+    assert index_records == []
+
+    await engine.dispose()

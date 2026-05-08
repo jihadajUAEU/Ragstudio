@@ -33,6 +33,7 @@ class SettingsService:
                 "neo4j_password",
             }
         )
+        values = self._normalize_runtime_values(values)
         if profile is None:
             profile = SettingsProfile(id="default", **values)
             self.session.add(profile)
@@ -109,7 +110,7 @@ class SettingsService:
             mineru_base_url=profile.mineru_base_url,
             mineru_timeout_ms=profile.mineru_timeout_ms or 1_800_000,
             mineru_poll_interval_ms=profile.mineru_poll_interval_ms or 1_000,
-            runtime_mode=cast(RuntimeMode, profile.runtime_mode or "runtime"),
+            runtime_mode=self._runtime_mode(profile.runtime_mode, profile.storage_backend),
             vision_model=profile.vision_model,
             vision_base_url=profile.vision_base_url,
             has_vision_api_key=bool(profile.vision_api_key),
@@ -161,3 +162,23 @@ class SettingsService:
         if value in {"postgres_pgvector_neo4j", "fallback_local"}:
             return cast(StorageBackend, value)
         return "fallback_local"
+
+    def _runtime_mode(
+        self,
+        value: str | None,
+        storage_backend: str | None,
+    ) -> RuntimeMode:
+        if self._storage_backend(storage_backend) == "fallback_local":
+            return "fallback"
+        if value in {"runtime", "fallback", "degraded"}:
+            return cast(RuntimeMode, value)
+        return "fallback"
+
+    def _normalize_runtime_values(self, values: dict[str, object]) -> dict[str, object]:
+        storage_backend = self._storage_backend(
+            cast(str | None, values.get("storage_backend"))
+        )
+        if storage_backend == "fallback_local":
+            values["storage_backend"] = "fallback_local"
+            values["runtime_mode"] = "fallback"
+        return values

@@ -48,8 +48,13 @@ async def test_runtime_profile_service_normalizes_index_shape(tmp_path):
         llm_model="gpt-4o",
         llm_base_url="http://127.0.0.1:8004/v1",
         embedding_model="text-embedding-3-large",
+        embedding_api_key="embedding-secret",
         embedding_dimensions=3072,
         storage_backend="postgres_pgvector_neo4j",
+        llm_api_key="llm-secret",
+        vision_api_key="vision-secret",
+        reranker_api_key="reranker-secret",
+        neo4j_password="neo4j-secret",
         parser="mineru",
         parse_method="auto",
         chunk_token_size=1200,
@@ -69,6 +74,11 @@ async def test_runtime_profile_service_normalizes_index_shape(tmp_path):
 
     assert profile.id == "default"
     assert profile.runtime_mode == "runtime"
+    assert profile.llm_api_key == "llm-secret"
+    assert profile.embedding_api_key == "embedding-secret"
+    assert profile.vision_api_key == "vision-secret"
+    assert profile.reranker_api_key == "reranker-secret"
+    assert profile.neo4j_password == "neo4j-secret"
     assert profile.index_shape == {
         "embedding_model": "text-embedding-3-large",
         "embedding_dimensions": 3072,

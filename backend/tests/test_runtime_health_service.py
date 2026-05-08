@@ -1,4 +1,5 @@
 import pytest
+from ragstudio.db.engine import init_db, make_engine, make_session_factory
 from ragstudio.schemas.runtime import RuntimeProfile
 from ragstudio.services.runtime_health_service import RuntimeHealthService
 
@@ -101,8 +102,38 @@ async def test_runtime_health_blocks_until_native_adapter_is_implemented():
 
 
 @pytest.mark.asyncio
-async def test_runtime_health_reports_missing_profile_as_blocking():
+async def test_runtime_health_reports_missing_profile_as_fallback_available():
     checks = await RuntimeHealthService().check(None)
 
     assert [item.name for item in checks] == ["runtime_profile"]
-    assert RuntimeHealthService().blocking_failures(checks) == checks
+    assert checks[0].status == "skipped"
+    assert RuntimeHealthService().blocking_failures(checks) == []
+
+
+@pytest.mark.asyncio
+async def test_runtime_health_verifies_pgvector_requires_postgres(tmp_path):
+    engine = make_engine(f"sqlite+aiosqlite:///{tmp_path / 'health.sqlite3'}")
+    await init_db(engine)
+    factory = make_session_factory(engine)
+
+    class FakeDriver:
+        def verify_connectivity(self):
+            return None
+
+        def close(self):
+            return None
+
+    async with factory() as session:
+        checks = await RuntimeHealthService(
+            session,
+            verify_storage=True,
+            neo4j_driver_factory=lambda *args, **kwargs: FakeDriver(),
+        ).check(profile(neo4j_password="secret"))
+
+    await engine.dispose()
+
+    pgvector = next(item for item in checks if item.name == "pgvector")
+    neo4j = next(item for item in checks if item.name == "neo4j")
+    assert pgvector.status == "failed"
+    assert pgvector.error_type == "storage_backend_mismatch"
+    assert neo4j.status == "ok"

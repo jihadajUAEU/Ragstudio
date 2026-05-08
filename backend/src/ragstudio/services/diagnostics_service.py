@@ -23,7 +23,7 @@ class DiagnosticsService:
         self.session = session
         self.settings = settings
         self.adapter = adapter or RAGAnythingAdapter()
-        self.health_service = health_service or RuntimeHealthService()
+        self.health_service = health_service
 
     def get_diagnostics(self) -> Any:
         if self.session is None or self.settings is None:
@@ -46,8 +46,12 @@ class DiagnosticsService:
         except RuntimeProfileNotConfiguredError as exc:
             warnings.append(str(exc))
 
-        checks = await self.health_service.check(profile)
-        blocking = self.health_service.blocking_failures(checks)
+        health_service = self.health_service or RuntimeHealthService(
+            session,
+            verify_storage=True,
+        )
+        checks = await health_service.check(profile)
+        blocking = health_service.blocking_failures(checks)
         runtime_mode = profile.runtime_mode if profile else "fallback"
         overall_status = self._overall_status(runtime_mode, checks, blocking)
         raganything_available = bool(report.get("raganything_available"))

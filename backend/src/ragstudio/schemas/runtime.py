@@ -29,26 +29,31 @@ class RuntimeProfile(StudioModel):
     provider: str
     llm_model: str
     llm_base_url: str | None = None
+    llm_api_key: str | None = None
     llm_timeout_ms: int
     llm_capabilities: list[str] = Field(default_factory=list)
     vision_model: str | None = None
     vision_base_url: str | None = None
+    vision_api_key: str | None = None
     vision_timeout_ms: int
     embedding_provider: str
     embedding_model: str
     embedding_base_url: str | None = None
+    embedding_api_key: str | None = None
     embedding_dimensions: int
     embedding_batch_size: int
     embedding_timeout_ms: int
     reranker_provider: RerankerProvider
     reranker_model: str | None = None
     reranker_base_url: str | None = None
+    reranker_api_key: str | None = None
     reranker_timeout_ms: int
     storage_backend: StorageBackend
     pgvector_schema: str
     pgvector_table_prefix: str
     neo4j_uri: str | None = None
     neo4j_username: str | None = None
+    neo4j_password: str | None = None
     parser: str
     parse_method: str
     chunk_token_size: int

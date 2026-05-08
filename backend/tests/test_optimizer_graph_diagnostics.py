@@ -162,6 +162,9 @@ async def test_diagnostics_returns_capabilities_and_dependency_status(client):
     payload = response.json()
     assert "raganything_available" in payload["capabilities"]
     assert "fallback_active" in payload["capabilities"]
+    assert payload["capabilities"]["indexing"] is True
+    assert payload["capabilities"]["query"] is True
+    assert payload["overall_status"] == "fallback"
     assert "raganything" in payload["dependency_status"]
     if payload["capabilities"]["raganything_available"]:
         assert any(

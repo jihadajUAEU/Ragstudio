@@ -1,4 +1,3 @@
-from pathlib import Path
 from typing import cast
 
 from ragstudio.config import AppSettings
@@ -27,8 +26,8 @@ class RuntimeProfileService:
         if profile is None:
             raise RuntimeProfileNotConfiguredError("Default runtime profile is not configured.")
 
-        runtime_working_dir = Path(self.settings.resolved_runtime_working_dir)
-        runtime_working_dir.mkdir(parents=True, exist_ok=True)
+        storage_backend = self._storage_backend(profile.storage_backend)
+        runtime_mode = self._runtime_mode(profile.runtime_mode, storage_backend)
         index_shape = {
             "embedding_model": profile.embedding_model,
             "embedding_dimensions": profile.embedding_dimensions or 1536,
@@ -42,18 +41,21 @@ class RuntimeProfileService:
 
         return RuntimeProfile(
             id=profile.id,
-            runtime_mode=cast(RuntimeMode, profile.runtime_mode or "runtime"),
+            runtime_mode=runtime_mode,
             provider=profile.provider,
             llm_model=profile.llm_model,
             llm_base_url=profile.llm_base_url,
+            llm_api_key=profile.llm_api_key,
             llm_timeout_ms=profile.llm_timeout_ms or 10000,
             llm_capabilities=profile.llm_capabilities or [],
             vision_model=profile.vision_model,
             vision_base_url=profile.vision_base_url,
+            vision_api_key=profile.vision_api_key,
             vision_timeout_ms=profile.vision_timeout_ms or 10000,
             embedding_provider=profile.embedding_provider or "fallback",
             embedding_model=profile.embedding_model,
             embedding_base_url=profile.embedding_base_url,
+            embedding_api_key=profile.embedding_api_key,
             embedding_dimensions=profile.embedding_dimensions or 1536,
             embedding_batch_size=profile.embedding_batch_size or 16,
             embedding_timeout_ms=profile.embedding_timeout_ms or 10000,
@@ -63,21 +65,16 @@ class RuntimeProfileService:
             ),
             reranker_model=profile.reranker_model,
             reranker_base_url=profile.reranker_base_url,
+            reranker_api_key=profile.reranker_api_key,
             reranker_timeout_ms=profile.reranker_timeout_ms or 10000,
-            storage_backend=cast(
-                StorageBackend,
-                (
-                    profile.storage_backend
-                    if profile.storage_backend in {"postgres_pgvector_neo4j", "fallback_local"}
-                    else "fallback_local"
-                ),
-            ),
+            storage_backend=storage_backend,
             pgvector_schema=profile.pgvector_schema or self.settings.pgvector_schema,
             pgvector_table_prefix=(
                 profile.pgvector_table_prefix or self.settings.pgvector_table_prefix
             ),
             neo4j_uri=profile.neo4j_uri or self.settings.neo4j_uri,
             neo4j_username=profile.neo4j_username or self.settings.neo4j_username,
+            neo4j_password=profile.neo4j_password or self.settings.neo4j_password,
             parser=profile.parser or "mineru",
             parse_method=profile.parse_method or "auto",
             chunk_token_size=profile.chunk_token_size or 1200,
@@ -109,10 +106,22 @@ class RuntimeProfileService:
             llm_model_max_async=profile.llm_model_max_async or 4,
             embedding_func_max_async=profile.embedding_func_max_async or 8,
             max_parallel_insert=profile.max_parallel_insert or 2,
-            runtime_working_dir=str(runtime_working_dir),
+            runtime_working_dir=str(self.settings.resolved_runtime_working_dir),
             index_shape=index_shape,
         )
 
     @staticmethod
     def _default_bool(value: bool | None, default: bool) -> bool:
         return default if value is None else bool(value)
+
+    def _storage_backend(self, value: str | None) -> StorageBackend:
+        if value in {"postgres_pgvector_neo4j", "fallback_local"}:
+            return cast(StorageBackend, value)
+        return "fallback_local"
+
+    def _runtime_mode(self, value: str | None, storage_backend: StorageBackend) -> RuntimeMode:
+        if storage_backend == "fallback_local":
+            return "fallback"
+        if value in {"runtime", "fallback", "degraded"}:
+            return cast(RuntimeMode, value)
+        return "fallback"

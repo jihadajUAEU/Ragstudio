@@ -142,10 +142,31 @@ def _normalize_settings_profile_values(connection) -> None:
         text(
             """
             UPDATE settings_profiles
+            SET runtime_mode = 'fallback'
+            WHERE storage_backend IS NULL
+               OR storage_backend = ''
+               OR storage_backend = 'fallback_local'
+               OR storage_backend NOT IN ('postgres_pgvector_neo4j', 'fallback_local')
+            """
+        )
+    )
+    connection.execute(
+        text(
+            """
+            UPDATE settings_profiles
             SET storage_backend = 'fallback_local'
             WHERE storage_backend IS NULL
                OR storage_backend = ''
                OR storage_backend NOT IN ('postgres_pgvector_neo4j', 'fallback_local')
+            """
+        )
+    )
+    connection.execute(
+        text(
+            """
+            UPDATE settings_profiles
+            SET runtime_mode = 'fallback'
+            WHERE storage_backend = 'fallback_local'
             """
         )
     )

@@ -35,6 +35,15 @@ class ExperimentService:
 
         cases = [EvaluationCaseIn.model_validate(item) for item in evaluation_set.cases]
         await self._validate_inputs(payload, cases)
+        query_service = QueryService(self.session, self.data_dir, settings=self.settings)
+        for case in cases:
+            await query_service.preflight_runtime_readiness(
+                QueryIn(
+                    query=case.query,
+                    document_ids=case.documents or payload.document_ids,
+                    variant_ids=payload.variant_ids,
+                )
+            )
 
         experiment = Experiment(**payload.model_dump())
         self.session.add(experiment)
@@ -43,7 +52,6 @@ class ExperimentService:
 
         runs: list[RunOut] = []
         scores: list[ExperimentScoreOut] = []
-        query_service = QueryService(self.session, self.data_dir, settings=self.settings)
         scoring_service = ScoringService(self.session)
 
         for case in cases:

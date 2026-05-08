@@ -19,7 +19,7 @@ const DEFAULT_FORM_VALUES: SettingsProfileIn = {
   llm_timeout_ms: 10000,
   llm_capabilities: [],
   embedding_model: "fallback",
-  storage_backend: "postgres_pgvector_neo4j",
+  storage_backend: "fallback_local",
   embedding_provider: "fallback",
   embedding_base_url: "",
   embedding_timeout_ms: 10000,
@@ -30,7 +30,7 @@ const DEFAULT_FORM_VALUES: SettingsProfileIn = {
   mineru_base_url: "",
   mineru_timeout_ms: 1_800_000,
   mineru_poll_interval_ms: 1_000,
-  runtime_mode: "runtime",
+  runtime_mode: "fallback",
   vision_model: "",
   vision_base_url: "",
   vision_timeout_ms: 10000,
@@ -40,8 +40,8 @@ const DEFAULT_FORM_VALUES: SettingsProfileIn = {
   reranker_timeout_ms: 10000,
   pgvector_schema: "public",
   pgvector_table_prefix: "ragstudio",
-  neo4j_uri: "bolt://127.0.0.1:57687",
-  neo4j_username: "neo4j",
+  neo4j_uri: "",
+  neo4j_username: "",
   parser: "mineru",
   parse_method: "auto",
   chunk_token_size: 1200,
@@ -125,6 +125,32 @@ export function SettingsPage() {
     setFormOverride((current) => (formValues ? { ...formValues, ...current, [key]: value } : current));
   };
 
+  const updateRuntimeMode = (value: SettingsProfileIn["runtime_mode"]) => {
+    setFormOverride((current) => {
+      if (!formValues) {
+        return current;
+      }
+      const next = { ...formValues, ...current, runtime_mode: value };
+      if (value === "runtime" && next.storage_backend === "fallback_local") {
+        next.storage_backend = "postgres_pgvector_neo4j";
+      }
+      return next;
+    });
+  };
+
+  const updateStorageBackend = (value: SettingsProfileIn["storage_backend"]) => {
+    setFormOverride((current) => {
+      if (!formValues) {
+        return current;
+      }
+      const next = { ...formValues, ...current, storage_backend: value };
+      if (value === "fallback_local") {
+        next.runtime_mode = "fallback";
+      }
+      return next;
+    });
+  };
+
   const buildPayload = (form: HTMLFormElement): SettingsProfileIn | null => {
     if (!formValues) {
       return null;
@@ -142,8 +168,8 @@ export function SettingsPage() {
       embedding_provider: formValues.embedding_provider ?? "fallback",
       embedding_tls_verify: formValues.embedding_tls_verify ?? true,
       mineru_enabled: formValues.mineru_enabled ?? false,
-      runtime_mode: formValues.runtime_mode ?? "runtime",
-      storage_backend: formValues.storage_backend ?? "postgres_pgvector_neo4j",
+      runtime_mode: formValues.runtime_mode ?? "fallback",
+      storage_backend: formValues.storage_backend ?? "fallback_local",
       vision_timeout_ms: formValues.vision_timeout_ms ?? 10000,
       reranker_provider: formValues.reranker_provider ?? "disabled",
       reranker_timeout_ms: formValues.reranker_timeout_ms ?? 10000,
@@ -321,24 +347,23 @@ export function SettingsPage() {
             <SelectField
               label="Runtime mode"
               name="runtime_mode"
-              value={formValues?.runtime_mode ?? "runtime"}
+              value={formValues?.runtime_mode ?? "fallback"}
               disabled={busy}
-              onChange={(value) => updateField("runtime_mode", value as SettingsProfileIn["runtime_mode"])}
+              onChange={(value) => updateRuntimeMode(value as SettingsProfileIn["runtime_mode"])}
               options={[
-                { value: "runtime", label: "Runtime" },
                 { value: "fallback", label: "Fallback" },
-                { value: "degraded", label: "Degraded" },
+                { value: "runtime", label: "Native runtime" },
               ]}
             />
             <SelectField
               label="Storage backend"
               name="storage_backend"
-              value={formValues?.storage_backend ?? "postgres_pgvector_neo4j"}
+              value={formValues?.storage_backend ?? "fallback_local"}
               disabled={busy}
-              onChange={(value) => updateField("storage_backend", value as SettingsProfileIn["storage_backend"])}
+              onChange={(value) => updateStorageBackend(value as SettingsProfileIn["storage_backend"])}
               options={[
-                { value: "postgres_pgvector_neo4j", label: "Postgres / PGVector / Neo4j" },
                 { value: "fallback_local", label: "Fallback local" },
+                { value: "postgres_pgvector_neo4j", label: "Postgres / PGVector / Neo4j" },
               ]}
             />
             <Field

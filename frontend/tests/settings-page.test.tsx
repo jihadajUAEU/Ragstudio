@@ -206,8 +206,8 @@ describe("SettingsPage provider sync", () => {
     expect(vi.mocked(apiClient.updateDefaultSettings).mock.calls[0][0]).toEqual(
       expect.objectContaining({
         provider: "first-provider",
-        runtime_mode: "runtime",
-        storage_backend: "postgres_pgvector_neo4j",
+        runtime_mode: "fallback",
+        storage_backend: "fallback_local",
       }),
     );
   });

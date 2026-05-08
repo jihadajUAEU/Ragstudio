@@ -1,20 +1,39 @@
+import asyncio
 from collections.abc import Iterable
 from importlib import import_module
+from typing import Any
 
 from ragstudio.schemas.runtime import RuntimeHealthCheck, RuntimeProfile
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class RuntimeHealthService:
+    def __init__(
+        self,
+        session: AsyncSession | None = None,
+        *,
+        verify_storage: bool = False,
+        neo4j_driver_factory: Any | None = None,
+    ):
+        self.session = session
+        self.verify_storage = verify_storage
+        self.neo4j_driver_factory = neo4j_driver_factory
+
     async def check(self, profile: RuntimeProfile | None) -> list[RuntimeHealthCheck]:
         if profile is None:
             return [
                 RuntimeHealthCheck(
                     name="runtime_profile",
-                    status="failed",
-                    severity="blocking",
-                    detail="Default runtime profile is not configured.",
-                    error_type="configuration",
-                    remediation="Save Settings before indexing or querying.",
+                    status="skipped",
+                    detail=(
+                        "Default runtime profile is not configured; legacy fallback "
+                        "indexing and querying remain active."
+                    ),
+                    remediation=(
+                        "Save Settings only when you want to configure a native "
+                        "RAG-Anything runtime."
+                    ),
                 )
             ]
 
@@ -52,8 +71,8 @@ class RuntimeHealthService:
                 "Embedding base URL",
             ),
             self._reranker_check(profile),
-            self._required_text_check("pgvector", profile.pgvector_schema, "PGVector schema"),
-            self._required_url_check("neo4j", profile.neo4j_uri, "Neo4j URI"),
+            await self._pgvector_check(profile),
+            await self._neo4j_check(profile),
             self._required_text_check("parser", profile.parser, "Parser"),
         ]
 
@@ -123,6 +142,168 @@ class RuntimeHealthService:
             name=name,
             status="ok",
             detail=f"{label} is configured.",
+        )
+
+    async def _pgvector_check(self, profile: RuntimeProfile) -> RuntimeHealthCheck:
+        if not profile.pgvector_schema:
+            return RuntimeHealthCheck(
+                name="pgvector",
+                status="failed",
+                severity="blocking",
+                detail="PGVector schema is not configured.",
+                error_type="configuration",
+            )
+        if not self.verify_storage:
+            return RuntimeHealthCheck(
+                name="pgvector",
+                status="warning",
+                severity="warning",
+                detail="PGVector schema is configured; connectivity was not verified.",
+            )
+        if self.session is None:
+            return RuntimeHealthCheck(
+                name="pgvector",
+                status="failed",
+                severity="blocking",
+                detail="PGVector connectivity cannot be verified without a database session.",
+                error_type="storage_health_unavailable",
+            )
+
+        bind = self.session.get_bind()
+        dialect_name = bind.dialect.name if bind is not None else "unknown"
+        if dialect_name != "postgresql":
+            return RuntimeHealthCheck(
+                name="pgvector",
+                status="failed",
+                severity="blocking",
+                detail=(
+                    "PGVector requires the metadata database to use PostgreSQL; "
+                    f"active dialect is {dialect_name}."
+                ),
+                error_type="storage_backend_mismatch",
+            )
+
+        try:
+            extension_ready = await self.session.scalar(
+                text("SELECT 1 FROM pg_extension WHERE extname = 'vector'")
+            )
+            schema_ready = await self.session.scalar(
+                text(
+                    """
+                    SELECT 1
+                    FROM information_schema.schemata
+                    WHERE schema_name = :schema
+                    """
+                ),
+                {"schema": profile.pgvector_schema},
+            )
+        except Exception as exc:
+            return RuntimeHealthCheck(
+                name="pgvector",
+                status="failed",
+                severity="blocking",
+                detail=f"PGVector health check failed: {exc}",
+                error_type="storage_connectivity",
+            )
+
+        if extension_ready != 1:
+            return RuntimeHealthCheck(
+                name="pgvector",
+                status="failed",
+                severity="blocking",
+                detail="PostgreSQL vector extension is not installed.",
+                error_type="storage_extension_missing",
+                remediation="Run CREATE EXTENSION IF NOT EXISTS vector on the Ragstudio database.",
+            )
+        if schema_ready != 1:
+            return RuntimeHealthCheck(
+                name="pgvector",
+                status="failed",
+                severity="blocking",
+                detail=f"PGVector schema '{profile.pgvector_schema}' does not exist.",
+                error_type="storage_schema_missing",
+            )
+        return RuntimeHealthCheck(
+            name="pgvector",
+            status="ok",
+            detail="PGVector extension and schema are reachable.",
+        )
+
+    async def _neo4j_check(self, profile: RuntimeProfile) -> RuntimeHealthCheck:
+        if not profile.neo4j_uri:
+            return RuntimeHealthCheck(
+                name="neo4j",
+                status="failed",
+                severity="blocking",
+                detail="Neo4j URI is not configured.",
+                error_type="configuration",
+            )
+        if not self.verify_storage:
+            return RuntimeHealthCheck(
+                name="neo4j",
+                status="warning",
+                severity="warning",
+                detail="Neo4j URI is configured; connectivity was not verified.",
+            )
+
+        if (profile.neo4j_username and not profile.neo4j_password) or (
+            profile.neo4j_password and not profile.neo4j_username
+        ):
+            return RuntimeHealthCheck(
+                name="neo4j",
+                status="failed",
+                severity="blocking",
+                detail="Neo4j username and password must be configured together.",
+                error_type="configuration",
+            )
+
+        try:
+            if self.neo4j_driver_factory is None:
+                graph_database = import_module("neo4j").GraphDatabase
+                driver_factory = graph_database.driver
+            else:
+                driver_factory = self.neo4j_driver_factory
+        except Exception as exc:
+            return RuntimeHealthCheck(
+                name="neo4j",
+                status="failed",
+                severity="blocking",
+                detail=f"Neo4j driver is not importable: {exc}",
+                error_type="dependency_import",
+            )
+
+        auth = None
+        if profile.neo4j_username or profile.neo4j_password:
+            auth = (profile.neo4j_username or "", profile.neo4j_password or "")
+
+        driver = None
+        try:
+            driver = driver_factory(
+                profile.neo4j_uri,
+                auth=auth,
+                connection_timeout=3.0,
+                max_transaction_retry_time=1.0,
+            )
+            await asyncio.wait_for(
+                asyncio.to_thread(driver.verify_connectivity),
+                timeout=5.0,
+            )
+        except Exception as exc:
+            return RuntimeHealthCheck(
+                name="neo4j",
+                status="failed",
+                severity="blocking",
+                detail=f"Neo4j health check failed: {exc}",
+                error_type="storage_connectivity",
+            )
+        finally:
+            if driver is not None:
+                await asyncio.to_thread(driver.close)
+
+        return RuntimeHealthCheck(
+            name="neo4j",
+            status="ok",
+            detail="Neo4j connectivity and authentication succeeded.",
         )
 
     def _vision_check(self, profile: RuntimeProfile) -> RuntimeHealthCheck:
