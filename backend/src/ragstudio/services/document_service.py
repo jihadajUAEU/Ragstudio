@@ -31,6 +31,7 @@ class DocumentService:
         self.session = session
         self.store = ArtifactStore(data_dir)
         self.settings = settings
+        self.queued_index_job_id: str | None = None
 
     async def upload(
         self,
@@ -39,11 +40,15 @@ class DocumentService:
         content: bytes,
         *,
         options: IndexDocumentIn | None = None,
+        index_immediately: bool = True,
     ) -> DocumentOut:
         digest, artifact_path = self.store.prepare_upload(filename, content)
         existing = await self.session.scalar(select(Document).where(Document.sha256 == digest))
         if existing is not None:
-            await self._ensure_indexed(existing, options)
+            if index_immediately:
+                await self._ensure_indexed(existing, options)
+            else:
+                await self._enqueue_index_job(existing)
             return DocumentOut.model_validate(existing)
 
         _, artifact_path = self.store.write_upload(filename, content)
@@ -59,19 +64,27 @@ class DocumentService:
             await self.session.flush()
             job = JobWorker.build("index_document", document.id)
             self.session.add(job)
+            self.queued_index_job_id = job.id
             await self.session.flush()
-            try:
-                await self._index_document_for_job(document, job, options)
-            except Exception as exc:
-                if not self._should_persist_index_failure(options, exc):
-                    raise
-                self._mark_index_failed(document, job, exc)
+            if index_immediately:
+                try:
+                    await self._index_document_for_job(document, job, options)
+                except Exception as exc:
+                    if not self._should_persist_index_failure(options, exc):
+                        raise
+                    self._mark_index_failed(document, job, exc)
+            else:
+                document.status = StageStatus.RUNNING.value
+                job.logs = [*(job.logs or []), "Indexing queued."]
             await self.session.commit()
         except IntegrityError:
             await self.session.rollback()
             existing = await self.session.scalar(select(Document).where(Document.sha256 == digest))
             if existing is not None:
-                await self._ensure_indexed(existing, options)
+                if index_immediately:
+                    await self._ensure_indexed(existing, options)
+                else:
+                    await self._enqueue_index_job(existing)
                 return DocumentOut.model_validate(existing)
             raise
         except Exception:
@@ -121,10 +134,41 @@ class DocumentService:
         document = await self.session.get(Document, document_id)
         if document is None:
             return None
+        return await self._enqueue_index_job(document)
+
+    async def latest_index_job(self, document_id: str) -> Job | None:
+        return await self.session.scalar(
+            select(Job)
+            .where(Job.type == "index_document", Job.target_id == document_id)
+            .order_by(Job.created_at.desc())
+            .limit(1)
+        )
+
+    async def mark_index_job_failed(
+        self,
+        document_id: str,
+        job_id: str,
+        reason: str,
+    ) -> None:
+        document = await self.session.get(Document, document_id)
+        job = await self.session.get(Job, job_id)
+        if document is not None:
+            document.status = StageStatus.FAILED.value
+        if job is not None:
+            job.status = StageStatus.FAILED.value
+            job.progress = 100
+            job.logs = [*(job.logs or []), reason]
+            job.result = {**(job.result or {}), "document_id": document_id, "error": reason}
+        await self.session.commit()
+
+    async def _enqueue_index_job(self, document: Document) -> Job:
         job = JobWorker.build("index_document", document.id)
         self.session.add(job)
         document.status = StageStatus.RUNNING.value
+        self.queued_index_job_id = job.id
+        job.logs = [*(job.logs or []), "Indexing queued."]
         await self.session.commit()
+        await self.session.refresh(document)
         await self.session.refresh(job)
         return job
 

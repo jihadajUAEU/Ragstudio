@@ -14,6 +14,7 @@ from ragstudio.schemas.runtime import (
 EmbeddingProvider = Literal["fallback", "vllm_openai"]
 LlmProvider = Literal["openai_compatible"]
 LlmCapability = Literal["text", "vision", "reasoning"]
+MINERU_DEFAULT_TIMEOUT_MS = 14_400_000
 
 
 class SettingsProfileIn(StudioModel):
@@ -35,9 +36,9 @@ class SettingsProfileIn(StudioModel):
     embedding_tls_verify: bool = True
     mineru_enabled: bool = False
     mineru_base_url: str | None = None
-    mineru_timeout_ms: int = Field(default=1_800_000, ge=100, le=3_600_000)
+    mineru_timeout_ms: int = Field(default=MINERU_DEFAULT_TIMEOUT_MS, ge=100, le=28_800_000)
     mineru_poll_interval_ms: int = Field(default=1_000, ge=100, le=60_000)
-    runtime_mode: RuntimeMode = "runtime"
+    runtime_mode: RuntimeMode = "fallback"
     vision_model: str | None = None
     vision_base_url: str | None = None
     vision_api_key: str | None = None

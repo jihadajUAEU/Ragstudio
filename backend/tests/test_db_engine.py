@@ -116,7 +116,8 @@ async def test_init_db_backfills_runtime_columns_for_existing_sqlite_tables(tmp_
             await connection.execute(
                 text(
                     """
-                    SELECT runtime_mode, storage_backend, pgvector_schema, enable_image_processing
+                    SELECT runtime_mode, storage_backend, pgvector_schema,
+                           enable_image_processing, mineru_timeout_ms
                     FROM settings_profiles WHERE id = 'default'
                     """
                 )
@@ -142,6 +143,7 @@ async def test_init_db_backfills_runtime_columns_for_existing_sqlite_tables(tmp_
     assert settings_row["storage_backend"] == "fallback_local"
     assert settings_row["pgvector_schema"] == "public"
     assert settings_row["enable_image_processing"] in (1, True)
+    assert settings_row["mineru_timeout_ms"] == 14400000
     assert chunk_row["content_type"] == "text"
     assert run_row["document_ids"] == "[]"
     assert run_row["query_config"] == "{}"
@@ -178,6 +180,7 @@ async def test_init_db_backfills_runtime_columns_for_existing_sqlite_tables(tmp_
     assert settings is not None
     assert settings.storage_backend == "fallback_local"
     assert settings.runtime_mode == "fallback"
+    assert settings.mineru_timeout_ms == 14400000
     assert runtime_profile.storage_backend == "fallback_local"
     assert runtime_profile.runtime_mode == "fallback"
     assert diagnostics.capabilities["indexing"] is True

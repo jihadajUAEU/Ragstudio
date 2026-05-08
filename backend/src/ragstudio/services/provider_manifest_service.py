@@ -1,7 +1,11 @@
 from typing import Any
 
 import httpx
-from ragstudio.schemas.settings import ProviderSyncPreviewOut, SettingsProfileOut
+from ragstudio.schemas.settings import (
+    MINERU_DEFAULT_TIMEOUT_MS,
+    ProviderSyncPreviewOut,
+    SettingsProfileOut,
+)
 
 SUPPORTED_SECTIONS = {"reasoning", "embeddings", "hpcMineru"}
 KNOWN_SECTIONS = {"stt", "reasoning", "embeddings", "ragAnything", "hpcMineru"}
@@ -170,7 +174,7 @@ class ProviderManifestService:
             if api_url:
                 patch["mineru_base_url"] = api_url.rstrip("/")
             if timeout_ms is not None:
-                patch["mineru_timeout_ms"] = timeout_ms
+                patch["mineru_timeout_ms"] = max(timeout_ms, MINERU_DEFAULT_TIMEOUT_MS)
 
         return patch
 

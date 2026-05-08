@@ -28,6 +28,7 @@ const blankSecretValues = (): SecretValues => ({
 });
 
 const DEFAULT_MANIFEST_URL = "https://updates.jihadaj.com/providers.json";
+const DEFAULT_MINERU_TIMEOUT_MS = 14_400_000;
 const DEFAULT_FORM_VALUES: SettingsProfileIn = {
   provider: "openai-compatible",
   llm_provider: "openai_compatible",
@@ -45,7 +46,7 @@ const DEFAULT_FORM_VALUES: SettingsProfileIn = {
   embedding_tls_verify: true,
   mineru_enabled: false,
   mineru_base_url: "",
-  mineru_timeout_ms: 1_800_000,
+  mineru_timeout_ms: DEFAULT_MINERU_TIMEOUT_MS,
   mineru_poll_interval_ms: 1_000,
   runtime_mode: "fallback",
   vision_model: "",
@@ -154,9 +155,7 @@ export function SettingsPage() {
         return current;
       }
       const next = { ...formValues, ...current, runtime_mode: value };
-      if (value === "fallback") {
-        next.storage_backend = "fallback_local";
-      } else if (next.storage_backend === "fallback_local") {
+      if (value !== "fallback" && next.storage_backend === "fallback_local") {
         next.storage_backend = "postgres_pgvector_neo4j";
       }
       return next;
@@ -171,8 +170,6 @@ export function SettingsPage() {
       const next = { ...formValues, ...current, storage_backend: value };
       if (value === "fallback_local") {
         next.runtime_mode = "fallback";
-      } else {
-        next.runtime_mode = "runtime";
       }
       return next;
     });
@@ -656,8 +653,8 @@ export function SettingsPage() {
             <Field
               label="MinerU timeout (ms)"
               name="mineru_timeout_ms"
-              value={String(formValues?.mineru_timeout_ms ?? 1800000)}
-              placeholder="1800000"
+              value={String(formValues?.mineru_timeout_ms ?? DEFAULT_MINERU_TIMEOUT_MS)}
+              placeholder={String(DEFAULT_MINERU_TIMEOUT_MS)}
               disabled={busy}
               type="number"
               onChange={(value) => updateField("mineru_timeout_ms", Number(value))}

@@ -3,6 +3,7 @@ import pytest_asyncio
 from ragstudio.db.models import Chunk, Document, IndexRecord, SettingsProfile
 from ragstudio.schemas.common import StageStatus
 from ragstudio.schemas.parsing import IndexDocumentIn
+from ragstudio.services.chunk_sanitizer import sanitize_db_value
 from ragstudio.services.chunk_service import ChunkService
 from ragstudio.services.runtime_types import RuntimeChunk
 from sqlalchemy import select
@@ -32,6 +33,22 @@ class FakeRuntime:
 class FakeRuntimeFactory:
     def build(self, profile):
         return FakeRuntime()
+
+
+class NullByteAdapter:
+    async def index_document(self, artifact_path):
+        return [
+            RuntimeChunk(
+                text="alpha\x00 beta",
+                source_location={"line": "1\x00"},
+                metadata={
+                    "backend": "fallback",
+                    "artifact_ref": "nul.txt",
+                    "nested": {"value": "bad\x00metadata"},
+                    "items": ["ok\x00"],
+                },
+            )
+        ]
 
 
 class PassingHealthService:
@@ -87,6 +104,60 @@ async def test_index_uploaded_document_creates_line_chunks(client):
             select(IndexRecord).where(IndexRecord.document_id == document_id)
         )
     assert record is None
+
+
+@pytest.mark.asyncio
+async def test_index_document_strips_null_bytes_before_persisting(client):
+    upload_response = await client.post(
+        "/api/documents",
+        files={"file": ("nul.txt", b"ignored", "text/plain")},
+    )
+    document_id = upload_response.json()["id"]
+
+    app = client._transport.app
+    async with app.state.session_factory() as session:
+        chunks = await ChunkService(
+            session,
+            app.state.settings.data_dir,
+            adapter=NullByteAdapter(),
+        ).index_document(
+            document_id,
+            options=IndexDocumentIn(parser_mode="local_fallback"),
+        )
+
+        assert chunks is not None
+        assert chunks[0].text == "alpha beta"
+        persisted = await session.scalar(select(Chunk).where(Chunk.document_id == document_id))
+
+    assert persisted is not None
+    assert persisted.text == "alpha beta"
+    assert persisted.source_location == {"line": "1"}
+    assert persisted.metadata_json["nested"] == {"value": "badmetadata"}
+    assert persisted.metadata_json["items"] == ["ok"]
+
+
+def test_sanitize_db_value_converts_json_unsafe_values(tmp_path):
+    class CustomValue:
+        def __str__(self):
+            return "custom\x00value"
+
+    payload = {
+        "nan": float("nan"),
+        "inf": float("inf"),
+        "bytes": b"hello\x00world",
+        "path": tmp_path / "artifact.txt",
+        "custom": CustomValue(),
+        "nested": ("ok\x00", {"bad\x00key": b"value\x00"}),
+    }
+
+    sanitized = sanitize_db_value(payload)
+
+    assert sanitized["nan"] is None
+    assert sanitized["inf"] is None
+    assert sanitized["bytes"] == "helloworld"
+    assert sanitized["path"].endswith("artifact.txt")
+    assert sanitized["custom"] == "customvalue"
+    assert sanitized["nested"] == ["ok", {"badkey": "value"}]
 
 
 @pytest.mark.asyncio

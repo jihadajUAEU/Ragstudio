@@ -6,6 +6,7 @@ from ragstudio.schemas.settings import (
     EmbeddingProvider,
     LlmCapability,
     LlmProvider,
+    MINERU_DEFAULT_TIMEOUT_MS,
     SettingsProfileIn,
     SettingsProfileOut,
 )
@@ -108,7 +109,7 @@ class SettingsService:
             embedding_tls_verify=default_bool(profile.embedding_tls_verify, True),
             mineru_enabled=bool(profile.mineru_enabled),
             mineru_base_url=profile.mineru_base_url,
-            mineru_timeout_ms=profile.mineru_timeout_ms or 1_800_000,
+            mineru_timeout_ms=max(profile.mineru_timeout_ms or 0, MINERU_DEFAULT_TIMEOUT_MS),
             mineru_poll_interval_ms=profile.mineru_poll_interval_ms or 1_000,
             runtime_mode=self._runtime_mode(profile.runtime_mode, profile.storage_backend),
             vision_model=profile.vision_model,
@@ -181,4 +182,7 @@ class SettingsService:
         if storage_backend == "fallback_local":
             values["storage_backend"] = "fallback_local"
             values["runtime_mode"] = "fallback"
+        timeout = values.get("mineru_timeout_ms")
+        if isinstance(timeout, int):
+            values["mineru_timeout_ms"] = max(timeout, MINERU_DEFAULT_TIMEOUT_MS)
         return values

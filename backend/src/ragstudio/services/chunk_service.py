@@ -7,6 +7,7 @@ from ragstudio.db.models import Chunk, Document, SettingsProfile
 from ragstudio.schemas.chunks import ChunkOut, ChunkSearchIn, ChunkSearchOut
 from ragstudio.schemas.parsing import DomainMetadata, IndexDocumentIn, ParserMode
 from ragstudio.services.adapter import AdapterChunk, RAGAnythingAdapter
+from ragstudio.services.chunk_sanitizer import sanitize_db_text, sanitize_db_value
 from ragstudio.services.mineru_client import MinerUClient
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -48,8 +49,8 @@ class ChunkService:
         chunks = [
             Chunk(
                 document_id=document.id,
-                text=adapter_chunk.text,
-                source_location=adapter_chunk.source_location,
+                text=sanitize_db_text(adapter_chunk.text),
+                source_location=sanitize_db_value(adapter_chunk.source_location),
                 metadata_json=self._safe_metadata(
                     self._merge_metadata(
                         adapter_chunk.metadata,
@@ -124,7 +125,7 @@ class ChunkService:
             raise RuntimeError("MinerU is disabled in settings.")
         client = MinerUClient(
             base_url=settings.mineru_base_url,
-            timeout_ms=settings.mineru_timeout_ms or 1_800_000,
+            timeout_ms=settings.mineru_timeout_ms or 14_400_000,
             poll_interval_ms=settings.mineru_poll_interval_ms or 1_000,
         )
         artifact_dir = self.data_dir / "mineru-artifacts" / document.id
@@ -184,7 +185,7 @@ class ChunkService:
             and not self._is_absolute_path_value(value)
         }
         safe["document_id"] = document_id
-        return safe
+        return sanitize_db_value(safe)
 
     def _merge_metadata(
         self,

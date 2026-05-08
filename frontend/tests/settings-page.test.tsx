@@ -197,14 +197,24 @@ describe("SettingsPage provider sync", () => {
     const runtimeMode = screen.getByLabelText("Runtime mode") as HTMLSelectElement;
     const storageBackend = screen.getByLabelText("Storage backend") as HTMLSelectElement;
 
+    fireEvent.change(runtimeMode, { target: { value: "fallback" } });
+    expect(storageBackend.value).toBe("postgres_pgvector_neo4j");
+    expect(
+      screen.queryByText("Native adapter pending; indexing and query requests will block."),
+    ).not.toBeInTheDocument();
+
     fireEvent.change(storageBackend, { target: { value: "fallback_local" } });
     expect(runtimeMode.value).toBe("fallback");
+    expect(
+      screen.queryByText("Native adapter pending; indexing and query requests will block."),
+    ).not.toBeInTheDocument();
 
     fireEvent.change(storageBackend, { target: { value: "postgres_pgvector_neo4j" } });
-    expect(runtimeMode.value).toBe("runtime");
+    expect(runtimeMode.value).toBe("fallback");
 
-    fireEvent.change(runtimeMode, { target: { value: "fallback" } });
-    expect(storageBackend.value).toBe("fallback_local");
+    fireEvent.change(runtimeMode, { target: { value: "runtime" } });
+    expect(storageBackend.value).toBe("postgres_pgvector_neo4j");
+    expect(screen.getByText("Native adapter pending; indexing and query requests will block.")).toBeVisible();
   });
 
   it("submits newly typed secret values", async () => {

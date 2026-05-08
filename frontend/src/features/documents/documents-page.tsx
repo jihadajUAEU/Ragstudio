@@ -218,7 +218,7 @@ export function DocumentsPage() {
             }
           }}
         >
-          <div className="grid gap-3 lg:grid-cols-[minmax(280px,1fr)_auto] lg:items-end">
+          <div className="grid gap-3">
             <label className="min-w-0 text-sm font-medium text-[#3a4a53]">
               <span className="mb-1.5 block truncate">Upload file</span>
               <input
@@ -229,14 +229,6 @@ export function DocumentsPage() {
                 disabled={uploadDocument.isPending}
               />
             </label>
-            <Button type="submit" disabled={!file || !metadataValid || uploadDocument.isPending}>
-              {uploadDocument.isPending ? (
-                <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-              ) : (
-                <Upload className="h-4 w-4" aria-hidden="true" />
-              )}
-              Upload
-            </Button>
           </div>
           <div className="min-w-0">
             <DomainMetadataPanel
@@ -254,6 +246,16 @@ export function DocumentsPage() {
                   : undefined
               }
             />
+          </div>
+          <div className="flex justify-end">
+            <Button type="submit" disabled={!file || !metadataValid || uploadDocument.isPending}>
+              {uploadDocument.isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+              ) : (
+                <Upload className="h-4 w-4" aria-hidden="true" />
+              )}
+              Upload
+            </Button>
           </div>
         </form>
         <p className="mt-3 min-h-5 text-sm text-[#62717a]" role="status">

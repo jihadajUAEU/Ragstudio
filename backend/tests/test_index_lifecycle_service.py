@@ -10,19 +10,10 @@ from sqlalchemy import select
 
 
 class FakeRuntime:
-    def __init__(self):
+    def __init__(self, chunks: list[RuntimeChunk] | None = None):
         self.deleted: list[str] = []
         self.indexed_paths: list[str | Path] = []
-
-    def capability_report(self):
-        return {"active_backend": "runtime", "raganything_available": True}
-
-    async def delete_document_index(self, document_id):
-        self.deleted.append(document_id)
-
-    async def index_document(self, artifact_path):
-        self.indexed_paths.append(artifact_path)
-        return [
+        self.chunks = chunks or [
             RuntimeChunk(
                 text="Runtime chunk",
                 source_location={"page": 1},
@@ -32,6 +23,16 @@ class FakeRuntime:
                 preview_ref="preview://runtime-1",
             )
         ]
+
+    def capability_report(self):
+        return {"active_backend": "runtime", "raganything_available": True}
+
+    async def delete_document_index(self, document_id):
+        self.deleted.append(document_id)
+
+    async def index_document(self, artifact_path):
+        self.indexed_paths.append(artifact_path)
+        return self.chunks
 
 
 class FakeFactory:
@@ -129,6 +130,68 @@ async def test_lifecycle_deletes_existing_chunks_and_mirrors_runtime_chunks(clie
     assert records[0].chunk_count == 1
     assert refreshed_document is not None
     assert refreshed_document.status == StageStatus.SUCCEEDED.value
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_strips_null_bytes_from_runtime_chunks(client):
+    app = client._transport.app
+    runtime = FakeRuntime(
+        [
+            RuntimeChunk(
+                text="Runtime\x00 chunk",
+                source_location={"page\x00": "1\x00"},
+                metadata={"score\x00": "1.0\x00"},
+                runtime_source_id="runtime-\x001",
+                content_type="text/\x00plain",
+                preview_ref="preview://runtime-\x001",
+            )
+        ]
+    )
+    artifact_path = app.state.settings.data_dir / "doc-with-nuls.txt"
+    artifact_path.write_text("runtime text", encoding="utf-8")
+
+    async with app.state.session_factory() as session:
+        session.add(
+            SettingsProfile(
+                id="default",
+                provider="openai-compatible",
+                llm_model="gpt-4o",
+                llm_base_url="http://llm.test",
+                embedding_model="text-embedding-3-large",
+                embedding_base_url="http://embedding.test",
+                storage_backend="postgres_pgvector_neo4j",
+                runtime_mode="runtime",
+            )
+        )
+        document = Document(
+            filename="doc-with-nuls.txt",
+            content_type="text/plain",
+            sha256="def",
+            artifact_path=str(artifact_path),
+            status=StageStatus.READY.value,
+        )
+        session.add(document)
+        await session.commit()
+
+        chunks = await IndexLifecycleService(
+            session,
+            app.state.settings,
+            runtime_factory=FakeFactory(runtime),
+            health_service=FakeHealthService(),
+        ).reindex_document(document.id, options=IndexDocumentIn())
+
+        stored = (
+            await session.execute(select(Chunk).where(Chunk.document_id == document.id))
+        ).scalar_one()
+
+    assert chunks is not None
+    assert chunks[0].text == "Runtime chunk"
+    assert stored.text == "Runtime chunk"
+    assert stored.source_location == {"page": "1"}
+    assert stored.metadata_json["score"] == "1.0"
+    assert stored.runtime_source_id == "runtime-1"
+    assert stored.content_type == "text/plain"
+    assert stored.preview_ref == "preview://runtime-1"
 
 
 @pytest.mark.asyncio

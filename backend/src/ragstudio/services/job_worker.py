@@ -1,5 +1,5 @@
 from ragstudio.db.models import Job
-from ragstudio.schemas.common import StageStatus
+from ragstudio.schemas.common import StageStatus, new_id
 from ragstudio.schemas.jobs import JobOut
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,7 +11,15 @@ class JobWorker:
 
     @staticmethod
     def build(job_type: str, target_id: str | None) -> Job:
-        return Job(type=job_type, target_id=target_id, status=StageStatus.READY.value, progress=0)
+        return Job(
+            id=new_id(),
+            type=job_type,
+            target_id=target_id,
+            status=StageStatus.READY.value,
+            progress=0,
+            logs=[],
+            result={},
+        )
 
     async def enqueue(self, job_type: str, target_id: str | None) -> JobOut:
         job = self.build(job_type, target_id)

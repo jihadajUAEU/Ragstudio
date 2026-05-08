@@ -17,7 +17,7 @@ async def test_settings_profile_round_trip(client):
     assert read_response.status_code == 200
     assert read_response.json()["provider"] == "openai"
     assert read_response.json()["storage_backend"] == "postgres_pgvector_neo4j"
-    assert read_response.json()["runtime_mode"] == "runtime"
+    assert read_response.json()["runtime_mode"] == "fallback"
     assert read_response.json()["query_mode"] == "mix"
     assert read_response.json()["top_k"] == 40
 
@@ -305,7 +305,7 @@ async def test_provider_sync_preview_maps_manifest_without_persisting(client, mo
     assert body["patch"]["embedding_timeout_ms"] == 10000
     assert body["patch"]["mineru_enabled"] is True
     assert body["patch"]["mineru_base_url"] == "http://10.10.9.19:8765"
-    assert body["patch"]["mineru_timeout_ms"] == 1800000
+    assert body["patch"]["mineru_timeout_ms"] == 14400000
     assert "llm_base_url" in body["changed_fields"]
     assert "stt" in body["ignored_sections"]
     assert read_response.json()["llm_model"] == "gpt-4.1"
@@ -545,7 +545,7 @@ async def test_settings_profile_saves_mineru_config(client):
     body = response.json()
     assert body["mineru_enabled"] is True
     assert body["mineru_base_url"] == "http://127.0.0.1:8765"
-    assert body["mineru_timeout_ms"] == 120000
+    assert body["mineru_timeout_ms"] == 14400000
     assert body["mineru_poll_interval_ms"] == 500
 
 

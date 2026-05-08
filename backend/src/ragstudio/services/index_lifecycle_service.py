@@ -6,6 +6,7 @@ from ragstudio.db.models import Chunk, Document, IndexRecord
 from ragstudio.schemas.chunks import ChunkOut
 from ragstudio.schemas.common import StageStatus
 from ragstudio.schemas.parsing import IndexDocumentIn
+from ragstudio.services.chunk_sanitizer import sanitize_db_text, sanitize_db_value
 from ragstudio.services.runtime_factory import RAGAnythingRuntimeFactory
 from ragstudio.services.runtime_health_service import RuntimeHealthService
 from ragstudio.services.runtime_profile_service import RuntimeProfileService
@@ -74,13 +75,19 @@ class IndexLifecycleService:
             chunks.append(
                 Chunk(
                     document_id=document.id,
-                    text=adapter_chunk.text,
-                    source_location=adapter_chunk.source_location,
-                    metadata_json=self._merge_options_metadata(adapter_chunk.metadata, options),
+                    text=sanitize_db_text(adapter_chunk.text),
+                    source_location=sanitize_db_value(adapter_chunk.source_location),
+                    metadata_json=sanitize_db_value(
+                        self._merge_options_metadata(adapter_chunk.metadata, options)
+                    ),
                     runtime_profile_id=profile.id,
-                    runtime_source_id=adapter_chunk.metadata.get("runtime_source_id"),
-                    content_type=str(adapter_chunk.metadata.get("content_type") or "text"),
-                    preview_ref=adapter_chunk.metadata.get("preview_ref"),
+                    runtime_source_id=sanitize_db_value(
+                        adapter_chunk.metadata.get("runtime_source_id")
+                    ),
+                    content_type=sanitize_db_text(
+                        str(adapter_chunk.metadata.get("content_type") or "text")
+                    ),
+                    preview_ref=sanitize_db_value(adapter_chunk.metadata.get("preview_ref")),
                     indexed_at=indexed_at,
                 )
             )

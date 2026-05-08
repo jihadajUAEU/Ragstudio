@@ -53,6 +53,17 @@ describe("DocumentsPage", () => {
     expect(uploadButton).toBeEnabled();
   });
 
+  it("places the upload action after the custom JSON editor", () => {
+    renderDocumentsPage();
+
+    const customJson = screen.getByLabelText("Custom JSON");
+    const uploadButton = screen.getByRole("button", { name: /^upload$/i });
+
+    expect(
+      customJson.compareDocumentPosition(uploadButton) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
   it("confirms and deletes an uploaded document", async () => {
     vi.mocked(apiClient.documents)
       .mockResolvedValueOnce({

@@ -1,4 +1,7 @@
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
+import asyncio
+import logging
+
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ragstudio.api.deps import get_session
@@ -21,6 +24,7 @@ from ragstudio.services.runtime_profile_service import (
 )
 
 router = APIRouter(prefix="/api/chunks", tags=["chunks"])
+logger = logging.getLogger(__name__)
 
 
 @router.post(
@@ -31,7 +35,6 @@ router = APIRouter(prefix="/api/chunks", tags=["chunks"])
 async def create_index_document_job(
     document_id: str,
     options: IndexDocumentIn,
-    background_tasks: BackgroundTasks,
     request: Request,
     session: AsyncSession = Depends(get_session),
 ) -> JobOut:
@@ -56,12 +59,8 @@ async def create_index_document_job(
     job = await service.create_index_job(document_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Document not found")
-    background_tasks.add_task(
-        _run_index_document_job,
-        request.app.state.settings,
-        document_id,
-        job.id,
-        options,
+    asyncio.create_task(
+        _run_index_document_job(request.app.state.settings, document_id, job.id, options)
     )
     return JobOut.model_validate(job)
 
@@ -133,5 +132,37 @@ async def _run_index_document_job(
                 job_id,
                 options,
             )
+    except asyncio.CancelledError:
+        await _mark_background_index_failed(
+            settings,
+            document_id,
+            job_id,
+            "Indexing task was interrupted before completion.",
+        )
+        raise
+    except Exception as exc:
+        logger.exception("Background reindexing failed for job %s", job_id)
+        await _mark_background_index_failed(settings, document_id, job_id, str(exc))
+    finally:
+        await engine.dispose()
+
+
+async def _mark_background_index_failed(
+    settings: AppSettings,
+    document_id: str,
+    job_id: str,
+    reason: str,
+) -> None:
+    engine = make_engine(settings.resolved_database_url)
+    factory = make_session_factory(engine)
+    try:
+        async with factory() as background_session:
+            await DocumentService(
+                background_session,
+                settings.data_dir,
+                settings=settings,
+            ).mark_index_job_failed(document_id, job_id, reason)
+    except Exception:
+        logger.exception("Failed to persist background indexing failure for job %s", job_id)
     finally:
         await engine.dispose()

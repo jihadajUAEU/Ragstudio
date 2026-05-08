@@ -1,3 +1,4 @@
+import asyncio
 import json
 from pathlib import Path
 
@@ -43,6 +44,28 @@ class PassingHealthService:
         return []
 
 
+async def wait_for_jobs(client, expected_count: int, terminal: bool = True) -> list[dict]:
+    for _ in range(50):
+        response = await client.get("/api/jobs")
+        jobs = response.json()["items"]
+        if len(jobs) >= expected_count:
+            if not terminal or all(job["status"] in {"succeeded", "failed"} for job in jobs):
+                return jobs
+        await asyncio.sleep(0.01)
+    return jobs
+
+
+async def wait_for_chunks(client, document_id: str, expected_total: int) -> dict:
+    payload = {"query": "", "document_ids": [document_id], "limit": 20}
+    for _ in range(50):
+        response = await client.post("/api/chunks/search", json=payload)
+        body = response.json()
+        if body["total"] >= expected_total:
+            return body
+        await asyncio.sleep(0.01)
+    return body
+
+
 @pytest.mark.asyncio
 async def test_upload_accepts_parser_mode_and_domain_metadata(client):
     response = await client.post(
@@ -63,6 +86,7 @@ async def test_upload_accepts_parser_mode_and_domain_metadata(client):
 
     assert response.status_code == 201
     document_id = response.json()["id"]
+    await wait_for_chunks(client, document_id, 1)
     search_response = await client.post(
         "/api/chunks/search",
         json={"query": "Policy", "document_ids": [document_id], "limit": 10},
@@ -110,11 +134,10 @@ async def test_upload_mineru_strict_failure_persists_failed_job(client, monkeypa
         data={"parser_mode": "mineru_strict", "domain_metadata": "{}"},
         files={"file": ("paper.pdf", b"%PDF fake", "application/pdf")},
     )
-    jobs_response = await client.get("/api/jobs")
+    jobs = await wait_for_jobs(client, 1)
 
     assert response.status_code == 201
-    assert response.json()["status"] == "failed"
-    jobs = jobs_response.json()["items"]
+    assert response.json()["status"] == "running"
     assert len(jobs) == 1
     assert jobs[0]["status"] == "failed"
     assert jobs[0]["result"]["error"] == "MinerU parse failed"
@@ -126,6 +149,7 @@ async def test_duplicate_upload_mineru_strict_failure_persists_failed_job(client
         "/api/documents",
         files={"file": ("paper.pdf", b"%PDF fake", "application/pdf")},
     )
+    await wait_for_jobs(client, 1)
 
     async def fail_index(self, document_id, *, options, commit=True, on_mineru_status=None):
         raise RuntimeError("MinerU parse failed")
@@ -140,12 +164,11 @@ async def test_duplicate_upload_mineru_strict_failure_persists_failed_job(client
         data={"parser_mode": "mineru_strict", "domain_metadata": "{}"},
         files={"file": ("paper-copy.pdf", b"%PDF fake", "application/pdf")},
     )
-    jobs_response = await client.get("/api/jobs")
+    jobs = await wait_for_jobs(client, 2)
 
     assert second_response.status_code == 201
     assert second_response.json()["id"] == first_response.json()["id"]
-    assert second_response.json()["status"] == "failed"
-    jobs = jobs_response.json()["items"]
+    assert second_response.json()["status"] == "running"
     failed_jobs = [job for job in jobs if job["status"] == "failed"]
     succeeded_jobs = [job for job in jobs if job["status"] == "succeeded"]
     assert len(jobs) == 2
@@ -165,13 +188,58 @@ async def test_duplicate_upload_with_explicit_default_options_creates_new_job(cl
         data={"parser_mode": "local_fallback", "domain_metadata": "{}"},
         files={"file": ("notes-copy.txt", b"same bytes", "text/plain")},
     )
-    jobs_response = await client.get("/api/jobs")
+    jobs = await wait_for_jobs(client, 2)
 
     assert second_response.status_code == 201
     assert second_response.json()["id"] == first_response.json()["id"]
-    jobs = [job for job in jobs_response.json()["items"] if job["type"] == "index_document"]
+    jobs = [job for job in jobs if job["type"] == "index_document"]
     assert len(jobs) == 2
     assert {job["status"] for job in jobs} == {"succeeded"}
+
+
+@pytest.mark.asyncio
+async def test_duplicate_upload_schedules_each_created_job_id(client, monkeypatch):
+    scheduled = []
+
+    async def fake_run_index_job(settings, document_id, job_id, options):
+        scheduled.append(
+            {
+                "document_id": document_id,
+                "job_id": job_id,
+                "parser_mode": options.parser_mode,
+            }
+        )
+
+    monkeypatch.setattr("ragstudio.api.routes.documents._run_index_job", fake_run_index_job)
+
+    first_response = await client.post(
+        "/api/documents",
+        data={"parser_mode": "local_fallback", "domain_metadata": "{}"},
+        files={"file": ("notes.txt", b"same bytes", "text/plain")},
+    )
+    second_response = await client.post(
+        "/api/documents",
+        data={"parser_mode": "mineru_with_fallback", "domain_metadata": "{}"},
+        files={"file": ("notes-copy.txt", b"same bytes", "text/plain")},
+    )
+
+    for _ in range(20):
+        if len(scheduled) == 2:
+            break
+        await asyncio.sleep(0.01)
+    jobs = await wait_for_jobs(client, 2, terminal=False)
+    job_ids = {job["id"] for job in jobs}
+
+    assert first_response.status_code == 201
+    assert second_response.status_code == 201
+    assert first_response.json()["id"] == second_response.json()["id"]
+    assert len(scheduled) == 2
+    assert {item["job_id"] for item in scheduled} == job_ids
+    assert scheduled[0]["job_id"] != scheduled[1]["job_id"]
+    assert [item["parser_mode"] for item in scheduled] == [
+        "local_fallback",
+        "mineru_with_fallback",
+    ]
 
 
 @pytest.mark.asyncio
@@ -182,6 +250,10 @@ async def test_upload_uses_runtime_index_lifecycle_when_profile_exists(client, m
     )
     monkeypatch.setattr(
         "ragstudio.services.index_lifecycle_service.RuntimeHealthService",
+        PassingHealthService,
+    )
+    monkeypatch.setattr(
+        "ragstudio.api.routes.documents.RuntimeHealthService",
         PassingHealthService,
     )
     app = client._transport.app
@@ -207,6 +279,7 @@ async def test_upload_uses_runtime_index_lifecycle_when_profile_exists(client, m
 
     assert response.status_code == 201
     document_id = response.json()["id"]
+    await wait_for_jobs(client, 1)
     async with app.state.session_factory() as session:
         record = await session.scalar(
             select(IndexRecord).where(IndexRecord.document_id == document_id)
@@ -321,12 +394,18 @@ async def test_upload_local_fallback_index_failure_propagates(client, monkeypatc
         fail_index,
     )
 
-    with pytest.raises(RuntimeError, match="local index bug"):
-        await client.post(
-            "/api/documents",
-            data={"parser_mode": "local_fallback", "domain_metadata": "{}"},
-            files={"file": ("paper.txt", b"text", "text/plain")},
-        )
+    response = await client.post(
+        "/api/documents",
+        data={"parser_mode": "local_fallback", "domain_metadata": "{}"},
+        files={"file": ("paper.txt", b"text", "text/plain")},
+    )
+    jobs = await wait_for_jobs(client, 1)
+
+    assert response.status_code == 201
+    assert response.json()["status"] == "running"
+    assert len(jobs) == 1
+    assert jobs[0]["status"] == "failed"
+    assert jobs[0]["result"]["error"] == "local index bug"
 
 
 @pytest.mark.asyncio
@@ -337,6 +416,7 @@ async def test_delete_document_removes_document_chunks_jobs_and_artifact(client)
     )
     assert upload_response.status_code == 201
     document_id = upload_response.json()["id"]
+    await wait_for_chunks(client, document_id, 2)
     session_factory = client._transport.app.state.session_factory
     async with session_factory() as session:
         document = await session.get(Document, document_id)

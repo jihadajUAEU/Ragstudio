@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 from ragstudio.db.engine import init_db, make_engine, make_session_factory
 from ragstudio.db.models import Chunk, Document, Job, SettingsProfile
@@ -174,12 +176,12 @@ async def test_create_strict_reindex_job_returns_immediately(client, monkeypatch
     document_id = upload_response.json()["id"]
     scheduled = {}
 
-    def fake_add_task(self, fn, *args, **kwargs):
-        scheduled["fn"] = fn
-        scheduled["args"] = args
-        scheduled["kwargs"] = kwargs
+    async def fake_run_index_job(settings, doc_id, job_id, options):
+        scheduled["document_id"] = doc_id
+        scheduled["job_id"] = job_id
+        scheduled["parser_mode"] = options.parser_mode
 
-    monkeypatch.setattr("fastapi.BackgroundTasks.add_task", fake_add_task)
+    monkeypatch.setattr("ragstudio.api.routes.chunks._run_index_document_job", fake_run_index_job)
 
     response = await client.post(
         f"/api/chunks/index/{document_id}/jobs",
@@ -200,8 +202,13 @@ async def test_create_strict_reindex_job_returns_immediately(client, monkeypatch
     assert body["type"] == "index_document"
     assert body["target_id"] == document_id
     assert body["status"] == "ready"
-    assert scheduled["args"][1] == document_id
-    assert scheduled["args"][2] == body["id"]
+    for _ in range(20):
+        if scheduled:
+            break
+        await asyncio.sleep(0.01)
+    assert scheduled["document_id"] == document_id
+    assert scheduled["job_id"] == body["id"]
+    assert scheduled["parser_mode"] == "mineru_strict"
 
 
 @pytest.mark.asyncio
