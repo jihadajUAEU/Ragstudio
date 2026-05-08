@@ -105,7 +105,11 @@ async def test_duplicate_upload_mineru_strict_failure_persists_failed_job(client
     assert second_response.status_code == 201
     assert second_response.json()["id"] == first_response.json()["id"]
     assert second_response.json()["status"] == "failed"
-    failed_jobs = [job for job in jobs_response.json()["items"] if job["status"] == "failed"]
+    jobs = jobs_response.json()["items"]
+    failed_jobs = [job for job in jobs if job["status"] == "failed"]
+    succeeded_jobs = [job for job in jobs if job["status"] == "succeeded"]
+    assert len(jobs) == 2
+    assert succeeded_jobs
     assert failed_jobs
     assert failed_jobs[0]["result"]["error"] == "MinerU parse failed"
 

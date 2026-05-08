@@ -56,6 +56,7 @@ class DocumentService:
             await self.session.rollback()
             existing = await self.session.scalar(select(Document).where(Document.sha256 == digest))
             if existing is not None:
+                await self._ensure_indexed(existing, options)
                 return DocumentOut.model_validate(existing)
             raise
         except Exception:
@@ -76,17 +77,22 @@ class DocumentService:
         existing_chunk_id = await self.session.scalar(
             select(Chunk.id).where(Chunk.document_id == document.id).limit(1)
         )
-        if existing_chunk_id is not None and options is None:
+        if existing_chunk_id is not None and self._is_idempotent_existing_upload(options):
             return
 
-        existing_job = await self.session.scalar(
-            select(Job)
-            .where(Job.type == "index_document", Job.target_id == document.id)
-            .order_by(Job.created_at.desc())
-            .limit(1)
-        )
-        job = existing_job or JobWorker.build("index_document", document.id)
-        if existing_job is None:
+        job = JobWorker.build("index_document", document.id)
+        add_job = True
+        if self._is_idempotent_existing_upload(options):
+            existing_job = await self.session.scalar(
+                select(Job)
+                .where(Job.type == "index_document", Job.target_id == document.id)
+                .order_by(Job.created_at.desc())
+                .limit(1)
+            )
+            if existing_job is not None:
+                job = existing_job
+                add_job = False
+        if add_job:
             self.session.add(job)
             await self.session.flush()
         try:
@@ -121,6 +127,10 @@ class DocumentService:
 
     def _should_persist_index_failure(self, options: IndexDocumentIn | None) -> bool:
         return options is not None and options.parser_mode == "mineru_strict"
+
+    def _is_idempotent_existing_upload(self, options: IndexDocumentIn | None) -> bool:
+        default_options = IndexDocumentIn()
+        return options is None or options == default_options
 
     def _mark_index_failed(self, document: Document, job: Job, exc: Exception) -> None:
         document.status = StageStatus.FAILED.value

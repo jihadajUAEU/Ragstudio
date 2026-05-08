@@ -199,3 +199,38 @@ def test_mineru_client_collects_related_artifacts_from_items_manifest(tmp_path):
     assert chunks[0].metadata["parser_metadata"]["related_artifacts"] == [
         {"path": "images/page-1.png", "kind": "image"}
     ]
+
+
+def test_mineru_client_collects_related_artifacts_from_files_and_items(tmp_path):
+    artifact_zip = tmp_path / "combined.zip"
+    with ZipFile(artifact_zip, "w") as archive:
+        archive.writestr(
+            "manifest.json",
+            json.dumps(
+                {
+                    "files": [
+                        {"path": "tables/table-1.json", "kind": "json"},
+                        {"path": "images/page-1.png", "kind": "image"},
+                    ],
+                    "items": [
+                        {"path": "pages/page-1.md", "contentType": "text"},
+                        {"path": "images/page-1.png", "contentType": "image"},
+                    ],
+                }
+            ),
+        )
+        archive.writestr("pages/page-1.md", "Alpha")
+
+    client = MinerUClient(base_url="http://mineru.test", timeout_ms=1000, poll_interval_ms=100)
+    chunks = client.normalize_artifact_zip(
+        artifact_zip=artifact_zip,
+        extract_dir=tmp_path / "extract",
+        document_id="doc-1",
+        parser_mode="mineru_strict",
+        parse_job_id="job-1",
+    )
+
+    assert chunks[0].metadata["parser_metadata"]["related_artifacts"] == [
+        {"path": "tables/table-1.json", "kind": "json"},
+        {"path": "images/page-1.png", "kind": "image"},
+    ]

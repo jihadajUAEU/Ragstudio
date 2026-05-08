@@ -58,12 +58,33 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (!response.ok) {
     const message =
       typeof body === "object" && body !== null && "detail" in body
-        ? String(body.detail)
+        ? formatApiDetail(body.detail)
         : `Request failed with ${response.status}`;
     throw new ApiError(message, response.status, body);
   }
 
   return body as T;
+}
+
+function formatApiDetail(detail: unknown): string {
+  if (typeof detail === "string") {
+    return detail;
+  }
+  if (Array.isArray(detail)) {
+    return detail
+      .map((item) => {
+        if (typeof item === "object" && item !== null && "msg" in item) {
+          const location = "loc" in item && Array.isArray(item.loc) ? item.loc.join(".") : "";
+          return location ? `${location}: ${String(item.msg)}` : String(item.msg);
+        }
+        return JSON.stringify(item);
+      })
+      .join("; ");
+  }
+  if (typeof detail === "object" && detail !== null) {
+    return JSON.stringify(detail);
+  }
+  return String(detail);
 }
 
 export const apiClient = {

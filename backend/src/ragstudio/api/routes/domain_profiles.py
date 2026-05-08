@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 
 from ragstudio.schemas.parsing import (
     DomainMetadataSuggestIn,
@@ -34,4 +34,7 @@ async def upsert_domain_profile(
     request: Request,
 ) -> DomainProfileOut:
     profile = payload.model_copy(update={"id": profile_id})
-    return DomainMetadataService(request.app.state.settings.data_dir).upsert_profile(profile)
+    try:
+        return DomainMetadataService(request.app.state.settings.data_dir).upsert_profile(profile)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc

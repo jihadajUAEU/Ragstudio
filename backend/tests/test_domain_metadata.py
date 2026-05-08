@@ -56,3 +56,17 @@ async def test_saved_domain_profile_round_trip(client):
 
     assert create_response.status_code == 200
     assert any(item["id"] == "uaeu_policy" for item in list_response.json()["items"])
+
+
+@pytest.mark.asyncio
+async def test_saved_domain_profile_rejects_builtin_id(client):
+    response = await client.put(
+        "/api/domain-profiles/hadith",
+        json={
+            "id": "hadith",
+            "name": "Override",
+            "metadata": {"domain": "custom"},
+        },
+    )
+
+    assert response.status_code == 409

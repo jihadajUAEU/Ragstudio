@@ -109,6 +109,8 @@ class DomainMetadataService:
 
     def upsert_profile(self, profile: DomainProfileIn) -> DomainProfileOut:
         saved = DomainProfileOut.model_validate(profile.model_dump())
+        if saved.id in {item.id for item in BUILTIN_PROFILES}:
+            raise ValueError(f"Domain profile id '{saved.id}' is reserved.")
         profiles = {item.id: item for item in self._saved_profiles()}
         profiles[saved.id] = saved
         self.profile_path.parent.mkdir(parents=True, exist_ok=True)

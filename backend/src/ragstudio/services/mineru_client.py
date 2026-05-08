@@ -225,8 +225,10 @@ class MinerUClient:
         manifest: dict[str, Any],
         extract_dir: Path,
     ) -> list[dict[str, str]]:
-        raw_entries = manifest.get("files") or manifest.get("items") or []
+        raw_entries = [*self._raw_manifest_entries(manifest, "files")]
+        raw_entries.extend(self._raw_manifest_entries(manifest, "items"))
         related: list[dict[str, str]] = []
+        seen: set[tuple[str, str]] = set()
         text_kinds = {"text", "markdown", "md"}
         for item in raw_entries:
             if not isinstance(item, dict):
@@ -236,13 +238,19 @@ class MinerUClient:
             if not path or kind.lower() in text_kinds or path == "manifest.json":
                 continue
             safe_path = self._safe_manifest_path(extract_dir, path)
-            related.append(
-                {
-                    "path": safe_path.relative_to(extract_dir.resolve()).as_posix(),
-                    "kind": kind,
-                }
-            )
+            safe_ref = safe_path.relative_to(extract_dir.resolve()).as_posix()
+            key = (safe_ref, kind)
+            if key in seen:
+                continue
+            seen.add(key)
+            related.append({"path": safe_ref, "kind": kind})
         return related
+
+    def _raw_manifest_entries(self, manifest: dict[str, Any], key: str) -> list[dict[str, Any]]:
+        value = manifest.get(key)
+        if not isinstance(value, list):
+            return []
+        return [item for item in value if isinstance(item, dict)]
 
     def _safe_manifest_path(self, extract_dir: Path, rel_path: str) -> Path:
         root = extract_dir.resolve()
