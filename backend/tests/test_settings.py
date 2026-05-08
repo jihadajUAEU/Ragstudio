@@ -339,6 +339,56 @@ async def test_provider_sync_preview_rejects_invalid_manifest_url(client):
     assert "manifest_url" in response.text
 
 
+@pytest.mark.parametrize(
+    ("manifest", "field_name"),
+    [
+        ({"reasoning": {"apiUrl": 42}}, "reasoning.apiUrl"),
+        ({"reasoning": {"model": False}}, "reasoning.model"),
+        ({"reasoning": {"timeoutMs": True}}, "reasoning.timeoutMs"),
+        ({"reasoning": {"capabilities": ["text", 42]}}, "reasoning.capabilities"),
+        ({"embeddings": {"dimensions": False}}, "embeddings.dimensions"),
+        ({"embeddings": {"timeoutMs": 0}}, "embeddings.timeoutMs"),
+        ({"hpcMineru": {"enabled": "yes"}}, "hpcMineru.enabled"),
+        ({"hpcMineru": {"timeoutMs": -1}}, "hpcMineru.timeoutMs"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_provider_sync_preview_rejects_invalid_supported_field_types(
+    client, monkeypatch, manifest, field_name
+):
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return manifest
+
+    class FakeAsyncClient:
+        def __init__(self, timeout):
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return None
+
+        async def get(self, url):
+            return FakeResponse()
+
+    monkeypatch.setattr(
+        "ragstudio.services.provider_manifest_service.httpx.AsyncClient",
+        FakeAsyncClient,
+    )
+
+    response = await client.post(
+        "/api/settings/default/sync-provider-preview",
+        json={"manifest_url": "https://updates.jihadaj.com/providers.json"},
+    )
+
+    assert response.status_code == 502
+    assert field_name in response.json()["detail"]
+
+
 @pytest.mark.asyncio
 async def test_llm_connection_test_calls_chat_completions(client, monkeypatch):
     requests = []

@@ -62,7 +62,68 @@ class ProviderManifestService:
                 raise ProviderManifestError(
                     f"Provider manifest section {section} must be an object."
                 )
+        self._validate_supported_fields(payload)
         return payload
+
+    def _validate_supported_fields(self, manifest: dict[str, Any]) -> None:
+        reasoning = manifest.get("reasoning")
+        if isinstance(reasoning, dict):
+            self._validate_optional_str(reasoning, "apiUrl", "reasoning.apiUrl")
+            self._validate_optional_str(reasoning, "model", "reasoning.model")
+            self._validate_optional_positive_int(
+                reasoning, "timeoutMs", "reasoning.timeoutMs"
+            )
+            self._validate_optional_capabilities(reasoning)
+
+        embeddings = manifest.get("embeddings")
+        if isinstance(embeddings, dict):
+            self._validate_optional_str(embeddings, "apiUrl", "embeddings.apiUrl")
+            self._validate_optional_str(embeddings, "model", "embeddings.model")
+            self._validate_optional_positive_int(
+                embeddings, "dimensions", "embeddings.dimensions"
+            )
+            self._validate_optional_positive_int(
+                embeddings, "timeoutMs", "embeddings.timeoutMs"
+            )
+
+        mineru = manifest.get("hpcMineru")
+        if isinstance(mineru, dict):
+            if "enabled" in mineru and not isinstance(mineru["enabled"], bool):
+                raise ProviderManifestError(
+                    "Provider manifest field hpcMineru.enabled must be a boolean."
+                )
+            self._validate_optional_str(mineru, "apiUrl", "hpcMineru.apiUrl")
+            self._validate_optional_positive_int(
+                mineru, "timeoutMs", "hpcMineru.timeoutMs"
+            )
+
+    def _validate_optional_str(
+        self, section: dict[str, Any], key: str, field_name: str
+    ) -> None:
+        if key in section and not isinstance(section[key], str):
+            raise ProviderManifestError(
+                f"Provider manifest field {field_name} must be a string."
+            )
+
+    def _validate_optional_positive_int(
+        self, section: dict[str, Any], key: str, field_name: str
+    ) -> None:
+        value = section.get(key)
+        if key in section and (
+            not isinstance(value, int) or isinstance(value, bool) or value <= 0
+        ):
+            raise ProviderManifestError(
+                f"Provider manifest field {field_name} must be a positive integer."
+            )
+
+    def _validate_optional_capabilities(self, section: dict[str, Any]) -> None:
+        raw = section.get("capabilities")
+        if "capabilities" in section and (
+            not isinstance(raw, list) or any(not isinstance(item, str) for item in raw)
+        ):
+            raise ProviderManifestError(
+                "Provider manifest field reasoning.capabilities must be a list of strings."
+            )
 
     def _build_patch(self, manifest: dict[str, Any]) -> dict[str, object]:
         patch: dict[str, object] = {}
@@ -147,6 +208,6 @@ class ProviderManifestService:
         return stripped or None
 
     def _optional_int(self, value: object) -> int | None:
-        if isinstance(value, int) and value > 0:
+        if isinstance(value, int) and not isinstance(value, bool) and value > 0:
             return value
         return None
