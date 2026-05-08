@@ -1,12 +1,44 @@
-from fastapi import APIRouter, Depends, HTTPException, Request
+from pathlib import Path
+
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ragstudio.api.deps import get_session
+from ragstudio.config import AppSettings
+from ragstudio.db.engine import make_engine, make_session_factory
 from ragstudio.schemas.chunks import ChunkOut, ChunkSearchIn, ChunkSearchOut
+from ragstudio.schemas.jobs import JobOut
 from ragstudio.schemas.parsing import IndexDocumentIn
 from ragstudio.services.chunk_service import ChunkService
+from ragstudio.services.document_service import DocumentService
 
 router = APIRouter(prefix="/api/chunks", tags=["chunks"])
+
+
+@router.post(
+    "/index/{document_id}/jobs",
+    response_model=JobOut,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def create_index_document_job(
+    document_id: str,
+    options: IndexDocumentIn,
+    background_tasks: BackgroundTasks,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+) -> JobOut:
+    service = DocumentService(session, request.app.state.settings.data_dir)
+    job = await service.create_index_job(document_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+    background_tasks.add_task(
+        _run_index_document_job,
+        request.app.state.settings.data_dir,
+        document_id,
+        job.id,
+        options,
+    )
+    return JobOut.model_validate(job)
 
 
 @router.post("/index/{document_id}", response_model=list[ChunkOut])
@@ -32,3 +64,23 @@ async def search_chunks(
     session: AsyncSession = Depends(get_session),
 ) -> ChunkSearchOut:
     return await ChunkService(session, request.app.state.settings.data_dir).search(search_in)
+
+
+async def _run_index_document_job(
+    data_dir: Path,
+    document_id: str,
+    job_id: str,
+    options: IndexDocumentIn,
+) -> None:
+    settings = AppSettings(data_dir=data_dir)
+    engine = make_engine(settings.resolved_database_url)
+    factory = make_session_factory(engine)
+    try:
+        async with factory() as background_session:
+            await DocumentService(background_session, data_dir).run_index_job(
+                document_id,
+                job_id,
+                options,
+            )
+    finally:
+        await engine.dispose()

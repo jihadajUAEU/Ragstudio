@@ -101,3 +101,42 @@ async def test_run_index_job_marks_strict_mineru_failure(tmp_path):
     assert refreshed_job.status == "failed"
     assert refreshed_job.progress == 100
     assert "MinerU parse timed out" in refreshed_job.logs[-1]
+
+
+@pytest.mark.asyncio
+async def test_create_strict_reindex_job_returns_immediately(client, monkeypatch):
+    upload_response = await client.post(
+        "/api/documents",
+        files={"file": ("quran_arabic_english.pdf", b"%PDF-1.4", "application/pdf")},
+    )
+    document_id = upload_response.json()["id"]
+    scheduled = {}
+
+    def fake_add_task(self, fn, *args, **kwargs):
+        scheduled["fn"] = fn
+        scheduled["args"] = args
+        scheduled["kwargs"] = kwargs
+
+    monkeypatch.setattr("fastapi.BackgroundTasks.add_task", fake_add_task)
+
+    response = await client.post(
+        f"/api/chunks/index/{document_id}/jobs",
+        json={
+            "parser_mode": "mineru_strict",
+            "domain_metadata": {
+                "domain": "religious_text",
+                "document_type": "scripture_translation",
+                "language": "arabic_english",
+                "tags": ["quran", "arabic", "english", "translation"],
+                "collection": "quran_arabic_english",
+            },
+        },
+    )
+
+    assert response.status_code == 202
+    body = response.json()
+    assert body["type"] == "index_document"
+    assert body["target_id"] == document_id
+    assert body["status"] == "ready"
+    assert scheduled["args"][1] == document_id
+    assert scheduled["args"][2] == body["id"]

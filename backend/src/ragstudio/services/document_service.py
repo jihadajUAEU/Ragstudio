@@ -70,6 +70,17 @@ class DocumentService:
         result = await self.session.execute(select(Document).order_by(Document.created_at.desc()))
         return [DocumentOut.model_validate(item) for item in result.scalars().all()]
 
+    async def create_index_job(self, document_id: str) -> Job | None:
+        document = await self.session.get(Document, document_id)
+        if document is None:
+            return None
+        job = JobWorker.build("index_document", document.id)
+        self.session.add(job)
+        document.status = StageStatus.RUNNING.value
+        await self.session.commit()
+        await self.session.refresh(job)
+        return job
+
     async def _ensure_indexed(
         self,
         document: Document,
