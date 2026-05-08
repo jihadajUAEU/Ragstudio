@@ -94,10 +94,7 @@ class SettingsService:
                 if capability in {"text", "vision", "reasoning"}
             ],
             embedding_model=profile.embedding_model,
-            storage_backend=cast(
-                StorageBackend,
-                profile.storage_backend if profile.storage_backend else "postgres_pgvector_neo4j",
-            ),
+            storage_backend=self._storage_backend(profile.storage_backend),
             embedding_provider=cast(
                 EmbeddingProvider,
                 profile.embedding_provider if profile.embedding_provider else "fallback",
@@ -159,3 +156,8 @@ class SettingsService:
             embedding_func_max_async=profile.embedding_func_max_async or 8,
             max_parallel_insert=profile.max_parallel_insert or 2,
         )
+
+    def _storage_backend(self, value: str | None) -> StorageBackend:
+        if value in {"postgres_pgvector_neo4j", "fallback_local"}:
+            return cast(StorageBackend, value)
+        return "fallback_local"

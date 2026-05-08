@@ -100,6 +100,7 @@ def _ensure_runtime_columns(connection) -> None:
                 "max_parallel_insert": "INTEGER DEFAULT 2 NOT NULL",
             },
         )
+        _normalize_settings_profile_values(connection)
     if "chunks" in table_names:
         _ensure_columns(
             connection,
@@ -134,6 +135,31 @@ def _ensure_columns(connection, inspector, table_name: str, additions: dict[str,
     for column, definition in additions.items():
         if column not in existing:
             connection.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {column} {definition}"))
+
+
+def _normalize_settings_profile_values(connection) -> None:
+    connection.execute(
+        text(
+            """
+            UPDATE settings_profiles
+            SET storage_backend = 'fallback_local'
+            WHERE storage_backend IS NULL
+               OR storage_backend = ''
+               OR storage_backend NOT IN ('postgres_pgvector_neo4j', 'fallback_local')
+            """
+        )
+    )
+    connection.execute(
+        text(
+            """
+            UPDATE settings_profiles
+            SET runtime_mode = 'fallback'
+            WHERE runtime_mode IS NULL
+               OR runtime_mode = ''
+               OR runtime_mode NOT IN ('runtime', 'fallback', 'degraded')
+            """
+        )
+    )
 
 
 def _json_array_column(connection) -> str:

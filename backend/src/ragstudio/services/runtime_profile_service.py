@@ -66,7 +66,11 @@ class RuntimeProfileService:
             reranker_timeout_ms=profile.reranker_timeout_ms or 10000,
             storage_backend=cast(
                 StorageBackend,
-                profile.storage_backend or "postgres_pgvector_neo4j",
+                (
+                    profile.storage_backend
+                    if profile.storage_backend in {"postgres_pgvector_neo4j", "fallback_local"}
+                    else "fallback_local"
+                ),
             ),
             pgvector_schema=profile.pgvector_schema or self.settings.pgvector_schema,
             pgvector_table_prefix=(

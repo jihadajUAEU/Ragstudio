@@ -1,5 +1,6 @@
 import pytest
-from ragstudio.db.engine import init_db, is_postgres_url, make_engine
+from ragstudio.db.engine import init_db, is_postgres_url, make_engine, make_session_factory
+from ragstudio.services.settings_service import SettingsService
 from sqlalchemy import inspect, text
 
 
@@ -108,7 +109,7 @@ async def test_init_db_backfills_runtime_columns_for_existing_sqlite_tables(tmp_
             await connection.execute(
                 text(
                     """
-                    SELECT runtime_mode, pgvector_schema, enable_image_processing
+                    SELECT runtime_mode, storage_backend, pgvector_schema, enable_image_processing
                     FROM settings_profiles WHERE id = 'default'
                     """
                 )
@@ -133,8 +134,16 @@ async def test_init_db_backfills_runtime_columns_for_existing_sqlite_tables(tmp_
     assert "runtime_profile_id" in columns["runs"]
     assert "document_id" in columns["index_records"]
     assert settings_row["runtime_mode"] == "runtime"
+    assert settings_row["storage_backend"] == "fallback_local"
     assert settings_row["pgvector_schema"] == "public"
     assert settings_row["enable_image_processing"] in (1, True)
     assert chunk_row["content_type"] == "text"
     assert run_row["document_ids"] == "[]"
     assert run_row["query_config"] == "{}"
+
+    factory = make_session_factory(engine)
+    async with factory() as session:
+        settings = await SettingsService(session).get_default()
+
+    assert settings is not None
+    assert settings.storage_backend == "fallback_local"

@@ -9,6 +9,7 @@ All notable changes to RAG-Anything Studio will be documented in this file.
 - Added the production runtime foundation for RAG-Anything: Postgres/PGVector defaults, Neo4j local runtime service, runtime profile fields, health diagnostics, mirrored chunk metadata, destructive runtime reindex seams, and runtime-backed query traces.
 - Made the runtime boundary explicit: fallback mode uses legacy local behavior, while non-fallback runtime mode reports a blocking native-adapter check until the upstream RAG-Anything adapter is implemented.
 - Added startup-safe schema backfills and runtime index-shape checks so existing databases and stale indexes fail predictably instead of looking ready.
+- Normalized legacy settings profile storage backends during startup so older local profiles stay readable.
 
 ## [0.1.0.0] - 2026-05-08
 
