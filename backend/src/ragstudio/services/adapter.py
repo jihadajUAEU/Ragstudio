@@ -1,18 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from importlib.util import find_spec
 from pathlib import Path
-from typing import Any
+from typing import Any, overload
 
 from ragstudio.services.runtime_types import RuntimeChunk, RuntimeQueryResult
 
-
-@dataclass(frozen=True)
-class AdapterChunk:
-    text: str
-    source_location: dict[str, Any]
-    metadata: dict[str, Any]
+AdapterChunk = RuntimeChunk
 
 
 class RAGAnythingAdapter:
@@ -35,6 +29,25 @@ class RAGAnythingAdapter:
 
     async def index_document(self, artifact_path: str | Path) -> list[RuntimeChunk]:
         return self._line_split_index(Path(artifact_path))
+
+    @overload
+    async def query(
+        self,
+        query: str,
+        chunks: list[AdapterChunk],
+        limit: int = 10,
+    ) -> dict[str, Any]: ...
+
+    @overload
+    async def query(
+        self,
+        query: str,
+        chunks: None = None,
+        limit: int = 10,
+        *,
+        document_ids: list[str],
+        query_config: dict[str, Any],
+    ) -> RuntimeQueryResult: ...
 
     async def query(
         self,
