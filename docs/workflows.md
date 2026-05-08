@@ -60,12 +60,20 @@ Open **Settings** to edit the default runtime profile. The form fields are:
 
 - Provider
 - LLM model
-- Embedding model
 - Storage backend
+- Embedding provider
+- Embedding model
+- Embedding base URL
+- Optional embedding API key
+- Embedding timeout, dimensions, batch size, and TLS verification
 
-Click **Save** to persist the default profile through `PUT /api/settings/default`. Click **Reload** to refetch the saved profile. If no profile exists yet, the page shows `No default profile saved`.
+Click **Test connection** to validate a vLLM/OpenAI-compatible embeddings endpoint through `POST /api/settings/default/test-embedding`. The backend sends one request to `{base_url}/embeddings`, checks that a vector is returned, and verifies the configured dimension count.
+
+Click **Save** to persist the default profile through `PUT /api/settings/default`. Saved embedding API keys are masked in responses. Click **Reload** to refetch the saved profile. If no profile exists yet, the page shows `No default profile saved`.
 
 These defaults are stored as the `default` settings profile. The current backend persists the profile but query execution is still driven by selected documents, variants, and adapter behavior.
+
+For UAEU HPC vLLM embeddings, prefer the Meeting Copilot/model-training pattern: run the vLLM job on the cluster, expose the service through an SSH tunnel or stable internal alias, then configure Studio with a local URL such as `http://127.0.0.1:8001/v1` and the served model name.
 
 ## Upload and Index Documents
 
@@ -343,7 +351,7 @@ The page reads live counts from documents, variants, runs, graph, and diagnostic
 1. Run `./scripts/setup.sh`.
 2. Run `./scripts/dev.sh`.
 3. Open the Vite URL from the dev server, normally `http://127.0.0.1:5173`.
-4. Open Settings and save Provider, LLM model, Embedding model, and Storage backend.
+4. Open Settings and save Provider, LLM model, Storage backend, and Embeddings settings.
 5. Open Documents, upload a file, and confirm indexing succeeds.
 6. Open Chunks, select the document, and search for a known phrase.
 7. Open Variants and create at least one variant.

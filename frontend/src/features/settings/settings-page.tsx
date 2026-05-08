@@ -1,6 +1,6 @@
-import { type FormEvent } from "react";
+import { type FormEvent, type MouseEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2, RotateCcw, Save, Settings } from "lucide-react";
+import { Loader2, PlugZap, RotateCcw, Save, Settings } from "lucide-react";
 
 import { ApiError, apiClient } from "../../api/client";
 import type { SettingsProfileIn } from "../../api/generated";
@@ -25,16 +25,43 @@ export function SettingsPage() {
       queryClient.setQueryData(queryKeys.settings, settings);
     },
   });
+  const testEmbedding = useMutation({
+    mutationFn: apiClient.testEmbeddingSettings,
+  });
 
-  const submit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const formData = new FormData(event.currentTarget);
-    updateSettings.mutate({
+  const buildPayload = (form: HTMLFormElement): SettingsProfileIn => {
+    const formData = new FormData(form);
+    const apiKey = String(formData.get("embedding_api_key") ?? "").trim();
+    const payload: SettingsProfileIn = {
       provider: String(formData.get("provider") ?? ""),
       llm_model: String(formData.get("llm_model") ?? ""),
       embedding_model: String(formData.get("embedding_model") ?? ""),
       storage_backend: String(formData.get("storage_backend") ?? ""),
-    });
+      embedding_provider: String(formData.get("embedding_provider") ?? "fallback") as
+        | "fallback"
+        | "vllm_openai",
+      embedding_base_url: String(formData.get("embedding_base_url") ?? ""),
+      embedding_timeout_ms: Number(formData.get("embedding_timeout_ms") ?? 10000),
+      embedding_dimensions: Number(formData.get("embedding_dimensions") ?? 1536),
+      embedding_batch_size: Number(formData.get("embedding_batch_size") ?? 16),
+      embedding_tls_verify: formData.get("embedding_tls_verify") === "on",
+    };
+    if (apiKey) {
+      payload.embedding_api_key = apiKey;
+    }
+    return payload;
+  };
+
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    updateSettings.mutate(buildPayload(event.currentTarget));
+  };
+
+  const submitForTest = (event: MouseEvent<HTMLButtonElement>) => {
+    const form = event.currentTarget.form;
+    if (form?.reportValidity()) {
+      testEmbedding.mutate(buildPayload(form));
+    }
   };
 
   const message = getMessage(settingsQuery.error, updateSettings.error);
@@ -43,7 +70,22 @@ export function SettingsPage() {
     llm_model: settingsQuery.data?.llm_model ?? "",
     embedding_model: settingsQuery.data?.embedding_model ?? "",
     storage_backend: settingsQuery.data?.storage_backend ?? "",
+    embedding_provider: settingsQuery.data?.embedding_provider ?? "fallback",
+    embedding_base_url: settingsQuery.data?.embedding_base_url ?? "",
+    embedding_timeout_ms: settingsQuery.data?.embedding_timeout_ms ?? 10000,
+    embedding_dimensions: settingsQuery.data?.embedding_dimensions ?? 1536,
+    embedding_batch_size: settingsQuery.data?.embedding_batch_size ?? 16,
+    embedding_tls_verify: settingsQuery.data?.embedding_tls_verify ?? true,
   };
+  const testMessage = testEmbedding.error
+    ? testEmbedding.error.message
+    : testEmbedding.data
+      ? `${testEmbedding.data.ok ? "Connected" : "Failed"}: ${testEmbedding.data.detail}${
+          testEmbedding.data.dimensions ? ` (${testEmbedding.data.dimensions} dims)` : ""
+        }`
+      : settingsQuery.data?.has_embedding_api_key
+        ? "Saved API key present"
+        : "";
 
   return (
     <div className="mx-auto flex max-w-5xl flex-col gap-6">
@@ -69,46 +111,133 @@ export function SettingsPage() {
         </Button>
       </section>
 
-      <form
-        key={JSON.stringify(defaults)}
-        onSubmit={submit}
-        className="rounded-md border border-[#d6dde1] bg-white p-4 sm:p-5"
-      >
-        <div className="mb-5 flex items-center gap-2">
-          <Settings className="h-4 w-4 text-[#176b87]" aria-hidden="true" />
-          <h3 className="truncate text-base font-semibold text-[#1f2933]">Default settings</h3>
-        </div>
+      <form key={JSON.stringify(defaults)} onSubmit={submit} className="flex flex-col gap-4">
+        <section className="rounded-md border border-[#d6dde1] bg-white p-4 sm:p-5">
+          <div className="mb-5 flex items-center gap-2">
+            <Settings className="h-4 w-4 text-[#176b87]" aria-hidden="true" />
+            <h3 className="truncate text-base font-semibold text-[#1f2933]">Runtime profile</h3>
+          </div>
 
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field
-            label="Provider"
-            name="provider"
-            defaultValue={defaults.provider}
-            placeholder="openai"
-            disabled={updateSettings.isPending}
-          />
-          <Field
-            label="LLM model"
-            name="llm_model"
-            defaultValue={defaults.llm_model}
-            placeholder="gpt-4.1-mini"
-            disabled={updateSettings.isPending}
-          />
-          <Field
-            label="Embedding model"
-            name="embedding_model"
-            defaultValue={defaults.embedding_model}
-            placeholder="text-embedding-3-small"
-            disabled={updateSettings.isPending}
-          />
-          <Field
-            label="Storage backend"
-            name="storage_backend"
-            defaultValue={defaults.storage_backend}
-            placeholder="local"
-            disabled={updateSettings.isPending}
-          />
-        </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field
+              label="Provider"
+              name="provider"
+              defaultValue={defaults.provider}
+              placeholder="openai"
+              disabled={updateSettings.isPending}
+            />
+            <Field
+              label="LLM model"
+              name="llm_model"
+              defaultValue={defaults.llm_model}
+              placeholder="gpt-4.1-mini"
+              disabled={updateSettings.isPending}
+            />
+            <Field
+              label="Storage backend"
+              name="storage_backend"
+              defaultValue={defaults.storage_backend}
+              placeholder="local"
+              disabled={updateSettings.isPending}
+            />
+          </div>
+        </section>
+
+        <section className="rounded-md border border-[#d6dde1] bg-white p-4 sm:p-5">
+          <div className="mb-5 flex items-center gap-2">
+            <PlugZap className="h-4 w-4 text-[#176b87]" aria-hidden="true" />
+            <h3 className="truncate text-base font-semibold text-[#1f2933]">Embeddings</h3>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <SelectField
+              label="Embedding provider"
+              name="embedding_provider"
+              defaultValue={defaults.embedding_provider ?? "fallback"}
+              disabled={updateSettings.isPending}
+              options={[
+                { value: "fallback", label: "Local fallback" },
+                { value: "vllm_openai", label: "vLLM / OpenAI-compatible" },
+              ]}
+            />
+            <Field
+              label="Embedding model"
+              name="embedding_model"
+              defaultValue={defaults.embedding_model}
+              placeholder="Qwen/Qwen3-Embedding-8B"
+              disabled={updateSettings.isPending}
+            />
+            <Field
+              label="Base URL"
+              name="embedding_base_url"
+              defaultValue={defaults.embedding_base_url ?? ""}
+              placeholder="http://127.0.0.1:8001/v1"
+              disabled={updateSettings.isPending}
+              required={false}
+            />
+            <Field
+              label="API key"
+              name="embedding_api_key"
+              defaultValue=""
+              placeholder={settingsQuery.data?.has_embedding_api_key ? "Saved key present" : "optional"}
+              disabled={updateSettings.isPending}
+              required={false}
+              type="password"
+            />
+            <Field
+              label="Timeout (ms)"
+              name="embedding_timeout_ms"
+              defaultValue={String(defaults.embedding_timeout_ms ?? 10000)}
+              placeholder="10000"
+              disabled={updateSettings.isPending}
+              type="number"
+            />
+            <Field
+              label="Dimensions"
+              name="embedding_dimensions"
+              defaultValue={String(defaults.embedding_dimensions ?? 1536)}
+              placeholder="1536"
+              disabled={updateSettings.isPending}
+              type="number"
+            />
+            <Field
+              label="Batch size"
+              name="embedding_batch_size"
+              defaultValue={String(defaults.embedding_batch_size ?? 16)}
+              placeholder="16"
+              disabled={updateSettings.isPending}
+              type="number"
+            />
+            <label className="flex h-10 items-center gap-2 self-end rounded-md border border-[#cfd8dd] px-3 text-sm font-medium text-[#3a4a53]">
+              <input
+                name="embedding_tls_verify"
+                type="checkbox"
+                defaultChecked={defaults.embedding_tls_verify ?? true}
+                disabled={updateSettings.isPending}
+              />
+              Verify TLS
+            </label>
+          </div>
+
+          <div className="mt-5 flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <p className="min-h-5 text-sm text-[#62717a]" role="status">
+              {testMessage}
+            </p>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={submitForTest}
+              disabled={testEmbedding.isPending || updateSettings.isPending}
+            >
+              {testEmbedding.isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+              ) : (
+                <PlugZap className="h-4 w-4" aria-hidden="true" />
+              )}
+              Test connection
+            </Button>
+          </div>
+        </section>
 
         <div className="mt-5 flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between">
           <p className="min-h-5 text-sm text-[#62717a]" role="status">
@@ -139,24 +268,62 @@ function Field({
   defaultValue,
   placeholder,
   disabled,
+  required = true,
+  type = "text",
 }: {
   label: string;
   name: keyof SettingsProfileIn;
   defaultValue: string;
   placeholder: string;
   disabled: boolean;
+  required?: boolean;
+  type?: string;
 }) {
   return (
     <label className="min-w-0 text-sm font-medium text-[#3a4a53]">
       <span className="mb-1.5 block truncate">{label}</span>
       <input
         className="h-10 w-full rounded-md border border-[#cfd8dd] bg-white px-3 text-sm text-[#1f2933] outline-none focus:border-[#176b87] focus:ring-2 focus:ring-[#176b87]/20 disabled:bg-[#f4f7f8]"
+        type={type}
         name={name}
         defaultValue={defaultValue}
         placeholder={placeholder}
         disabled={disabled}
-        required
+        required={required}
       />
+    </label>
+  );
+}
+
+function SelectField({
+  label,
+  name,
+  defaultValue,
+  disabled,
+  options,
+}: {
+  label: string;
+  name: keyof SettingsProfileIn;
+  defaultValue: string;
+  disabled: boolean;
+  options: Array<{ value: string; label: string }>;
+}) {
+  return (
+    <label className="min-w-0 text-sm font-medium text-[#3a4a53]">
+      <span className="mb-1.5 block truncate">{label}</span>
+      <select
+        className="h-10 w-full rounded-md border border-[#cfd8dd] bg-white px-3 text-sm text-[#1f2933] outline-none focus:border-[#176b87] focus:ring-2 focus:ring-[#176b87]/20 disabled:bg-[#f4f7f8]"
+        name={name}
+        defaultValue={defaultValue}
+        disabled={disabled}
+        required
+      >
+        {options.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
     </label>
   );
 }

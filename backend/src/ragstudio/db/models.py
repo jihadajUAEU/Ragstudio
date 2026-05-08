@@ -3,7 +3,7 @@ from typing import Any
 
 from ragstudio.db.base import Base
 from ragstudio.schemas.common import new_id, now_utc
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.ext.mutable import MutableDict, MutableList
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.types import JSON
@@ -24,6 +24,13 @@ class SettingsProfile(Base, TimestampMixin):
     llm_model: Mapped[str] = mapped_column(String)
     embedding_model: Mapped[str] = mapped_column(String)
     storage_backend: Mapped[str] = mapped_column(String)
+    embedding_provider: Mapped[str] = mapped_column(String, default="fallback")
+    embedding_base_url: Mapped[str | None] = mapped_column(String, nullable=True)
+    embedding_api_key: Mapped[str | None] = mapped_column(String, nullable=True)
+    embedding_timeout_ms: Mapped[int] = mapped_column(Integer, default=10000)
+    embedding_dimensions: Mapped[int] = mapped_column(Integer, default=1536)
+    embedding_batch_size: Mapped[int] = mapped_column(Integer, default=16)
+    embedding_tls_verify: Mapped[bool] = mapped_column(Boolean, default=True)
 
 
 class Document(Base, TimestampMixin):

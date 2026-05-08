@@ -52,7 +52,7 @@ Run the full project test suite with:
 
 Use this path to get from an empty local workspace to a completed answer and inspectable result:
 
-1. Open `Settings`, fill `Provider`, `LLM model`, `Embedding model`, and `Storage backend`, then click `Save`.
+1. Open `Settings`, fill `Provider`, `LLM model`, `Storage backend`, and the `Embeddings` fields, then click `Save`.
 2. Open `Variants`, create a variant with `Name`, `Preset`, and a JSON `Parameters` object. The default example is:
 
    ```json
@@ -230,20 +230,33 @@ If `raganything` is not installed in the active Python environment, Diagnostics 
 
 `Settings` manages the default runtime profile.
 
-Fields:
+Runtime profile fields:
 
 - `Provider`
 - `LLM model`
-- `Embedding model`
 - `Storage backend`
+
+Embeddings fields:
+
+- `Embedding provider`: `Local fallback` or `vLLM / OpenAI-compatible`.
+- `Embedding model`: model name sent to the embeddings endpoint.
+- `Base URL`: OpenAI-compatible base URL such as `http://127.0.0.1:8001/v1`.
+- `API key`: optional bearer token. Saved keys are not returned by the API.
+- `Timeout (ms)`: request timeout for the connection test and future embedding calls.
+- `Dimensions`: expected vector dimension.
+- `Batch size`: planned maximum embedding batch size.
+- `Verify TLS`: TLS verification for HTTPS endpoints.
 
 Controls:
 
 - `Reload`: refetches the saved default profile.
+- `Test connection`: sends a one-text embedding request to `/embeddings` and validates vector dimensions.
 - `Reset`: resets unsaved form edits.
 - `Save`: writes the default profile.
 
 If no profile exists, the page shows `No default profile saved`.
+
+For UAEU HPC or another Slurm-hosted vLLM embedding job, use an SSH tunnel or stable internal alias and set `Base URL` to the local OpenAI-compatible endpoint, for example `http://127.0.0.1:8001/v1`. The model name must match the model served by vLLM, such as `Qwen/Qwen3-Embedding-8B`.
 
 ## Evaluation File Formats
 
@@ -428,7 +441,7 @@ The app still works in fallback mode, but graph output is a placeholder and quer
 
 ### Settings shows `No default profile saved`
 
-Open `Settings`, enter all four fields, and click `Save`. The form requires `Provider`, `LLM model`, `Embedding model`, and `Storage backend`.
+Open `Settings`, enter the runtime profile fields, and click `Save`. For vLLM embeddings, also set `Embedding provider`, `Embedding model`, `Base URL`, `Timeout`, `Dimensions`, and `Batch size`.
 
 ### Query cannot run
 

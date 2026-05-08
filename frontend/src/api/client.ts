@@ -1,6 +1,7 @@
 import type {
   DiagnosticsOut,
   DocumentOut,
+  EmbeddingConnectionTestOut,
   EvaluationSetOut,
   ExperimentIn,
   ExperimentOut,
@@ -86,7 +87,13 @@ export const apiClient = {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
-  }),
+    }),
+  testEmbeddingSettings: (payload: SettingsProfileIn) =>
+    request<EmbeddingConnectionTestOut>("/api/settings/default/test-embedding", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }),
   indexDocumentChunks: (documentId: string) =>
     request<ChunkOut[]>(`/api/chunks/index/${encodeURIComponent(documentId)}`, {
       method: "POST",

@@ -29,10 +29,37 @@ export interface SettingsProfileIn {
   llm_model: string;
   embedding_model: string;
   storage_backend: string;
+  embedding_provider?: "fallback" | "vllm_openai";
+  embedding_base_url?: string | null;
+  embedding_api_key?: string | null;
+  embedding_timeout_ms?: number;
+  embedding_dimensions?: number;
+  embedding_batch_size?: number;
+  embedding_tls_verify?: boolean;
 }
 
-export interface SettingsProfileOut extends SettingsProfileIn {
+export interface SettingsProfileOut {
   id: string;
+  provider: string;
+  llm_model: string;
+  embedding_model: string;
+  storage_backend: string;
+  embedding_provider: "fallback" | "vllm_openai";
+  embedding_base_url: string | null;
+  has_embedding_api_key: boolean;
+  embedding_timeout_ms: number;
+  embedding_dimensions: number;
+  embedding_batch_size: number;
+  embedding_tls_verify: boolean;
+}
+
+export interface EmbeddingConnectionTestOut {
+  ok: boolean;
+  provider: string;
+  model: string;
+  dimensions: number | null;
+  latency_ms: number;
+  detail: string;
 }
 
 export interface JobOut {
