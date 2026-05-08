@@ -1,7 +1,6 @@
 import time
 
 import httpx
-
 from ragstudio.schemas.settings import LlmConnectionTestOut, SettingsProfileIn
 
 

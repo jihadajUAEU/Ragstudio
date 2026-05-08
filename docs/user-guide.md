@@ -52,7 +52,7 @@ Run the full project test suite with:
 
 Use this path to get from an empty local workspace to a completed answer and inspectable result:
 
-1. Open `Settings`, fill `Provider`, `LLM model`, `Storage backend`, and the `Embeddings` fields, then click `Save`.
+1. Open `Settings`, fill `Provider`, `Storage backend`, `LLM generation`, and `Embeddings` fields, then click `Save`. If your HPC endpoints are published in a provider manifest, use `Provider sync` first and review the previewed fields before saving.
 2. Open `Variants`, create a variant with `Name`, `Preset`, and a JSON `Parameters` object. The default example is:
 
    ```json
@@ -233,8 +233,27 @@ If `raganything` is not installed in the active Python environment, Diagnostics 
 Runtime profile fields:
 
 - `Provider`
-- `LLM model`
 - `Storage backend`
+
+Provider sync fields:
+
+- `Provider manifest URL`: Cloudflare-hosted JSON manifest, such as `https://updates.jihadaj.com/providers.json`.
+- `Sync`: fetches the manifest and previews supported endpoint changes in the form. Sync does not save; click `Save` after reviewing the populated fields.
+
+Supported manifest sections:
+
+- `reasoning`: updates the OpenAI-compatible LLM endpoint, model, timeout, and read-only capability badges.
+- `embeddings`: updates embedding provider, model, base URL, dimensions, and timeout.
+- `hpcMineru`: updates MinerU enabled state, base URL, and timeout.
+
+LLM generation fields:
+
+- `LLM provider`: OpenAI-compatible generation endpoint.
+- `LLM model`: model name sent to `/chat/completions`.
+- `LLM base URL`: OpenAI-compatible base URL such as `http://10.10.9.195:8004/v1`.
+- `LLM API key`: optional bearer token. Saved keys are not returned by the API.
+- `LLM timeout (ms)`: request timeout for the connection test and future generation calls.
+- `Capabilities`: read-only `Text`, `Vision`, and `Reasoning` badges from the manifest or model inference.
 
 Embeddings fields:
 
@@ -257,6 +276,8 @@ MinerU parser fields:
 Controls:
 
 - `Reload`: refetches the saved default profile.
+- `Sync`: previews provider manifest changes for LLM, embeddings, and MinerU.
+- `Test LLM`: sends a tiny chat-completions request to the configured LLM endpoint.
 - `Test connection`: sends a one-text embedding request to `/embeddings` and validates vector dimensions.
 - `Test MinerU`: checks the configured MinerU `/health` endpoint.
 - `Reset`: resets unsaved form edits.

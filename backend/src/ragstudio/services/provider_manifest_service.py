@@ -1,7 +1,6 @@
 from typing import Any
 
 import httpx
-
 from ragstudio.schemas.settings import ProviderSyncPreviewOut, SettingsProfileOut
 
 SUPPORTED_SECTIONS = {"reasoning", "embeddings", "hpcMineru"}
@@ -60,7 +59,9 @@ class ProviderManifestService:
 
         for section in SUPPORTED_SECTIONS:
             if section in payload and not isinstance(payload[section], dict):
-                raise ProviderManifestError(f"Provider manifest section {section} must be an object.")
+                raise ProviderManifestError(
+                    f"Provider manifest section {section} must be an object."
+                )
         return payload
 
     def _build_patch(self, manifest: dict[str, Any]) -> dict[str, object]:
@@ -125,7 +126,11 @@ class ProviderManifestService:
         return self._ordered_capabilities(inferred)
 
     def _ordered_capabilities(self, values: list[str]) -> list[str]:
-        return [capability for capability in ["text", "vision", "reasoning"] if capability in values]
+        return [
+            capability
+            for capability in ["text", "vision", "reasoning"]
+            if capability in values
+        ]
 
     def _changed_fields(
         self, patch: dict[str, object], current: SettingsProfileOut | None

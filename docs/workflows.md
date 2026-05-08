@@ -59,21 +59,36 @@ Use the Diagnostics page to verify the active mode. It shows Capabilities, Depen
 Open **Settings** to edit the default runtime profile. The form fields are:
 
 - Provider
-- LLM model
 - Storage backend
+- LLM provider, model, base URL, optional API key, timeout, and read-only capabilities
 - Embedding provider
 - Embedding model
 - Embedding base URL
 - Optional embedding API key
 - Embedding timeout, dimensions, batch size, and TLS verification
 
+Use **Provider sync** to preview a hosted HPC provider manifest before saving runtime changes. Enter a manifest URL such as `https://updates.jihadaj.com/providers.json`, click **Sync**, and review the updated LLM, embeddings, and MinerU fields. Sync only updates the form preview. Click **Save** to persist the reviewed settings.
+
+The supported manifest sections are `reasoning`, `embeddings`, and `hpcMineru`. `reasoning` configures the OpenAI-compatible LLM endpoint and shows read-only capability badges for Text, Vision, and Reasoning.
+
+Click **Test LLM** to validate an OpenAI-compatible generation endpoint through `POST /api/settings/default/test-llm`. The backend sends one tiny request to `{base_url}/chat/completions` and checks that the response includes choices.
+
 Click **Test connection** to validate a vLLM/OpenAI-compatible embeddings endpoint through `POST /api/settings/default/test-embedding`. The backend sends one request to `{base_url}/embeddings`, checks that a vector is returned, and verifies the configured dimension count.
 
-Click **Save** to persist the default profile through `PUT /api/settings/default`. Saved embedding API keys are masked in responses. Click **Reload** to refetch the saved profile. If no profile exists yet, the page shows `No default profile saved`.
+Click **Save** to persist the default profile through `PUT /api/settings/default`. Saved LLM and embedding API keys are masked in responses. Click **Reload** to refetch the saved profile. If no profile exists yet, the page shows `No default profile saved`.
 
 These defaults are stored as the `default` settings profile. The current backend persists the profile but query execution is still driven by selected documents, variants, and adapter behavior.
 
 For UAEU HPC vLLM embeddings, prefer the Meeting Copilot/model-training pattern: run the vLLM job on the cluster, expose the service through an SSH tunnel or stable internal alias, then configure Studio with a local URL such as `http://127.0.0.1:8001/v1` and the served model name.
+
+### Rotate HPC Runtime Endpoints
+
+1. Publish or refresh the Cloudflare-hosted provider manifest after the HPC services are running behind stable aliases.
+2. Open Ragstudio Settings.
+3. Enter the manifest URL in **Provider sync**.
+4. Click **Sync** and review the changed fields.
+5. Click **Test LLM**, **Test connection** for embeddings, and **Test MinerU** as needed.
+6. Click **Save** after the preview matches the intended runtime profile.
 
 ## Upload and Index Documents
 

@@ -4,6 +4,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { apiClient } from "../src/api/client";
+import type { SettingsProfileOut } from "../src/api/generated";
 import { SettingsPage } from "../src/features/settings/settings-page";
 
 vi.mock("../src/api/client", () => ({
@@ -20,7 +21,7 @@ vi.mock("../src/api/client", () => ({
   },
 }));
 
-const settings = {
+const settings: SettingsProfileOut = {
   id: "default",
   provider: "openai",
   llm_provider: "openai_compatible",
