@@ -16,7 +16,7 @@ class AppSettings(BaseSettings):
     database_url: str = "postgresql+asyncpg://ragstudio:ragstudio@127.0.0.1:55432/ragstudio"
     pgvector_schema: str = "public"
     pgvector_table_prefix: str = "ragstudio"
-    neo4j_uri: str = "bolt://127.0.0.1:7687"
+    neo4j_uri: str = "bolt://127.0.0.1:57687"
     neo4j_username: str = "neo4j"
     neo4j_password: str = "ragstudio-password"
     runtime_working_dir: Path | None = None
