@@ -54,18 +54,20 @@ describe("DocumentsPage", () => {
   });
 
   it("confirms and deletes an uploaded document", async () => {
-    vi.mocked(apiClient.documents).mockResolvedValue({
-      items: [
-        {
-          id: "doc-1",
-          filename: "delete-me.pdf",
-          content_type: "application/pdf",
-          status: "succeeded",
-          sha256: "sha-1",
-        },
-      ],
-      total: 1,
-    });
+    vi.mocked(apiClient.documents)
+      .mockResolvedValueOnce({
+        items: [
+          {
+            id: "doc-1",
+            filename: "delete-me.pdf",
+            content_type: "application/pdf",
+            status: "succeeded",
+            sha256: "sha-1",
+          },
+        ],
+        total: 1,
+      })
+      .mockResolvedValue({ items: [], total: 0 });
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
 
     renderDocumentsPage();
@@ -80,6 +82,10 @@ describe("DocumentsPage", () => {
       "Delete delete-me.pdf and all indexed chunks? This cannot be undone.",
     );
     expect(await screen.findByText("Deleted delete-me.pdf")).toBeVisible();
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: /delete delete-me\.pdf/i })).not.toBeInTheDocument();
+      expect(apiClient.jobs).toHaveBeenCalledTimes(2);
+    });
 
     confirmSpy.mockRestore();
   });

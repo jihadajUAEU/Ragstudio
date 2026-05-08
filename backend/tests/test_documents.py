@@ -4,6 +4,8 @@ from pathlib import Path
 import pytest
 from ragstudio.db.models import Document, Job
 from ragstudio.schemas.common import StageStatus
+from ragstudio.services.document_service import DocumentService
+from sqlalchemy import select
 
 
 @pytest.mark.asyncio
@@ -239,3 +241,41 @@ async def test_delete_document_with_active_index_job_returns_409(client, tmp_pat
     assert response.status_code == 409
     assert response.json()["detail"] == "Document has an active indexing job"
     assert artifact.exists()
+
+
+@pytest.mark.asyncio
+async def test_delete_document_rolls_back_when_artifact_cleanup_fails(client, tmp_path):
+    session_factory = client._transport.app.state.session_factory
+    artifact = tmp_path / "uploads" / "artifact-directory"
+    artifact.mkdir(parents=True)
+    async with session_factory() as session:
+        document = Document(
+            filename="cleanup-fails.txt",
+            content_type="text/plain",
+            sha256="cleanup-fails-sha",
+            artifact_path=str(artifact),
+            status=StageStatus.SUCCEEDED.value,
+        )
+        session.add(document)
+        await session.flush()
+        session.add(
+            Job(
+                type="index_document",
+                target_id=document.id,
+                status=StageStatus.SUCCEEDED.value,
+                progress=100,
+            )
+        )
+        await session.commit()
+        document_id = document.id
+
+    async with session_factory() as session:
+        with pytest.raises(OSError):
+            await DocumentService(session, tmp_path).delete_document(document_id)
+
+    async with session_factory() as session:
+        assert await session.get(Document, document_id) is not None
+        job_id = await session.scalar(select(Job.id).where(Job.target_id == document_id))
+
+    assert artifact.exists()
+    assert job_id is not None

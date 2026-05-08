@@ -90,10 +90,16 @@ class DocumentService:
             return "active_job"
 
         artifact_path = Path(document.artifact_path)
-        await self.session.execute(delete(Job).where(Job.target_id == document.id))
+        await self.session.execute(
+            delete(Job).where(Job.type == "index_document", Job.target_id == document.id)
+        )
         await self.session.delete(document)
-        await self.session.commit()
-        artifact_path.unlink(missing_ok=True)
+        try:
+            artifact_path.unlink(missing_ok=True)
+            await self.session.commit()
+        except OSError:
+            await self.session.rollback()
+            raise
         return "deleted"
 
     async def create_index_job(self, document_id: str) -> Job | None:
