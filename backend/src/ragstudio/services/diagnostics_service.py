@@ -1,19 +1,22 @@
 from typing import Any
 
+from ragstudio.config import AppSettings
 from ragstudio.schemas.diagnostics import DiagnosticsOut
+from ragstudio.schemas.runtime import RuntimeOverallStatus
 from ragstudio.services.adapter import RAGAnythingAdapter
 from ragstudio.services.runtime_health_service import RuntimeHealthService
 from ragstudio.services.runtime_profile_service import (
     RuntimeProfileNotConfiguredError,
     RuntimeProfileService,
 )
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class DiagnosticsService:
     def __init__(
         self,
-        session: Any | None = None,
-        settings: Any | None = None,
+        session: AsyncSession | None = None,
+        settings: AppSettings | None = None,
         adapter: RAGAnythingAdapter | None = None,
         health_service: RuntimeHealthService | None = None,
     ):
@@ -25,16 +28,20 @@ class DiagnosticsService:
     def get_diagnostics(self) -> Any:
         if self.session is None or self.settings is None:
             return self._legacy_diagnostics()
-        return self._get_diagnostics_async()
+        return self._get_diagnostics_async(self.session, self.settings)
 
-    async def _get_diagnostics_async(self) -> DiagnosticsOut:
+    async def _get_diagnostics_async(
+        self,
+        session: AsyncSession,
+        settings: AppSettings,
+    ) -> DiagnosticsOut:
         report = self.adapter.capability_report()
         profile = None
         warnings = []
         try:
             profile = await RuntimeProfileService(
-                self.session,
-                self.settings,
+                session,
+                settings,
             ).get_active_profile()
         except RuntimeProfileNotConfiguredError as exc:
             warnings.append(str(exc))
@@ -100,7 +107,12 @@ class DiagnosticsService:
             "graph": report.get("graph"),
         }
 
-    def _overall_status(self, runtime_mode: str, checks: list[Any], blocking: list[Any]) -> str:
+    def _overall_status(
+        self,
+        runtime_mode: str,
+        checks: list[Any],
+        blocking: list[Any],
+    ) -> RuntimeOverallStatus:
         if runtime_mode == "fallback":
             return "fallback"
         if blocking:

@@ -164,7 +164,10 @@ async def test_diagnostics_returns_capabilities_and_dependency_status(client):
     assert "fallback_active" in payload["capabilities"]
     assert "raganything" in payload["dependency_status"]
     if payload["capabilities"]["raganything_available"]:
-        assert payload["warnings"] == []
+        assert any(
+            "Default runtime profile is not configured" in warning
+            for warning in payload["warnings"]
+        )
     else:
         assert any("./scripts/setup.sh" in warning for warning in payload["warnings"])
 
