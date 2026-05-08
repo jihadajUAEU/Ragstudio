@@ -31,6 +31,10 @@ class SettingsProfile(Base, TimestampMixin):
     embedding_dimensions: Mapped[int] = mapped_column(Integer, default=1536)
     embedding_batch_size: Mapped[int] = mapped_column(Integer, default=16)
     embedding_tls_verify: Mapped[bool] = mapped_column(Boolean, default=True)
+    mineru_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    mineru_base_url: Mapped[str | None] = mapped_column(String, nullable=True)
+    mineru_timeout_ms: Mapped[int] = mapped_column(Integer, default=1_800_000)
+    mineru_poll_interval_ms: Mapped[int] = mapped_column(Integer, default=1_000)
 
 
 class Document(Base, TimestampMixin):

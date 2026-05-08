@@ -39,6 +39,10 @@ def _ensure_settings_profile_columns(connection) -> None:
         "embedding_dimensions": "INTEGER DEFAULT 1536 NOT NULL",
         "embedding_batch_size": "INTEGER DEFAULT 16 NOT NULL",
         "embedding_tls_verify": "BOOLEAN DEFAULT 1 NOT NULL",
+        "mineru_enabled": "BOOLEAN DEFAULT 0 NOT NULL",
+        "mineru_base_url": "VARCHAR",
+        "mineru_timeout_ms": "INTEGER DEFAULT 1800000 NOT NULL",
+        "mineru_poll_interval_ms": "INTEGER DEFAULT 1000 NOT NULL",
     }
     for column, definition in additions.items():
         if column not in existing:

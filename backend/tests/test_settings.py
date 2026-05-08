@@ -175,3 +175,67 @@ async def test_embedding_connection_test_uses_saved_api_key_when_blank(
             }
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_settings_profile_saves_mineru_config(client):
+    payload = {
+        "provider": "openai",
+        "llm_model": "gpt-4.1",
+        "embedding_model": "text-embedding-3-large",
+        "storage_backend": "sqlite",
+        "mineru_enabled": True,
+        "mineru_base_url": "http://127.0.0.1:8765/",
+        "mineru_timeout_ms": 120000,
+        "mineru_poll_interval_ms": 500,
+    }
+
+    response = await client.put("/api/settings/default", json=payload)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["mineru_enabled"] is True
+    assert body["mineru_base_url"] == "http://127.0.0.1:8765"
+    assert body["mineru_timeout_ms"] == 120000
+    assert body["mineru_poll_interval_ms"] == 500
+
+
+@pytest.mark.asyncio
+async def test_mineru_connection_test(client, monkeypatch):
+    requests = []
+
+    class FakeResponse:
+        status_code = 200
+        text = "ok"
+
+    class FakeAsyncClient:
+        def __init__(self, timeout):
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return None
+
+        async def get(self, url):
+            requests.append({"url": url, "timeout": self.timeout})
+            return FakeResponse()
+
+    monkeypatch.setattr("ragstudio.api.routes.settings.httpx.AsyncClient", FakeAsyncClient)
+    payload = {
+        "provider": "openai",
+        "llm_model": "gpt-4.1",
+        "embedding_model": "text-embedding-3-large",
+        "storage_backend": "sqlite",
+        "mineru_enabled": True,
+        "mineru_base_url": "http://127.0.0.1:8765",
+        "mineru_timeout_ms": 2000,
+        "mineru_poll_interval_ms": 500,
+    }
+
+    response = await client.post("/api/settings/default/test-mineru", json=payload)
+
+    assert response.status_code == 200
+    assert response.json()["ok"] is True
+    assert requests == [{"url": "http://127.0.0.1:8765/health", "timeout": 2.0}]

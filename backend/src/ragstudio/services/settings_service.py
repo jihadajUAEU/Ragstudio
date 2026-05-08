@@ -57,4 +57,8 @@ class SettingsService:
             embedding_dimensions=profile.embedding_dimensions or 1536,
             embedding_batch_size=profile.embedding_batch_size or 16,
             embedding_tls_verify=bool(profile.embedding_tls_verify),
+            mineru_enabled=bool(profile.mineru_enabled),
+            mineru_base_url=profile.mineru_base_url,
+            mineru_timeout_ms=profile.mineru_timeout_ms or 1_800_000,
+            mineru_poll_interval_ms=profile.mineru_poll_interval_ms or 1_000,
         )

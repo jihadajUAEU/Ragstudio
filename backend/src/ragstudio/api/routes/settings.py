@@ -1,9 +1,13 @@
+import time
+
+import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ragstudio.api.deps import get_session
 from ragstudio.schemas.settings import (
     EmbeddingConnectionTestOut,
+    MinerUConnectionTestOut,
     SettingsProfileIn,
     SettingsProfileOut,
 )
@@ -36,3 +40,42 @@ async def test_embedding_settings(
 ) -> EmbeddingConnectionTestOut:
     resolved_payload = await SettingsService(session).resolve_embedding_test_payload(payload)
     return await EmbeddingConnectionService().test(resolved_payload)
+
+
+@router.post("/default/test-mineru", response_model=MinerUConnectionTestOut)
+async def test_mineru_settings(payload: SettingsProfileIn) -> MinerUConnectionTestOut:
+    base_url = payload.mineru_base_url or ""
+    if not base_url:
+        return MinerUConnectionTestOut(
+            ok=False,
+            base_url="",
+            latency_ms=0,
+            detail="MinerU base URL is not configured.",
+        )
+
+    started = time.perf_counter()
+    try:
+        async with httpx.AsyncClient(timeout=payload.mineru_timeout_ms / 1000) as client:
+            response = await client.get(f"{base_url}/health")
+        latency_ms = int((time.perf_counter() - started) * 1000)
+        if response.status_code >= 400:
+            return MinerUConnectionTestOut(
+                ok=False,
+                base_url=base_url,
+                latency_ms=latency_ms,
+                detail=f"MinerU health check returned HTTP {response.status_code}.",
+            )
+        return MinerUConnectionTestOut(
+            ok=True,
+            base_url=base_url,
+            latency_ms=latency_ms,
+            detail="MinerU health check succeeded.",
+        )
+    except httpx.HTTPError as exc:
+        latency_ms = int((time.perf_counter() - started) * 1000)
+        return MinerUConnectionTestOut(
+            ok=False,
+            base_url=base_url,
+            latency_ms=latency_ms,
+            detail=str(exc),
+        )
