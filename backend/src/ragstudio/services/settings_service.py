@@ -30,6 +30,16 @@ class SettingsService:
         await self.session.refresh(profile)
         return self._to_out(profile)
 
+    async def resolve_embedding_test_payload(self, data: SettingsProfileIn) -> SettingsProfileIn:
+        if data.embedding_api_key:
+            return data
+
+        profile = await self.session.get(SettingsProfile, "default")
+        if profile is None or not profile.embedding_api_key:
+            return data
+
+        return data.model_copy(update={"embedding_api_key": profile.embedding_api_key})
+
     def _to_out(self, profile: SettingsProfile) -> SettingsProfileOut:
         return SettingsProfileOut(
             id=profile.id,

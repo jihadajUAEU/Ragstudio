@@ -30,5 +30,9 @@ async def put_default_settings(
 
 
 @router.post("/default/test-embedding", response_model=EmbeddingConnectionTestOut)
-async def test_embedding_settings(payload: SettingsProfileIn) -> EmbeddingConnectionTestOut:
-    return await EmbeddingConnectionService().test(payload)
+async def test_embedding_settings(
+    payload: SettingsProfileIn,
+    session: AsyncSession = Depends(get_session),
+) -> EmbeddingConnectionTestOut:
+    resolved_payload = await SettingsService(session).resolve_embedding_test_payload(payload)
+    return await EmbeddingConnectionService().test(resolved_payload)
