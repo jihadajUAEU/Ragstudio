@@ -155,7 +155,7 @@ async def test_graph_returns_adapter_graph_shape(client):
 
 
 @pytest.mark.asyncio
-async def test_diagnostics_returns_capabilities_and_fallback_warning(client):
+async def test_diagnostics_returns_capabilities_and_dependency_status(client):
     response = await client.get("/api/diagnostics")
 
     assert response.status_code == 200
@@ -163,7 +163,10 @@ async def test_diagnostics_returns_capabilities_and_fallback_warning(client):
     assert "raganything_available" in payload["capabilities"]
     assert "fallback_active" in payload["capabilities"]
     assert "raganything" in payload["dependency_status"]
-    assert any("./scripts/setup.sh" in warning for warning in payload["warnings"])
+    if payload["capabilities"]["raganything_available"]:
+        assert payload["warnings"] == []
+    else:
+        assert any("./scripts/setup.sh" in warning for warning in payload["warnings"])
 
 
 def test_diagnostics_suppresses_missing_dependency_warning_when_package_available():

@@ -29,6 +29,9 @@ dev = [
 [project.scripts]
 ragstudio = "ragstudio.app:main"
 
+[tool.hatch.build.targets.wheel]
+packages = ["src/ragstudio"]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
