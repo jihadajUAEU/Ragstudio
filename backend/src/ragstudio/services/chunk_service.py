@@ -1,4 +1,5 @@
 import re
+from collections.abc import Awaitable, Callable
 from pathlib import Path, PureWindowsPath
 from typing import Any
 
@@ -9,6 +10,8 @@ from ragstudio.services.adapter import AdapterChunk, RAGAnythingAdapter
 from ragstudio.services.mineru_client import MinerUClient
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+MinerUStatusCallback = Callable[[dict[str, Any]], Awaitable[None]]
 
 
 class ChunkService:
@@ -28,13 +31,18 @@ class ChunkService:
         *,
         options: IndexDocumentIn | None = None,
         commit: bool = True,
+        on_mineru_status: MinerUStatusCallback | None = None,
     ) -> list[ChunkOut] | None:
         document = await self.session.get(Document, document_id)
         if document is None:
             return None
 
         options = options or IndexDocumentIn()
-        adapter_chunks = await self._adapter_chunks(document, options)
+        adapter_chunks = await self._adapter_chunks(
+            document,
+            options,
+            on_mineru_status=on_mineru_status,
+        )
         await self.session.execute(delete(Chunk).where(Chunk.document_id == document.id))
 
         chunks = [
@@ -67,11 +75,17 @@ class ChunkService:
         self,
         document: Document,
         options: IndexDocumentIn,
+        *,
+        on_mineru_status: MinerUStatusCallback | None = None,
     ) -> list[AdapterChunk]:
         if options.parser_mode == "local_fallback":
             return await self.adapter.index_document(document.artifact_path)
         try:
-            return await self._mineru_adapter_chunks(document.id, options=options)
+            return await self._mineru_adapter_chunks(
+                document.id,
+                options=options,
+                on_mineru_status=on_mineru_status,
+            )
         except Exception as exc:
             if options.parser_mode == "mineru_strict":
                 raise
@@ -98,6 +112,7 @@ class ChunkService:
         document_id: str,
         *,
         options: IndexDocumentIn,
+        on_mineru_status: MinerUStatusCallback | None = None,
     ) -> list[AdapterChunk]:
         document = await self.session.get(Document, document_id)
         if document is None:
@@ -120,6 +135,7 @@ class ChunkService:
             content_type=document.content_type,
             sha256=document.sha256,
             domain_metadata=options.domain_metadata.model_dump(exclude_none=True),
+            on_status=on_mineru_status,
         )
         return client.normalize_artifact_zip(
             artifact_zip=job_result.artifact_zip,
@@ -221,4 +237,7 @@ class ChunkService:
         return (coverage * 10.0) + (density * 2.0) + phrase_bonus
 
     def _terms(self, value: str) -> set[str]:
-        return set(re.findall(r"[a-z0-9]+", value.lower()))
+        return {
+            match.group(0).lower()
+            for match in re.finditer(r"[\w\u0600-\u06FF]+", value, flags=re.UNICODE)
+        }

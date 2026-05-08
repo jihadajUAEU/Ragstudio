@@ -4,6 +4,7 @@ import asyncio
 import json
 import shutil
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -24,6 +25,9 @@ class MinerUJobResult:
     artifact_zip: Path
 
 
+MinerUStatusCallback = Callable[[dict[str, Any]], Awaitable[None]]
+
+
 class MinerUClient:
     def __init__(self, base_url: str, timeout_ms: int, poll_interval_ms: int):
         self.base_url = base_url.rstrip("/")
@@ -39,6 +43,7 @@ class MinerUClient:
         content_type: str = "application/octet-stream",
         sha256: str | None = None,
         domain_metadata: dict[str, Any] | None = None,
+        on_status: MinerUStatusCallback | None = None,
     ) -> MinerUJobResult:
         parse_job_id = await self.submit_parse(
             artifact_path,
@@ -47,7 +52,9 @@ class MinerUClient:
             sha256=sha256,
             domain_metadata=domain_metadata,
         )
-        ready_job = await self.poll_until_ready(parse_job_id)
+        if on_status is not None:
+            await on_status({"jobId": parse_job_id, "status": "submitted", "progress": 0})
+        ready_job = await self.poll_until_ready(parse_job_id, on_status=on_status)
         artifact_zip = await self.download_artifacts(
             str(ready_job.get("jobId") or parse_job_id),
             artifact_dir / "artifacts.zip",
@@ -93,10 +100,17 @@ class MinerUClient:
         response.raise_for_status()
         return response.json()
 
-    async def poll_until_ready(self, parse_job_id: str) -> dict[str, Any]:
+    async def poll_until_ready(
+        self,
+        parse_job_id: str,
+        *,
+        on_status: MinerUStatusCallback | None = None,
+    ) -> dict[str, Any]:
         deadline = time.monotonic() + self.timeout_seconds
         while True:
             payload = await self.poll_parse_job(parse_job_id)
+            if on_status is not None:
+                await on_status(payload)
             status = str(payload.get("status") or "").lower()
             if status == "ready":
                 return payload
