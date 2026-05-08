@@ -4,9 +4,13 @@ from typing import Any
 from ragstudio.db.base import Base
 from ragstudio.schemas.common import new_id, now_utc
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.mutable import MutableDict, MutableList
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.types import JSON
+
+
+JsonType = JSON().with_variant(JSONB, "postgresql")
 
 
 class TimestampMixin:
@@ -27,7 +31,7 @@ class SettingsProfile(Base, TimestampMixin):
     llm_api_key: Mapped[str | None] = mapped_column(String, nullable=True)
     llm_timeout_ms: Mapped[int] = mapped_column(Integer, default=10000)
     llm_capabilities: Mapped[list[str]] = mapped_column(
-        MutableList.as_mutable(JSON), default=list
+        MutableList.as_mutable(JsonType), default=list
     )
     embedding_model: Mapped[str] = mapped_column(String)
     storage_backend: Mapped[str] = mapped_column(String)
@@ -65,12 +69,31 @@ class Chunk(Base, TimestampMixin):
     document_id: Mapped[str] = mapped_column(ForeignKey("documents.id"))
     text: Mapped[str] = mapped_column(Text)
     source_location: Mapped[dict[str, Any]] = mapped_column(
-        MutableDict.as_mutable(JSON), default=dict
+        MutableDict.as_mutable(JsonType), default=dict
     )
     metadata_json: Mapped[dict[str, Any]] = mapped_column(
-        MutableDict.as_mutable(JSON), default=dict
+        MutableDict.as_mutable(JsonType), default=dict
     )
+    runtime_profile_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    runtime_source_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    content_type: Mapped[str] = mapped_column(String, default="text")
+    preview_ref: Mapped[str | None] = mapped_column(String, nullable=True)
+    indexed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     document: Mapped[Document] = relationship(back_populates="chunks")
+
+
+class IndexRecord(Base, TimestampMixin):
+    __tablename__ = "index_records"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
+    document_id: Mapped[str] = mapped_column(ForeignKey("documents.id"))
+    runtime_profile_id: Mapped[str] = mapped_column(String)
+    status: Mapped[str] = mapped_column(String, default="ready")
+    index_shape: Mapped[dict[str, Any]] = mapped_column(
+        MutableDict.as_mutable(JsonType), default=dict
+    )
+    chunk_count: Mapped[int] = mapped_column(Integer, default=0)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class Job(Base, TimestampMixin):
@@ -81,8 +104,10 @@ class Job(Base, TimestampMixin):
     status: Mapped[str] = mapped_column(String, default="ready")
     target_id: Mapped[str | None] = mapped_column(String, nullable=True)
     progress: Mapped[int] = mapped_column(Integer, default=0)
-    logs: Mapped[list[str]] = mapped_column(MutableList.as_mutable(JSON), default=list)
-    result: Mapped[dict[str, Any]] = mapped_column(MutableDict.as_mutable(JSON), default=dict)
+    logs: Mapped[list[str]] = mapped_column(MutableList.as_mutable(JsonType), default=list)
+    result: Mapped[dict[str, Any]] = mapped_column(
+        MutableDict.as_mutable(JsonType), default=dict
+    )
 
 
 class Variant(Base, TimestampMixin):
@@ -91,7 +116,9 @@ class Variant(Base, TimestampMixin):
     id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
     name: Mapped[str] = mapped_column(String)
     preset: Mapped[str] = mapped_column(String)
-    parameters: Mapped[dict[str, Any]] = mapped_column(MutableDict.as_mutable(JSON), default=dict)
+    parameters: Mapped[dict[str, Any]] = mapped_column(
+        MutableDict.as_mutable(JsonType), default=dict
+    )
 
 
 class EvaluationSet(Base, TimestampMixin):
@@ -99,7 +126,9 @@ class EvaluationSet(Base, TimestampMixin):
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
     name: Mapped[str] = mapped_column(String)
-    cases: Mapped[list[dict[str, Any]]] = mapped_column(MutableList.as_mutable(JSON), default=list)
+    cases: Mapped[list[dict[str, Any]]] = mapped_column(
+        MutableList.as_mutable(JsonType), default=list
+    )
 
 
 class Experiment(Base, TimestampMixin):
@@ -107,10 +136,16 @@ class Experiment(Base, TimestampMixin):
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
     name: Mapped[str] = mapped_column(String)
-    document_ids: Mapped[list[str]] = mapped_column(MutableList.as_mutable(JSON), default=list)
+    document_ids: Mapped[list[str]] = mapped_column(
+        MutableList.as_mutable(JsonType), default=list
+    )
     evaluation_set_id: Mapped[str] = mapped_column(String)
-    variant_ids: Mapped[list[str]] = mapped_column(MutableList.as_mutable(JSON), default=list)
-    objective: Mapped[dict[str, Any]] = mapped_column(MutableDict.as_mutable(JSON), default=dict)
+    variant_ids: Mapped[list[str]] = mapped_column(
+        MutableList.as_mutable(JsonType), default=list
+    )
+    objective: Mapped[dict[str, Any]] = mapped_column(
+        MutableDict.as_mutable(JsonType), default=dict
+    )
 
 
 class Run(Base, TimestampMixin):
@@ -119,17 +154,33 @@ class Run(Base, TimestampMixin):
     id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
     variant_id: Mapped[str] = mapped_column(String)
     experiment_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    runtime_profile_id: Mapped[str | None] = mapped_column(String, nullable=True)
     query: Mapped[str] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String, default="ready")
     answer: Mapped[str] = mapped_column(Text, default="")
+    document_ids: Mapped[list[str]] = mapped_column(
+        MutableList.as_mutable(JsonType), default=list
+    )
+    query_config: Mapped[dict[str, Any]] = mapped_column(
+        MutableDict.as_mutable(JsonType), default=dict
+    )
     sources: Mapped[list[dict[str, Any]]] = mapped_column(
-        MutableList.as_mutable(JSON), default=list
+        MutableList.as_mutable(JsonType), default=list
     )
     chunk_traces: Mapped[list[dict[str, Any]]] = mapped_column(
-        MutableList.as_mutable(JSON), default=list
+        MutableList.as_mutable(JsonType), default=list
     )
-    timings: Mapped[dict[str, Any]] = mapped_column(MutableDict.as_mutable(JSON), default=dict)
+    reranker_traces: Mapped[list[dict[str, Any]]] = mapped_column(
+        MutableList.as_mutable(JsonType), default=list
+    )
+    timings: Mapped[dict[str, Any]] = mapped_column(
+        MutableDict.as_mutable(JsonType), default=dict
+    )
+    token_metadata: Mapped[dict[str, Any]] = mapped_column(
+        MutableDict.as_mutable(JsonType), default=dict
+    )
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_type: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
 class Score(Base, TimestampMixin):
@@ -138,7 +189,9 @@ class Score(Base, TimestampMixin):
     id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
     run_id: Mapped[str] = mapped_column(String)
     total: Mapped[int] = mapped_column(Integer)
-    details: Mapped[dict[str, Any]] = mapped_column(MutableDict.as_mutable(JSON), default=dict)
+    details: Mapped[dict[str, Any]] = mapped_column(
+        MutableDict.as_mutable(JsonType), default=dict
+    )
 
 
 class OptimizationSession(Base, TimestampMixin):
@@ -146,7 +199,11 @@ class OptimizationSession(Base, TimestampMixin):
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
     experiment_id: Mapped[str] = mapped_column(String)
-    objective: Mapped[dict[str, Any]] = mapped_column(MutableDict.as_mutable(JSON), default=dict)
+    objective: Mapped[dict[str, Any]] = mapped_column(
+        MutableDict.as_mutable(JsonType), default=dict
+    )
     selected_variant_id: Mapped[str | None] = mapped_column(String, nullable=True)
     explanation: Mapped[str] = mapped_column(Text, default="")
-    tried_variant_ids: Mapped[list[str]] = mapped_column(MutableList.as_mutable(JSON), default=list)
+    tried_variant_ids: Mapped[list[str]] = mapped_column(
+        MutableList.as_mutable(JsonType), default=list
+    )
