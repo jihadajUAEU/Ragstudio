@@ -204,6 +204,142 @@ async def test_embedding_connection_test_uses_saved_api_key_when_blank(
 
 
 @pytest.mark.asyncio
+async def test_provider_sync_preview_maps_manifest_without_persisting(client, monkeypatch):
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {
+                "version": 2,
+                "updatedAt": "2026-05-07T08:23:27.928Z",
+                "reasoning": {
+                    "apiUrl": "http://10.10.9.195:8004/v1",
+                    "model": "QuantTrio/Qwen3-VL-32B-Instruct-AWQ",
+                    "timeoutMs": 5000,
+                },
+                "embeddings": {
+                    "apiUrl": "http://10.10.9.192:8001/v1",
+                    "model": "Qwen/Qwen3-Embedding-8B",
+                    "dimensions": 1536,
+                    "timeoutMs": 10000,
+                },
+                "hpcMineru": {
+                    "enabled": True,
+                    "apiUrl": "http://10.10.9.19:8765",
+                    "timeoutMs": 1800000,
+                },
+                "stt": {"apiUrl": "http://10.10.9.196:8002/v1"},
+            }
+
+    class FakeAsyncClient:
+        def __init__(self, timeout):
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return None
+
+        async def get(self, url):
+            assert url == "https://updates.jihadaj.com/providers.json"
+            assert self.timeout == 5.0
+            return FakeResponse()
+
+    monkeypatch.setattr(
+        "ragstudio.services.provider_manifest_service.httpx.AsyncClient",
+        FakeAsyncClient,
+    )
+    save_response = await client.put(
+        "/api/settings/default",
+        json={
+            "provider": "openai",
+            "llm_model": "gpt-4.1",
+            "embedding_model": "text-embedding-3-large",
+            "storage_backend": "sqlite",
+        },
+    )
+
+    response = await client.post(
+        "/api/settings/default/sync-provider-preview",
+        json={"manifest_url": "https://updates.jihadaj.com/providers.json"},
+    )
+    read_response = await client.get("/api/settings/default")
+
+    assert save_response.status_code == 200
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is True
+    assert body["manifest_version"] == 2
+    assert body["updated_at"] == "2026-05-07T08:23:27.928Z"
+    assert body["patch"]["llm_provider"] == "openai_compatible"
+    assert body["patch"]["llm_base_url"] == "http://10.10.9.195:8004/v1"
+    assert body["patch"]["llm_model"] == "QuantTrio/Qwen3-VL-32B-Instruct-AWQ"
+    assert body["patch"]["llm_timeout_ms"] == 5000
+    assert body["patch"]["llm_capabilities"] == ["text", "vision", "reasoning"]
+    assert body["patch"]["embedding_provider"] == "vllm_openai"
+    assert body["patch"]["embedding_base_url"] == "http://10.10.9.192:8001/v1"
+    assert body["patch"]["embedding_model"] == "Qwen/Qwen3-Embedding-8B"
+    assert body["patch"]["embedding_dimensions"] == 1536
+    assert body["patch"]["embedding_timeout_ms"] == 10000
+    assert body["patch"]["mineru_enabled"] is True
+    assert body["patch"]["mineru_base_url"] == "http://10.10.9.19:8765"
+    assert body["patch"]["mineru_timeout_ms"] == 1800000
+    assert "llm_base_url" in body["changed_fields"]
+    assert "stt" in body["ignored_sections"]
+    assert read_response.json()["llm_model"] == "gpt-4.1"
+
+
+@pytest.mark.asyncio
+async def test_provider_sync_preview_accepts_partial_manifest(client, monkeypatch):
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"version": 3, "embeddings": {"model": "Qwen/Qwen3-Embedding-8B"}}
+
+    class FakeAsyncClient:
+        def __init__(self, timeout):
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return None
+
+        async def get(self, url):
+            return FakeResponse()
+
+    monkeypatch.setattr(
+        "ragstudio.services.provider_manifest_service.httpx.AsyncClient",
+        FakeAsyncClient,
+    )
+
+    response = await client.post(
+        "/api/settings/default/sync-provider-preview",
+        json={"manifest_url": "https://updates.jihadaj.com/providers.json"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["patch"] == {
+        "embedding_provider": "vllm_openai",
+        "embedding_model": "Qwen/Qwen3-Embedding-8B",
+    }
+
+
+@pytest.mark.asyncio
+async def test_provider_sync_preview_rejects_invalid_manifest_url(client):
+    response = await client.post(
+        "/api/settings/default/sync-provider-preview",
+        json={"manifest_url": "ftp://updates.jihadaj.com/providers.json"},
+    )
+
+    assert response.status_code == 422
+    assert "manifest_url" in response.text
+
+
+@pytest.mark.asyncio
 async def test_settings_profile_saves_mineru_config(client):
     payload = {
         "provider": "openai",

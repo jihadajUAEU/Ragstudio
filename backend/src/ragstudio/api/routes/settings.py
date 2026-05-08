@@ -8,10 +8,16 @@ from ragstudio.api.deps import get_session
 from ragstudio.schemas.settings import (
     EmbeddingConnectionTestOut,
     MinerUConnectionTestOut,
+    ProviderSyncPreviewIn,
+    ProviderSyncPreviewOut,
     SettingsProfileIn,
     SettingsProfileOut,
 )
 from ragstudio.services.embedding_connection_service import EmbeddingConnectionService
+from ragstudio.services.provider_manifest_service import (
+    ProviderManifestError,
+    ProviderManifestService,
+)
 from ragstudio.services.settings_service import SettingsService
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
@@ -31,6 +37,19 @@ async def put_default_settings(
     session: AsyncSession = Depends(get_session),
 ) -> SettingsProfileOut:
     return await SettingsService(session).upsert_default(payload)
+
+
+@router.post("/default/sync-provider-preview", response_model=ProviderSyncPreviewOut)
+async def sync_provider_preview(
+    payload: ProviderSyncPreviewIn,
+    session: AsyncSession = Depends(get_session),
+) -> ProviderSyncPreviewOut:
+    settings_service = SettingsService(session)
+    current = await settings_service.get_default()
+    try:
+        return await ProviderManifestService().preview(payload.manifest_url, current)
+    except ProviderManifestError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @router.post("/default/test-embedding", response_model=EmbeddingConnectionTestOut)

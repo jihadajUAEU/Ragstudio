@@ -123,3 +123,29 @@ class MinerUConnectionTestOut(StudioModel):
     base_url: str
     latency_ms: int
     detail: str
+
+
+class ProviderSyncPreviewIn(StudioModel):
+    manifest_url: str
+
+    @field_validator("manifest_url")
+    @classmethod
+    def validate_manifest_url(cls, value: str) -> str:
+        normalized = value.strip()
+        parsed = urlparse(normalized)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError("Provider manifest URL must be an http or https URL")
+        if parsed.username or parsed.password:
+            raise ValueError("Provider manifest URL must not include credentials")
+        return normalized
+
+
+class ProviderSyncPreviewOut(StudioModel):
+    ok: bool
+    manifest_url: str
+    manifest_version: int | None = None
+    updated_at: str | None = None
+    patch: dict[str, object]
+    changed_fields: list[str]
+    ignored_sections: list[str]
+    detail: str
