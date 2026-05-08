@@ -10,7 +10,7 @@ Install backend and frontend dependencies first:
 ./scripts/setup.sh
 ```
 
-The backend setup installs `raganything[text]`. If you skip setup, Studio still runs
+The backend setup installs `raganything[all]`. If you skip setup, Studio still runs
 with a local fallback adapter and the Diagnostics page will show a warning.
 
 ```bash
