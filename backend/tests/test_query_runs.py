@@ -1,6 +1,7 @@
 import pytest
 from ragstudio.db.models import Document, IndexRecord, SettingsProfile, Variant
 from ragstudio.schemas.common import StageStatus
+from ragstudio.services.runtime_profile_service import RuntimeProfileService
 from ragstudio.services.runtime_types import RuntimeQueryResult
 
 
@@ -211,12 +212,13 @@ async def test_query_route_uses_runtime_profile_when_configured(client, monkeypa
         variant = Variant(name="Runtime Route", preset="balanced", parameters={"top_k": 7})
         session.add_all([document, variant])
         await session.flush()
+        profile = await RuntimeProfileService(session, app.state.settings).get_active_profile()
         session.add(
             IndexRecord(
                 document_id=document.id,
                 runtime_profile_id="default",
                 status=StageStatus.SUCCEEDED.value,
-                index_shape={},
+                index_shape=profile.index_shape,
                 chunk_count=1,
             )
         )

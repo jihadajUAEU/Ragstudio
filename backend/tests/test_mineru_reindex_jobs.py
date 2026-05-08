@@ -1,6 +1,6 @@
 import pytest
 from ragstudio.db.engine import init_db, make_engine, make_session_factory
-from ragstudio.db.models import Chunk, Document, Job
+from ragstudio.db.models import Chunk, Document, Job, SettingsProfile
 from ragstudio.schemas.chunks import ChunkSearchIn
 from ragstudio.schemas.parsing import IndexDocumentIn
 from ragstudio.services.chunk_service import ChunkService
@@ -202,3 +202,35 @@ async def test_create_strict_reindex_job_returns_immediately(client, monkeypatch
     assert body["status"] == "ready"
     assert scheduled["args"][1] == document_id
     assert scheduled["args"][2] == body["id"]
+
+
+@pytest.mark.asyncio
+async def test_create_reindex_job_returns_conflict_when_runtime_health_blocks(client):
+    upload_response = await client.post(
+        "/api/documents",
+        files={"file": ("runtime-job.pdf", b"%PDF-1.4", "application/pdf")},
+    )
+    document_id = upload_response.json()["id"]
+    app = client._transport.app
+    async with app.state.session_factory() as session:
+        session.add(
+            SettingsProfile(
+                id="default",
+                provider="openai-compatible",
+                llm_model="gpt-4o",
+                llm_base_url="http://127.0.0.1:8004/v1",
+                embedding_model="text-embedding-3-large",
+                embedding_base_url="http://127.0.0.1:8001/v1",
+                storage_backend="postgres_pgvector_neo4j",
+                runtime_mode="runtime",
+            )
+        )
+        await session.commit()
+
+    response = await client.post(
+        f"/api/chunks/index/{document_id}/jobs",
+        json={"parser_mode": "mineru_strict", "domain_metadata": {}},
+    )
+
+    assert response.status_code == 409
+    assert "native_runtime_adapter" in response.json()["detail"]

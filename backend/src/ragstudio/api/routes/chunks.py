@@ -14,6 +14,7 @@ from ragstudio.services.index_lifecycle_service import (
     RuntimeHealthBlockedError,
 )
 from ragstudio.services.runtime_factory import RuntimeUnavailableError
+from ragstudio.services.runtime_health_service import RuntimeHealthService
 from ragstudio.services.runtime_profile_service import (
     RuntimeProfileNotConfiguredError,
     RuntimeProfileService,
@@ -34,10 +35,23 @@ async def create_index_document_job(
     request: Request,
     session: AsyncSession = Depends(get_session),
 ) -> JobOut:
+    settings = request.app.state.settings
+    try:
+        profile = await RuntimeProfileService(session, settings).get_active_profile()
+    except RuntimeProfileNotConfiguredError:
+        profile = None
+    if profile is not None and profile.runtime_mode != "fallback":
+        health_service = RuntimeHealthService()
+        checks = await health_service.check(profile)
+        blocking = health_service.blocking_failures(checks)
+        if blocking:
+            detail = "; ".join(f"{item.name}: {item.detail}" for item in blocking)
+            raise HTTPException(status_code=409, detail=detail)
+
     service = DocumentService(
         session,
-        request.app.state.settings.data_dir,
-        settings=request.app.state.settings,
+        settings.data_dir,
+        settings=settings,
     )
     job = await service.create_index_job(document_id)
     if job is None:

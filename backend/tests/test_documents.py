@@ -218,6 +218,38 @@ async def test_upload_uses_runtime_index_lifecycle_when_profile_exists(client, m
 
 
 @pytest.mark.asyncio
+async def test_duplicate_upload_requires_runtime_index_when_profile_changes(client):
+    first_response = await client.post(
+        "/api/documents",
+        files={"file": ("runtime-change.txt", b"same runtime bytes", "text/plain")},
+    )
+    assert first_response.status_code == 201
+    app = client._transport.app
+    async with app.state.session_factory() as session:
+        session.add(
+            SettingsProfile(
+                id="default",
+                provider="openai-compatible",
+                llm_model="gpt-4o",
+                llm_base_url="http://127.0.0.1:8004/v1",
+                embedding_model="text-embedding-3-large",
+                embedding_base_url="http://127.0.0.1:8001/v1",
+                storage_backend="postgres_pgvector_neo4j",
+                runtime_mode="runtime",
+            )
+        )
+        await session.commit()
+
+    second_response = await client.post(
+        "/api/documents",
+        files={"file": ("runtime-change-copy.txt", b"same runtime bytes", "text/plain")},
+    )
+
+    assert second_response.status_code == 409
+    assert "native_runtime_adapter" in second_response.json()["detail"]
+
+
+@pytest.mark.asyncio
 async def test_runtime_blocked_mineru_strict_upload_returns_conflict(client):
     app = client._transport.app
     async with app.state.session_factory() as session:

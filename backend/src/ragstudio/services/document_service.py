@@ -6,6 +6,7 @@ from ragstudio.db.models import Chunk, Document, IndexRecord, Job
 from ragstudio.schemas.common import StageStatus
 from ragstudio.schemas.documents import DocumentOut
 from ragstudio.schemas.parsing import IndexDocumentIn
+from ragstudio.schemas.runtime import RuntimeProfile
 from ragstudio.services.artifact_store import ArtifactStore
 from ragstudio.services.chunk_service import ChunkService
 from ragstudio.services.index_lifecycle_service import (
@@ -136,7 +137,11 @@ class DocumentService:
             select(Chunk.id).where(Chunk.document_id == document.id).limit(1)
         )
         if existing_chunk_id is not None and options is None:
-            return
+            profile = await self._active_runtime_profile()
+            if profile is None or profile.runtime_mode == "fallback":
+                return
+            if await self._has_ready_runtime_index(document.id, profile):
+                return
 
         job = JobWorker.build("index_document", document.id)
         add_job = True
@@ -172,7 +177,8 @@ class DocumentService:
         job.status = StageStatus.RUNNING.value
         job.progress = 50
         job.logs = [*job.logs, "Indexing document chunks."]
-        if await self._should_use_runtime_lifecycle():
+        profile = await self._active_runtime_profile()
+        if profile is not None and profile.runtime_mode != "fallback":
             assert self.settings is not None
             chunks = await IndexLifecycleService(
                 self.session,
@@ -192,17 +198,32 @@ class DocumentService:
         job.result = {**job.result, "document_id": document.id, "chunk_count": chunk_count}
         job.logs = [*job.logs, f"Indexed {chunk_count} chunks."]
 
-    async def _should_use_runtime_lifecycle(self) -> bool:
+    async def _active_runtime_profile(self) -> RuntimeProfile | None:
         if self.settings is None:
-            return False
+            return None
         try:
-            profile = await RuntimeProfileService(
+            return await RuntimeProfileService(
                 self.session,
                 self.settings,
             ).get_active_profile()
         except RuntimeProfileNotConfiguredError:
-            return False
-        return profile.runtime_mode != "fallback"
+            return None
+
+    async def _has_ready_runtime_index(
+        self,
+        document_id: str,
+        profile: RuntimeProfile,
+    ) -> bool:
+        result = await self.session.execute(
+            select(IndexRecord).where(
+                IndexRecord.document_id == document_id,
+                IndexRecord.runtime_profile_id == profile.id,
+                IndexRecord.status == StageStatus.SUCCEEDED.value,
+            )
+        )
+        return any(
+            record.index_shape == profile.index_shape for record in result.scalars().all()
+        )
 
     def _should_persist_index_failure(
         self,

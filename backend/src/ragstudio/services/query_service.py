@@ -128,7 +128,11 @@ class QueryService:
         blocking = self.health_service.blocking_failures(checks)
         if blocking:
             return await self._failed_runtime_runs(payload, profile.id, blocking)
-        await self._validate_index_readiness(payload.document_ids, profile.id)
+        await self._validate_index_readiness(
+            payload.document_ids,
+            profile.id,
+            profile.index_shape,
+        )
 
         variants = await self._variants_by_id(payload.variant_ids)
         runs: list[Run] = []
@@ -319,18 +323,25 @@ class QueryService:
         return fallback
 
     async def _validate_index_readiness(
-        self, document_ids: list[str], runtime_profile_id: str
+        self,
+        document_ids: list[str],
+        runtime_profile_id: str,
+        index_shape: dict[str, Any],
     ) -> None:
         if not document_ids:
             return
         result = await self.session.execute(
-            select(IndexRecord.document_id).where(
+            select(IndexRecord).where(
                 IndexRecord.document_id.in_(document_ids),
                 IndexRecord.runtime_profile_id == runtime_profile_id,
                 IndexRecord.status == StageStatus.SUCCEEDED.value,
             )
         )
-        ready = set(result.scalars().all())
+        ready = {
+            record.document_id
+            for record in result.scalars().all()
+            if record.index_shape == index_shape
+        }
         missing = [document_id for document_id in document_ids if document_id not in ready]
         if missing:
             raise QueryResourceNotFoundError("Runtime index", missing)

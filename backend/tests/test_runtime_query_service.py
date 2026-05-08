@@ -4,6 +4,7 @@ from ragstudio.schemas.common import StageStatus
 from ragstudio.schemas.query import QueryIn
 from ragstudio.schemas.runtime import RuntimeHealthCheck
 from ragstudio.services.query_service import QueryResourceNotFoundError, QueryService
+from ragstudio.services.runtime_profile_service import RuntimeProfileService
 from ragstudio.services.runtime_types import RuntimeQueryResult
 
 
@@ -56,7 +57,13 @@ class FakeHealthService:
         ]
 
 
-async def _create_runtime_records(session, app, *, indexed: bool = True):
+async def _create_runtime_records(
+    session,
+    app,
+    *,
+    indexed: bool = True,
+    index_shape: dict | None = None,
+):
     settings = SettingsProfile(
         id="default",
         provider="openai-compatible",
@@ -78,12 +85,13 @@ async def _create_runtime_records(session, app, *, indexed: bool = True):
     session.add_all([settings, document, variant])
     await session.flush()
     if indexed:
+        profile = await RuntimeProfileService(session, app.state.settings).get_active_profile()
         session.add(
             IndexRecord(
                 document_id=document.id,
                 runtime_profile_id="default",
                 status=StageStatus.SUCCEEDED.value,
-                index_shape={"embedding_model": "text-embedding-3-large"},
+                index_shape=index_shape if index_shape is not None else profile.index_shape,
                 chunk_count=1,
             )
         )
@@ -189,6 +197,31 @@ async def test_query_service_requires_ready_runtime_index(client):
                 health_service=FakeHealthService(),
             ).run_query(
                 QueryIn(query="not indexed", document_ids=[document.id], variant_ids=[variant.id])
+            )
+
+    assert exc_info.value.resource == "Runtime index"
+    assert exc_info.value.missing_ids == [document.id]
+
+
+@pytest.mark.asyncio
+async def test_query_service_rejects_stale_runtime_index_shape(client):
+    app = client._transport.app
+    async with app.state.session_factory() as session:
+        document, variant = await _create_runtime_records(
+            session,
+            app,
+            index_shape={"embedding_model": "old-model"},
+        )
+
+        with pytest.raises(QueryResourceNotFoundError) as exc_info:
+            await QueryService(
+                session,
+                app.state.settings.data_dir,
+                settings=app.state.settings,
+                runtime_factory=FakeFactory(),
+                health_service=FakeHealthService(),
+            ).run_query(
+                QueryIn(query="stale index", document_ids=[document.id], variant_ids=[variant.id])
             )
 
     assert exc_info.value.resource == "Runtime index"

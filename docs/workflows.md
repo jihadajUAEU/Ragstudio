@@ -30,6 +30,8 @@ The dev script starts FastAPI on `http://127.0.0.1:8000` and Vite on `http://127
 
 The backend targets local Postgres/PGVector and Neo4j runtime stores by default, while uploaded artifacts and runtime working files remain under `.ragstudio/`.
 
+On startup, the backend creates missing tables and backfills the runtime columns added in this release for existing SQLite or Postgres metadata databases. This keeps older Studio databases readable while you move toward the Postgres default. Existing fallback chunks remain fallback chunks; runtime queries require a ready `IndexRecord` whose stored index shape matches the active profile.
+
 ## Runtime Foundation vs Fallback
 
 Studio isolates upstream RAG-Anything calls behind a runtime adapter boundary. This branch provides the production store/profile/health/index/query seams, while the native upstream RAG-Anything adapter mapping is still intentionally blocked until it is implemented and verified.
