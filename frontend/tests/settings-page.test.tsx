@@ -187,6 +187,26 @@ describe("SettingsPage provider sync", () => {
     );
   });
 
+  it("keeps runtime mode and storage backend pairings explicit", async () => {
+    renderSettings();
+
+    await screen.findByDisplayValue("gpt-4.1");
+    expect(screen.getByRole("option", { name: "Native runtime (blocked)" })).toBeVisible();
+    expect(screen.getByText("Native adapter pending; indexing and query requests will block.")).toBeVisible();
+
+    const runtimeMode = screen.getByLabelText("Runtime mode") as HTMLSelectElement;
+    const storageBackend = screen.getByLabelText("Storage backend") as HTMLSelectElement;
+
+    fireEvent.change(storageBackend, { target: { value: "fallback_local" } });
+    expect(runtimeMode.value).toBe("fallback");
+
+    fireEvent.change(storageBackend, { target: { value: "postgres_pgvector_neo4j" } });
+    expect(runtimeMode.value).toBe("runtime");
+
+    fireEvent.change(runtimeMode, { target: { value: "fallback" } });
+    expect(storageBackend.value).toBe("fallback_local");
+  });
+
   it("submits newly typed secret values", async () => {
     renderSettings();
 
@@ -219,6 +239,19 @@ describe("SettingsPage provider sync", () => {
         neo4j_password: "neo4j-secret",
       }),
     );
+
+    await waitFor(() => expect(screen.getByLabelText("LLM API key")).toHaveValue(""));
+    expect(screen.getByLabelText("Vision API key")).toHaveValue("");
+    expect(screen.getByLabelText("Reranker API key")).toHaveValue("");
+    expect(screen.getByLabelText("API key")).toHaveValue("");
+    expect(screen.getByLabelText("Neo4j password")).toHaveValue("");
+
+    fireEvent.change(screen.getByLabelText("Neo4j password"), {
+      target: { value: "typed-again" },
+    });
+    expect(screen.getByLabelText("Neo4j password")).toHaveValue("typed-again");
+    fireEvent.click(screen.getByRole("button", { name: /^Reset$/i }));
+    expect(screen.getByLabelText("Neo4j password")).toHaveValue("");
   });
 
   it("allows saving the first profile when settings are missing", async () => {

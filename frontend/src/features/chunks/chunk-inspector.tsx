@@ -247,7 +247,7 @@ export function ChunkInspector() {
             ))}
           </div>
         ) : activeSearchResult ? (
-          <EmptyState icon={Search} title="No chunks matched" description="Try another question or index selected documents." />
+          <EmptyState icon={Search} title="No mirrored chunks matched" description="Try another question or index selected documents." />
         ) : (
           <EmptyState
             icon={Database}

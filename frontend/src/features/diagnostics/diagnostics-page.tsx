@@ -4,7 +4,7 @@ import type { ColumnDef } from "@tanstack/react-table";
 import { AlertCircle, AlertTriangle, CheckCircle2, Loader2, RefreshCcw, ServerCog, XCircle } from "lucide-react";
 
 import { apiClient } from "../../api/client";
-import type { RuntimeHealthCheck } from "../../api/generated";
+import type { RuntimeHealthCheck, RuntimeOverallStatus } from "../../api/generated";
 import { DataTable } from "../../components/data-table";
 import { EmptyState } from "../../components/empty-state";
 import { Button } from "../../components/ui/button";
@@ -167,7 +167,7 @@ export function DiagnosticsPage() {
             <Metric
               icon={ServerCog}
               label="Overall status"
-              value={titleCase(diagnosticsQuery.data.overall_status)}
+              value={<OverallStatusBadge status={diagnosticsQuery.data.overall_status} />}
               detail={titleCase(diagnosticsQuery.data.runtime_mode)}
             />
             <Metric
@@ -250,7 +250,7 @@ function Metric({
 }: {
   icon: typeof ServerCog;
   label: string;
-  value: string;
+  value: ReactNode;
   detail: string;
 }) {
   return (
@@ -266,6 +266,31 @@ function Metric({
       </div>
       <p className="mt-3 truncate text-sm text-[#62717a]">{detail}</p>
     </div>
+  );
+}
+
+function OverallStatusBadge({ status }: { status: RuntimeOverallStatus }) {
+  const isReady = status === "ready";
+  const isWarning = status === "degraded" || status === "fallback";
+  return (
+    <span
+      className={
+        isReady
+          ? "inline-flex items-center gap-2 rounded-md bg-[#ecf8f0] px-2 py-1 text-xs font-medium text-[#24563a]"
+          : isWarning
+            ? "inline-flex items-center gap-2 rounded-md bg-[#fff8e6] px-2 py-1 text-xs font-medium text-[#8c6500]"
+            : "inline-flex items-center gap-2 rounded-md bg-[#fff0f0] px-2 py-1 text-xs font-medium text-[#8c2525]"
+      }
+    >
+      {isReady ? (
+        <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
+      ) : isWarning ? (
+        <AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />
+      ) : (
+        <XCircle className="h-3.5 w-3.5" aria-hidden="true" />
+      )}
+      {titleCase(status)}
+    </span>
   );
 }
 

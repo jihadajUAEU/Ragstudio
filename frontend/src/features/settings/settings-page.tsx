@@ -10,6 +10,23 @@ const queryKeys = {
   settings: ["settings", "default"],
 } as const;
 
+type SecretFieldName =
+  | "embedding_api_key"
+  | "llm_api_key"
+  | "vision_api_key"
+  | "reranker_api_key"
+  | "neo4j_password";
+
+type SecretValues = Record<SecretFieldName, string>;
+
+const blankSecretValues = (): SecretValues => ({
+  embedding_api_key: "",
+  llm_api_key: "",
+  vision_api_key: "",
+  reranker_api_key: "",
+  neo4j_password: "",
+});
+
 const DEFAULT_MANIFEST_URL = "https://updates.jihadaj.com/providers.json";
 const DEFAULT_FORM_VALUES: SettingsProfileIn = {
   provider: "openai-compatible",
@@ -72,6 +89,7 @@ const DEFAULT_FORM_VALUES: SettingsProfileIn = {
 export function SettingsPage() {
   const queryClient = useQueryClient();
   const [formOverride, setFormOverride] = useState<SettingsProfileIn | null>(null);
+  const [secretValues, setSecretValues] = useState<SecretValues>(() => blankSecretValues());
   const [manifestUrl, setManifestUrl] = useState(DEFAULT_MANIFEST_URL);
   const [syncMessage, setSyncMessage] = useState("");
 
@@ -96,6 +114,7 @@ export function SettingsPage() {
     onSuccess: (settings) => {
       queryClient.setQueryData(queryKeys.settings, settings);
       setFormOverride(settingsToFormValues(settings));
+      setSecretValues(blankSecretValues());
     },
   });
   const syncProvider = useMutation({
@@ -125,13 +144,19 @@ export function SettingsPage() {
     setFormOverride((current) => (formValues ? { ...formValues, ...current, [key]: value } : current));
   };
 
+  const updateSecretField = (key: SecretFieldName, value: string) => {
+    setSecretValues((current) => ({ ...current, [key]: value }));
+  };
+
   const updateRuntimeMode = (value: SettingsProfileIn["runtime_mode"]) => {
     setFormOverride((current) => {
       if (!formValues) {
         return current;
       }
       const next = { ...formValues, ...current, runtime_mode: value };
-      if (value === "runtime" && next.storage_backend === "fallback_local") {
+      if (value === "fallback") {
+        next.storage_backend = "fallback_local";
+      } else if (next.storage_backend === "fallback_local") {
         next.storage_backend = "postgres_pgvector_neo4j";
       }
       return next;
@@ -146,6 +171,8 @@ export function SettingsPage() {
       const next = { ...formValues, ...current, storage_backend: value };
       if (value === "fallback_local") {
         next.runtime_mode = "fallback";
+      } else {
+        next.runtime_mode = "runtime";
       }
       return next;
     });
@@ -282,7 +309,10 @@ export function SettingsPage() {
         <Button
           type="button"
           variant="secondary"
-          onClick={() => void settingsQuery.refetch()}
+          onClick={() => {
+            setSecretValues(blankSecretValues());
+            void settingsQuery.refetch();
+          }}
           disabled={settingsQuery.isFetching}
         >
           {settingsQuery.isFetching ? (
@@ -352,7 +382,7 @@ export function SettingsPage() {
               onChange={(value) => updateRuntimeMode(value as SettingsProfileIn["runtime_mode"])}
               options={[
                 { value: "fallback", label: "Fallback" },
-                { value: "runtime", label: "Native runtime" },
+                { value: "runtime", label: "Native runtime (blocked)" },
               ]}
             />
             <SelectField
@@ -403,13 +433,19 @@ export function SettingsPage() {
             <Field
               label="Neo4j password"
               name="neo4j_password"
-              value=""
+              value={secretValues.neo4j_password}
               placeholder={settingsQuery.data?.has_neo4j_password ? "Saved password present" : "optional"}
               disabled={busy}
               required={false}
               type="password"
+              onChange={(value) => updateSecretField("neo4j_password", value)}
             />
           </div>
+          {formValues?.runtime_mode === "runtime" ? (
+            <p className="mt-4 rounded-md border border-[#f0d68a] bg-[#fff8e6] px-3 py-2 text-sm text-[#7a5b00]" role="status">
+              Native adapter pending; indexing and query requests will block.
+            </p>
+          ) : null}
         </section>
 
         <section className="rounded-md border border-[#d6dde1] bg-white p-4 sm:p-5">
@@ -439,11 +475,12 @@ export function SettingsPage() {
             <Field
               label="Vision API key"
               name="vision_api_key"
-              value=""
+              value={secretValues.vision_api_key}
               placeholder={settingsQuery.data?.has_vision_api_key ? "Saved key present" : "optional"}
               disabled={busy}
               required={false}
               type="password"
+              onChange={(value) => updateSecretField("vision_api_key", value)}
             />
             <Field
               label="Vision timeout (ms)"
@@ -488,11 +525,12 @@ export function SettingsPage() {
             <Field
               label="Reranker API key"
               name="reranker_api_key"
-              value=""
+              value={secretValues.reranker_api_key}
               placeholder={settingsQuery.data?.has_reranker_api_key ? "Saved key present" : "optional"}
               disabled={busy}
               required={false}
               type="password"
+              onChange={(value) => updateSecretField("reranker_api_key", value)}
             />
             <Field
               label="Reranker timeout (ms)"
@@ -540,11 +578,12 @@ export function SettingsPage() {
             <Field
               label="LLM API key"
               name="llm_api_key"
-              value=""
+              value={secretValues.llm_api_key}
               placeholder={settingsQuery.data?.has_llm_api_key ? "Saved key present" : "optional"}
               disabled={busy}
               required={false}
               type="password"
+              onChange={(value) => updateSecretField("llm_api_key", value)}
             />
             <Field
               label="LLM timeout (ms)"
@@ -921,11 +960,12 @@ export function SettingsPage() {
             <Field
               label="API key"
               name="embedding_api_key"
-              value=""
+              value={secretValues.embedding_api_key}
               placeholder={settingsQuery.data?.has_embedding_api_key ? "Saved key present" : "optional"}
               disabled={busy}
               required={false}
               type="password"
+              onChange={(value) => updateSecretField("embedding_api_key", value)}
             />
             <Field
               label="Timeout (ms)"
@@ -995,6 +1035,7 @@ export function SettingsPage() {
               variant="secondary"
               onClick={() => {
                 setFormOverride(null);
+                setSecretValues(blankSecretValues());
               }}
               disabled={busy}
             >
