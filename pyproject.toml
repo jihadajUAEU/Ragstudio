@@ -15,6 +15,7 @@ dependencies = [
   "httpx>=0.28.1",
   "pydantic-settings>=2.12.0",
   "pyyaml>=6.0.3",
+  "torch>=2.11.0",
   "orjson>=3.11.9",
   "structlog>=25.5.0",
   "anyio>=4.13.0",

@@ -1,0 +1,13 @@
+.git
+.venv
+.ragstudio
+frontend/node_modules
+frontend/dist
+backend/.pytest_cache
+**/__pycache__
+**/.pytest_cache
+**/.ruff_cache
+**/.pyright
+*.pyc
+*.pyo
+*.log

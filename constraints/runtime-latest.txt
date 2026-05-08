@@ -1,0 +1,7 @@
+torch==2.11.0
+PyYAML==6.0.3
+raganything==1.3.0
+mineru==3.1.9
+lightrag-hku==1.4.16
+paddleocr==3.5.0
+paddlex==3.5.1

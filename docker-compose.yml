@@ -1,4 +1,42 @@
 services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: ragstudio-backend
+    environment:
+      RAGSTUDIO_DATABASE_URL: postgresql+asyncpg://ragstudio:ragstudio@postgres:5432/ragstudio
+      RAGSTUDIO_NEO4J_URI: bolt://neo4j:7687
+      RAGSTUDIO_NEO4J_USERNAME: neo4j
+      RAGSTUDIO_NEO4J_PASSWORD: ragstudio-password
+      RAGSTUDIO_DATA_DIR: /data
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - ./backend/src:/app/backend/src
+      - ragstudio-backend-data:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    container_name: ragstudio-frontend
+    environment:
+      VITE_API_PROXY_TARGET: http://backend:8000
+    ports:
+      - "127.0.0.1:5173:5173"
+    volumes:
+      - ./frontend/src:/app/frontend/src
+      - ./frontend/index.html:/app/frontend/index.html
+      - ./frontend/vite.config.ts:/app/frontend/vite.config.ts
+    depends_on:
+      - backend
+
   postgres:
     image: pgvector/pgvector:pg17
     container_name: ragstudio-postgres
@@ -39,6 +77,7 @@ services:
       retries: 20
 
 volumes:
+  ragstudio-backend-data:
   ragstudio-postgres-data:
   ragstudio-neo4j-data:
   ragstudio-neo4j-logs:

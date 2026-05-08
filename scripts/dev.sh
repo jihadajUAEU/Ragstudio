@@ -2,12 +2,24 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
-export RAGSTUDIO_DATABASE_URL="${RAGSTUDIO_DATABASE_URL:-postgresql+asyncpg://ragstudio:ragstudio@127.0.0.1:55432/ragstudio}"
-export RAGSTUDIO_NEO4J_URI="${RAGSTUDIO_NEO4J_URI:-bolt://127.0.0.1:57687}"
-export RAGSTUDIO_NEO4J_USERNAME="${RAGSTUDIO_NEO4J_USERNAME:-neo4j}"
-export RAGSTUDIO_NEO4J_PASSWORD="${RAGSTUDIO_NEO4J_PASSWORD:-ragstudio-password}"
-python -m uvicorn ragstudio.app:create_app --factory --reload --app-dir backend/src --host 127.0.0.1 --port 8000 &
-BACKEND_PID=$!
-trap 'kill "$BACKEND_PID" 2>/dev/null || true' EXIT
-cd frontend
-npm run dev -- --host 127.0.0.1 --port 5173
+
+if ! command -v docker >/dev/null 2>&1; then
+  echo "Docker is required. Install Docker Desktop and try again." >&2
+  exit 1
+fi
+
+if ! docker info >/dev/null 2>&1; then
+  echo "Docker is required, but the Docker daemon is not running." >&2
+  echo "Start Docker Desktop and try again." >&2
+  exit 1
+fi
+
+for port in 5173 8000; do
+  if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
+    echo "Port $port is already in use. Stop the process using it, then rerun ./scripts/dev.sh." >&2
+    lsof -nP -iTCP:"$port" -sTCP:LISTEN >&2
+    exit 1
+  fi
+done
+
+docker compose up --build
