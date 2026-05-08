@@ -5,6 +5,8 @@ from importlib.util import find_spec
 from pathlib import Path
 from typing import Any
 
+from ragstudio.services.runtime_types import RuntimeChunk, RuntimeQueryResult
+
 
 @dataclass(frozen=True)
 class AdapterChunk:
@@ -28,12 +30,28 @@ class RAGAnythingAdapter:
             "graph": "placeholder",
         }
 
-    async def index_document(self, artifact_path: str | Path) -> list[AdapterChunk]:
+    async def delete_document_index(self, document_id: str) -> None:
+        return None
+
+    async def index_document(self, artifact_path: str | Path) -> list[RuntimeChunk]:
         return self._line_split_index(Path(artifact_path))
 
     async def query(
-        self, query: str, chunks: list[AdapterChunk], limit: int = 10
-    ) -> dict[str, Any]:
+        self,
+        query: str,
+        chunks: list[AdapterChunk] | None = None,
+        limit: int = 10,
+        *,
+        document_ids: list[str] | None = None,
+        query_config: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | RuntimeQueryResult:
+        if chunks is None:
+            return RuntimeQueryResult(
+                answer="",
+                timings={},
+                error="Fallback runtime query requires mirrored chunks.",
+                error_type="fallback_runtime_without_chunks",
+            )
         selected = chunks[:limit]
         return {
             "answer": self._simple_answer(query, selected),
@@ -51,18 +69,18 @@ class RAGAnythingAdapter:
     async def graph(self) -> dict[str, Any]:
         return {"nodes": [], "edges": [], "placeholder": True}
 
-    def _line_split_index(self, artifact_path: Path) -> list[AdapterChunk]:
+    def _line_split_index(self, artifact_path: Path) -> list[RuntimeChunk]:
         artifact_ref = artifact_path.name
         content = artifact_path.read_bytes().decode("utf-8", errors="replace")
         lines = content.splitlines()
-        chunks: list[AdapterChunk] = []
+        chunks: list[RuntimeChunk] = []
 
         for line_number, line in enumerate(lines, start=1):
             text = line.strip()
             if not text:
                 continue
             chunks.append(
-                AdapterChunk(
+                RuntimeChunk(
                     text=text,
                     source_location={"line": line_number},
                     metadata={
@@ -76,7 +94,7 @@ class RAGAnythingAdapter:
 
         if not chunks and content.strip():
             chunks.append(
-                AdapterChunk(
+                RuntimeChunk(
                     text=content.strip(),
                     source_location={"line": 1},
                     metadata={
