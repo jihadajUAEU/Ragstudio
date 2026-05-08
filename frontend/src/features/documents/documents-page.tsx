@@ -159,7 +159,7 @@ export function DocumentsPage() {
 
       <section className="rounded-md border border-[#d6dde1] bg-white p-4">
         <form
-          className="flex flex-col gap-3 sm:flex-row sm:items-end"
+          className="grid gap-4"
           onSubmit={(event) => {
             event.preventDefault();
             if (file) {
@@ -167,17 +167,27 @@ export function DocumentsPage() {
             }
           }}
         >
-          <label className="min-w-0 flex-1 text-sm font-medium text-[#3a4a53]">
-            <span className="mb-1.5 block truncate">Upload file</span>
-            <input
-              ref={fileInputRef}
-              type="file"
-              className="block w-full min-w-0 rounded-md border border-[#cfd8dd] bg-white text-sm text-[#1f2933] file:mr-3 file:h-10 file:border-0 file:bg-[#edf3f5] file:px-3 file:text-sm file:font-medium file:text-[#24313a]"
-              onChange={(event) => setFile(event.target.files?.[0] ?? null)}
-              disabled={uploadDocument.isPending}
-            />
-          </label>
-          <div className="sm:col-span-2 sm:basis-full">
+          <div className="grid gap-3 lg:grid-cols-[minmax(280px,1fr)_auto] lg:items-end">
+            <label className="min-w-0 text-sm font-medium text-[#3a4a53]">
+              <span className="mb-1.5 block truncate">Upload file</span>
+              <input
+                ref={fileInputRef}
+                type="file"
+                className="block h-10 w-full min-w-0 rounded-md border border-[#cfd8dd] bg-white text-sm text-[#1f2933] file:mr-3 file:h-full file:border-0 file:bg-[#edf3f5] file:px-3 file:text-sm file:font-medium file:text-[#24313a]"
+                onChange={(event) => setFile(event.target.files?.[0] ?? null)}
+                disabled={uploadDocument.isPending}
+              />
+            </label>
+            <Button type="submit" disabled={!file || !metadataValid || uploadDocument.isPending}>
+              {uploadDocument.isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+              ) : (
+                <Upload className="h-4 w-4" aria-hidden="true" />
+              )}
+              Upload
+            </Button>
+          </div>
+          <div className="min-w-0">
             <DomainMetadataPanel
               profiles={profilesQuery.data?.items ?? []}
               value={indexOptions}
@@ -194,14 +204,6 @@ export function DocumentsPage() {
               }
             />
           </div>
-          <Button type="submit" disabled={!file || !metadataValid || uploadDocument.isPending}>
-            {uploadDocument.isPending ? (
-              <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-            ) : (
-              <Upload className="h-4 w-4" aria-hidden="true" />
-            )}
-            Upload
-          </Button>
         </form>
         <p className="mt-3 min-h-5 text-sm text-[#62717a]" role="status">
           {uploadDocument.isSuccess ? "Uploaded" : uploadDocument.error?.message}
