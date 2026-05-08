@@ -11,10 +11,13 @@ import type {
   HealthOut,
   JobOut,
   IndexDocumentIn,
+  LlmConnectionTestOut,
   MinerUConnectionTestOut,
   OptimizerIn,
   OptimizerOut,
   Page,
+  ProviderSyncPreviewIn,
+  ProviderSyncPreviewOut,
   ChunkOut,
   ChunkSearchIn,
   ChunkSearchOut,
@@ -121,8 +124,20 @@ export const apiClient = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     }),
+  testLlmSettings: (payload: SettingsProfileIn) =>
+    request<LlmConnectionTestOut>("/api/settings/default/test-llm", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }),
   testMinerUSettings: (payload: SettingsProfileIn) =>
     request<MinerUConnectionTestOut>("/api/settings/default/test-mineru", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }),
+  syncProviderPreview: (payload: ProviderSyncPreviewIn) =>
+    request<ProviderSyncPreviewOut>("/api/settings/default/sync-provider-preview", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),

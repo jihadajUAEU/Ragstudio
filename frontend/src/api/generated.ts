@@ -27,6 +27,11 @@ export interface DocumentOut {
 export interface SettingsProfileIn {
   provider: string;
   llm_model: string;
+  llm_provider?: "openai_compatible";
+  llm_base_url?: string | null;
+  llm_api_key?: string | null;
+  llm_timeout_ms?: number;
+  llm_capabilities?: Array<"text" | "vision" | "reasoning">;
   embedding_model: string;
   storage_backend: string;
   embedding_provider?: "fallback" | "vllm_openai";
@@ -46,6 +51,11 @@ export interface SettingsProfileOut {
   id: string;
   provider: string;
   llm_model: string;
+  llm_provider: "openai_compatible";
+  llm_base_url: string | null;
+  has_llm_api_key: boolean;
+  llm_timeout_ms: number;
+  llm_capabilities: Array<"text" | "vision" | "reasoning">;
   embedding_model: string;
   storage_backend: string;
   embedding_provider: "fallback" | "vllm_openai";
@@ -70,10 +80,33 @@ export interface EmbeddingConnectionTestOut {
   detail: string;
 }
 
+export interface LlmConnectionTestOut {
+  ok: boolean;
+  provider: string;
+  model: string;
+  latency_ms: number;
+  detail: string;
+}
+
 export interface MinerUConnectionTestOut {
   ok: boolean;
   base_url: string;
   latency_ms: number;
+  detail: string;
+}
+
+export interface ProviderSyncPreviewIn {
+  manifest_url: string;
+}
+
+export interface ProviderSyncPreviewOut {
+  ok: boolean;
+  manifest_url: string;
+  manifest_version?: number | null;
+  updated_at?: string | null;
+  patch: Partial<SettingsProfileIn>;
+  changed_fields: string[];
+  ignored_sections: string[];
   detail: string;
 }
 
