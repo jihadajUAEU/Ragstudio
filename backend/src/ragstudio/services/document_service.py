@@ -48,7 +48,7 @@ class DocumentService:
             if index_immediately:
                 await self._ensure_indexed(existing, options)
             else:
-                await self._enqueue_index_job(existing)
+                await self._ensure_queued_index_job(existing, options)
             return DocumentOut.model_validate(existing)
 
         _, artifact_path = self.store.write_upload(filename, content)
@@ -84,7 +84,7 @@ class DocumentService:
                 if index_immediately:
                     await self._ensure_indexed(existing, options)
                 else:
-                    await self._enqueue_index_job(existing)
+                    await self._ensure_queued_index_job(existing, options)
                 return DocumentOut.model_validate(existing)
             raise
         except Exception:
@@ -171,6 +171,33 @@ class DocumentService:
         await self.session.refresh(document)
         await self.session.refresh(job)
         return job
+
+    async def _ensure_queued_index_job(
+        self,
+        document: Document,
+        options: IndexDocumentIn | None,
+    ) -> None:
+        if options is None:
+            existing_chunk_id = await self.session.scalar(
+                select(Chunk.id).where(Chunk.document_id == document.id).limit(1)
+            )
+            if existing_chunk_id is not None:
+                return
+
+            active_job = await self.session.scalar(
+                select(Job)
+                .where(
+                    Job.type == "index_document",
+                    Job.target_id == document.id,
+                    Job.status.in_([StageStatus.READY.value, StageStatus.RUNNING.value]),
+                )
+                .order_by(Job.created_at.desc())
+                .limit(1)
+            )
+            if active_job is not None:
+                return
+
+        await self._enqueue_index_job(document)
 
     async def _ensure_indexed(
         self,

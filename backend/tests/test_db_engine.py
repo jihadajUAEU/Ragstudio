@@ -19,9 +19,17 @@ def test_is_postgres_url_rejects_sqlite_url():
     assert not is_postgres_url("sqlite+aiosqlite:////tmp/ragstudio.sqlite3")
 
 
+def test_make_engine_rejects_sqlite_url():
+    with pytest.raises(ValueError, match="requires PostgreSQL"):
+        make_engine("sqlite+aiosqlite:////tmp/ragstudio.sqlite3")
+
+
 @pytest.mark.asyncio
-async def test_init_db_backfills_runtime_columns_for_existing_sqlite_tables(tmp_path):
-    engine = make_engine(f"sqlite+aiosqlite:///{tmp_path / 'legacy.sqlite3'}")
+async def test_init_db_backfills_runtime_columns_for_existing_postgres_tables(
+    tmp_path,
+    database_url,
+):
+    engine = make_engine(database_url)
     async with engine.begin() as connection:
         await connection.execute(
             text(
@@ -32,8 +40,8 @@ async def test_init_db_backfills_runtime_columns_for_existing_sqlite_tables(tmp_
                     llm_model VARCHAR NOT NULL,
                     embedding_model VARCHAR NOT NULL,
                     storage_backend VARCHAR NOT NULL,
-                    created_at DATETIME,
-                    updated_at DATETIME
+                    created_at TIMESTAMP,
+                    updated_at TIMESTAMP
                 )
                 """
             )
@@ -55,10 +63,10 @@ async def test_init_db_backfills_runtime_columns_for_existing_sqlite_tables(tmp_
                     id VARCHAR PRIMARY KEY,
                     document_id VARCHAR NOT NULL,
                     text TEXT NOT NULL,
-                    source_location JSON DEFAULT '{}' NOT NULL,
-                    metadata_json JSON DEFAULT '{}' NOT NULL,
-                    created_at DATETIME,
-                    updated_at DATETIME
+                    source_location JSONB DEFAULT '{}'::jsonb NOT NULL,
+                    metadata_json JSONB DEFAULT '{}'::jsonb NOT NULL,
+                    created_at TIMESTAMP,
+                    updated_at TIMESTAMP
                 )
                 """
             )
@@ -81,12 +89,12 @@ async def test_init_db_backfills_runtime_columns_for_existing_sqlite_tables(tmp_
                     query TEXT NOT NULL,
                     status VARCHAR DEFAULT 'ready' NOT NULL,
                     answer TEXT DEFAULT '' NOT NULL,
-                    sources JSON DEFAULT '[]' NOT NULL,
-                    chunk_traces JSON DEFAULT '[]' NOT NULL,
-                    timings JSON DEFAULT '{}' NOT NULL,
+                    sources JSONB DEFAULT '[]'::jsonb NOT NULL,
+                    chunk_traces JSONB DEFAULT '[]'::jsonb NOT NULL,
+                    timings JSONB DEFAULT '{}'::jsonb NOT NULL,
                     error TEXT,
-                    created_at DATETIME,
-                    updated_at DATETIME
+                    created_at TIMESTAMP,
+                    updated_at TIMESTAMP
                 )
                 """
             )
@@ -143,16 +151,16 @@ async def test_init_db_backfills_runtime_columns_for_existing_sqlite_tables(tmp_
     assert settings_row["runtime_mode"] == "fallback"
     assert settings_row["storage_backend"] == "fallback_local"
     assert settings_row["pgvector_schema"] == "public"
-    assert settings_row["enable_image_processing"] in (1, True)
+    assert settings_row["enable_image_processing"] is True
     assert settings_row["mineru_timeout_ms"] == 14400000
-    assert settings_row["mineru_require_hpc"] in (1, True)
+    assert settings_row["mineru_require_hpc"] is True
     assert chunk_row["content_type"] == "text"
-    assert run_row["document_ids"] == "[]"
-    assert run_row["query_config"] == "{}"
+    assert run_row["document_ids"] == []
+    assert run_row["query_config"] == {}
 
     settings_obj = AppSettings(
         data_dir=tmp_path,
-        database_url=f"sqlite+aiosqlite:///{tmp_path / 'legacy.sqlite3'}",
+        database_url=database_url,
     )
     factory = make_session_factory(engine)
     async with factory() as session:

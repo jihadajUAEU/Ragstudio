@@ -15,11 +15,13 @@ if ! docker info >/dev/null 2>&1; then
 fi
 
 docker compose build backend frontend
+docker compose up -d postgres neo4j
 
 backend_run=(
-  docker compose run --rm --no-deps
-  -e RAGSTUDIO_DATABASE_URL=postgresql+asyncpg://ragstudio:ragstudio@127.0.0.1:55432/ragstudio
-  -e RAGSTUDIO_NEO4J_URI=bolt://127.0.0.1:57687
+  docker compose run --rm
+  -e RAGSTUDIO_DATABASE_URL=postgresql+asyncpg://ragstudio:ragstudio@postgres:5432/ragstudio
+  -e RAGSTUDIO_TEST_DATABASE_URL=postgresql+asyncpg://ragstudio:ragstudio@postgres:5432/ragstudio
+  -e RAGSTUDIO_NEO4J_URI=bolt://neo4j:7687
   backend
 )
 

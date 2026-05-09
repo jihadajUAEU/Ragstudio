@@ -4,6 +4,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ragstudio.api.background import create_background_task
 from ragstudio.api.deps import get_session
 from ragstudio.config import AppSettings
 from ragstudio.db.engine import make_engine, make_session_factory
@@ -69,7 +70,8 @@ async def create_index_document_job(
     job = await service.create_index_job(document_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Document not found")
-    asyncio.create_task(
+    create_background_task(
+        request.app,
         _run_index_document_job(request.app.state.settings, document_id, job.id, options)
     )
     return JobOut.model_validate(job)

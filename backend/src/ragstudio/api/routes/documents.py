@@ -15,6 +15,7 @@ from fastapi import (
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ragstudio.api.background import create_background_task
 from ragstudio.api.deps import get_session
 from ragstudio.api.upload_utils import read_upload_file
 from ragstudio.config import AppSettings
@@ -74,16 +75,16 @@ async def upload_document(
             options=options,
             index_immediately=False,
         )
-        if service.queued_index_job_id is None:
-            raise RuntimeError("Upload did not create an index job.")
-        asyncio.create_task(
-            _run_index_job(
-                settings,
-                document.id,
-                service.queued_index_job_id,
-                options or IndexDocumentIn(),
+        if service.queued_index_job_id is not None:
+            create_background_task(
+                request.app,
+                _run_index_job(
+                    settings,
+                    document.id,
+                    service.queued_index_job_id,
+                    options or IndexDocumentIn(),
+                )
             )
-        )
         return document
     except (RuntimeHealthBlockedError, RuntimeUnavailableError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc

@@ -41,7 +41,7 @@ async def test_runtime_profile_uses_saved_settings(client):
 
 
 @pytest.mark.asyncio
-async def test_runtime_profile_service_normalizes_index_shape(tmp_path):
+async def test_runtime_profile_service_normalizes_index_shape(tmp_path, database_url):
     payload = SettingsProfileIn(
         provider="openai-compatible",
         runtime_mode="runtime",
@@ -62,7 +62,7 @@ async def test_runtime_profile_service_normalizes_index_shape(tmp_path):
     )
     app = create_app(
         data_dir=tmp_path,
-        database_url=f"sqlite+aiosqlite:///{tmp_path / 'test.sqlite3'}",
+        database_url=database_url,
     )
     async with app.router.lifespan_context(app):
         async with app.state.session_factory() as session:

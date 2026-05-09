@@ -111,8 +111,8 @@ async def test_runtime_health_reports_missing_profile_as_fallback_available():
 
 
 @pytest.mark.asyncio
-async def test_runtime_health_verifies_pgvector_requires_postgres(tmp_path):
-    engine = make_engine(f"sqlite+aiosqlite:///{tmp_path / 'health.sqlite3'}")
+async def test_runtime_health_verifies_pgvector_storage(database_url):
+    engine = make_engine(database_url)
     await init_db(engine)
     factory = make_session_factory(engine)
 
@@ -134,6 +134,5 @@ async def test_runtime_health_verifies_pgvector_requires_postgres(tmp_path):
 
     pgvector = next(item for item in checks if item.name == "pgvector")
     neo4j = next(item for item in checks if item.name == "neo4j")
-    assert pgvector.status == "failed"
-    assert pgvector.error_type == "storage_backend_mismatch"
+    assert pgvector.status == "ok"
     assert neo4j.status == "ok"

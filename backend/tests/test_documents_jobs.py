@@ -9,6 +9,19 @@ from ragstudio.services.document_service import DocumentService
 from sqlalchemy import select
 
 
+async def wait_for_document_status(client, document_id: str, status: str) -> dict:
+    for _ in range(50):
+        response = await client.get("/api/documents")
+        assert response.status_code == 200
+        document = next(
+            item for item in response.json()["items"] if item["id"] == document_id
+        )
+        if document["status"] == status:
+            return document
+        await asyncio.sleep(0.05)
+    raise AssertionError(f"Document {document_id} did not reach {status}")
+
+
 @pytest.mark.asyncio
 async def test_upload_document_creates_document_and_index_job(client):
     files = {"file": ("sample.txt", b"alpha beta gamma", "text/plain")}
@@ -18,7 +31,8 @@ async def test_upload_document_creates_document_and_index_job(client):
     assert upload_response.status_code == 201
     document = upload_response.json()
     assert document["filename"] == "sample.txt"
-    assert document["status"] == "succeeded"
+    assert document["status"] == "running"
+    await wait_for_document_status(client, document["id"], "succeeded")
 
     jobs_response = await client.get("/api/jobs")
     assert jobs_response.status_code == 200
@@ -56,6 +70,7 @@ async def test_upload_document_is_idempotent_by_content_hash(client):
     files = {"file": ("sample.txt", b"same bytes", "text/plain")}
 
     first_response = await client.post("/api/documents", files=files)
+    await wait_for_document_status(client, first_response.json()["id"], "succeeded")
     second_response = await client.post(
         "/api/documents",
         files={"file": ("copy.txt", b"same bytes", "text/plain")},
@@ -78,8 +93,11 @@ async def test_upload_document_is_idempotent_by_content_hash(client):
 
 
 @pytest.mark.asyncio
-async def test_duplicate_uploads_with_different_filenames_share_one_artifact(tmp_path):
-    engine = make_engine(f"sqlite+aiosqlite:///{tmp_path / 'studio.sqlite3'}")
+async def test_duplicate_uploads_with_different_filenames_share_one_artifact(
+    tmp_path,
+    database_url,
+):
+    engine = make_engine(database_url)
     session_factory = make_session_factory(engine)
     await init_db(engine)
 
@@ -101,8 +119,8 @@ async def test_duplicate_uploads_with_different_filenames_share_one_artifact(tmp
 
 
 @pytest.mark.asyncio
-async def test_duplicate_upload_indexes_legacy_unindexed_document(tmp_path):
-    engine = make_engine(f"sqlite+aiosqlite:///{tmp_path / 'studio.sqlite3'}")
+async def test_duplicate_upload_indexes_legacy_unindexed_document(tmp_path, database_url):
+    engine = make_engine(database_url)
     session_factory = make_session_factory(engine)
     await init_db(engine)
 
@@ -147,6 +165,8 @@ async def test_concurrent_duplicate_uploads_are_idempotent(client):
     assert {response.status_code for response in responses} == {201}
     document_ids = {response.json()["id"] for response in responses}
     assert len(document_ids) == 1
+    document_id = next(iter(document_ids))
+    await wait_for_document_status(client, document_id, "succeeded")
 
     documents_response = await client.get("/api/documents")
     assert documents_response.status_code == 200
@@ -157,12 +177,16 @@ async def test_concurrent_duplicate_uploads_are_idempotent(client):
     assert jobs_response.status_code == 200
     index_jobs = [job for job in jobs_response.json()["items"] if job["type"] == "index_document"]
     assert len(index_jobs) == 1
-    assert index_jobs[0]["target_id"] == responses[0].json()["id"]
+    assert index_jobs[0]["target_id"] == document_id
 
 
 @pytest.mark.asyncio
-async def test_upload_failure_preserves_content_addressed_artifact(tmp_path, monkeypatch):
-    engine = make_engine(f"sqlite+aiosqlite:///{tmp_path / 'studio.sqlite3'}")
+async def test_upload_failure_preserves_content_addressed_artifact(
+    tmp_path,
+    database_url,
+    monkeypatch,
+):
+    engine = make_engine(database_url)
     session_factory = make_session_factory(engine)
     await init_db(engine)
 
@@ -186,8 +210,11 @@ async def test_upload_failure_preserves_content_addressed_artifact(tmp_path, mon
 
 
 @pytest.mark.asyncio
-async def test_upload_document_sanitizes_artifact_path_for_unsafe_filename(tmp_path):
-    engine = make_engine(f"sqlite+aiosqlite:///{tmp_path / 'studio.sqlite3'}")
+async def test_upload_document_sanitizes_artifact_path_for_unsafe_filename(
+    tmp_path,
+    database_url,
+):
+    engine = make_engine(database_url)
     session_factory = make_session_factory(engine)
     await init_db(engine)
 

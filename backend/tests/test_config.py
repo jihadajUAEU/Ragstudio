@@ -14,7 +14,10 @@ def test_app_settings_default_database_is_postgres():
 def test_app_settings_accepts_explicit_database_url():
     settings = AppSettings(
         data_dir=Path("/tmp/ragstudio-test"),
-        database_url="sqlite+aiosqlite:////tmp/ragstudio-test.sqlite3",
+        database_url="postgresql+asyncpg://user:password@postgres:5432/ragstudio",
     )
 
-    assert settings.resolved_database_url == "sqlite+aiosqlite:////tmp/ragstudio-test.sqlite3"
+    assert (
+        settings.resolved_database_url
+        == "postgresql+asyncpg://user:password@postgres:5432/ragstudio"
+    )

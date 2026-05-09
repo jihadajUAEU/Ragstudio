@@ -22,8 +22,8 @@ class FailingIndexService(DocumentService):
 
 
 @pytest.mark.asyncio
-async def test_arabic_phrase_search_matches_indexed_chunk(tmp_path):
-    engine = make_engine(f"sqlite+aiosqlite:///{tmp_path / 'studio.sqlite3'}")
+async def test_arabic_phrase_search_matches_indexed_chunk(tmp_path, database_url):
+    engine = make_engine(database_url)
     session_factory = make_session_factory(engine)
     await init_db(engine)
 
@@ -66,8 +66,8 @@ async def test_arabic_phrase_search_matches_indexed_chunk(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_run_index_job_marks_strict_mineru_failure(tmp_path):
-    engine = make_engine(f"sqlite+aiosqlite:///{tmp_path / 'studio.sqlite3'}")
+async def test_run_index_job_marks_strict_mineru_failure(tmp_path, database_url):
+    engine = make_engine(database_url)
     session_factory = make_session_factory(engine)
     await init_db(engine)
 
@@ -108,8 +108,12 @@ async def test_run_index_job_marks_strict_mineru_failure(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_run_index_job_preserves_mineru_status_on_success(tmp_path, monkeypatch):
-    engine = make_engine(f"sqlite+aiosqlite:///{tmp_path / 'studio.sqlite3'}")
+async def test_run_index_job_preserves_mineru_status_on_success(
+    tmp_path,
+    database_url,
+    monkeypatch,
+):
+    engine = make_engine(database_url)
     session_factory = make_session_factory(engine)
     await init_db(engine)
 
@@ -466,8 +470,8 @@ async def test_create_reindex_job_returns_conflict_when_runtime_health_blocks(cl
 
 
 @pytest.mark.asyncio
-async def test_mineru_strict_blocks_when_sidecar_is_local_only(tmp_path):
-    engine = make_engine(f"sqlite+aiosqlite:///{tmp_path / 'test.sqlite3'}")
+async def test_mineru_strict_blocks_when_sidecar_is_local_only(tmp_path, database_url):
+    engine = make_engine(database_url)
     await init_db(engine)
     factory = make_session_factory(engine)
 

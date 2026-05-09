@@ -3,10 +3,10 @@ from typing import cast
 from ragstudio.db.models import SettingsProfile
 from ragstudio.schemas.runtime import QueryMode, RerankerProvider, RuntimeMode, StorageBackend
 from ragstudio.schemas.settings import (
+    MINERU_DEFAULT_TIMEOUT_MS,
     EmbeddingProvider,
     LlmCapability,
     LlmProvider,
-    MINERU_DEFAULT_TIMEOUT_MS,
     SettingsProfileIn,
     SettingsProfileOut,
 )

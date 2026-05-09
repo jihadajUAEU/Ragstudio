@@ -16,6 +16,8 @@ def is_postgres_url(database_url: str) -> bool:
 
 
 def make_engine(database_url: str) -> AsyncEngine:
+    if not is_postgres_url(database_url):
+        raise ValueError("Ragstudio requires PostgreSQL for the metadata database.")
     return create_async_engine(database_url, future=True)
 
 
