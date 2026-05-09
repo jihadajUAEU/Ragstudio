@@ -339,7 +339,11 @@ class DocumentService:
             chunks = await IndexLifecycleService(
                 self.session,
                 self.settings,
-            ).reindex_document(document.id, options=options)
+            ).reindex_document(
+                document.id,
+                options=options,
+                on_mineru_status=on_mineru_status,
+            )
         else:
             chunks = await ChunkService(self.session, self.store.root).index_document(
                 document.id,

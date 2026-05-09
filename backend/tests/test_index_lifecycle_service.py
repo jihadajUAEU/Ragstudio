@@ -246,9 +246,10 @@ async def test_lifecycle_uses_preparsed_mineru_chunks_for_strict_runtime_reindex
         session.add(document)
         await session.commit()
 
-        async def fake_mineru_chunks(self, document_arg, options):
+        async def fake_mineru_chunks(self, document_arg, options, *, on_mineru_status=None):
             assert document_arg.id == document.id
             assert options.parser_mode == "mineru_strict"
+            assert on_mineru_status is None
             return [
                 AdapterChunk(
                     text="Remote MinerU chunk",
@@ -277,6 +278,127 @@ async def test_lifecycle_uses_preparsed_mineru_chunks_for_strict_runtime_reindex
     assert runtime.preparsed_paths == [str(artifact_path)]
     assert chunks is not None
     assert [chunk.text for chunk in chunks] == ["Remote MinerU chunk"]
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_preserves_runtime_index_when_strict_mineru_parse_fails(
+    client,
+    monkeypatch,
+):
+    app = client._transport.app
+    artifact_path = app.state.settings.data_dir / "strict-mineru-fails.pdf"
+    artifact_path.write_text("runtime text", encoding="utf-8")
+
+    async with app.state.session_factory() as session:
+        session.add(
+            SettingsProfile(
+                id="default",
+                provider="openai-compatible",
+                llm_model="gpt-4o",
+                llm_base_url="http://llm.test",
+                embedding_model="text-embedding-3-large",
+                embedding_base_url="http://embedding.test",
+                storage_backend="postgres_pgvector_neo4j",
+                runtime_mode="runtime",
+            )
+        )
+        document = Document(
+            filename="strict-mineru-fails.pdf",
+            content_type="application/pdf",
+            sha256="strict-mineru-fails",
+            artifact_path=str(artifact_path),
+            status=StageStatus.READY.value,
+        )
+        session.add(document)
+        await session.commit()
+
+        async def failing_mineru_chunks(self, document_arg, options, *, on_mineru_status=None):
+            raise RuntimeError("remote MinerU failed")
+
+        monkeypatch.setattr(
+            IndexLifecycleService,
+            "_mineru_adapter_chunks",
+            failing_mineru_chunks,
+        )
+        runtime = PreparsedRuntime()
+
+        with pytest.raises(RuntimeError, match="remote MinerU failed"):
+            await IndexLifecycleService(
+                session,
+                app.state.settings,
+                runtime_factory=FakeFactory(runtime),
+                health_service=FakeHealthService(),
+            ).reindex_document(
+                document.id,
+                options=IndexDocumentIn(parser_mode="mineru_strict"),
+            )
+
+    assert runtime.deleted == []
+    assert runtime.preparsed_paths == []
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_forwards_runtime_mineru_status_callback(client, monkeypatch):
+    app = client._transport.app
+    artifact_path = app.state.settings.data_dir / "strict-mineru-progress.pdf"
+    artifact_path.write_text("runtime text", encoding="utf-8")
+    statuses = []
+
+    async with app.state.session_factory() as session:
+        session.add(
+            SettingsProfile(
+                id="default",
+                provider="openai-compatible",
+                llm_model="gpt-4o",
+                llm_base_url="http://llm.test",
+                embedding_model="text-embedding-3-large",
+                embedding_base_url="http://embedding.test",
+                storage_backend="postgres_pgvector_neo4j",
+                runtime_mode="runtime",
+            )
+        )
+        document = Document(
+            filename="strict-mineru-progress.pdf",
+            content_type="application/pdf",
+            sha256="strict-mineru-progress",
+            artifact_path=str(artifact_path),
+            status=StageStatus.READY.value,
+        )
+        session.add(document)
+        await session.commit()
+
+        async def fake_mineru_chunks(self, document_arg, options, *, on_mineru_status=None):
+            assert on_mineru_status is not None
+            await on_mineru_status({"status": "running", "progress": 42})
+            return [
+                AdapterChunk(
+                    text="Remote MinerU chunk",
+                    source_location={"page_start": 1, "page_end": 1},
+                    metadata={"parser_metadata": {"backend": "mineru"}},
+                )
+            ]
+
+        async def collect_status(status):
+            statuses.append(status)
+
+        monkeypatch.setattr(
+            IndexLifecycleService,
+            "_mineru_adapter_chunks",
+            fake_mineru_chunks,
+        )
+
+        await IndexLifecycleService(
+            session,
+            app.state.settings,
+            runtime_factory=FakeFactory(PreparsedRuntime()),
+            health_service=FakeHealthService(),
+        ).reindex_document(
+            document.id,
+            options=IndexDocumentIn(parser_mode="mineru_strict"),
+            on_mineru_status=collect_status,
+        )
+
+    assert statuses == [{"status": "running", "progress": 42}]
 
 
 @pytest.mark.asyncio

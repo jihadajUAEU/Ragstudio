@@ -1,3 +1,4 @@
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from inspect import signature
 from typing import Any
@@ -25,6 +26,9 @@ class RuntimeHealthBlockedError(RuntimeError):
     pass
 
 
+MinerUStatusCallback = Callable[[dict[str, Any]], Awaitable[None]]
+
+
 class IndexLifecycleService:
     def __init__(
         self,
@@ -46,6 +50,7 @@ class IndexLifecycleService:
         document_id: str,
         *,
         options: IndexDocumentIn | None = None,
+        on_mineru_status: MinerUStatusCallback | None = None,
     ) -> list[ChunkOut] | None:
         document = await self.session.get(Document, document_id)
         if document is None:
@@ -68,13 +73,18 @@ class IndexLifecycleService:
         # Do not hold the Studio session's transaction open while runtime storage works,
         # or Postgres can block the runtime on our own idle transaction.
         artifact_path = document.artifact_path
+        preparsed_chunks = await self._preparse_runtime_document(
+            runtime,
+            document,
+            options,
+            on_mineru_status=on_mineru_status,
+        )
         await runtime.delete_document_index(document.id)
         runtime_chunks = await self._index_runtime_document(
             runtime,
             artifact_path,
             document.id,
-            document,
-            options,
+            preparsed_chunks=preparsed_chunks,
         )
 
         await self.session.execute(delete(Chunk).where(Chunk.document_id == document.id))
@@ -139,27 +149,44 @@ class IndexLifecycleService:
             await self.session.refresh(chunk)
         return [ChunkOut.model_validate(chunk) for chunk in chunks]
 
+    async def _preparse_runtime_document(
+        self,
+        runtime: Any,
+        document: Document,
+        options: IndexDocumentIn,
+        *,
+        on_mineru_status: MinerUStatusCallback | None = None,
+    ) -> list[AdapterChunk] | None:
+        if options.parser_mode == "local_fallback" or not hasattr(
+            runtime,
+            "index_preparsed_chunks",
+        ):
+            return None
+        try:
+            return await self._mineru_adapter_chunks(
+                document,
+                options,
+                on_mineru_status=on_mineru_status,
+            )
+        except Exception:
+            if options.parser_mode == "mineru_strict":
+                raise
+            return None
+
     async def _index_runtime_document(
         self,
         runtime: Any,
         artifact_path: str,
         document_id: str,
-        document: Document,
-        options: IndexDocumentIn,
+        *,
+        preparsed_chunks: list[AdapterChunk] | None = None,
     ) -> list[Any]:
-        if options.parser_mode != "local_fallback" and hasattr(runtime, "index_preparsed_chunks"):
-            try:
-                adapter_chunks = await self._mineru_adapter_chunks(document, options)
-            except Exception:
-                if options.parser_mode == "mineru_strict":
-                    raise
-            else:
-                return await runtime.index_preparsed_chunks(
-                    artifact_path,
-                    adapter_chunks,
-                    document_id=document_id,
-                )
-
+        if preparsed_chunks is not None:
+            return await runtime.index_preparsed_chunks(
+                artifact_path,
+                preparsed_chunks,
+                document_id=document_id,
+            )
         parameters = signature(runtime.index_document).parameters
         if "document_id" in parameters:
             return await runtime.index_document(artifact_path, document_id=document_id)
@@ -169,6 +196,8 @@ class IndexLifecycleService:
         self,
         document: Document,
         options: IndexDocumentIn,
+        *,
+        on_mineru_status: MinerUStatusCallback | None = None,
     ) -> list[AdapterChunk]:
         settings = await self.session.get(SettingsProfile, "default")
         if settings is None or not settings.mineru_base_url:
@@ -213,6 +242,7 @@ class IndexLifecycleService:
             content_type=content_type,
             sha256=sha256,
             domain_metadata=domain_metadata,
+            on_status=on_mineru_status,
         )
         return client.normalize_artifact_zip(
             artifact_zip=job_result.artifact_zip,

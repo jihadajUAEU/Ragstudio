@@ -373,9 +373,17 @@ class NativeRAGAnythingAdapter:
         path: Path,
     ) -> list[RuntimeChunk]:
         output: list[RuntimeChunk] = []
+        seen_content_lists: set[tuple[str, str]] = set()
         for index, chunk in enumerate(chunks):
             parser_metadata = chunk.metadata.get("parser_metadata")
             metadata = dict(parser_metadata) if isinstance(parser_metadata, dict) else {}
+            extract_dir = metadata.get("artifact_extract_dir")
+            content_ref = metadata.get("content_list_ref")
+            if isinstance(extract_dir, str) and isinstance(content_ref, str):
+                content_key = (extract_dir, content_ref)
+                if content_key in seen_content_lists:
+                    continue
+                seen_content_lists.add(content_key)
             metadata.update(
                 {
                     "backend": metadata.get("backend", "mineru"),

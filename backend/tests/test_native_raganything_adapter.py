@@ -202,6 +202,53 @@ async def test_native_adapter_indexes_preparsed_chunks_without_local_parse(tmp_p
 
 
 @pytest.mark.asyncio
+async def test_native_adapter_deduplicates_shared_content_list_mirror_seeds(tmp_path):
+    artifact = tmp_path / "paper.pdf"
+    artifact.write_text("pdf", encoding="utf-8")
+    extract_dir = tmp_path / "mineru"
+    extract_dir.mkdir()
+    (extract_dir / "source_content_list.json").write_text(
+        '[{"type": "text", "text": "Page one", "page_idx": 0},'
+        '{"type": "text", "text": "Page two", "page_idx": 1}]',
+        encoding="utf-8",
+    )
+    shared_metadata = {
+        "parser_metadata": {
+            "backend": "mineru",
+            "artifact_extract_dir": str(extract_dir),
+            "content_list_ref": "source_content_list.json",
+        }
+    }
+    adapter = NativeRAGAnythingAdapter(
+        profile(runtime_working_dir=str(tmp_path / "runtime")),
+        AppSettings(database_url="postgresql+asyncpg://user:pass@localhost:5432/ragstudio"),
+    )
+
+    chunks = await adapter.index_preparsed_chunks(
+        artifact,
+        [
+            AdapterChunk(
+                text="Markdown artifact one",
+                source_location={"artifact": "one.md"},
+                metadata=shared_metadata,
+            ),
+            AdapterChunk(
+                text="Markdown artifact two",
+                source_location={"artifact": "two.md"},
+                metadata=shared_metadata,
+            ),
+        ],
+        document_id="studio-doc-id",
+    )
+
+    assert len(chunks) == 1
+    assert FakeRAGAnything.instances[0].inserted_content_list == [
+        {"type": "text", "text": "Page one", "page_idx": 0},
+        {"type": "text", "text": "Page two", "page_idx": 1},
+    ]
+
+
+@pytest.mark.asyncio
 async def test_native_adapter_queries_raganything(tmp_path):
     adapter = NativeRAGAnythingAdapter(
         profile(runtime_working_dir=str(tmp_path / "runtime")),
