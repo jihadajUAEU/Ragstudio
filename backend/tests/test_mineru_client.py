@@ -33,6 +33,94 @@ async def test_mineru_client_parses_artifact_zip(tmp_path):
     assert chunks[0].metadata["parser_metadata"]["parse_job_id"] == "job-1"
 
 
+def test_mineru_client_adds_content_list_metadata_from_files_manifest(tmp_path):
+    artifact_zip = tmp_path / "artifact.zip"
+    with ZipFile(artifact_zip, "w") as archive:
+        archive.writestr(
+            "manifest.json",
+            json.dumps(
+                {
+                    "files": [
+                        {"path": "pages/page-1.md", "kind": "markdown"},
+                        {"path": "source/auto/source_content_list.json", "kind": "json"},
+                    ]
+                }
+            ),
+        )
+        archive.writestr("pages/page-1.md", "Alpha page text")
+        archive.writestr("source/auto/source_content_list.json", "[]")
+    extract_dir = tmp_path / "extract"
+
+    client = MinerUClient(base_url="http://mineru.test", timeout_ms=1000, poll_interval_ms=100)
+    chunks = client.normalize_artifact_zip(
+        artifact_zip=artifact_zip,
+        extract_dir=extract_dir,
+        document_id="doc-1",
+        parser_mode="mineru_strict",
+        parse_job_id="job-1",
+    )
+
+    parser_metadata = chunks[0].metadata["parser_metadata"]
+    assert parser_metadata["artifact_extract_dir"] == str(extract_dir.resolve())
+    assert parser_metadata["content_list_ref"] == "source/auto/source_content_list.json"
+
+
+def test_mineru_client_adds_content_list_metadata_from_items_manifest(tmp_path):
+    artifact_zip = tmp_path / "artifact.zip"
+    with ZipFile(artifact_zip, "w") as archive:
+        archive.writestr(
+            "manifest.json",
+            json.dumps(
+                {
+                    "items": [
+                        {"path": "pages/page-1.md", "contentType": "text/markdown"},
+                        {
+                            "path": "source/auto/source_content_list_v2.json",
+                            "contentType": "application/json",
+                        },
+                    ]
+                }
+            ),
+        )
+        archive.writestr("pages/page-1.md", "Alpha page text")
+        archive.writestr("source/auto/source_content_list_v2.json", "[]")
+    extract_dir = tmp_path / "extract"
+
+    client = MinerUClient(base_url="http://mineru.test", timeout_ms=1000, poll_interval_ms=100)
+    chunks = client.normalize_artifact_zip(
+        artifact_zip=artifact_zip,
+        extract_dir=extract_dir,
+        document_id="doc-1",
+        parser_mode="mineru_strict",
+        parse_job_id="job-1",
+    )
+
+    parser_metadata = chunks[0].metadata["parser_metadata"]
+    assert parser_metadata["artifact_extract_dir"] == str(extract_dir.resolve())
+    assert parser_metadata["content_list_ref"] == "source/auto/source_content_list_v2.json"
+
+
+def test_mineru_client_adds_content_list_metadata_from_extracted_tree(tmp_path):
+    artifact_zip = tmp_path / "artifact.zip"
+    with ZipFile(artifact_zip, "w") as archive:
+        archive.writestr("pages/page-1.md", "Alpha page text")
+        archive.writestr("source/auto/source_content_list.json", "[]")
+    extract_dir = tmp_path / "extract"
+
+    client = MinerUClient(base_url="http://mineru.test", timeout_ms=1000, poll_interval_ms=100)
+    chunks = client.normalize_artifact_zip(
+        artifact_zip=artifact_zip,
+        extract_dir=extract_dir,
+        document_id="doc-1",
+        parser_mode="mineru_strict",
+        parse_job_id="job-1",
+    )
+
+    parser_metadata = chunks[0].metadata["parser_metadata"]
+    assert parser_metadata["artifact_extract_dir"] == str(extract_dir.resolve())
+    assert parser_metadata["content_list_ref"] == "source/auto/source_content_list.json"
+
+
 def test_mineru_client_rejects_unsafe_zip_paths(tmp_path):
     artifact_zip = tmp_path / "unsafe.zip"
     with ZipFile(artifact_zip, "w") as archive:

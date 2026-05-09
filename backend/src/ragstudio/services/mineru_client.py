@@ -192,6 +192,7 @@ class MinerUClient:
         self._extract_safe(artifact_zip, extract_dir)
         manifest = self._read_manifest(extract_dir)
         related_artifacts = self._related_artifacts(manifest, extract_dir)
+        content_list_ref = self._content_list_ref(manifest, extract_dir)
         chunks: list[AdapterChunk] = []
         for index, item in enumerate(self._manifest_entries(manifest, extract_dir)):
             rel_path = str(item.get("path") or "")
@@ -214,28 +215,28 @@ class MinerUClient:
                 page_value = item.get(manifest_key)
                 if isinstance(page_value, int):
                     source_location[source_key] = page_value
+            parser_metadata = {
+                "backend": "mineru",
+                "parser_mode": parser_mode,
+                "parse_job_id": parse_job_id,
+                "parse_method": manifest.get("parseMethod"),
+                "source_id": manifest.get("sourceId"),
+                "sha256": manifest.get("sha256"),
+                "parser": manifest.get("parser"),
+                "artifact_ref": safe_rel_path,
+                "content_type": str(item.get("contentType") or item.get("kind") or "text"),
+                "chunk_index": index,
+                "document_id": document_id,
+                "related_artifacts": related_artifacts,
+            }
+            if content_list_ref is not None:
+                parser_metadata["artifact_extract_dir"] = str(extract_dir.resolve())
+                parser_metadata["content_list_ref"] = content_list_ref
             chunks.append(
                 AdapterChunk(
                     text=text,
                     source_location=source_location,
-                    metadata={
-                        "parser_metadata": {
-                            "backend": "mineru",
-                            "parser_mode": parser_mode,
-                            "parse_job_id": parse_job_id,
-                            "parse_method": manifest.get("parseMethod"),
-                            "source_id": manifest.get("sourceId"),
-                            "sha256": manifest.get("sha256"),
-                            "parser": manifest.get("parser"),
-                            "artifact_ref": safe_rel_path,
-                            "content_type": str(
-                                item.get("contentType") or item.get("kind") or "text"
-                            ),
-                            "chunk_index": index,
-                            "document_id": document_id,
-                            "related_artifacts": related_artifacts,
-                        }
-                    },
+                    metadata={"parser_metadata": parser_metadata},
                 )
             )
         return chunks
@@ -301,6 +302,29 @@ class MinerUClient:
             seen.add(safe_ref)
             related.append({"path": safe_ref, "kind": kind})
         return related
+
+    def _content_list_ref(self, manifest: dict[str, Any], extract_dir: Path) -> str | None:
+        names = {"source_content_list.json", "source_content_list_v2.json"}
+        raw_entries = [*self._raw_manifest_entries(manifest, "files")]
+        raw_entries.extend(self._raw_manifest_entries(manifest, "items"))
+        for item in raw_entries:
+            path = str(item.get("path") or "")
+            if not path or Path(path).name not in names:
+                continue
+            safe_path = self._safe_manifest_path(extract_dir, path)
+            if safe_path.exists() and safe_path.is_file():
+                return safe_path.relative_to(extract_dir.resolve()).as_posix()
+        for name in sorted(names):
+            matches = sorted(extract_dir.rglob(name))
+            for path in matches:
+                rel_path = path.resolve().relative_to(extract_dir.resolve()).as_posix()
+                safe_path = self._safe_manifest_path(
+                    extract_dir,
+                    rel_path,
+                )
+                if safe_path.is_file():
+                    return safe_path.relative_to(extract_dir.resolve()).as_posix()
+        return None
 
     def _is_text_artifact(self, item: dict[str, Any]) -> bool:
         path = str(item.get("path") or "").lower()
