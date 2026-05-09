@@ -141,9 +141,11 @@ class FakeConfig:
 
 
 class FakeChunkVectorStorage:
-    def __init__(self, rows):
+    def __init__(self, rows, hydrated_rows=None):
         self.rows = rows
+        self.hydrated_rows = hydrated_rows or rows
         self.calls = []
+        self.get_by_ids_calls = []
         self.cosine_better_than_threshold = 0.2
 
     async def query(self, query, top_k, query_embedding=None):
@@ -151,6 +153,11 @@ class FakeChunkVectorStorage:
             {"query": query, "top_k": top_k, "query_embedding": query_embedding}
         )
         return self.rows[:top_k]
+
+    async def get_by_ids(self, ids):
+        self.get_by_ids_calls.append(ids)
+        by_id = {str(row.get("id")): row for row in self.hydrated_rows}
+        return [by_id.get(str(row_id)) for row_id in ids]
 
 
 class FakeLightRAG:
@@ -236,6 +243,30 @@ async def test_scoped_vector_proxy_preserves_base_attributes():
     proxy = ScopedVectorStorageProxy(base, ["doc-1"])
 
     assert proxy.cosine_better_than_threshold == 0.2
+
+
+@pytest.mark.asyncio
+async def test_scoped_vector_proxy_hydrates_full_doc_id_before_filtering():
+    from ragstudio.services.native_raganything_adapter import ScopedVectorStorageProxy
+
+    base = FakeChunkVectorStorage(
+        [
+            {"id": "chunk-1", "content": "inside one"},
+            {"id": "chunk-2", "content": "outside"},
+        ],
+        hydrated_rows=[
+            {"id": "chunk-1", "full_doc_id": "doc-1", "content": "inside one"},
+            {"id": "chunk-2", "full_doc_id": "doc-2", "content": "outside"},
+        ],
+    )
+    proxy = ScopedVectorStorageProxy(base, ["doc-1"])
+
+    rows = await proxy.query("question", top_k=2)
+
+    assert [row["id"] for row in rows] == ["chunk-1"]
+    assert base.get_by_ids_calls == [["chunk-1", "chunk-2"]]
+    assert proxy.raw_results[0]["full_doc_id"] == "doc-1"
+    assert proxy.collected_results[0]["full_doc_id"] == "doc-1"
 
 
 @pytest.mark.asyncio

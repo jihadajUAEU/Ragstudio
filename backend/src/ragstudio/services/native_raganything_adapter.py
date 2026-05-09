@@ -48,6 +48,7 @@ class ScopedVectorStorageProxy:
             top_k=requested_top_k,
             query_embedding=query_embedding,
         )
+        rows = await self._with_full_doc_ids(rows)
         self.raw_results.extend(rows)
         scoped_rows = [
             row
@@ -56,6 +57,28 @@ class ScopedVectorStorageProxy:
         ][:top_k]
         self.collected_results.extend(scoped_rows)
         return scoped_rows
+
+    async def _with_full_doc_ids(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        missing_ids = [
+            str(row.get("id"))
+            for row in rows
+            if row.get("id") is not None and not row.get("full_doc_id")
+        ]
+        if not missing_ids or not hasattr(self.base, "get_by_ids"):
+            return rows
+
+        hydrated_rows = await self.base.get_by_ids(missing_ids)
+        hydrated_by_id = {
+            str(row.get("id")): dict(row)
+            for row in hydrated_rows
+            if isinstance(row, dict) and row.get("id") is not None
+        }
+        return [
+            {**hydrated_by_id.get(str(row.get("id")), {}), **row}
+            if row.get("full_doc_id")
+            else {**row, **hydrated_by_id.get(str(row.get("id")), {})}
+            for row in rows
+        ]
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self.base, name)
