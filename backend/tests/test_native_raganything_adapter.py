@@ -367,6 +367,41 @@ def test_native_adapter_reports_scoped_query_capability(tmp_path):
     )
 
 
+def test_native_adapter_supplies_placeholder_api_keys_for_local_runtime(tmp_path):
+    adapter = NativeRAGAnythingAdapter(
+        profile(runtime_working_dir=str(tmp_path / "runtime")),
+        AppSettings(database_url="postgresql+asyncpg://user:pass@localhost:5432/ragstudio"),
+    )
+
+    rag = adapter._raganything()
+
+    assert rag.kwargs["llm_model_func"].keywords["api_key"] == "ragstudio-local-runtime"
+    assert rag.kwargs["embedding_func"].kwargs["func"].keywords["api_key"] == (
+        "ragstudio-local-runtime"
+    )
+    assert rag.kwargs["vision_model_func"].keywords["api_key"] == "ragstudio-local-runtime"
+
+
+def test_native_adapter_preserves_configured_api_keys(tmp_path):
+    adapter = NativeRAGAnythingAdapter(
+        profile(
+            runtime_working_dir=str(tmp_path / "runtime"),
+            llm_api_key="llm-secret",
+            embedding_api_key="embedding-secret",
+            vision_api_key="vision-secret",
+        ),
+        AppSettings(database_url="postgresql+asyncpg://user:pass@localhost:5432/ragstudio"),
+    )
+
+    rag = adapter._raganything()
+
+    assert rag.kwargs["llm_model_func"].keywords["api_key"] == "llm-secret"
+    assert rag.kwargs["embedding_func"].kwargs["func"].keywords["api_key"] == (
+        "embedding-secret"
+    )
+    assert rag.kwargs["vision_model_func"].keywords["api_key"] == "vision-secret"
+
+
 @pytest.mark.asyncio
 async def test_native_adapter_queries_selected_documents_with_scoped_lightrag(tmp_path):
     adapter = NativeRAGAnythingAdapter(

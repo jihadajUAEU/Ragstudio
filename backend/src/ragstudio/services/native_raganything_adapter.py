@@ -223,7 +223,7 @@ class NativeRAGAnythingAdapter:
             openai_module.openai_complete_if_cache,
             model=self.profile.llm_model,
             base_url=self.profile.llm_base_url,
-            api_key=self.profile.llm_api_key,
+            api_key=self._api_key_or_placeholder(self.profile.llm_api_key),
             timeout=self.profile.llm_timeout_ms / 1000,
         )
         embedding_impl = getattr(openai_module.openai_embed, "func", openai_module.openai_embed)
@@ -233,7 +233,7 @@ class NativeRAGAnythingAdapter:
                 embedding_impl,
                 model=self.profile.embedding_model,
                 base_url=self.profile.embedding_base_url,
-                api_key=self.profile.embedding_api_key,
+                api_key=self._api_key_or_placeholder(self.profile.embedding_api_key),
             ),
             model_name=self.profile.embedding_model,
         )
@@ -243,7 +243,9 @@ class NativeRAGAnythingAdapter:
                 openai_module.openai_complete_if_cache,
                 model=self.profile.vision_model or self.profile.llm_model,
                 base_url=self.profile.vision_base_url or self.profile.llm_base_url,
-                api_key=self.profile.vision_api_key or self.profile.llm_api_key,
+                api_key=self._api_key_or_placeholder(
+                    self.profile.vision_api_key or self.profile.llm_api_key,
+                ),
                 timeout=self.profile.vision_timeout_ms / 1000,
             )
 
@@ -270,6 +272,9 @@ class NativeRAGAnythingAdapter:
             lightrag_kwargs=self._lightrag_kwargs(),
         )
         return self._rag
+
+    def _api_key_or_placeholder(self, api_key: str | None) -> str:
+        return api_key or "ragstudio-local-runtime"
 
     def _lightrag_kwargs(self) -> dict[str, Any]:
         return {
