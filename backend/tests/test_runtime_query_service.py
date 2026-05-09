@@ -128,6 +128,49 @@ async def test_query_service_uses_runtime_without_chunk_search(client):
 
 
 @pytest.mark.asyncio
+async def test_query_service_records_native_scoped_runtime_success(client):
+    app = client._transport.app
+    runtime = FakeRuntime(
+        RuntimeQueryResult(
+            answer="native scoped answer",
+            sources=[
+                {
+                    "chunk_id": "chunk-1",
+                    "document_id": "doc-1",
+                    "text": "Sahih al-Bukhari 7277 Hadith Collection",
+                    "metadata": {"native_scope": True},
+                }
+            ],
+            chunk_traces=[{"rank": 1, "inclusion_status": "native-scoped"}],
+            timings={"runtime_query_ms": 7, "native_scoped_query": True},
+        )
+    )
+    async with app.state.session_factory() as session:
+        document, variant = await _create_runtime_records(session, app)
+
+        result = await QueryService(
+            session,
+            app.state.settings.data_dir,
+            settings=app.state.settings,
+            runtime_factory=FakeFactory(runtime),
+            health_service=FakeHealthService(),
+        ).run_query(
+            QueryIn(
+                query="how many hadith in bukhari",
+                document_ids=[document.id],
+                variant_ids=[variant.id],
+            )
+        )
+
+    run = result.runs[0]
+    assert run.status == StageStatus.SUCCEEDED
+    assert run.answer == "native scoped answer"
+    assert run.sources[0]["metadata"]["native_scope"] is True
+    assert run.timings["native_scoped_query"] is True
+    assert "scoped_runtime_fallback" not in run.timings
+
+
+@pytest.mark.asyncio
 async def test_query_service_falls_back_to_mirrored_chunks_for_native_scope_limitation(client):
     app = client._transport.app
     runtime = FakeRuntime(
