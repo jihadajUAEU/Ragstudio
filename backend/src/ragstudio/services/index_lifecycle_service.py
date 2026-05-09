@@ -6,6 +6,8 @@ from ragstudio.db.models import Chunk, Document, IndexRecord
 from ragstudio.schemas.chunks import ChunkOut
 from ragstudio.schemas.common import StageStatus
 from ragstudio.schemas.parsing import IndexDocumentIn
+from ragstudio.services.adapter import AdapterChunk
+from ragstudio.services.chunk_splitter import ChunkSplitter
 from ragstudio.services.chunk_sanitizer import sanitize_db_text, sanitize_db_value
 from ragstudio.services.runtime_factory import RAGAnythingRuntimeFactory
 from ragstudio.services.runtime_health_service import RuntimeHealthService
@@ -64,14 +66,22 @@ class IndexLifecycleService:
 
         runtime_chunks = await runtime.index_document(document.artifact_path)
         indexed_at = datetime.now(UTC)
-        chunks: list[Chunk] = []
-        for runtime_chunk in runtime_chunks:
-            adapter_chunk = self.normalizer.chunk_to_adapter_chunk(
+        normalized_chunks: list[AdapterChunk] = [
+            self.normalizer.chunk_to_adapter_chunk(
                 runtime_chunk,
                 document_id=document.id,
                 runtime_profile_id=profile.id,
                 index_shape=profile.index_shape,
             )
+            for runtime_chunk in runtime_chunks
+        ]
+        adapter_chunks = ChunkSplitter().split(
+            normalized_chunks,
+            domain_metadata=options.domain_metadata,
+            parser_mode=options.parser_mode,
+        )
+        chunks: list[Chunk] = []
+        for adapter_chunk in adapter_chunks:
             chunks.append(
                 Chunk(
                     document_id=document.id,

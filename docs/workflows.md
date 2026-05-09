@@ -134,6 +134,8 @@ Artifacts are stored under `.ragstudio/mineru-artifacts/<document_id>/`. Ragstud
 
 Domain metadata is applied before parsing. Parser metadata is added after parsing. Chunk metadata therefore has two top-level groups: `domain_metadata` and `parser_metadata`.
 
+MinerU output is passed through Ragstudio's shared metadata-driven chunking layer before persistence. Large markdown artifacts are split by metadata profile, headings, pages, verse markers, paragraph boundaries, and a hard word cap so a successful MinerU parse cannot persist as a single oversized retrieval chunk.
+
 ## Inspect and Search Chunks
 
 Open **Chunks** to index individual documents again or search indexed chunks.

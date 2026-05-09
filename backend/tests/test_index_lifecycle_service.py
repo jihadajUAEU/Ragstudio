@@ -133,6 +133,76 @@ async def test_lifecycle_deletes_existing_chunks_and_mirrors_runtime_chunks(clie
 
 
 @pytest.mark.asyncio
+async def test_lifecycle_splits_oversized_runtime_chunks(client):
+    app = client._transport.app
+    runtime = FakeRuntime(
+        [
+            RuntimeChunk(
+                text=" ".join(f"runtime{index}" for index in range(3100)),
+                source_location={"artifact": "runtime.md"},
+                metadata={"backend": "runtime", "chunk_index": 0},
+                runtime_source_id="runtime-large",
+                content_type="text",
+                preview_ref="preview://runtime-large",
+            )
+        ]
+    )
+    artifact_path = app.state.settings.data_dir / "large-runtime.txt"
+    artifact_path.write_text("runtime text", encoding="utf-8")
+
+    async with app.state.session_factory() as session:
+        session.add(
+            SettingsProfile(
+                id="default",
+                provider="openai-compatible",
+                llm_model="gpt-4o",
+                llm_base_url="http://llm.test",
+                embedding_model="text-embedding-3-large",
+                embedding_base_url="http://embedding.test",
+                storage_backend="postgres_pgvector_neo4j",
+                runtime_mode="runtime",
+            )
+        )
+        document = Document(
+            filename="large-runtime.txt",
+            content_type="text/plain",
+            sha256="runtime-large",
+            artifact_path=str(artifact_path),
+            status=StageStatus.READY.value,
+        )
+        session.add(document)
+        await session.commit()
+
+        chunks = await IndexLifecycleService(
+            session,
+            app.state.settings,
+            runtime_factory=FakeFactory(runtime),
+            health_service=FakeHealthService(),
+        ).reindex_document(
+            document.id,
+            options=IndexDocumentIn(
+                parser_mode="local_fallback",
+                domain_metadata={"domain": "generic", "document_type": "document"},
+            ),
+        )
+
+        stored = (
+            await session.execute(select(Chunk).where(Chunk.document_id == document.id))
+        ).scalars().all()
+        record = (
+            await session.execute(select(IndexRecord).where(IndexRecord.document_id == document.id))
+        ).scalar_one()
+
+    assert chunks is not None
+    assert len(chunks) == 3
+    assert len(stored) == 3
+    assert record.chunk_count == 3
+    assert [len(chunk.text.split()) for chunk in chunks] == [1500, 1500, 100]
+    assert chunks[0].metadata["domain_metadata"]["domain"] == "generic"
+    assert chunks[0].metadata["parser_metadata"]["split_strategy"] == "metadata_profile"
+
+
+@pytest.mark.asyncio
 async def test_lifecycle_strips_null_bytes_from_runtime_chunks(client):
     app = client._transport.app
     runtime = FakeRuntime(

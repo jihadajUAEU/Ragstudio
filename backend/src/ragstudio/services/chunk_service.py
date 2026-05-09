@@ -9,6 +9,7 @@ from ragstudio.schemas.chunks import ChunkOut, ChunkSearchIn, ChunkSearchOut
 from ragstudio.schemas.parsing import DomainMetadata, IndexDocumentIn, ParserMode
 from ragstudio.services.adapter import AdapterChunk, RAGAnythingAdapter
 from ragstudio.services.chunk_sanitizer import sanitize_db_text, sanitize_db_value
+from ragstudio.services.chunk_splitter import ChunkSplitter
 from ragstudio.services.mineru_client import MinerUClient
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,11 +24,13 @@ class ChunkService:
         data_dir: Path,
         adapter: RAGAnythingAdapter | None = None,
         mineru_client_factory: type[MinerUClient] | None = None,
+        chunk_splitter: ChunkSplitter | None = None,
     ):
         self.session = session
         self.data_dir = data_dir
         self.adapter = adapter or RAGAnythingAdapter()
         self.mineru_client_factory = mineru_client_factory or MinerUClient
+        self.chunk_splitter = chunk_splitter or ChunkSplitter()
 
     async def index_document(
         self,
@@ -46,6 +49,15 @@ class ChunkService:
             document,
             options,
             on_mineru_status=on_mineru_status,
+        )
+        adapter_chunks = [
+            self._chunk_with_parser_metadata(adapter_chunk, options.parser_mode)
+            for adapter_chunk in adapter_chunks
+        ]
+        adapter_chunks = self.chunk_splitter.split(
+            adapter_chunks,
+            domain_metadata=options.domain_metadata,
+            parser_mode=options.parser_mode,
         )
         await self.session.execute(delete(Chunk).where(Chunk.document_id == document.id))
 
@@ -235,6 +247,31 @@ class ChunkService:
         metadata.pop("chunk_index", None)
         metadata.pop("source_type", None)
         return metadata
+
+    def _chunk_with_parser_metadata(
+        self,
+        chunk: AdapterChunk,
+        parser_mode: ParserMode,
+    ) -> AdapterChunk:
+        if isinstance(chunk.metadata.get("parser_metadata"), dict):
+            return chunk
+
+        metadata = dict(chunk.metadata)
+        metadata["parser_metadata"] = {
+            "backend": metadata.get("backend", "fallback"),
+            "parser_mode": parser_mode,
+            "artifact_ref": metadata.get("artifact_ref"),
+            "chunk_index": metadata.get("chunk_index"),
+            "source_type": metadata.get("source_type"),
+        }
+        return AdapterChunk(
+            text=chunk.text,
+            source_location=chunk.source_location,
+            metadata=metadata,
+            runtime_source_id=chunk.runtime_source_id,
+            content_type=chunk.content_type,
+            preview_ref=chunk.preview_ref,
+        )
 
     def _is_absolute_path_value(self, value: Any) -> bool:
         if not isinstance(value, str):

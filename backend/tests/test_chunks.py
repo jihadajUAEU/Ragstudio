@@ -3,10 +3,15 @@ import pytest_asyncio
 from ragstudio.db.models import Chunk, Document, IndexRecord, SettingsProfile
 from ragstudio.schemas.common import StageStatus
 from ragstudio.schemas.parsing import IndexDocumentIn
+from ragstudio.services.adapter import AdapterChunk
 from ragstudio.services.chunk_sanitizer import sanitize_db_value
 from ragstudio.services.chunk_service import ChunkService
 from ragstudio.services.runtime_types import RuntimeChunk
 from sqlalchemy import select
+
+
+def words(count: int, prefix: str = "word"):
+    return " ".join(f"{prefix}{index}" for index in range(count))
 
 
 class FakeRuntime:
@@ -46,6 +51,22 @@ class NullByteAdapter:
                     "artifact_ref": "nul.txt",
                     "nested": {"value": "bad\x00metadata"},
                     "items": ["ok\x00"],
+                },
+            )
+        ]
+
+
+class OversizedAdapter:
+    async def index_document(self, artifact_path):
+        return [
+            AdapterChunk(
+                text=words(3100),
+                source_location={"artifact": "oversized.txt"},
+                metadata={
+                    "backend": "fallback",
+                    "artifact_ref": "oversized.txt",
+                    "chunk_index": 4,
+                    "source_type": "text",
                 },
             )
         ]
@@ -287,6 +308,53 @@ async def test_index_local_chunks_copies_domain_metadata(client):
 
 
 @pytest.mark.asyncio
+async def test_index_document_splits_oversized_adapter_chunk(client):
+    upload_response = await client.post(
+        "/api/documents",
+        files={"file": ("oversized.txt", b"ignored", "text/plain")},
+    )
+    document_id = upload_response.json()["id"]
+
+    app = client._transport.app
+    async with app.state.session_factory() as session:
+        chunks = await ChunkService(
+            session,
+            app.state.settings.data_dir,
+            adapter=OversizedAdapter(),
+        ).index_document(
+            document_id,
+            options=IndexDocumentIn(
+                parser_mode="local_fallback",
+                domain_metadata={
+                    "domain": "generic",
+                    "document_type": "document",
+                    "collection": "Adapter regression",
+                },
+            ),
+        )
+
+        persisted = (
+            await session.execute(
+                select(Chunk)
+                .where(Chunk.document_id == document_id)
+                .order_by(Chunk.created_at.asc(), Chunk.id.asc())
+            )
+        ).scalars().all()
+
+    assert chunks is not None
+    assert [len(chunk.text.split()) for chunk in chunks] == [1500, 1500, 100]
+    assert [len(chunk.text.split()) for chunk in persisted] == [1500, 1500, 100]
+    metadata = chunks[0].metadata
+    assert metadata["domain_metadata"]["collection"] == "Adapter regression"
+    assert metadata["parser_metadata"]["backend"] == "fallback"
+    assert metadata["parser_metadata"]["split_strategy"] == "metadata_profile"
+    assert metadata["parser_metadata"]["split_profile"] == "generic"
+    assert metadata["parser_metadata"]["parent_artifact_ref"] == "oversized.txt"
+    assert metadata["parser_metadata"]["parent_chunk_index"] == 4
+    assert metadata["parser_metadata"]["split_count"] == 3
+
+
+@pytest.mark.asyncio
 async def test_index_mineru_strict_uses_adapter_chunks(client, monkeypatch):
     upload_response = await client.post(
         "/api/documents",
@@ -332,6 +400,78 @@ async def test_index_mineru_strict_uses_adapter_chunks(client, monkeypatch):
     assert chunk.text == "MinerU text"
     assert chunk.metadata["domain_metadata"]["domain"] == "research"
     assert chunk.metadata["parser_metadata"]["backend"] == "mineru"
+
+
+@pytest.mark.asyncio
+async def test_index_mineru_strict_splits_huge_markdown_adapter_chunk(client, monkeypatch):
+    upload_response = await client.post(
+        "/api/documents",
+        files={"file": ("huge-tafseer.pdf", b"%PDF fake", "application/pdf")},
+    )
+    document_id = upload_response.json()["id"]
+
+    async def fake_mineru_adapter_chunks(self, document_id, *, options, on_mineru_status=None):
+        return [
+            AdapterChunk(
+                text="\n\n".join(
+                    [
+                        "# Tafsir",
+                        "## Surah 1",
+                        f"Verse 1:1\n\n{words(900, 'alpha')}",
+                        f"Verse 1:2\n\n{words(900, 'beta')}",
+                        "## Surah 2",
+                        f"Verse 2:1\n\n{words(900, 'gamma')}",
+                    ]
+                ),
+                source_location={"artifact": "source/auto/source.md"},
+                metadata={
+                    "parser_metadata": {
+                        "backend": "mineru",
+                        "parser_mode": "mineru_strict",
+                        "parse_job_id": "job-huge",
+                        "artifact_ref": "source/auto/source.md",
+                        "chunk_index": 0,
+                    }
+                },
+            )
+        ]
+
+    monkeypatch.setattr(
+        "ragstudio.services.chunk_service.ChunkService._mineru_adapter_chunks",
+        fake_mineru_adapter_chunks,
+    )
+
+    app = client._transport.app
+    async with app.state.session_factory() as session:
+        chunks = await ChunkService(session, app.state.settings.data_dir).index_document(
+            document_id,
+            options=IndexDocumentIn(
+                parser_mode="mineru_strict",
+                domain_metadata={"domain": "tafseer", "document_type": "book"},
+            ),
+        )
+
+        persisted = (
+            await session.execute(
+                select(Chunk)
+                .where(Chunk.document_id == document_id)
+                .order_by(Chunk.created_at.asc(), Chunk.id.asc())
+            )
+        ).scalars().all()
+
+    assert chunks is not None
+    assert len(chunks) == 3
+    assert all(len(chunk.text.split()) <= 1500 for chunk in chunks)
+    assert len(persisted) == 3
+    assert chunks[0].text.startswith("# Tafsir")
+    assert chunks[1].text.startswith("Verse 1:2")
+    metadata = chunks[0].metadata
+    assert metadata["domain_metadata"]["domain"] == "tafseer"
+    assert metadata["parser_metadata"]["backend"] == "mineru"
+    assert metadata["parser_metadata"]["split_strategy"] == "metadata_profile"
+    assert metadata["parser_metadata"]["split_profile"] == "tafseer_book"
+    assert metadata["parser_metadata"]["parent_artifact_ref"] == "source/auto/source.md"
+    assert metadata["parser_metadata"]["split_count"] == 3
 
 
 @pytest.mark.asyncio

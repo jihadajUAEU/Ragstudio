@@ -301,6 +301,8 @@ Upload and Index actions support three parser modes:
 
 Before parsing, choose or review domain metadata. This metadata is copied onto every resulting chunk, including local fallback chunks. MinerU adds parser metadata such as page numbers, artifact references, content type, and parse job id.
 
+For large parsed documents, Ragstudio applies metadata-driven chunk profiles. Tafseer/book uploads are split into semantic retrieval chunks, Quran-style text favors verse-aware chunks, papers favor section chunks, and every parser path has a hard cap to prevent oversized single chunks.
+
 ## Evaluation File Formats
 
 Studio accepts JSONL, NDJSON, JSON, YAML, YML, and CSV evaluation imports. JSONL is the canonical repeatable format.
