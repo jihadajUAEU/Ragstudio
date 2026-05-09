@@ -69,7 +69,13 @@ class GraphService:
                 raise RuntimeGraphUnavailableError(
                     f"Runtime graph prerequisites are unavailable: {details}"
                 )
-            return await self.runtime_factory.build(profile).graph()
+            graph = await self.runtime_factory.build(profile).graph()
+            if self._has_graph_data(graph):
+                return graph
+            fallback_graph = await self._relationship_metadata_graph()
+            if self._has_graph_data(fallback_graph):
+                return fallback_graph
+            return graph
         except RuntimeGraphUnavailableError:
             raise
         except RuntimeUnavailableError as exc:
@@ -151,6 +157,10 @@ class GraphService:
                     },
                 )
         return {"nodes": list(nodes.values()), "edges": list(edges.values())}
+
+    @staticmethod
+    def _has_graph_data(graph: dict[str, Any]) -> bool:
+        return bool(graph.get("nodes") or graph.get("edges"))
 
     @staticmethod
     def _fallback_graph_node_id(raw_id: str, document_id: str) -> str:

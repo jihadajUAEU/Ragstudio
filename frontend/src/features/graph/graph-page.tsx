@@ -44,6 +44,7 @@ export function GraphPage() {
   const diagnosticsQuery = useQuery({ queryKey: queryKeys.diagnostics, queryFn: apiClient.diagnostics });
   const nodes = graphQuery.data?.nodes ?? [];
   const edges = graphQuery.data?.edges ?? [];
+  const hasGraphData = nodes.length > 0 || edges.length > 0;
   const graphAvailable = diagnosticsQuery.data?.capabilities.graph ?? true;
   const graphUnavailableDetail =
     diagnosticsQuery.data?.warnings.find((warning) => warning.toLowerCase().includes("graph")) ??
@@ -96,7 +97,7 @@ export function GraphPage() {
             </Button>
           }
         />
-      ) : !graphAvailable ? (
+      ) : !graphAvailable && !hasGraphData ? (
         <EmptyState
           icon={AlertCircle}
           title="Graph unavailable"
@@ -108,7 +109,7 @@ export function GraphPage() {
             </Button>
           }
         />
-      ) : nodes.length === 0 && edges.length === 0 ? (
+      ) : !hasGraphData ? (
         <EmptyState
           icon={Network}
           title="Graph is empty"

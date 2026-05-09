@@ -103,4 +103,25 @@ describe("GraphPage", () => {
     expect(map).toHaveTextContent("Reference");
     expect(map).toHaveTextContent("document doc-1");
   });
+
+  it("renders returned graph data when diagnostics marks graph unavailable", async () => {
+    vi.mocked(apiClient.graph).mockResolvedValue({
+      nodes: [
+        {
+          id: "fallback-chunk",
+          labels: ["FallbackRelationship"],
+          properties: { label: "Runtime chunk", document_id: "doc-1", page: 7 },
+        },
+        { id: "topic-runtime", label: "Runtime fallback", type: "topic" },
+      ],
+      edges: [{ source: "fallback-chunk", target: "topic-runtime", type: "mentions" }],
+    });
+
+    renderGraphPage();
+
+    const map = await screen.findByLabelText("Graph relationship map");
+    expect(map).toHaveTextContent("Runtime chunk");
+    expect(map).toHaveTextContent("FallbackRelationship");
+    expect(screen.queryByText("Graph unavailable")).not.toBeInTheDocument();
+  });
 });

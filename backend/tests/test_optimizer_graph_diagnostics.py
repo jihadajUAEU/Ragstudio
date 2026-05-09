@@ -575,6 +575,108 @@ async def test_graph_returns_fallback_relationships_when_native_graph_unavailabl
 
 
 @pytest.mark.asyncio
+async def test_graph_returns_fallback_relationships_when_native_graph_is_empty(
+    client, monkeypatch
+):
+    from ragstudio.db.models import Chunk, Document
+    from ragstudio.schemas.common import StageStatus
+
+    class ReadyRuntimeHealthService:
+        def __init__(self, session, *, verify_storage):
+            self.session = session
+            self.verify_storage = verify_storage
+
+        async def check(self, profile):
+            return []
+
+        def blocking_failures(self, checks):
+            return []
+
+    class EmptyRuntime:
+        async def graph(self):
+            return {"nodes": [], "edges": []}
+
+    class EmptyRuntimeFactory:
+        def __init__(self, settings):
+            self.settings = settings
+
+        def build(self, profile):
+            return EmptyRuntime()
+
+    monkeypatch.setattr(
+        "ragstudio.services.graph_service.RAGAnythingRuntimeFactory",
+        EmptyRuntimeFactory,
+    )
+    monkeypatch.setattr(
+        "ragstudio.services.graph_service.RuntimeHealthService",
+        ReadyRuntimeHealthService,
+    )
+
+    settings = await client.put(
+        "/api/settings/default",
+        json={
+            "provider": "openai-compatible",
+            "runtime_mode": "runtime",
+            "llm_model": "gpt-4o",
+            "embedding_model": "text-embedding-3-large",
+            "storage_backend": "postgres_pgvector_neo4j",
+        },
+    )
+    assert settings.status_code == 200
+
+    app = client._transport.app
+    async with app.state.session_factory() as session:
+        document = Document(
+            filename="runtime-empty-graph-relationships.txt",
+            content_type="text/plain",
+            sha256="runtime-empty-graph-relationships",
+            artifact_path=str(app.state.settings.data_dir / "runtime-empty-graph-relationships.txt"),
+            status=StageStatus.SUCCEEDED.value,
+        )
+        session.add(document)
+        await session.flush()
+        session.add(
+            Chunk(
+                document_id=document.id,
+                text="Runtime empty graph fallback relationship chunk.",
+                source_location={"page": 8},
+                metadata_json={
+                    "relationship_metadata": {
+                        "graph_relationships": [
+                            {
+                                "source": "reference:8:1",
+                                "target": "topic:empty_runtime",
+                                "type": "mentions",
+                                "source_label": "8:1",
+                                "target_label": "Empty runtime",
+                            }
+                        ]
+                    }
+                },
+            )
+        )
+        await session.commit()
+
+    response = await client.get("/api/graph")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert {node["id"] for node in payload["nodes"]} == {
+        "reference:8:1",
+        "topic:empty_runtime",
+    }
+    assert payload["edges"] == [
+        {
+            "id": f"reference:8:1-topic:empty_runtime-mentions-document:{document.id}",
+            "source": "reference:8:1",
+            "target": "topic:empty_runtime",
+            "type": "mentions",
+            "properties": {"page": 8, "document_id": document.id},
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_graph_returns_conflict_when_runtime_health_blocks(client, monkeypatch):
     class BlockingRuntimeHealthService:
         def __init__(self, session, *, verify_storage):
