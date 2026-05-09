@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ragstudio.api.deps import get_session
 from ragstudio.config import AppSettings
 from ragstudio.db.engine import make_engine, make_session_factory
+from ragstudio.db.models import Document
 from ragstudio.schemas.chunks import ChunkOut, ChunkSearchIn, ChunkSearchOut
 from ragstudio.schemas.jobs import JobOut
 from ragstudio.schemas.parsing import IndexDocumentIn
@@ -39,6 +40,10 @@ async def create_index_document_job(
     session: AsyncSession = Depends(get_session),
 ) -> JobOut:
     settings = request.app.state.settings
+    document = await session.get(Document, document_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+
     try:
         profile = await RuntimeProfileService(session, settings).get_active_profile()
     except RuntimeProfileNotConfiguredError:
@@ -50,6 +55,11 @@ async def create_index_document_job(
         if blocking:
             detail = "; ".join(f"{item.name}: {item.detail}" for item in blocking)
             raise HTTPException(status_code=409, detail=detail)
+
+    try:
+        await ChunkService(session, settings.data_dir).validate_strict_mineru_sidecar(options)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     service = DocumentService(
         session,

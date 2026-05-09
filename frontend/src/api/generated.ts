@@ -67,7 +67,7 @@ export interface SettingsProfileIn {
   mineru_base_url?: string | null;
   mineru_timeout_ms?: number;
   mineru_poll_interval_ms?: number;
-  mineru_require_hpc: boolean;
+  mineru_require_hpc?: boolean;
   runtime_mode?: RuntimeMode;
   vision_model?: string | null;
   vision_base_url?: string | null;

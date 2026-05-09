@@ -118,9 +118,26 @@ class MinerUClient:
         async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
             response = await client.get(f"{self.base_url}/health")
         response.raise_for_status()
-        payload = response.json()
+        try:
+            payload = response.json()
+        except ValueError:
+            return MinerUSidecarHealth(
+                ready=False,
+                detail="MinerU health check returned invalid JSON.",
+                version=None,
+                hpc_enabled=False,
+                hpc_mode=None,
+                raw={},
+            )
         if not isinstance(payload, dict):
-            payload = {}
+            return MinerUSidecarHealth(
+                ready=False,
+                detail="MinerU health check returned non-object JSON.",
+                version=None,
+                hpc_enabled=False,
+                hpc_mode=None,
+                raw={},
+            )
         hpc = payload.get("hpcMineru")
         hpc_payload = hpc if isinstance(hpc, dict) else {}
         return MinerUSidecarHealth(

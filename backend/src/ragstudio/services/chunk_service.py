@@ -3,6 +3,7 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path, PureWindowsPath
 from typing import Any
 
+import httpx
 from ragstudio.db.models import Chunk, Document, SettingsProfile
 from ragstudio.schemas.chunks import ChunkOut, ChunkSearchIn, ChunkSearchOut
 from ragstudio.schemas.parsing import DomainMetadata, IndexDocumentIn, ParserMode
@@ -21,12 +22,12 @@ class ChunkService:
         session: AsyncSession,
         data_dir: Path,
         adapter: RAGAnythingAdapter | None = None,
-        mineru_client_factory: type[MinerUClient] = MinerUClient,
+        mineru_client_factory: type[MinerUClient] | None = None,
     ):
         self.session = session
         self.data_dir = data_dir
         self.adapter = adapter or RAGAnythingAdapter()
-        self.mineru_client_factory = mineru_client_factory
+        self.mineru_client_factory = mineru_client_factory or MinerUClient
 
     async def index_document(
         self,
@@ -120,26 +121,7 @@ class ChunkService:
         document = await self.session.get(Document, document_id)
         if document is None:
             return []
-        settings = await self.session.get(SettingsProfile, "default")
-        if settings is None or not settings.mineru_base_url:
-            raise RuntimeError("MinerU base URL is not configured.")
-        if not settings.mineru_enabled:
-            raise RuntimeError("MinerU is disabled in settings.")
-        client = self.mineru_client_factory(
-            base_url=settings.mineru_base_url,
-            timeout_ms=settings.mineru_timeout_ms or 14_400_000,
-            poll_interval_ms=settings.mineru_poll_interval_ms or 1_000,
-        )
-        health = await client.health()
-        if settings.mineru_require_hpc and not health.is_hpc_coordinator:
-            mode = health.hpc_mode or "unknown"
-            raise RuntimeError(
-                "MinerU sidecar is not in HPC coordinator mode. "
-                f"Health detail: {health.detail or 'no detail'}; "
-                f"hpcMineru.enabled={health.hpc_enabled}; mode={mode}. "
-                "Start the HPC MinerU sidecar/coordinator or disable "
-                "'Require HPC MinerU coordinator' in Settings."
-            )
+        _, client = await self._validated_mineru_client()
         artifact_dir = self.data_dir / "mineru-artifacts" / document.id
         job_result = await client.parse_document(
             artifact_path=document.artifact_path,
@@ -157,6 +139,39 @@ class ChunkService:
             parser_mode=options.parser_mode,
             parse_job_id=job_result.parse_job_id,
         )
+
+    async def validate_strict_mineru_sidecar(self, options: IndexDocumentIn) -> None:
+        if options.parser_mode != "mineru_strict":
+            return
+        await self._validated_mineru_client()
+
+    async def _validated_mineru_client(self) -> tuple[SettingsProfile, MinerUClient]:
+        settings = await self.session.get(SettingsProfile, "default")
+        if settings is None or not settings.mineru_base_url:
+            raise RuntimeError("MinerU base URL is not configured.")
+        if not settings.mineru_enabled:
+            raise RuntimeError("MinerU is disabled in settings.")
+        client = self.mineru_client_factory(
+            base_url=settings.mineru_base_url,
+            timeout_ms=settings.mineru_timeout_ms or 14_400_000,
+            poll_interval_ms=settings.mineru_poll_interval_ms or 1_000,
+        )
+        try:
+            health = await client.health()
+        except httpx.HTTPError as exc:
+            raise RuntimeError(f"MinerU health check failed: {exc}") from exc
+        if not health.ready:
+            raise RuntimeError(health.detail or "MinerU sidecar is not ready.")
+        if settings.mineru_require_hpc and not health.is_hpc_coordinator:
+            mode = health.hpc_mode or "unknown"
+            raise RuntimeError(
+                "MinerU sidecar is not in HPC coordinator mode. "
+                f"Health detail: {health.detail or 'no detail'}; "
+                f"hpcMineru.enabled={health.hpc_enabled}; mode={mode}. "
+                "Start the HPC MinerU sidecar/coordinator or disable "
+                "'Require HPC MinerU coordinator' in Settings."
+            )
+        return settings, client
 
     async def search(self, search_in: ChunkSearchIn) -> ChunkSearchOut:
         limit = max(search_in.limit, 0)

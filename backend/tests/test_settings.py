@@ -673,3 +673,39 @@ async def test_mineru_connection_test_rejects_local_mode_when_required(client, m
     assert response.status_code == 200
     assert response.json()["ok"] is False
     assert "local mode" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_mineru_connection_test_reports_invalid_health_payload(client, monkeypatch):
+    class FakeClient:
+        def __init__(self, base_url, timeout_ms, poll_interval_ms):
+            self.base_url = base_url
+
+        async def health(self):
+            from ragstudio.services.mineru_client import MinerUSidecarHealth
+
+            return MinerUSidecarHealth(
+                ready=False,
+                detail="MinerU health check returned invalid JSON.",
+                version=None,
+                hpc_enabled=False,
+                hpc_mode=None,
+                raw={},
+            )
+
+    monkeypatch.setattr("ragstudio.api.routes.settings.MinerUClient", FakeClient)
+    payload = {
+        "provider": "openai",
+        "llm_model": "gpt-4.1",
+        "embedding_model": "text-embedding-3-large",
+        "storage_backend": "postgres_pgvector_neo4j",
+        "mineru_enabled": True,
+        "mineru_base_url": "http://10.10.9.19:8765",
+        "mineru_require_hpc": True,
+    }
+
+    response = await client.post("/api/settings/default/test-mineru", json=payload)
+
+    assert response.status_code == 200
+    assert response.json()["ok"] is False
+    assert response.json()["detail"] == "MinerU health check returned invalid JSON."

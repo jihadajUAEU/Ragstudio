@@ -117,6 +117,38 @@ async def test_mineru_client_submits_pdf_mime_and_metadata(tmp_path, monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_mineru_client_health_reports_invalid_json(monkeypatch):
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            raise ValueError("bad json")
+
+    class FakeAsyncClient:
+        def __init__(self, timeout):
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return None
+
+        async def get(self, url):
+            return FakeResponse()
+
+    monkeypatch.setattr("ragstudio.services.mineru_client.httpx.AsyncClient", FakeAsyncClient)
+    client = MinerUClient(base_url="http://mineru.test", timeout_ms=1000, poll_interval_ms=100)
+
+    health = await client.health()
+
+    assert health.ready is False
+    assert health.detail == "MinerU health check returned invalid JSON."
+    assert health.raw == {}
+
+
+@pytest.mark.asyncio
 async def test_mineru_client_preserves_files_manifest_page_ranges_and_artifacts(tmp_path):
     artifact_zip = tmp_path / "artifact.zip"
     with ZipFile(artifact_zip, "w") as archive:
