@@ -265,6 +265,21 @@ async def test_native_adapter_queries_raganything(tmp_path):
     assert result.sources == []
 
 
+def test_native_adapter_reports_scoped_query_capability(tmp_path):
+    adapter = NativeRAGAnythingAdapter(
+        profile(runtime_working_dir=str(tmp_path / "runtime")),
+        AppSettings(database_url="postgresql+asyncpg://user:pass@localhost:5432/ragstudio"),
+    )
+
+    report = adapter.capability_report()
+
+    assert report["scoped_query"] is False
+    assert (
+        report["scoped_query_detail"]
+        == "Native RAG-Anything query cannot yet enforce selected document_ids."
+    )
+
+
 @pytest.mark.asyncio
 async def test_native_adapter_refuses_unscoped_document_queries(tmp_path):
     adapter = NativeRAGAnythingAdapter(

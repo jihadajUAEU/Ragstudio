@@ -118,6 +118,8 @@ class DiagnosticsService:
             "indexing": report.get("indexing"),
             "query": report.get("query"),
             "graph": report.get("graph"),
+            "scoped_query": report.get("scoped_query"),
+            "scoped_query_detail": report.get("scoped_query_detail"),
         }
 
     def _runtime_dependency_report(
@@ -142,6 +144,10 @@ class DiagnosticsService:
             "indexing": "raganything" if runtime_available else "unavailable",
             "query": "raganything" if runtime_available else "unavailable",
             "graph": "neo4j" if graph_available else "unavailable",
+            "scoped_query": False,
+            "scoped_query_detail": (
+                "Native RAG-Anything query cannot yet enforce selected document_ids."
+            ),
         }
 
     def _overall_status(
