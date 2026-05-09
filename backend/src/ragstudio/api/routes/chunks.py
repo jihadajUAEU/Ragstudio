@@ -18,6 +18,7 @@ from ragstudio.services.index_lifecycle_service import (
     IndexLifecycleService,
     RuntimeHealthBlockedError,
 )
+from ragstudio.services.metadata_json_schema import validate_custom_json
 from ragstudio.services.runtime_factory import RuntimeUnavailableError
 from ragstudio.services.runtime_health_service import RuntimeHealthService
 from ragstudio.services.runtime_profile_service import (
@@ -41,6 +42,7 @@ async def create_index_document_job(
     session: AsyncSession = Depends(get_session),
 ) -> JobOut:
     settings = request.app.state.settings
+    _validate_index_options(options)
     document = await session.get(Document, document_id)
     if document is None:
         raise HTTPException(status_code=404, detail="Document not found")
@@ -86,6 +88,7 @@ async def index_document_chunks(
 ) -> list[ChunkOut]:
     resolved_options = options or IndexDocumentIn()
     settings = request.app.state.settings
+    _validate_index_options(resolved_options)
     try:
         profile = await RuntimeProfileService(session, settings).get_active_profile()
     except RuntimeProfileNotConfiguredError:
@@ -123,6 +126,13 @@ async def search_chunks(
     session: AsyncSession = Depends(get_session),
 ) -> ChunkSearchOut:
     return await ChunkService(session, request.app.state.settings.data_dir).search(search_in)
+
+
+def _validate_index_options(options: IndexDocumentIn) -> None:
+    try:
+        validate_custom_json(options.domain_metadata.custom_json)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 async def _run_index_document_job(

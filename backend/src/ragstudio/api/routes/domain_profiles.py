@@ -12,7 +12,10 @@ from ragstudio.schemas.parsing import (
 )
 from ragstudio.services.domain_metadata_ai_suggester import DomainMetadataAiSuggester
 from ragstudio.services.domain_metadata_service import DomainMetadataService
-from ragstudio.services.metadata_json_schema import reference_custom_json_example
+from ragstudio.services.metadata_json_schema import (
+    reference_custom_json_example,
+    validate_custom_json,
+)
 from ragstudio.services.page_sampler import PageSampler
 
 router = APIRouter(prefix="/api/domain-profiles", tags=["domain-profiles"])
@@ -72,6 +75,10 @@ async def upsert_domain_profile(
     payload: DomainProfileIn,
     request: Request,
 ) -> DomainProfileOut:
+    try:
+        validate_custom_json(payload.metadata.custom_json)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     profile = payload.model_copy(update={"id": profile_id})
     try:
         return DomainMetadataService(request.app.state.settings.data_dir).upsert_profile(profile)

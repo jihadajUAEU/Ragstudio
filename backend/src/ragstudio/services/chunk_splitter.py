@@ -110,6 +110,24 @@ class ChunkSplitter:
 
         sections = self._markdown_sections(chunk.text)
         title_sections, body_sections = self._split_title_sections(sections, chunk, profile)
+        title_pieces = [
+            self._piece_from_parent(chunk, text, source_location=dict(chunk.source_location))
+            for text in title_sections
+            if text.strip()
+        ]
+        body_text = "\n\n".join(body_sections).strip()
+        body_chunk = AdapterChunk(
+            text=body_text,
+            source_location=chunk.source_location,
+            metadata=chunk.metadata,
+            runtime_source_id=chunk.runtime_source_id,
+            content_type=chunk.content_type,
+            preview_ref=chunk.preview_ref,
+        )
+        reference_units = self._reference_unit_sections(body_chunk, profile)
+        if reference_units:
+            return [*title_pieces, *reference_units]
+
         pieces = [*title_sections, *self._pack_sections(body_sections, profile)]
         return [
             self._piece_from_parent(chunk, text, source_location=dict(chunk.source_location))
@@ -164,6 +182,29 @@ class ChunkSplitter:
             for part in self._hard_split_text(text, profile.hard_max_words):
                 pieces.append(self._piece_from_parent(chunk, part, source_location=source_location))
         return pieces
+
+    def _reference_unit_sections(
+        self,
+        chunk: AdapterChunk,
+        profile: ChunkProfile,
+    ) -> list[SplitPiece]:
+        if profile.semantics is None or profile.semantics.chunk_unit not in {
+            "verse",
+            "reference",
+            "section",
+        }:
+            return []
+
+        units = profile.semantics.split_reference_units(chunk.text)
+        if len(units) <= 1:
+            return []
+
+        return [
+            self._piece_from_parent(chunk, text, source_location=dict(chunk.source_location))
+            for unit in units
+            for text in self._hard_split_text(unit, profile.hard_max_words)
+            if text.strip()
+        ]
 
     def _markdown_sections(self, text: str) -> list[str]:
         blocks = [block.strip() for block in re.split(r"\n{2,}", text) if block.strip()]
@@ -359,7 +400,7 @@ class ChunkSplitter:
         if any(self._starts_boundary(block) for block in title_blocks):
             return None
         joined = " ".join(title_blocks).strip()
-        if "quran" in joined.casefold() and "translation" in joined.casefold():
+        if len(joined.split()) <= 18 and not re.search(r"\d+\s*:\s*\d+", joined):
             return joined
         return None
 

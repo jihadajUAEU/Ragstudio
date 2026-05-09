@@ -100,6 +100,18 @@ class DocumentService:
     async def document_exists(self, document_id: str) -> bool:
         return await self.session.get(Document, document_id) is not None
 
+    async def active_index_job(self, document_id: str) -> Job | None:
+        return await self.session.scalar(
+            select(Job)
+            .where(
+                Job.type == "index_document",
+                Job.target_id == document_id,
+                Job.status.in_([StageStatus.READY.value, StageStatus.RUNNING.value]),
+            )
+            .order_by(Job.created_at.desc())
+            .limit(1)
+        )
+
     async def delete_document(self, document_id: str) -> DeleteDocumentResult:
         document = await self.session.get(Document, document_id)
         if document is None:

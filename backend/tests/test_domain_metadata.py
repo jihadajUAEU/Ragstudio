@@ -741,6 +741,24 @@ async def test_saved_domain_profile_round_trip(client):
 
 
 @pytest.mark.asyncio
+async def test_saved_domain_profile_validates_custom_json(client):
+    response = await client.put(
+        "/api/domain-profiles/bad_reference",
+        json={
+            "id": "bad_reference",
+            "name": "Bad reference",
+            "metadata": {
+                "domain": "legal",
+                "custom_json": {"chunking": {"include_neighbors": True}},
+            },
+        },
+    )
+
+    assert response.status_code == 422
+    assert "include_neighbors" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
 async def test_saved_domain_profile_rejects_builtin_id(client):
     response = await client.put(
         "/api/domain-profiles/hadith",

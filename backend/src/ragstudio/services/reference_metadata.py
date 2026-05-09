@@ -12,6 +12,14 @@ REFERENCE_PATTERN = re.compile(
     r"(?(bracket)\])",
     flags=re.IGNORECASE,
 )
+LEGAL_SECTION_PATTERN = re.compile(
+    r"(?:\bsection\b|\bsec\.?|§)\s*(?P<section>\d+(?:\.\d+)*)",
+    flags=re.IGNORECASE,
+)
+PAGE_LINE_PATTERN = re.compile(
+    r"\b(?:page|p\.?)\s*(?P<page>\d+)(?:\s*[:,-]\s*(?:line|l\.?)\s*(?P<line>\d+))?",
+    flags=re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -25,6 +33,7 @@ class ReferenceSemantics:
     boost_same_chapter: bool = False
     boost_neighbor_verses: bool = False
     relationships: dict[str, list[str]] = field(default_factory=dict)
+    reference_pattern: str | None = None
 
     @classmethod
     def from_metadata(cls, metadata: DomainMetadata) -> "ReferenceSemantics":
@@ -32,6 +41,7 @@ class ReferenceSemantics:
         reference_schema = custom.get("reference_schema")
         chunking = custom.get("chunking") if isinstance(custom.get("chunking"), dict) else {}
         retrieval = custom.get("retrieval") if isinstance(custom.get("retrieval"), dict) else {}
+        schema_pattern = cls._schema_pattern(reference_schema)
 
         has_reference_schema = isinstance(reference_schema, dict)
         structured_reference = has_reference_schema or cls._has_structured_reference_fields(metadata)
@@ -70,25 +80,44 @@ class ReferenceSemantics:
                 default=structured_reference,
             ),
             relationships=cls._relationships(custom.get("relationships")),
+            reference_pattern=schema_pattern,
         )
 
     def extract_query_reference(self, query: str) -> dict[str, int | str] | None:
-        match = REFERENCE_PATTERN.search(query)
-        if match is None:
-            return None
-        return self._match_to_reference(match)
+        for pattern in self._compiled_patterns():
+            match = pattern.search(query)
+            if match is not None:
+                return self._match_to_reference(match)
+        return None
 
     def extract_chunk_references(self, text: str) -> list[dict[str, int | str]]:
         references: list[dict[str, int | str]] = []
-        seen: set[tuple[int, int]] = set()
-        for match in REFERENCE_PATTERN.finditer(text):
+        seen: set[str] = set()
+        for match in self._iter_matches(text):
             ref = self._match_to_reference(match)
-            key = (int(ref["chapter"]), int(ref["verse"]))
+            key = str(ref["ref"])
             if key in seen:
                 continue
             seen.add(key)
             references.append(ref)
         return references
+
+    def split_reference_units(self, text: str) -> list[str]:
+        matches = list(self._iter_matches(text))
+        if not matches:
+            return []
+
+        units: list[str] = []
+        leading = text[: matches[0].start()].strip()
+        for index, match in enumerate(matches):
+            start = match.start()
+            end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+            unit = text[start:end].strip()
+            if index == 0 and leading:
+                unit = f"{leading}\n\n{unit}".strip()
+            if unit:
+                units.append(unit)
+        return units
 
     def derive_reference_metadata(
         self,
@@ -99,29 +128,42 @@ class ReferenceSemantics:
         if not references:
             return {}
 
-        chapter_values = [int(ref["chapter"]) for ref in references]
-        verse_values = [int(ref["verse"]) for ref in references]
-        chapter_start = min(chapter_values)
-        chapter_end = max(chapter_values)
-        same_chapter = chapter_start == chapter_end
-        verse_start = min(verse_values) if same_chapter else int(references[0]["verse"])
-        verse_end = max(verse_values) if same_chapter else int(references[-1]["verse"])
-
         metadata: dict[str, Any] = {
             "reference_type": self.reference_type,
-            "references": [f"{ref['chapter']}:{ref['verse']}" for ref in references],
-            "chapter_start": chapter_start,
-            "chapter_end": chapter_end,
-            "verse_start": verse_start,
-            "verse_end": verse_end,
+            "references": [str(ref["ref"]) for ref in references],
         }
-        metadata.update(self._page_range(source_location))
+        chapter_verse_refs = [
+            ref
+            for ref in references
+            if isinstance(ref.get("chapter"), int) and isinstance(ref.get("verse"), int)
+        ]
+        if chapter_verse_refs:
+            chapter_values = [int(ref["chapter"]) for ref in chapter_verse_refs]
+            verse_values = [int(ref["verse"]) for ref in chapter_verse_refs]
+            chapter_start = min(chapter_values)
+            chapter_end = max(chapter_values)
+            same_chapter = chapter_start == chapter_end
+            verse_start = min(verse_values) if same_chapter else int(chapter_verse_refs[0]["verse"])
+            verse_end = max(verse_values) if same_chapter else int(chapter_verse_refs[-1]["verse"])
+            metadata.update(
+                {
+                    "chapter_start": chapter_start,
+                    "chapter_end": chapter_end,
+                    "verse_start": verse_start,
+                    "verse_end": verse_end,
+                }
+            )
+            if self.include_neighbors > 0 and same_chapter:
+                previous_verse = verse_start - self.include_neighbors
+                if previous_verse > 0:
+                    metadata["previous_ref"] = f"{chapter_start}:{previous_verse}"
+                metadata["next_ref"] = f"{chapter_end}:{verse_end + self.include_neighbors}"
 
-        if self.include_neighbors > 0 and same_chapter:
-            previous_verse = verse_start - self.include_neighbors
-            if previous_verse > 0:
-                metadata["previous_ref"] = f"{chapter_start}:{previous_verse}"
-            metadata["next_ref"] = f"{chapter_end}:{verse_end + self.include_neighbors}"
+        for field in ("section", "page", "line"):
+            values = [ref[field] for ref in references if field in ref]
+            if values:
+                metadata[f"{field}s"] = values
+        metadata.update(self._page_range(source_location))
 
         return metadata
 
@@ -132,13 +174,49 @@ class ReferenceSemantics:
     ) -> dict[str, Any]:
         return self.derive_reference_metadata(text, source_location)
 
-    @staticmethod
-    def _match_to_reference(match: re.Match[str]) -> dict[str, int | str]:
-        return {
-            "chapter": int(match.group("chapter")),
-            "verse": int(match.group("verse")),
-            "raw": match.group(0),
-        }
+    def _iter_matches(self, text: str) -> list[re.Match[str]]:
+        matches: list[re.Match[str]] = []
+        for pattern in self._compiled_patterns():
+            matches.extend(pattern.finditer(text))
+        return sorted(matches, key=lambda match: match.start())
+
+    def _compiled_patterns(self) -> list[re.Pattern[str]]:
+        patterns: list[re.Pattern[str]] = []
+        if self.reference_pattern:
+            try:
+                patterns.append(re.compile(self.reference_pattern, flags=re.IGNORECASE))
+            except re.error:
+                pass
+        reference_type = (self.reference_type or "").casefold()
+        if reference_type in {"surah_ayah", "chapter_verse"} or self.profile_name == "scripture_reference":
+            patterns.append(REFERENCE_PATTERN)
+        if reference_type in {"legal_section", "section", "article_section"}:
+            patterns.append(LEGAL_SECTION_PATTERN)
+        if reference_type in {"page_line", "page"}:
+            patterns.append(PAGE_LINE_PATTERN)
+        return patterns
+
+    def _match_to_reference(self, match: re.Match[str]) -> dict[str, int | str]:
+        groups = match.groupdict()
+        ref: dict[str, int | str] = {"raw": match.group(0)}
+        for key, value in groups.items():
+            if value is None:
+                continue
+            if key in {"prefix", "bracket"}:
+                continue
+            ref[key] = int(value) if value.isdigit() else value
+
+        if isinstance(ref.get("chapter"), int) and isinstance(ref.get("verse"), int):
+            ref["ref"] = f"{ref['chapter']}:{ref['verse']}"
+        elif "section" in ref:
+            ref["ref"] = f"section:{ref['section']}"
+        elif "page" in ref and "line" in ref:
+            ref["ref"] = f"page:{ref['page']}:line:{ref['line']}"
+        elif "page" in ref:
+            ref["ref"] = f"page:{ref['page']}"
+        else:
+            ref["ref"] = match.group(0).strip()
+        return ref
 
     @classmethod
     def _has_structured_reference_fields(cls, metadata: DomainMetadata) -> bool:
@@ -182,6 +260,16 @@ class ReferenceSemantics:
             for value in values
         ):
             return "chapter_verse"
+        return None
+
+    @staticmethod
+    def _schema_pattern(reference_schema: Any) -> str | None:
+        if not isinstance(reference_schema, dict):
+            return None
+        for key in ("pattern", "regex"):
+            value = reference_schema.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
         return None
 
     @staticmethod

@@ -113,16 +113,19 @@ def test_extract_query_reference_supports_quran_bracket_and_bare_forms():
 
     assert semantics.extract_query_reference("What does Quran 1:4 say?") == {
         "chapter": 1,
+        "ref": "1:4",
         "verse": 4,
         "raw": "Quran 1:4",
     }
     assert semantics.extract_query_reference("Find [2:17]") == {
         "chapter": 2,
+        "ref": "2:17",
         "verse": 17,
         "raw": "[2:17]",
     }
     assert semantics.extract_query_reference("1:4") == {
         "chapter": 1,
+        "ref": "1:4",
         "verse": 4,
         "raw": "1:4",
     }
@@ -136,8 +139,8 @@ def test_extract_chunk_references_finds_multiple_markers():
     )
 
     assert refs == [
-        {"chapter": 1, "verse": 1, "raw": "[1:1]"},
-        {"chapter": 1, "verse": 2, "raw": "[1:2]"},
+        {"chapter": 1, "ref": "1:1", "verse": 1, "raw": "[1:1]"},
+        {"chapter": 1, "ref": "1:2", "verse": 2, "raw": "[1:2]"},
     ]
 
 
@@ -147,8 +150,8 @@ def test_extract_chunk_references_deduplicates_markers_in_order():
     refs = semantics.extract_chunk_references("[1:1] repeated [1:1] then [1:2]")
 
     assert refs == [
-        {"chapter": 1, "verse": 1, "raw": "[1:1]"},
-        {"chapter": 1, "verse": 2, "raw": "[1:2]"},
+        {"chapter": 1, "ref": "1:1", "verse": 1, "raw": "[1:1]"},
+        {"chapter": 1, "ref": "1:2", "verse": 2, "raw": "[1:2]"},
     ]
 
 
@@ -194,3 +197,38 @@ def test_chunk_reference_metadata_aliases_derive_reference_metadata():
     semantics = ReferenceSemantics.from_metadata(quran_metadata())
 
     assert semantics.chunk_reference_metadata("[1:4]") == semantics.derive_reference_metadata("[1:4]")
+
+
+def test_reference_semantics_uses_custom_schema_pattern_for_legal_sections():
+    semantics = ReferenceSemantics.from_metadata(
+        DomainMetadata(
+            domain="legal",
+            document_type="statute",
+            custom_json={
+                "reference_schema": {
+                    "type": "legal_section",
+                    "pattern": r"Article\s+(?P<section>\d+(?:\.\d+)*)",
+                },
+                "chunking": {"unit": "section"},
+                "retrieval": {"exact_reference_top1": True},
+            },
+        )
+    )
+
+    assert semantics.extract_query_reference("Explain Article 12.3") == {
+        "raw": "Article 12.3",
+        "section": "12.3",
+        "ref": "section:12.3",
+    }
+    assert semantics.derive_reference_metadata("Article 12.3 text")["references"] == [
+        "section:12.3"
+    ]
+
+
+def test_reference_semantics_splits_text_into_reference_units():
+    semantics = ReferenceSemantics.from_metadata(quran_metadata())
+
+    assert semantics.split_reference_units("Surah 1\n\n[1:1] One\n\n[1:2] Two") == [
+        "Surah 1\n\n[1:1] One",
+        "[1:2] Two",
+    ]

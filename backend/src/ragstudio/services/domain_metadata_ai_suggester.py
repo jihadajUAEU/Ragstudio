@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from ragstudio.db.models import SettingsProfile
 from ragstudio.schemas.parsing import DomainMetadata, DomainMetadataSuggestOut
+from ragstudio.services.metadata_json_schema import validate_custom_json
 from ragstudio.services.page_sampler import SampledPage
 
 
@@ -64,6 +65,7 @@ class DomainMetadataAiSuggester:
             raise ValueError(f"Metadata autosuggest LLM response was invalid: {exc}") from exc
 
         metadata = suggestion.domain_metadata
+        validate_custom_json(metadata.custom_json)
         metadata.metadata_sources = ["ai_vision" if target.supports_images else "ai_llm"]
         evidence_pages = self._validated_evidence_pages(suggestion.evidence_pages, pages)
         return DomainMetadataSuggestOut(

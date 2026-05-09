@@ -188,13 +188,16 @@ def test_chunk_splitter_uses_scripture_profile_from_editable_metadata_json():
         parser_mode="mineru_strict",
     )
 
+    assert [item.metadata["reference_metadata"]["references"] for item in split] == [
+        ["1:1"],
+        ["1:2"],
+    ]
     assert split[0].metadata["parser_metadata"]["split_profile"] == "scripture_reference"
     assert split[0].metadata["reference_metadata"]["reference_type"] == "surah_ayah"
-    assert split[0].metadata["reference_metadata"]["references"] == ["1:1", "1:2"]
     assert split[0].metadata["reference_metadata"]["page_start"] == 2
     assert split[0].metadata["reference_metadata"]["page_end"] == 2
     assert "previous_ref" not in split[0].metadata["reference_metadata"]
-    assert split[0].metadata["reference_metadata"]["next_ref"] == "1:3"
+    assert split[0].metadata["reference_metadata"]["next_ref"] == "1:2"
 
 
 def test_chunk_splitter_selects_scripture_profile_from_standard_fields():
@@ -283,3 +286,31 @@ def test_chunk_splitter_cleans_obvious_mineru_noise_without_removing_text():
     assert f"Arabic text stays. {arabic_text}" in split[0].text
     assert "English text stays." in split[0].text
     assert split[0].metadata["reference_metadata"]["references"] == ["1:3"]
+
+
+def test_chunk_splitter_splits_reference_units_when_metadata_requests_verse_chunks():
+    chunk = AdapterChunk(
+        text="Surah 1\n\n[1:4]\n\nIt is You we worship.\n\n[1:5]\n\nGuide us.",
+        source_location={"page_start": 2, "page_end": 2},
+        metadata={"parser_metadata": {"backend": "mineru", "chunk_index": 0}},
+    )
+
+    split = ChunkSplitter(max_words=1500).split(
+        [chunk],
+        domain_metadata=DomainMetadata(
+            domain="religion",
+            tags=["quran"],
+            custom_json={
+                "reference_schema": {"type": "surah_ayah"},
+                "chunking": {"unit": "verse", "include_neighbors": 1},
+            },
+        ),
+        parser_mode="mineru_strict",
+    )
+
+    assert [item.metadata["reference_metadata"]["references"] for item in split] == [
+        ["1:4"],
+        ["1:5"],
+    ]
+    assert split[0].text.startswith("Surah 1")
+    assert split[1].text.startswith("[1:5]")

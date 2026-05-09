@@ -323,6 +323,108 @@ async def test_reindex_missing_document_returns_404(client):
 
 
 @pytest.mark.asyncio
+async def test_reindex_document_validates_custom_json(client, tmp_path):
+    session_factory = client._transport.app.state.session_factory
+    artifact = tmp_path / "uploads" / "invalid-json-reindex-sha"
+    artifact.parent.mkdir(parents=True)
+    artifact.write_text("Quran 1:4", encoding="utf-8")
+    async with session_factory() as session:
+        document = Document(
+            filename="quran.pdf",
+            content_type="application/pdf",
+            sha256="invalid-json-reindex-sha",
+            artifact_path=str(artifact),
+            status=StageStatus.SUCCEEDED.value,
+        )
+        session.add(document)
+        await session.commit()
+        document_id = document.id
+
+    response = await client.post(
+        f"/api/documents/{document_id}/reindex",
+        json={
+            "parser_mode": "local_fallback",
+            "domain_metadata": {"custom_json": {"retrieval": {"exact_reference_top1": "yes"}}},
+        },
+    )
+
+    assert response.status_code == 422
+    assert "retrieval values" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_reindex_document_rejects_active_index_job(client, tmp_path):
+    session_factory = client._transport.app.state.session_factory
+    artifact = tmp_path / "uploads" / "active-reindex-sha"
+    artifact.parent.mkdir(parents=True)
+    artifact.write_text("Quran 1:4", encoding="utf-8")
+    async with session_factory() as session:
+        document = Document(
+            filename="quran.pdf",
+            content_type="application/pdf",
+            sha256="active-reindex-sha",
+            artifact_path=str(artifact),
+            status=StageStatus.RUNNING.value,
+        )
+        session.add(document)
+        await session.flush()
+        session.add(
+            Job(
+                type="index_document",
+                target_id=document.id,
+                status=StageStatus.RUNNING.value,
+                progress=50,
+            )
+        )
+        await session.commit()
+        document_id = document.id
+
+    response = await client.post(
+        f"/api/documents/{document_id}/reindex",
+        json={"parser_mode": "local_fallback", "domain_metadata": {}},
+    )
+
+    assert response.status_code == 409
+    assert "active indexing job" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_reindex_document_validates_strict_mineru_before_queueing(client, tmp_path):
+    session_factory = client._transport.app.state.session_factory
+    artifact = tmp_path / "uploads" / "strict-reindex-sha"
+    artifact.parent.mkdir(parents=True)
+    artifact.write_text("Quran 1:4", encoding="utf-8")
+    async with session_factory() as session:
+        document = Document(
+            filename="quran.pdf",
+            content_type="application/pdf",
+            sha256="strict-reindex-sha",
+            artifact_path=str(artifact),
+            status=StageStatus.SUCCEEDED.value,
+        )
+        session.add(document)
+        await session.commit()
+        document_id = document.id
+
+    response = await client.post(
+        f"/api/documents/{document_id}/reindex",
+        json={"parser_mode": "mineru_strict", "domain_metadata": {}},
+    )
+
+    assert response.status_code == 409
+    assert "MinerU" in response.json()["detail"]
+    async with session_factory() as session:
+        job_count = len(
+            (
+                await session.execute(
+                    select(Job).where(Job.type == "index_document", Job.target_id == document_id)
+                )
+            ).scalars().all()
+        )
+    assert job_count == 0
+
+
+@pytest.mark.asyncio
 async def test_upload_uses_runtime_index_lifecycle_when_profile_exists(client, monkeypatch):
     monkeypatch.setattr(
         "ragstudio.services.index_lifecycle_service.RAGAnythingRuntimeFactory",

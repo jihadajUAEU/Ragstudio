@@ -31,6 +31,7 @@ class HybridChunkSearch:
         reference_exact = 0.0
         same_chapter = 0.0
         neighbor_match = 0.0
+        requested_ref = self._query_reference_label(query_ref)
         if isinstance(query_ref, dict) and isinstance(reference_metadata, dict):
             q_chapter = query_ref.get("chapter")
             q_verse = query_ref.get("verse")
@@ -38,8 +39,22 @@ class HybridChunkSearch:
             chapter_end = reference_metadata.get("chapter_end")
             verse_start = reference_metadata.get("verse_start")
             verse_end = reference_metadata.get("verse_end")
+            references = reference_metadata.get("references")
+            explicit_refs = (
+                {ref for ref in references if isinstance(ref, str)}
+                if isinstance(references, list)
+                else set()
+            )
             if (
-                isinstance(q_chapter, int)
+                semantics
+                and semantics.exact_reference_top1
+                and requested_ref in explicit_refs
+            ):
+                reference_exact = 100.0
+            elif (
+                semantics
+                and semantics.exact_reference_top1
+                and isinstance(q_chapter, int)
                 and isinstance(q_verse, int)
                 and isinstance(chapter_start, int)
                 and isinstance(chapter_end, int)
@@ -50,15 +65,16 @@ class HybridChunkSearch:
             ):
                 reference_exact = 100.0
             elif (
-                isinstance(q_chapter, int)
+                semantics
+                and semantics.boost_same_chapter
+                and isinstance(q_chapter, int)
                 and isinstance(chapter_start, int)
                 and isinstance(chapter_end, int)
                 and chapter_start <= q_chapter <= chapter_end
             ):
                 same_chapter = 5.0
 
-            requested_ref = self._query_reference_label(query_ref)
-            if requested_ref in {
+            if semantics and semantics.boost_neighbor_verses and requested_ref in {
                 reference_metadata.get("previous_ref"),
                 reference_metadata.get("next_ref"),
             }:
@@ -140,4 +156,7 @@ class HybridChunkSearch:
         verse = query_ref.get("verse")
         if isinstance(chapter, int) and isinstance(verse, int):
             return f"{chapter}:{verse}"
+        ref = query_ref.get("ref")
+        if isinstance(ref, str) and ref:
+            return ref
         return None
