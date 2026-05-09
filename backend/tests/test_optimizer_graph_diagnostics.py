@@ -677,6 +677,59 @@ async def test_graph_returns_fallback_relationships_when_native_graph_is_empty(
 
 
 @pytest.mark.asyncio
+async def test_graph_returns_conflict_when_native_and_fallback_graphs_are_empty(
+    client, monkeypatch
+):
+    class ReadyRuntimeHealthService:
+        def __init__(self, session, *, verify_storage):
+            self.session = session
+            self.verify_storage = verify_storage
+
+        async def check(self, profile):
+            return []
+
+        def blocking_failures(self, checks):
+            return []
+
+    class EmptyRuntime:
+        async def graph(self):
+            return {"nodes": [], "edges": []}
+
+    class EmptyRuntimeFactory:
+        def __init__(self, settings):
+            self.settings = settings
+
+        def build(self, profile):
+            return EmptyRuntime()
+
+    monkeypatch.setattr(
+        "ragstudio.services.graph_service.RAGAnythingRuntimeFactory",
+        EmptyRuntimeFactory,
+    )
+    monkeypatch.setattr(
+        "ragstudio.services.graph_service.RuntimeHealthService",
+        ReadyRuntimeHealthService,
+    )
+
+    settings = await client.put(
+        "/api/settings/default",
+        json={
+            "provider": "openai-compatible",
+            "runtime_mode": "runtime",
+            "llm_model": "gpt-4o",
+            "embedding_model": "text-embedding-3-large",
+            "storage_backend": "postgres_pgvector_neo4j",
+        },
+    )
+    assert settings.status_code == 200
+
+    response = await client.get("/api/graph")
+
+    assert response.status_code == 409
+    assert "Runtime graph is empty" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
 async def test_graph_returns_conflict_when_runtime_health_blocks(client, monkeypatch):
     class BlockingRuntimeHealthService:
         def __init__(self, session, *, verify_storage):

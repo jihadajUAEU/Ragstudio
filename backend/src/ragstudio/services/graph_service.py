@@ -75,7 +75,9 @@ class GraphService:
             fallback_graph = await self._relationship_metadata_graph()
             if self._has_graph_data(fallback_graph):
                 return fallback_graph
-            return graph
+            raise RuntimeGraphUnavailableError(
+                "Runtime graph is empty and fallback relationship graph is unavailable."
+            )
         except RuntimeGraphUnavailableError:
             raise
         except RuntimeUnavailableError as exc:
