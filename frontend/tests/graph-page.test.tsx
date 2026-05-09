@@ -1,6 +1,6 @@
 import "@testing-library/jest-dom/vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
 
@@ -123,5 +123,67 @@ describe("GraphPage", () => {
     expect(map).toHaveTextContent("Runtime chunk");
     expect(map).toHaveTextContent("FallbackRelationship");
     expect(screen.queryByText("Graph unavailable")).not.toBeInTheDocument();
+  });
+
+  it("filters the graph map by node type", async () => {
+    vi.mocked(apiClient.diagnostics).mockResolvedValue({
+      capabilities: { graph: true },
+      dependency_status: {},
+      warnings: [],
+      runtime_mode: "runtime",
+      overall_status: "ready",
+      checks: [],
+    });
+    vi.mocked(apiClient.graph).mockResolvedValue({
+      nodes: [
+        { id: "verse-1", labels: ["Reference"], properties: { label: "2:255" } },
+        { id: "topic-1", labels: ["Topic"], properties: { label: "Throne Verse" } },
+      ],
+      edges: [{ source: "verse-1", target: "topic-1", type: "mentions" }],
+    });
+
+    renderGraphPage();
+
+    fireEvent.change(await screen.findByLabelText("Node type"), {
+      target: { value: "Reference" },
+    });
+
+    const map = await screen.findByLabelText("Graph relationship map");
+    expect(map).toHaveTextContent("2:255");
+    expect(map).not.toHaveTextContent("Throne Verse");
+    expect(screen.getByText("Visible nodes")).toBeInTheDocument();
+  });
+
+  it("filters by document id from edge properties and keeps endpoint nodes", async () => {
+    vi.mocked(apiClient.diagnostics).mockResolvedValue({
+      capabilities: { graph: true },
+      dependency_status: {},
+      warnings: [],
+      runtime_mode: "runtime",
+      overall_status: "ready",
+      checks: [],
+    });
+    vi.mocked(apiClient.graph).mockResolvedValue({
+      nodes: [
+        { id: "verse-1", labels: ["Reference"], properties: { label: "2:255" } },
+        { id: "topic-1", labels: ["Topic"], properties: { label: "Throne Verse" } },
+        { id: "topic-2", labels: ["Topic"], properties: { label: "Different Topic" } },
+      ],
+      edges: [
+        { source: "verse-1", target: "topic-1", type: "mentions", properties: { document_ids: ["doc-7"] } },
+        { source: "topic-1", target: "topic-2", type: "related", properties: { document_ids: ["doc-9"] } },
+      ],
+    });
+
+    renderGraphPage();
+
+    fireEvent.change(await screen.findByLabelText("Document id"), {
+      target: { value: "doc-7" },
+    });
+
+    const map = await screen.findByLabelText("Graph relationship map");
+    expect(map).toHaveTextContent("2:255");
+    expect(map).toHaveTextContent("Throne Verse");
+    expect(map).not.toHaveTextContent("Different Topic");
   });
 });

@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Background,
@@ -15,10 +15,12 @@ import "@xyflow/react/dist/style.css";
 import {
   AlertCircle,
   CircleDot,
+  Filter,
   GitBranch,
   Loader2,
   Network,
   RefreshCcw,
+  Search,
 } from "lucide-react";
 
 import { apiClient } from "../../api/client";
@@ -37,23 +39,50 @@ type GraphNodeData = {
   detail: string;
 };
 
+type GraphFilters = {
+  nodeType: string;
+  edgeType: string;
+  documentId: string;
+  searchText: string;
+};
+
+type GraphFilterOptions = {
+  nodeTypes: string[];
+  edgeTypes: string[];
+  documentIds: string[];
+};
+
 const nodeTypes = { graphEntity: GraphEntityNode };
 
+const emptyGraphItems: Record<string, unknown>[] = [];
+
+const emptyFilters: GraphFilters = {
+  nodeType: "",
+  edgeType: "",
+  documentId: "",
+  searchText: "",
+};
+
 export function GraphPage() {
+  const [filters, setFilters] = useState<GraphFilters>(emptyFilters);
   const graphQuery = useQuery({ queryKey: queryKeys.graph, queryFn: apiClient.graph });
   const diagnosticsQuery = useQuery({ queryKey: queryKeys.diagnostics, queryFn: apiClient.diagnostics });
-  const nodes = graphQuery.data?.nodes ?? [];
-  const edges = graphQuery.data?.edges ?? [];
+  const nodes = graphQuery.data?.nodes ?? emptyGraphItems;
+  const edges = graphQuery.data?.edges ?? emptyGraphItems;
   const hasGraphData = nodes.length > 0 || edges.length > 0;
+  const filterOptions = useMemo(() => buildGraphFilterOptions(nodes, edges), [nodes, edges]);
+  const filteredGraph = useMemo(() => filterGraphData(nodes, edges, filters), [nodes, edges, filters]);
+  const hasActiveFilters = hasGraphFilters(filters);
   const graphAvailable = diagnosticsQuery.data?.capabilities.graph ?? true;
   const graphUnavailableDetail =
     diagnosticsQuery.data?.warnings.find((warning) => warning.toLowerCase().includes("graph")) ??
     diagnosticsQuery.data?.checks.find((check) => check.name === "runtime_mode")?.detail ??
     "Graph capability is disabled by the active runtime profile.";
 
-  const previewNodes = nodes.slice(0, 50);
-  const previewEdges = edges.slice(0, 50);
+  const previewNodes = filteredGraph.nodes.slice(0, 50);
+  const previewEdges = filteredGraph.edges.slice(0, 50);
   const visualGraph = useMemo(() => buildVisualGraph(previewNodes, previewEdges), [previewNodes, previewEdges]);
+  const filteredResultEmpty = hasGraphData && filteredGraph.nodes.length === 0 && filteredGraph.edges.length === 0;
 
   return (
     <div className="mx-auto flex max-w-7xl flex-col gap-6">
@@ -79,8 +108,18 @@ export function GraphPage() {
       </section>
 
       <section className="grid gap-4 sm:grid-cols-2">
-        <Metric icon={CircleDot} label="Nodes" value={formatCount(nodes.length)} />
-        <Metric icon={GitBranch} label="Edges" value={formatCount(edges.length)} />
+        <Metric
+          icon={CircleDot}
+          label={hasActiveFilters ? "Visible nodes" : "Nodes"}
+          value={formatCount(hasGraphData ? filteredGraph.nodes.length : nodes.length)}
+          detail={hasActiveFilters ? `${formatCount(nodes.length)} total` : undefined}
+        />
+        <Metric
+          icon={GitBranch}
+          label={hasActiveFilters ? "Visible edges" : "Edges"}
+          value={formatCount(hasGraphData ? filteredGraph.edges.length : edges.length)}
+          detail={hasActiveFilters ? `${formatCount(edges.length)} total` : undefined}
+        />
       </section>
 
       {graphQuery.isLoading || diagnosticsQuery.isLoading ? (
@@ -116,31 +155,138 @@ export function GraphPage() {
           description="The backend returned no nodes or edges yet."
         />
       ) : (
-        <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
-          <div className="h-[560px] overflow-hidden rounded-md border border-[#d6dde1] bg-white">
-            <ReactFlow
-              nodes={visualGraph.nodes}
-              edges={visualGraph.edges}
-              nodeTypes={nodeTypes}
-              fitView
-              nodesDraggable
-              nodesConnectable={false}
-              minZoom={0.35}
-              maxZoom={1.6}
-              aria-label="Graph relationship map"
-            >
-              <Background color="#d7e0e4" gap={20} />
-              <MiniMap pannable zoomable nodeStrokeWidth={3} />
-              <Controls showInteractive={false} />
-            </ReactFlow>
-          </div>
-          <div className="grid min-w-0 gap-4">
-            <GraphList title="Nodes" items={previewNodes} total={nodes.length} />
-            <GraphList title="Edges" items={previewEdges} total={edges.length} />
+        <section className="grid gap-4">
+          <GraphFiltersPanel
+            filters={filters}
+            options={filterOptions}
+            onChange={setFilters}
+            onReset={() => setFilters(emptyFilters)}
+          />
+          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
+            <div className="h-[560px] overflow-hidden rounded-md border border-[#d6dde1] bg-white">
+              {filteredResultEmpty ? (
+                <div className="flex h-full items-center justify-center p-6">
+                  <EmptyState
+                    icon={Filter}
+                    title="No graph matches"
+                    description="Adjust the filters to explore a different slice of the graph."
+                  />
+                </div>
+              ) : (
+                <ReactFlow
+                  nodes={visualGraph.nodes}
+                  edges={visualGraph.edges}
+                  nodeTypes={nodeTypes}
+                  fitView
+                  nodesDraggable
+                  nodesConnectable={false}
+                  minZoom={0.35}
+                  maxZoom={1.6}
+                  aria-label="Graph relationship map"
+                >
+                  <Background color="#d7e0e4" gap={20} />
+                  <MiniMap pannable zoomable nodeStrokeWidth={3} />
+                  <Controls showInteractive={false} />
+                </ReactFlow>
+              )}
+            </div>
+            <div className="grid min-w-0 gap-4">
+              <GraphList title="Nodes" items={previewNodes} total={filteredGraph.nodes.length} />
+              <GraphList title="Edges" items={previewEdges} total={filteredGraph.edges.length} />
+            </div>
           </div>
         </section>
       )}
     </div>
+  );
+}
+
+function GraphFiltersPanel({
+  filters,
+  options,
+  onChange,
+  onReset,
+}: {
+  filters: GraphFilters;
+  options: GraphFilterOptions;
+  onChange: (filters: GraphFilters) => void;
+  onReset: () => void;
+}) {
+  const active = hasGraphFilters(filters);
+
+  return (
+    <div className="rounded-md border border-[#d6dde1] bg-white p-4">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-end">
+        <FilterSelect
+          label="Node type"
+          value={filters.nodeType}
+          options={options.nodeTypes}
+          placeholder="All node types"
+          onChange={(nodeType) => onChange({ ...filters, nodeType })}
+        />
+        <FilterSelect
+          label="Edge type"
+          value={filters.edgeType}
+          options={options.edgeTypes}
+          placeholder="All edge types"
+          onChange={(edgeType) => onChange({ ...filters, edgeType })}
+        />
+        <FilterSelect
+          label="Document id"
+          value={filters.documentId}
+          options={options.documentIds}
+          placeholder="All documents"
+          onChange={(documentId) => onChange({ ...filters, documentId })}
+        />
+        <label className="min-w-0 flex-1 text-sm font-medium text-[#3a4a53]">
+          Page or reference
+          <div className="mt-1 flex h-10 items-center gap-2 rounded-md border border-[#d6dde1] bg-white px-3 focus-within:ring-2 focus-within:ring-[#176b87]">
+            <Search className="h-4 w-4 shrink-0 text-[#6f7f87]" aria-hidden="true" />
+            <input
+              value={filters.searchText}
+              onChange={(event) => onChange({ ...filters, searchText: event.target.value })}
+              placeholder="Label, id, page, ref"
+              className="min-w-0 flex-1 bg-transparent text-sm text-[#24313a] outline-none placeholder:text-[#8c9aa1]"
+            />
+          </div>
+        </label>
+        <Button variant="secondary" onClick={onReset} disabled={!active}>
+          Reset
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function FilterSelect({
+  label,
+  value,
+  options,
+  placeholder,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  options: string[];
+  placeholder: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className="min-w-0 flex-1 text-sm font-medium text-[#3a4a53]">
+      {label}
+      <select
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="mt-1 h-10 w-full rounded-md border border-[#d6dde1] bg-white px-3 text-sm text-[#24313a] outline-none focus:ring-2 focus:ring-[#176b87]"
+      >
+        <option value="">{placeholder}</option>
+        {options.map((option) => (
+          <option key={option} value={option}>
+            {option}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }
 
@@ -160,10 +306,12 @@ function Metric({
   icon: Icon,
   label,
   value,
+  detail,
 }: {
   icon: typeof CircleDot;
   label: string;
   value: string;
+  detail?: string;
 }) {
   return (
     <div className="rounded-md border border-[#d6dde1] bg-white p-4">
@@ -173,7 +321,10 @@ function Metric({
         </div>
         <div className="min-w-0">
           <p className="truncate text-sm text-[#62717a]">{label}</p>
-          <p className="truncate text-2xl font-semibold text-[#1f2933]">{value}</p>
+          <div className="flex flex-wrap items-baseline gap-x-2">
+            <p className="truncate text-2xl font-semibold text-[#1f2933]">{value}</p>
+            {detail ? <p className="truncate text-xs text-[#6f7f87]">{detail}</p> : null}
+          </div>
         </div>
       </div>
     </div>
@@ -198,17 +349,146 @@ function GraphList({
         </span>
       </div>
       <div className="max-h-[560px] space-y-2 overflow-auto pr-1">
-        {items.map((item, index) => (
-          <pre
-            key={`${title}-${index}`}
-            className="whitespace-pre-wrap break-words rounded-md border border-[#e1e7ea] bg-[#f8fafb] p-3 text-xs leading-5 text-[#3a4a53]"
-          >
-            {JSON.stringify(item, null, 2)}
-          </pre>
-        ))}
+        {items.length === 0 ? (
+          <p className="rounded-md border border-[#e1e7ea] bg-[#f8fafb] p-3 text-sm text-[#62717a]">
+            No matching {title.toLowerCase()}.
+          </p>
+        ) : (
+          items.map((item, index) => (
+            <pre
+              key={`${title}-${index}`}
+              className="whitespace-pre-wrap break-words rounded-md border border-[#e1e7ea] bg-[#f8fafb] p-3 text-xs leading-5 text-[#3a4a53]"
+            >
+              {JSON.stringify(item, null, 2)}
+            </pre>
+          ))
+        )}
       </div>
     </div>
   );
+}
+
+function buildGraphFilterOptions(
+  rawNodes: Record<string, unknown>[],
+  rawEdges: Record<string, unknown>[],
+): GraphFilterOptions {
+  return {
+    nodeTypes: uniqueSorted(rawNodes.map((item) => graphType(item, "entity"))),
+    edgeTypes: uniqueSorted(rawEdges.map((item) => graphType(item, "relates"))),
+    documentIds: uniqueSorted([...rawNodes, ...rawEdges].flatMap((item) => graphDocumentIds(item))),
+  };
+}
+
+function filterGraphData(
+  rawNodes: Record<string, unknown>[],
+  rawEdges: Record<string, unknown>[],
+  filters: GraphFilters,
+): { nodes: Record<string, unknown>[]; edges: Record<string, unknown>[] } {
+  if (!hasGraphFilters(filters)) {
+    return { nodes: rawNodes, edges: rawEdges };
+  }
+
+  const nodeEntries = rawNodes.map((node, index) => ({ node, id: graphId(node, index) }));
+  const nodesById = new Map(nodeEntries.map((entry) => [entry.id, entry.node]));
+  const visibleNodeIds = new Set<string>();
+  const hasNodeScopedFilter = Boolean(filters.nodeType || filters.documentId || filters.searchText.trim());
+  const normalizedSearch = filters.searchText.trim().toLowerCase();
+
+  for (const entry of nodeEntries) {
+    if (nodeMatchesFilters(entry.node, filters, normalizedSearch)) {
+      visibleNodeIds.add(entry.id);
+    }
+  }
+
+  const edgeEntries = rawEdges.map((edge) => ({
+    edge,
+    source: graphEndpoint(edge, ["source", "source_id", "from", "start"]),
+    target: graphEndpoint(edge, ["target", "target_id", "to", "end"]),
+  }));
+  const matchingEdgeEntries = edgeEntries.filter((entry) => {
+    if (!entry.source || !entry.target) {
+      return false;
+    }
+    return edgeMatchesFilters(entry.edge, filters, normalizedSearch);
+  });
+
+  if (!hasNodeScopedFilter) {
+    for (const entry of matchingEdgeEntries) {
+      if (nodesById.has(entry.source)) {
+        visibleNodeIds.add(entry.source);
+      }
+      if (nodesById.has(entry.target)) {
+        visibleNodeIds.add(entry.target);
+      }
+    }
+  } else {
+    for (const entry of matchingEdgeEntries) {
+      if (filters.nodeType) {
+        continue;
+      }
+      if (entry.source && nodesById.has(entry.source)) {
+        visibleNodeIds.add(entry.source);
+      }
+      if (entry.target && nodesById.has(entry.target)) {
+        visibleNodeIds.add(entry.target);
+      }
+    }
+  }
+
+  const filteredNodes = nodeEntries
+    .filter((entry) => visibleNodeIds.has(entry.id))
+    .map((entry) => entry.node);
+  const filteredEdges = edgeEntries
+    .filter((entry) => {
+      if (!entry.source || !entry.target) {
+        return false;
+      }
+      if (!visibleNodeIds.has(entry.source) || !visibleNodeIds.has(entry.target)) {
+        return false;
+      }
+      return !filters.edgeType || graphType(entry.edge, "relates") === filters.edgeType;
+    })
+    .map((entry) => entry.edge);
+
+  return { nodes: filteredNodes, edges: filteredEdges };
+}
+
+function nodeMatchesFilters(
+  item: Record<string, unknown>,
+  filters: GraphFilters,
+  normalizedSearch: string,
+): boolean {
+  if (filters.nodeType && graphType(item, "entity") !== filters.nodeType) {
+    return false;
+  }
+  if (filters.documentId && !graphDocumentIds(item).includes(filters.documentId)) {
+    return false;
+  }
+  if (normalizedSearch && !graphSearchText(item).includes(normalizedSearch)) {
+    return false;
+  }
+  return true;
+}
+
+function edgeMatchesFilters(
+  item: Record<string, unknown>,
+  filters: GraphFilters,
+  normalizedSearch: string,
+): boolean {
+  if (filters.edgeType && graphType(item, "relates") !== filters.edgeType) {
+    return false;
+  }
+  if (filters.documentId && !graphDocumentIds(item).includes(filters.documentId)) {
+    return false;
+  }
+  if (normalizedSearch && !graphSearchText(item).includes(normalizedSearch)) {
+    return false;
+  }
+  return true;
+}
+
+function hasGraphFilters(filters: GraphFilters): boolean {
+  return Boolean(filters.nodeType || filters.edgeType || filters.documentId || filters.searchText.trim());
 }
 
 function buildVisualGraph(
@@ -295,6 +575,61 @@ function graphDetail(item: Record<string, unknown>): string {
     .join(" · ");
 }
 
+function graphDocumentIds(item: Record<string, unknown>): string[] {
+  const properties = graphProperties(item);
+  return uniqueSorted([
+    ...valueStrings(item.document_id),
+    ...valueStrings(item.document_ids),
+    ...valueStrings(item.document),
+    ...valueStrings(item.source_document),
+    ...valueStrings(properties.document_id),
+    ...valueStrings(properties.document_ids),
+    ...valueStrings(properties.document),
+    ...valueStrings(properties.source_document),
+  ]);
+}
+
+function graphSearchText(item: Record<string, unknown>): string {
+  const properties = graphProperties(item);
+  return uniqueSorted([
+    ...valueStrings(item.id),
+    ...valueStrings(item.node_id),
+    ...valueStrings(item.edge_id),
+    ...valueStrings(item.label),
+    ...valueStrings(item.labels),
+    ...valueStrings(item.name),
+    ...valueStrings(item.title),
+    ...valueStrings(item.text),
+    ...valueStrings(item.type),
+    ...valueStrings(item.kind),
+    ...valueStrings(item.relationship),
+    ...valueStrings(item.page),
+    ...valueStrings(item.page_idx),
+    ...valueStrings(item.page_start),
+    ...valueStrings(item.page_end),
+    ...valueStrings(item.reference),
+    ...valueStrings(item.ref),
+    ...valueStrings(properties.label),
+    ...valueStrings(properties.labels),
+    ...valueStrings(properties.name),
+    ...valueStrings(properties.title),
+    ...valueStrings(properties.text),
+    ...valueStrings(properties.type),
+    ...valueStrings(properties.kind),
+    ...valueStrings(properties.page),
+    ...valueStrings(properties.page_idx),
+    ...valueStrings(properties.page_start),
+    ...valueStrings(properties.page_end),
+    ...valueStrings(properties.reference),
+    ...valueStrings(properties.ref),
+    ...graphDocumentIds(item),
+    graphType(item, "entity"),
+    graphDetail(item),
+  ])
+    .join(" ")
+    .toLowerCase();
+}
+
 function graphProperties(item: Record<string, unknown>): Record<string, unknown> {
   const properties = item.properties;
   return typeof properties === "object" && properties !== null && !Array.isArray(properties)
@@ -310,6 +645,25 @@ function graphEndpoint(item: Record<string, unknown>, keys: string[]): string | 
     }
   }
   return null;
+}
+
+function uniqueSorted(values: string[]): string[] {
+  return Array.from(new Set(values.filter(Boolean))).sort((a, b) =>
+    a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }),
+  );
+}
+
+function valueStrings(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => valueStrings(item));
+  }
+  if (typeof value === "string") {
+    return value ? [value] : [];
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return [String(value)];
+  }
+  return [];
 }
 
 function graphPosition(index: number, total: number): { x: number; y: number } {
