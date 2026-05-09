@@ -3,6 +3,29 @@ from __future__ import annotations
 import base64
 from dataclasses import dataclass
 
+TEXT_CONTENT_TYPES = {
+    "application/json",
+    "application/ld+json",
+    "application/x-ndjson",
+    "application/xml",
+    "text/csv",
+    "text/html",
+    "text/markdown",
+    "text/plain",
+    "text/xml",
+}
+TEXT_EXTENSIONS = {
+    ".csv",
+    ".json",
+    ".jsonl",
+    ".md",
+    ".ndjson",
+    ".txt",
+    ".xml",
+    ".yaml",
+    ".yml",
+}
+
 
 @dataclass(frozen=True)
 class SampledPage:
@@ -12,9 +35,15 @@ class SampledPage:
 
 
 class PageSampler:
-    def __init__(self, max_pages: int = 4, max_text_chars: int = 4000):
+    def __init__(
+        self,
+        max_pages: int = 4,
+        max_text_chars: int = 4000,
+        max_image_bytes: int = 1_500_000,
+    ):
         self.max_pages = max_pages
         self.max_text_chars = max_text_chars
+        self.max_image_bytes = max_image_bytes
         self.warnings: list[str] = []
 
     def sample(self, data: bytes, *, filename: str, content_type: str) -> list[SampledPage]:
@@ -22,28 +51,28 @@ class PageSampler:
         lower_name = filename.lower()
         if content_type == "application/pdf" or lower_name.endswith(".pdf"):
             return self._sample_pdf(data)
-        return self._sample_text(data)
+        if self._is_text_like(lower_name, content_type):
+            return self._sample_text(data)
+        self.warnings.append(f"Unsupported file type for AI metadata autosuggest: {content_type}.")
+        return []
 
     def _sample_pdf(self, data: bytes) -> list[SampledPage]:
         try:
             import fitz
 
-            document = fitz.open(stream=data, filetype="pdf")
-            indexes = self._representative_indexes(document.page_count)
-            pages: list[SampledPage] = []
-            for index in indexes:
-                page = document.load_page(index)
-                pixmap = page.get_pixmap(matrix=fitz.Matrix(1.5, 1.5), alpha=False)
-                image_data = base64.b64encode(pixmap.tobytes("png")).decode("ascii")
-                pages.append(
-                    SampledPage(
-                        page_number=index + 1,
-                        text=page.get_text("text")[: self.max_text_chars].strip(),
-                        image_data_url=f"data:image/png;base64,{image_data}",
+            with fitz.open(stream=data, filetype="pdf") as document:
+                indexes = self._representative_indexes(document.page_count)
+                pages: list[SampledPage] = []
+                for index in indexes:
+                    page = document.load_page(index)
+                    pages.append(
+                        SampledPage(
+                            page_number=index + 1,
+                            text=page.get_text("text")[: self.max_text_chars].strip(),
+                            image_data_url=self._page_image_data_url(page, fitz),
+                        )
                     )
-                )
-            document.close()
-            return pages
+                return pages
         except Exception as exc:
             self.warnings.append(f"Could not sample PDF pages: {exc}")
             return []
@@ -84,3 +113,25 @@ class PageSampler:
             if len(indexes) == self.max_pages:
                 break
         return indexes
+
+    def _is_text_like(self, lower_name: str, content_type: str) -> bool:
+        normalized_content_type = content_type.split(";", maxsplit=1)[0].strip().lower()
+        if normalized_content_type in TEXT_CONTENT_TYPES:
+            return True
+        if normalized_content_type.startswith("text/"):
+            return True
+        return any(lower_name.endswith(extension) for extension in TEXT_EXTENSIONS)
+
+    def _page_image_data_url(self, page, fitz) -> str | None:
+        for scale in (1.0, 0.6):
+            pixmap = page.get_pixmap(matrix=fitz.Matrix(scale, scale), alpha=False)
+            image_bytes = pixmap.tobytes("png")
+            if len(image_bytes) <= self.max_image_bytes:
+                image_data = base64.b64encode(image_bytes).decode("ascii")
+                return f"data:image/png;base64,{image_data}"
+
+        self.warnings.append(
+            f"Skipped page {page.number + 1} image because it exceeded "
+            f"{self.max_image_bytes} bytes."
+        )
+        return None

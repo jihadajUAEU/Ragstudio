@@ -1,4 +1,5 @@
 import pytest
+import httpx
 
 from ragstudio.db.models import SettingsProfile
 from ragstudio.services.domain_metadata_ai_suggester import DomainMetadataAiSuggester
@@ -45,6 +46,7 @@ async def test_ai_domain_metadata_suggester_uses_vision_model(monkeypatch):
                                 "metadata_sources": ["model_supplied"]
                               },
                               "confidence": 0.92,
+                              "evidence_pages": [1, 99],
                               "rationale": "Sample pages show Quran verses and commentary.",
                               "warnings": []
                             }"""
@@ -106,6 +108,83 @@ async def test_ai_domain_metadata_suggester_uses_vision_model(monkeypatch):
     assert calls[0]["headers"]["authorization"] == "Bearer vision-secret"
     assert calls[0]["json"]["model"] == "vision-model"
     assert calls[0]["json"]["temperature"] == 0
+    assert calls[0]["json"]["response_format"] == {"type": "json_object"}
+    assert calls[0]["json"]["messages"][0]["content"][1]["type"] == "image_url"
+
+
+@pytest.mark.asyncio
+async def test_ai_domain_metadata_suggester_uses_images_for_vision_capable_llm(monkeypatch):
+    calls = []
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": """{
+                              "domain_metadata": {
+                                "domain": "research",
+                                "document_type": "paper",
+                                "tags": ["paper"],
+                                "metadata_sources": ["model_supplied"]
+                              },
+                              "confidence": 0.7,
+                              "evidence_pages": [2],
+                              "rationale": "The page image shows a paper layout.",
+                              "warnings": []
+                            }"""
+                        }
+                    }
+                ]
+            }
+
+    class FakeClient:
+        def __init__(self, timeout):
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def post(self, url, headers, json):
+            calls.append({"url": url, "headers": headers, "json": json})
+            return FakeResponse()
+
+    monkeypatch.setattr(
+        "ragstudio.services.domain_metadata_ai_suggester.httpx.AsyncClient",
+        FakeClient,
+    )
+
+    result = await DomainMetadataAiSuggester().suggest(
+        settings_profile=SettingsProfile(
+            id="default",
+            provider="openai-compatible",
+            llm_model="vision-capable-model",
+            llm_base_url="http://llm.test/v1",
+            llm_capabilities=["vision"],
+            embedding_model="embedding-model",
+            storage_backend="postgres",
+        ),
+        filename="paper.pdf",
+        content_type="application/pdf",
+        pages=[
+            SampledPage(
+                page_number=2,
+                text="",
+                image_data_url="data:image/png;base64,abc",
+            )
+        ],
+        sampler_warnings=[],
+    )
+
+    assert result.domain_metadata.metadata_sources == ["ai_vision"]
+    assert result.evidence_pages == [2]
+    assert calls[0]["url"] == "http://llm.test/v1/chat/completions"
     assert calls[0]["json"]["messages"][0]["content"][1]["type"] == "image_url"
 
 
@@ -134,6 +213,7 @@ async def test_ai_domain_metadata_suggest_endpoint_uses_vision_model(client, mon
                                 "metadata_sources": ["ai_vision"]
                               },
                               "confidence": 0.92,
+                              "evidence_pages": [1],
                               "rationale": "Sample pages show Quran verses and commentary.",
                               "warnings": []
                             }"""
@@ -193,6 +273,102 @@ async def test_ai_domain_metadata_suggest_endpoint_uses_vision_model(client, mon
     assert calls[0]["headers"]["authorization"] == "Bearer vision-secret"
     assert calls[0]["json"]["model"] == "vision-model"
     assert calls[0]["json"]["temperature"] == 0
+
+
+@pytest.mark.asyncio
+async def test_ai_domain_metadata_suggest_requires_default_settings(client):
+    response = await client.post(
+        "/api/domain-profiles/suggest",
+        files={"file": ("notes.txt", b"plain text", "text/plain")},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == (
+        "Default settings profile is required for AI metadata autosuggest."
+    )
+
+
+@pytest.mark.asyncio
+async def test_ai_domain_metadata_suggest_rejects_unsupported_file_type(client):
+    app = client._transport.app
+    async with app.state.session_factory() as session:
+        session.add(
+            SettingsProfile(
+                id="default",
+                provider="openai-compatible",
+                llm_model="text-model",
+                llm_base_url="http://llm.test/v1",
+                embedding_model="embedding-model",
+                storage_backend="postgres",
+                vision_model="vision-model",
+                vision_base_url="http://vision.test/v1",
+            )
+        )
+        await session.commit()
+
+    response = await client.post(
+        "/api/domain-profiles/suggest",
+        files={
+            "file": (
+                "document.docx",
+                b"PK\x03\x04 fake office document",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            )
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == (
+        "Could not sample pages from this file for AI metadata autosuggest."
+    )
+
+
+@pytest.mark.asyncio
+async def test_ai_domain_metadata_suggest_returns_502_for_llm_transport_error(
+    client,
+    monkeypatch,
+):
+    class FakeClient:
+        def __init__(self, timeout):
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def post(self, url, headers, json):
+            raise httpx.ConnectError("connection failed")
+
+    monkeypatch.setattr(
+        "ragstudio.services.domain_metadata_ai_suggester.httpx.AsyncClient",
+        FakeClient,
+    )
+
+    app = client._transport.app
+    async with app.state.session_factory() as session:
+        session.add(
+            SettingsProfile(
+                id="default",
+                provider="openai-compatible",
+                llm_model="text-model",
+                llm_base_url="http://llm.test/v1",
+                embedding_model="embedding-model",
+                storage_backend="postgres",
+                vision_model="vision-model",
+                vision_base_url="http://vision.test/v1",
+            )
+        )
+        await session.commit()
+
+    response = await client.post(
+        "/api/domain-profiles/suggest",
+        files={"file": ("notes.txt", b"plain text", "text/plain")},
+    )
+
+    assert response.status_code == 502
+    assert "Metadata autosuggest LLM response was invalid" in response.json()["detail"]
 
 
 @pytest.mark.asyncio

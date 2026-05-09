@@ -43,13 +43,6 @@ class DomainProfileIn(StudioModel):
     metadata: DomainMetadata
 
 
-class DomainMetadataSuggestIn(StudioModel):
-    filename: str
-    content_type: str = "application/octet-stream"
-    profile_id: str | None = None
-    sample_text: str = ""
-
-
 class DomainMetadataSuggestOut(StudioModel):
     domain_metadata: DomainMetadata
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)

@@ -1,4 +1,28 @@
+import pytest
+
 from ragstudio.services.page_sampler import PageSampler
+
+
+def test_sample_pdf_renders_valid_pdf_pages():
+    fitz = pytest.importorskip("fitz")
+
+    document = fitz.open()
+    for index in range(5):
+        page = document.new_page()
+        page.insert_text((72, 72), f"Sample page {index + 1}")
+    pdf_bytes = document.tobytes()
+    document.close()
+
+    pages = PageSampler().sample(
+        pdf_bytes,
+        filename="sample.pdf",
+        content_type="application/pdf",
+    )
+
+    assert [page.page_number for page in pages] == [1, 2, 3, 5]
+    assert "Sample page 1" in pages[0].text
+    assert pages[0].image_data_url is not None
+    assert pages[0].image_data_url.startswith("data:image/png;base64,")
 
 
 def test_sample_text_file_uses_start_middle_end_excerpts():
@@ -14,6 +38,39 @@ def test_sample_text_file_uses_start_middle_end_excerpts():
     assert "line 60" in pages[1].text
     assert "line 119" in pages[2].text
     assert all(page.image_data_url is None for page in pages)
+
+
+def test_sample_unsupported_binary_file_returns_warning():
+    sampler = PageSampler()
+
+    pages = sampler.sample(
+        b"PK\x03\x04 fake office document",
+        filename="document.docx",
+        content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    )
+
+    assert pages == []
+    assert sampler.warnings == [
+        "Unsupported file type for AI metadata autosuggest: "
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document."
+    ]
+
+
+def test_sample_pdf_omits_oversized_images_with_warning():
+    fitz = pytest.importorskip("fitz")
+
+    document = fitz.open()
+    page = document.new_page()
+    page.insert_text((72, 72), "Large image page")
+    pdf_bytes = document.tobytes()
+    document.close()
+
+    sampler = PageSampler(max_image_bytes=10)
+    pages = sampler.sample(pdf_bytes, filename="large.pdf", content_type="application/pdf")
+
+    assert len(pages) == 1
+    assert pages[0].image_data_url is None
+    assert sampler.warnings == ["Skipped page 1 image because it exceeded 10 bytes."]
 
 
 def test_sample_pdf_returns_warning_for_invalid_pdf_bytes():

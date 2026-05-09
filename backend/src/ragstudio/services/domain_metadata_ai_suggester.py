@@ -5,6 +5,7 @@ import re
 from dataclasses import dataclass
 
 import httpx
+from pydantic import BaseModel, Field, ValidationError
 
 from ragstudio.db.models import SettingsProfile
 from ragstudio.schemas.parsing import DomainMetadata, DomainMetadataSuggestOut
@@ -18,6 +19,15 @@ class LlmTarget:
     api_key: str | None
     timeout_ms: int
     source: str
+    supports_images: bool
+
+
+class AiMetadataSuggestion(BaseModel):
+    domain_metadata: DomainMetadata
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    evidence_pages: list[int] = Field(default_factory=list)
+    rationale: str = ""
+    warnings: list[str] = Field(default_factory=list)
 
 
 class DomainMetadataAiSuggester:
@@ -41,24 +51,32 @@ class DomainMetadataAiSuggester:
         if target.api_key:
             headers["authorization"] = f"Bearer {target.api_key}"
 
-        async with httpx.AsyncClient(timeout=target.timeout_ms / 1000) as client:
-            response = await client.post(
-                f"{target.base_url.rstrip('/')}/chat/completions",
-                headers=headers,
-                json=payload,
-            )
-        if response.status_code >= 400:
-            raise ValueError(f"Metadata autosuggest LLM returned HTTP {response.status_code}.")
+        try:
+            async with httpx.AsyncClient(timeout=target.timeout_ms / 1000) as client:
+                response = await client.post(
+                    f"{target.base_url.rstrip('/')}/chat/completions",
+                    headers=headers,
+                    json=payload,
+                )
+            if response.status_code >= 400:
+                raise ValueError(
+                    f"Metadata autosuggest LLM returned HTTP {response.status_code}."
+                )
 
-        parsed = self._parse_json(self._message_content(response.json()))
-        metadata = DomainMetadata.model_validate(parsed["domain_metadata"])
-        metadata.metadata_sources = ["ai_vision" if target.source == "vision" else "ai_llm"]
+            parsed = self._parse_json(self._message_content(response.json()))
+            suggestion = AiMetadataSuggestion.model_validate(parsed)
+        except (httpx.HTTPError, json.JSONDecodeError, TypeError, ValidationError) as exc:
+            raise ValueError(f"Metadata autosuggest LLM response was invalid: {exc}") from exc
+
+        metadata = suggestion.domain_metadata
+        metadata.metadata_sources = ["ai_vision" if target.supports_images else "ai_llm"]
+        evidence_pages = self._validated_evidence_pages(suggestion.evidence_pages, pages)
         return DomainMetadataSuggestOut(
             domain_metadata=metadata,
-            confidence=float(parsed.get("confidence", 0.0)),
-            evidence_pages=[page.page_number for page in pages],
-            rationale=str(parsed.get("rationale", "")),
-            warnings=[*sampler_warnings, *list(parsed.get("warnings", []))],
+            confidence=suggestion.confidence,
+            evidence_pages=evidence_pages,
+            rationale=suggestion.rationale,
+            warnings=[*sampler_warnings, *suggestion.warnings],
         )
 
     def _target(self, profile: SettingsProfile) -> LlmTarget:
@@ -69,6 +87,7 @@ class DomainMetadataAiSuggester:
                 api_key=profile.vision_api_key,
                 timeout_ms=profile.vision_timeout_ms or profile.llm_timeout_ms or 10000,
                 source="vision",
+                supports_images=True,
             )
         if (
             profile.llm_base_url
@@ -81,6 +100,7 @@ class DomainMetadataAiSuggester:
                 api_key=profile.llm_api_key,
                 timeout_ms=profile.llm_timeout_ms or 10000,
                 source="llm",
+                supports_images=True,
             )
         raise ValueError("Vision model is not configured for AI metadata autosuggest.")
 
@@ -98,7 +118,7 @@ class DomainMetadataAiSuggester:
                 "text": self._prompt(filename=filename, content_type=content_type, pages=pages),
             }
         ]
-        if target.source == "vision":
+        if target.supports_images:
             for page in pages:
                 if page.image_data_url:
                     content.append(
@@ -112,6 +132,7 @@ class DomainMetadataAiSuggester:
             "messages": [{"role": "user", "content": content}],
             "temperature": 0,
             "max_tokens": 900,
+            "response_format": {"type": "json_object"},
         }
 
     def _prompt(self, *, filename: str, content_type: str, pages: list[SampledPage]) -> str:
@@ -141,6 +162,7 @@ Return JSON only with this shape:
     "metadata_sources": ["ai_vision"]
   }},
   "confidence": 0.0,
+  "evidence_pages": [1],
   "rationale": "one sentence explaining evidence",
   "warnings": []
 }}
@@ -174,3 +196,15 @@ Content type: {content_type}
         if "domain_metadata" not in data:
             raise ValueError("LLM metadata suggestion omitted domain_metadata.")
         return data
+
+    def _validated_evidence_pages(
+        self,
+        evidence_pages: list[int],
+        sampled_pages: list[SampledPage],
+    ) -> list[int]:
+        sampled = {page.page_number for page in sampled_pages}
+        validated: list[int] = []
+        for page_number in evidence_pages:
+            if page_number in sampled and page_number not in validated:
+                validated.append(page_number)
+        return validated
