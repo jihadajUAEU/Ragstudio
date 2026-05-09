@@ -18,6 +18,47 @@ from ragstudio.services.runtime_types import RuntimeChunk, RuntimeQueryResult
 from sqlalchemy.engine import make_url
 
 
+class ScopedVectorStorageProxy:
+    """Filters LightRAG chunk vector results to selected RAG-Anything doc IDs."""
+
+    def __init__(
+        self,
+        base: Any,
+        document_ids: list[str],
+        *,
+        overfetch_multiplier: int = 8,
+        max_fetch: int = 200,
+    ) -> None:
+        self.base = base
+        self.document_ids = {str(document_id) for document_id in document_ids}
+        self.overfetch_multiplier = max(1, overfetch_multiplier)
+        self.max_fetch = max(1, max_fetch)
+        self.collected_results: list[dict[str, Any]] = []
+
+    async def query(
+        self,
+        query: str,
+        top_k: int,
+        query_embedding: list[float] | None = None,
+    ) -> list[dict[str, Any]]:
+        requested_top_k = min(max(top_k * self.overfetch_multiplier, top_k), self.max_fetch)
+        rows = await self.base.query(
+            query,
+            top_k=requested_top_k,
+            query_embedding=query_embedding,
+        )
+        scoped_rows = [
+            row
+            for row in rows
+            if str(row.get("full_doc_id") or "") in self.document_ids
+        ][:top_k]
+        self.collected_results.extend(scoped_rows)
+        return scoped_rows
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.base, name)
+
+
 class NativeRAGAnythingAdapter:
     """Runtime adapter for the real RAG-Anything and LightRAG stack."""
 

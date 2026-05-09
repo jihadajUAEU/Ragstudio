@@ -117,6 +117,19 @@ class FakeConfig:
         self.kwargs = kwargs
 
 
+class FakeChunkVectorStorage:
+    def __init__(self, rows):
+        self.rows = rows
+        self.calls = []
+        self.cosine_better_than_threshold = 0.2
+
+    async def query(self, query, top_k, query_embedding=None):
+        self.calls.append(
+            {"query": query, "top_k": top_k, "query_embedding": query_embedding}
+        )
+        return self.rows[:top_k]
+
+
 @pytest.fixture(autouse=True)
 def fake_upstream(monkeypatch):
     FakeRAGAnything.instances.clear()
@@ -139,6 +152,38 @@ def fake_upstream(monkeypatch):
         raise AssertionError(f"unexpected import {name}")
 
     monkeypatch.setattr("ragstudio.services.native_raganything_adapter.import_module", fake_import)
+
+
+@pytest.mark.asyncio
+async def test_scoped_vector_proxy_filters_by_full_doc_id():
+    from ragstudio.services.native_raganything_adapter import ScopedVectorStorageProxy
+
+    base = FakeChunkVectorStorage(
+        [
+            {"id": "chunk-1", "full_doc_id": "doc-1", "content": "inside one"},
+            {"id": "chunk-2", "full_doc_id": "doc-2", "content": "outside"},
+            {"id": "chunk-3", "full_doc_id": "doc-1", "content": "inside two"},
+        ]
+    )
+    proxy = ScopedVectorStorageProxy(base, ["doc-1"])
+
+    rows = await proxy.query("question", top_k=2, query_embedding=[0.1, 0.2])
+
+    assert [row["id"] for row in rows] == ["chunk-1", "chunk-3"]
+    assert base.calls == [
+        {"query": "question", "top_k": 16, "query_embedding": [0.1, 0.2]}
+    ]
+    assert [row["id"] for row in proxy.collected_results] == ["chunk-1", "chunk-3"]
+
+
+@pytest.mark.asyncio
+async def test_scoped_vector_proxy_preserves_base_attributes():
+    from ragstudio.services.native_raganything_adapter import ScopedVectorStorageProxy
+
+    base = FakeChunkVectorStorage([])
+    proxy = ScopedVectorStorageProxy(base, ["doc-1"])
+
+    assert proxy.cosine_better_than_threshold == 0.2
 
 
 @pytest.mark.asyncio
