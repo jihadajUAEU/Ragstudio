@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Braces, Loader2, Wand2 } from "lucide-react";
 
 import { apiClient } from "../../api/client";
@@ -31,9 +31,15 @@ type MetadataChangeField =
   | "domain"
   | "document_type"
   | "language"
+  | "authority"
+  | "source"
   | "collection"
-  | "tags"
+  | "citation_style"
+  | "expected_structure"
   | "reference_pattern"
+  | "script"
+  | "content_role"
+  | "tags"
   | "metadata_sources"
   | "custom_json";
 
@@ -88,12 +94,6 @@ export function DomainMetadataPanel({
   };
   const changedFieldProps = (field: MetadataChangeField) =>
     hasAutosuggestChange(field) ? { "data-autosuggest-changed": "true" } : {};
-
-  useEffect(() => {
-    if (autosuggestChanges.length === 0) {
-      setAutosuggestEvidence(null);
-    }
-  }, [autosuggestChanges.length]);
 
   const suggest = async () => {
     if (!suggestContext?.file) {
@@ -161,25 +161,29 @@ export function DomainMetadataPanel({
           </Button>
         </div>
       ) : null}
-      {autosuggestChanges.length > 0 ? (
+      {autosuggestChanges.length > 0 || autosuggestEvidence ? (
         <div className="mb-3 rounded-md border border-[#9ccbd8] bg-[#edf7fa] p-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-sm font-semibold text-[#1f2933]">
-              Auto-suggest updated metadata
+              {autosuggestChanges.length > 0
+                ? "Auto-suggest updated metadata"
+                : "Auto-suggest reviewed metadata"}
             </p>
             <p className="text-xs font-medium text-[#176b87]">
               {autosuggestChanges.length}{" "}
               {autosuggestChanges.length === 1 ? "field changed" : "fields changed"}
             </p>
           </div>
-          <dl className="mt-2 grid gap-1.5 text-xs text-[#3a4a53]">
-            {autosuggestChanges.map((change) => (
-              <div key={change.field} className="grid gap-1 sm:grid-cols-[150px_minmax(0,1fr)]">
-                <dt className="font-semibold">{change.label}</dt>
-                <dd className="min-w-0 break-words">{change.summary}</dd>
-              </div>
-            ))}
-          </dl>
+          {autosuggestChanges.length > 0 ? (
+            <dl className="mt-2 grid gap-1.5 text-xs text-[#3a4a53]">
+              {autosuggestChanges.map((change) => (
+                <div key={change.field} className="grid gap-1 sm:grid-cols-[150px_minmax(0,1fr)]">
+                  <dt className="font-semibold">{change.label}</dt>
+                  <dd className="min-w-0 break-words">{change.summary}</dd>
+                </div>
+              ))}
+            </dl>
+          ) : null}
           {autosuggestEvidence ? (
             <div className="mt-2 rounded border border-[#cfe3ea] bg-white/70 p-2 text-xs text-[#3a4a53]">
               <p>
@@ -374,9 +378,15 @@ const metadataFieldLabels: Record<MetadataChangeField, string> = {
   domain: "Domain",
   document_type: "Document type",
   language: "Language",
+  authority: "Authority",
+  source: "Source",
   collection: "Collection",
-  tags: "Tags",
+  citation_style: "Citation style",
+  expected_structure: "Expected structure",
   reference_pattern: "Reference pattern",
+  script: "Script",
+  content_role: "Content role",
+  tags: "Tags",
   metadata_sources: "Metadata sources",
   custom_json: "Custom JSON",
 };
@@ -390,8 +400,14 @@ function buildMetadataChangeSet(
     "domain",
     "document_type",
     "language",
+    "authority",
+    "source",
     "collection",
+    "citation_style",
+    "expected_structure",
     "reference_pattern",
+    "script",
+    "content_role",
   ];
 
   for (const field of scalarFields) {

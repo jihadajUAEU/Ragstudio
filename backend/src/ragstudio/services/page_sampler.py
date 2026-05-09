@@ -78,7 +78,13 @@ class PageSampler:
             return []
 
     def _sample_text(self, data: bytes) -> list[SampledPage]:
+        if b"\x00" in data:
+            self.warnings.append("Text sample contains null bytes and appears to be binary.")
+            return []
         text = data.decode("utf-8", errors="replace")
+        if self._looks_like_binary_text(text):
+            self.warnings.append("Text sample contains too many invalid or control characters.")
+            return []
         if not text.strip():
             return []
         segment_length = max(len(text) // 3, 1)
@@ -121,6 +127,17 @@ class PageSampler:
         if normalized_content_type.startswith("text/"):
             return True
         return any(lower_name.endswith(extension) for extension in TEXT_EXTENSIONS)
+
+    def _looks_like_binary_text(self, text: str) -> bool:
+        if not text:
+            return False
+        replacement_count = text.count("\ufffd")
+        if replacement_count > max(3, len(text) // 100):
+            return True
+        control_count = sum(
+            1 for character in text if ord(character) < 32 and character not in "\n\r\t"
+        )
+        return control_count > max(3, len(text) // 100)
 
     def _page_image_data_url(self, page, fitz) -> str | None:
         for scale in (1.0, 0.6):

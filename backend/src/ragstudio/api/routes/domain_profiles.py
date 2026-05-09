@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Uplo
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ragstudio.api.deps import get_session
+from ragstudio.api.upload_utils import read_upload_file
 from ragstudio.db.models import SettingsProfile
 from ragstudio.schemas.parsing import (
     DomainMetadataSuggestOut,
@@ -39,7 +40,7 @@ async def suggest_domain_metadata(
 
     filename = file.filename or "upload"
     content_type = file.content_type or "application/octet-stream"
-    data = await file.read()
+    data = await read_upload_file(file)
     sampler = PageSampler()
     pages = sampler.sample(data, filename=filename, content_type=content_type)
     if not pages:

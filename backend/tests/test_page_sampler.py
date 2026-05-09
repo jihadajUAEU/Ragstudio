@@ -1,11 +1,9 @@
-import pytest
+import fitz
 
 from ragstudio.services.page_sampler import PageSampler
 
 
 def test_sample_pdf_renders_valid_pdf_pages():
-    fitz = pytest.importorskip("fitz")
-
     document = fitz.open()
     for index in range(5):
         page = document.new_page()
@@ -56,9 +54,35 @@ def test_sample_unsupported_binary_file_returns_warning():
     ]
 
 
-def test_sample_pdf_omits_oversized_images_with_warning():
-    fitz = pytest.importorskip("fitz")
+def test_sample_rejects_binary_content_mislabeled_as_text():
+    sampler = PageSampler()
 
+    pages = sampler.sample(
+        b"plain prefix\x00binary tail",
+        filename="notes.txt",
+        content_type="text/plain",
+    )
+
+    assert pages == []
+    assert sampler.warnings == ["Text sample contains null bytes and appears to be binary."]
+
+
+def test_sample_rejects_invalid_utf8_mislabeled_as_text():
+    sampler = PageSampler()
+
+    pages = sampler.sample(
+        b"\xff\xfe\xfa" * 10,
+        filename="notes.txt",
+        content_type="text/plain",
+    )
+
+    assert pages == []
+    assert sampler.warnings == [
+        "Text sample contains too many invalid or control characters."
+    ]
+
+
+def test_sample_pdf_omits_oversized_images_with_warning():
     document = fitz.open()
     page = document.new_page()
     page.insert_text((72, 72), "Large image page")

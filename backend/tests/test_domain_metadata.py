@@ -189,6 +189,81 @@ async def test_ai_domain_metadata_suggester_uses_images_for_vision_capable_llm(m
 
 
 @pytest.mark.asyncio
+async def test_ai_domain_metadata_suggester_retries_without_response_format(monkeypatch):
+    calls = []
+
+    class RejectedResponse:
+        status_code = 400
+
+        def json(self):
+            return {"error": "unsupported response_format"}
+
+    class AcceptedResponse:
+        status_code = 200
+
+        def json(self):
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": """{
+                              "domain_metadata": {
+                                "domain": "policy",
+                                "document_type": "admin_document",
+                                "tags": ["policy"]
+                              },
+                              "confidence": 0.81,
+                              "evidence_pages": [1],
+                              "rationale": "The page shows policy sections.",
+                              "warnings": []
+                            }"""
+                        }
+                    }
+                ]
+            }
+
+    class FakeClient:
+        def __init__(self, timeout):
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def post(self, url, headers, json):
+            calls.append(json)
+            return RejectedResponse() if len(calls) == 1 else AcceptedResponse()
+
+    monkeypatch.setattr(
+        "ragstudio.services.domain_metadata_ai_suggester.httpx.AsyncClient",
+        FakeClient,
+    )
+
+    result = await DomainMetadataAiSuggester().suggest(
+        settings_profile=SettingsProfile(
+            id="default",
+            provider="openai-compatible",
+            llm_model="text-model",
+            llm_base_url="http://llm.test/v1",
+            embedding_model="embedding-model",
+            storage_backend="postgres",
+            vision_model="vision-model",
+            vision_base_url="http://vision.test/v1",
+        ),
+        filename="policy.txt",
+        content_type="text/plain",
+        pages=[SampledPage(page_number=1, text="Policy sections")],
+        sampler_warnings=[],
+    )
+
+    assert result.domain_metadata.domain == "policy"
+    assert "response_format" in calls[0]
+    assert "response_format" not in calls[1]
+
+
+@pytest.mark.asyncio
 async def test_ai_domain_metadata_suggest_endpoint_uses_vision_model(client, monkeypatch):
     calls = []
 
@@ -321,6 +396,33 @@ async def test_ai_domain_metadata_suggest_rejects_unsupported_file_type(client):
     assert response.json()["detail"] == (
         "Could not sample pages from this file for AI metadata autosuggest."
     )
+
+
+@pytest.mark.asyncio
+async def test_ai_domain_metadata_suggest_rejects_oversized_upload(client):
+    app = client._transport.app
+    async with app.state.session_factory() as session:
+        session.add(
+            SettingsProfile(
+                id="default",
+                provider="openai-compatible",
+                llm_model="text-model",
+                llm_base_url="http://llm.test/v1",
+                embedding_model="embedding-model",
+                storage_backend="postgres",
+                vision_model="vision-model",
+                vision_base_url="http://vision.test/v1",
+            )
+        )
+        await session.commit()
+
+    response = await client.post(
+        "/api/domain-profiles/suggest",
+        files={"file": ("large.txt", b"x" * (25 * 1024 * 1024 + 1), "text/plain")},
+    )
+
+    assert response.status_code == 413
+    assert response.json()["detail"] == "Upload exceeds 25 MiB limit"
 
 
 @pytest.mark.asyncio

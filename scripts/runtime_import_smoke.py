@@ -12,6 +12,7 @@ EXPECTED_VERSIONS = {
     "lightrag-hku": "1.4.16",
     "paddleocr": "3.5.0",
     "paddlex": "3.5.1",
+    "PyMuPDF": "1.26.6",
 }
 
 MODULES = (
@@ -22,6 +23,7 @@ MODULES = (
     "lightrag",
     "paddleocr",
     "paddlex",
+    "fitz",
 )
 
 

@@ -202,13 +202,18 @@ describe("DomainMetadataPanel", () => {
         domain: "tafseer",
         document_type: "book",
         language: "mixed",
+        authority: "Classical tafsir",
+        source: "Sampled pages",
         collection: "Tafseer Ibn Kathir",
+        citation_style: "surah_ayah",
+        expected_structure: "surah_ayah_sections",
         tags: ["quran", "tafseer"],
         reference_pattern: "Surah N, Ayah N",
+        script: "arabic_latin",
+        content_role: "tafseer",
         metadata_sources: ["heuristic", "profile"],
         custom_json: {
           audience: "research",
-          citation_style: "surah_ayah",
         },
       },
       ...autosuggestEvidence,
@@ -223,8 +228,15 @@ describe("DomainMetadataPanel", () => {
             domain: "generic",
             document_type: "document",
             language: "",
+            authority: "",
+            source: "",
             collection: "",
+            citation_style: "",
+            expected_structure: "",
             tags: ["quran"],
+            reference_pattern: "",
+            script: "",
+            content_role: "",
             metadata_sources: ["user"],
             custom_json: { audience: "general" },
           },
@@ -245,23 +257,35 @@ describe("DomainMetadataPanel", () => {
     };
 
     expect(await screen.findByText("Auto-suggest updated metadata")).toBeVisible();
-    expect(screen.getByText("8 fields changed")).toBeVisible();
+    expect(screen.getByText("14 fields changed")).toBeVisible();
     expectVisibleText("Domain");
     expect(screen.getByText("generic -> tafseer")).toBeVisible();
     expectVisibleText("Document type");
     expect(screen.getByText("document -> book")).toBeVisible();
     expectVisibleText("Language");
     expect(screen.getByText("empty -> mixed")).toBeVisible();
+    expectVisibleText("Authority");
+    expect(screen.getByText("empty -> Classical tafsir")).toBeVisible();
+    expectVisibleText("Source");
+    expect(screen.getByText("empty -> Sampled pages")).toBeVisible();
     expectVisibleText("Collection");
     expect(screen.getByText("empty -> Tafseer Ibn Kathir")).toBeVisible();
+    expectVisibleText("Citation style");
+    expect(screen.getByText("empty -> surah_ayah")).toBeVisible();
+    expectVisibleText("Expected structure");
+    expect(screen.getByText("empty -> surah_ayah_sections")).toBeVisible();
     expectVisibleText("Tags");
     expect(screen.getByText("added tafseer")).toBeVisible();
     expectVisibleText("Reference pattern");
     expect(screen.getByText("empty -> Surah N, Ayah N")).toBeVisible();
+    expectVisibleText("Script");
+    expect(screen.getByText("empty -> arabic_latin")).toBeVisible();
+    expectVisibleText("Content role");
+    expect(screen.getByText("empty -> tafseer")).toBeVisible();
     expectVisibleText("Metadata sources");
     expect(screen.getByText("added heuristic, profile; removed user")).toBeVisible();
     expectVisibleText("Custom JSON");
-    expect(screen.getByText("added citation_style; changed audience")).toBeVisible();
+    expect(screen.getByText("changed audience")).toBeVisible();
     expect(screen.getByText("Confidence 91% from pages 1, 2, 10, 20")).toBeVisible();
     expect(screen.getByText("The sampled pages show policy headings.")).toBeVisible();
 
@@ -315,6 +339,41 @@ describe("DomainMetadataPanel", () => {
     expect(
       screen.getByLabelText("Document type").closest("[data-autosuggest-changed]"),
     ).toHaveAttribute("data-autosuggest-changed", "true");
+  });
+
+  it("shows autosuggest evidence even when metadata is unchanged", async () => {
+    const file = new File(["pdf"], "policy.pdf", { type: "application/pdf" });
+    mocks.suggestDomainMetadata.mockResolvedValueOnce({
+      domain_metadata: {
+        domain: "generic",
+        document_type: "document",
+        tags: [],
+      },
+      confidence: 0.42,
+      evidence_pages: [1],
+      rationale: "The sampled page matches the current metadata.",
+      warnings: ["Only one readable page was sampled."],
+    });
+
+    render(
+      <DomainMetadataPanel
+        profiles={[]}
+        value={{
+          parser_mode: "local_fallback",
+          domain_metadata: { domain: "generic", document_type: "document", tags: [] },
+        }}
+        onChange={vi.fn()}
+        suggestContext={{ filename: "policy.pdf", content_type: "application/pdf", file }}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /auto-suggest/i }));
+
+    expect(await screen.findByText("Auto-suggest reviewed metadata")).toBeVisible();
+    expect(screen.getByText("0 fields changed")).toBeVisible();
+    expect(screen.getByText("Confidence 42% from pages 1")).toBeVisible();
+    expect(screen.getByText("The sampled page matches the current metadata.")).toBeVisible();
+    expect(screen.getByText("Only one readable page was sampled.")).toBeVisible();
   });
 
   it("keeps previous metadata and review when autosuggest fails", async () => {

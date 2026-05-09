@@ -52,12 +52,7 @@ class DomainMetadataAiSuggester:
             headers["authorization"] = f"Bearer {target.api_key}"
 
         try:
-            async with httpx.AsyncClient(timeout=target.timeout_ms / 1000) as client:
-                response = await client.post(
-                    f"{target.base_url.rstrip('/')}/chat/completions",
-                    headers=headers,
-                    json=payload,
-                )
+            response = await self._post_completion(target, headers, payload)
             if response.status_code >= 400:
                 raise ValueError(
                     f"Metadata autosuggest LLM returned HTTP {response.status_code}."
@@ -134,6 +129,22 @@ class DomainMetadataAiSuggester:
             "max_tokens": 900,
             "response_format": {"type": "json_object"},
         }
+
+    async def _post_completion(
+        self,
+        target: LlmTarget,
+        headers: dict[str, str],
+        payload: dict[str, object],
+    ) -> httpx.Response:
+        url = f"{target.base_url.rstrip('/')}/chat/completions"
+        async with httpx.AsyncClient(timeout=target.timeout_ms / 1000) as client:
+            response = await client.post(url, headers=headers, json=payload)
+            if response.status_code not in {400, 422} or "response_format" not in payload:
+                return response
+
+            fallback_payload = dict(payload)
+            fallback_payload.pop("response_format", None)
+            return await client.post(url, headers=headers, json=fallback_payload)
 
     def _prompt(self, *, filename: str, content_type: str, pages: list[SampledPage]) -> str:
         page_text = "\n\n".join(
