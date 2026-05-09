@@ -14,6 +14,7 @@ import {
 import "@xyflow/react/dist/style.css";
 import {
   AlertCircle,
+  AlertTriangle,
   BrainCircuit,
   Database,
   FileText,
@@ -27,6 +28,7 @@ import {
 } from "lucide-react";
 
 import { apiClient } from "../../api/client";
+import type { RuntimeHealthCheck } from "../../api/generated";
 import { EmptyState } from "../../components/empty-state";
 import { Button } from "../../components/ui/button";
 import { formatCount } from "../../lib/utils";
@@ -57,6 +59,10 @@ export function PipelineBuilder() {
     queryKey: queryKeys.diagnostics,
     queryFn: apiClient.diagnostics,
   });
+  const stageDiagnostics = useMemo(
+    () => getStageDiagnostics(diagnosticsQuery.data?.checks ?? [], diagnosticsQuery.data?.warnings ?? []),
+    [diagnosticsQuery.data?.checks, diagnosticsQuery.data?.warnings],
+  );
 
   const nodes = useMemo<Node<PipelineNodeData>[]>(
     () => [
@@ -184,19 +190,45 @@ export function PipelineBuilder() {
             <h3 className="truncate text-base font-semibold text-[#1f2933]">Stage checklist</h3>
           </div>
           <div className="space-y-3">
-            <StageCheck icon={FileText} label="Documents" value={formatCount(documentsQuery.data?.total)} />
-            <StageCheck icon={Database} label="Chunks" value="Index per document" />
-            <StageCheck icon={SlidersHorizontal} label="Variants" value={formatCount(variantsQuery.data?.total)} />
-            <StageCheck icon={Search} label="Retrieval" value="Scoped search" />
-            <StageCheck icon={BrainCircuit} label="Generation" value={formatCount(runsQuery.data?.total)} />
-            <StageCheck icon={MessageSquareText} label="Answers" value="Sources and traces" />
-            <StageCheck icon={GitBranch} label="Graph" value={`${formatCount(graphQuery.data?.edges.length)} edges`} />
+            <StageCheck
+              icon={FileText}
+              label="Documents"
+              value={formatCount(documentsQuery.data?.total)}
+              diagnostic={stageDiagnostics.documents}
+            />
+            <StageCheck icon={Database} label="Chunks" value="Index per document" diagnostic={stageDiagnostics.chunks} />
+            <StageCheck
+              icon={SlidersHorizontal}
+              label="Variants"
+              value={formatCount(variantsQuery.data?.total)}
+              diagnostic={stageDiagnostics.variants}
+            />
+            <StageCheck icon={Search} label="Retrieval" value="Scoped search" diagnostic={stageDiagnostics.retrieval} />
+            <StageCheck
+              icon={BrainCircuit}
+              label="Generation"
+              value={formatCount(runsQuery.data?.total)}
+              diagnostic={stageDiagnostics.generation}
+            />
+            <StageCheck
+              icon={MessageSquareText}
+              label="Answers"
+              value="Sources and traces"
+              diagnostic={stageDiagnostics.answers}
+            />
+            <StageCheck
+              icon={GitBranch}
+              label="Graph"
+              value={`${formatCount(graphQuery.data?.edges.length)} edges`}
+              diagnostic={stageDiagnostics.graph}
+            />
           </div>
-          {diagnosticsQuery.data?.warnings.length ? (
-            <div className="mt-4 rounded-md border border-[#e5c36b] bg-[#fff8e6] p-3 text-sm leading-6 text-[#705300]">
-              {diagnosticsQuery.data.warnings[0]}
-            </div>
-          ) : null}
+          <div className="mt-4 grid gap-2">
+            <StageAction href="/documents" label="Open Documents" />
+            <StageAction href="/settings" label="Open Settings" />
+            <StageAction href="/variants" label="Open Variants" />
+            <StageAction href="/query" label="Open Query" />
+          </div>
           <div className="mt-4 rounded-md border border-[#cfe3ea] bg-[#f5fafb] p-3 text-sm leading-6 text-[#3a4a53]">
             <div className="mb-1 flex items-center gap-2 font-semibold text-[#1f2933]">
               <Info className="h-4 w-4 text-[#176b87]" aria-hidden="true" />
@@ -240,20 +272,69 @@ function StageCheck({
   icon: Icon,
   label,
   value,
+  diagnostic,
 }: {
   icon: typeof FileText;
   label: string;
   value: string;
+  diagnostic?: string;
 }) {
   return (
-    <div className="flex items-center gap-3 rounded-md border border-[#e1e7ea] bg-[#f8fafb] p-3">
-      <Icon className="h-4 w-4 shrink-0 text-[#176b87]" aria-hidden="true" />
-      <div className="min-w-0">
-        <p className="truncate text-sm font-medium text-[#24313a]">{label}</p>
-        <p className="truncate text-xs text-[#62717a]">{value}</p>
+    <div className="rounded-md border border-[#e1e7ea] bg-[#f8fafb] p-3" aria-label={`${label} stage`}>
+      <div className="flex items-center gap-3">
+        <Icon className="h-4 w-4 shrink-0 text-[#176b87]" aria-hidden="true" />
+        <div className="min-w-0">
+          <p className="truncate text-sm font-medium text-[#24313a]">{label}</p>
+          <p className="truncate text-xs text-[#62717a]">{value}</p>
+        </div>
       </div>
+      {diagnostic ? (
+        <p className="mt-2 flex gap-2 rounded-md border border-[#e5c36b] bg-[#fff8e6] px-2 py-1.5 text-xs leading-5 text-[#705300]">
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#8c6500]" aria-hidden="true" />
+          <span className="line-clamp-2" title={diagnostic}>
+            {diagnostic}
+          </span>
+        </p>
+      ) : null}
     </div>
   );
+}
+
+function StageAction({ href, label }: { href: string; label: string }) {
+  return (
+    <a
+      href={href}
+      className="inline-flex h-9 items-center justify-center rounded-md border border-[#d6dde1] bg-white px-3 text-sm font-medium text-[#24313a] hover:bg-[#edf3f5]"
+    >
+      {label}
+    </a>
+  );
+}
+
+function getStageDiagnostics(checks: RuntimeHealthCheck[], warnings: string[]) {
+  const alerts = [
+    ...checks
+      .filter((check) => check.severity === "blocking" || check.status === "failed")
+      .map((check) => ({
+        text: check.detail || check.remediation || `${check.name} reported ${check.status}.`,
+        haystack: `${check.name} ${check.detail} ${check.remediation ?? ""}`.toLowerCase(),
+      })),
+    ...warnings.map((warning) => ({ text: warning, haystack: warning.toLowerCase() })),
+  ];
+
+  return {
+    documents: firstMatching(alerts, ["profile", "setting", "runtime mode"]),
+    chunks: firstMatching(alerts, ["index", "chunk", "embed", "pgvector", "raganything", "lightrag"]),
+    variants: firstMatching(alerts, ["variant", "profile", "provider", "setting"]),
+    retrieval: firstMatching(alerts, ["query", "retrieval", "scoped", "pgvector", "lightrag", "raganything"]),
+    generation: firstMatching(alerts, ["query", "generation", "provider", "raganything"]),
+    answers: firstMatching(alerts, ["query", "answer", "sources", "scoped"]),
+    graph: firstMatching(alerts, ["graph", "neo4j", "relationship"]),
+  };
+}
+
+function firstMatching(alerts: Array<{ text: string; haystack: string }>, keywords: string[]) {
+  return alerts.find((alert) => keywords.some((keyword) => alert.haystack.includes(keyword)))?.text;
 }
 
 function stage(

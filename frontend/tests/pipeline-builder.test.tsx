@@ -1,9 +1,10 @@
 import "@testing-library/jest-dom/vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
 
+import { apiClient } from "../src/api/client";
 import { PipelineBuilder } from "../src/features/pipeline/pipeline-builder";
 
 vi.mock("@xyflow/react", () => ({
@@ -31,16 +32,18 @@ vi.mock("@xyflow/react", () => ({
   ),
 }));
 
+const defaultDiagnostics = {
+  capabilities: {},
+  dependency_status: {},
+  warnings: [],
+  runtime_mode: "runtime",
+  overall_status: "ready",
+  checks: [],
+} as const;
+
 vi.mock("../src/api/client", () => ({
   apiClient: {
-    diagnostics: vi.fn().mockResolvedValue({
-      capabilities: {},
-      dependency_status: {},
-      warnings: [],
-      runtime_mode: "runtime",
-      overall_status: "ready",
-      checks: [],
-    }),
+    diagnostics: vi.fn(),
     documents: vi.fn().mockResolvedValue({ items: [], total: 0 }),
     graph: vi.fn().mockResolvedValue({ nodes: [], edges: [] }),
     runs: vi.fn().mockResolvedValue({ items: [], total: 0 }),
@@ -49,7 +52,7 @@ vi.mock("../src/api/client", () => ({
 }));
 
 describe("PipelineBuilder", () => {
-  it("renders the core RAG stages", async () => {
+  function renderPipeline() {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } },
     });
@@ -59,6 +62,14 @@ describe("PipelineBuilder", () => {
         <PipelineBuilder />
       </QueryClientProvider>,
     );
+  }
+
+  beforeEach(() => {
+    vi.mocked(apiClient.diagnostics).mockResolvedValue(defaultDiagnostics);
+  });
+
+  it("renders the core RAG stages", async () => {
+    renderPipeline();
 
     const flow = await screen.findByLabelText("RAG pipeline flow");
     expect(flow).toHaveTextContent("Documents");
@@ -69,5 +80,39 @@ describe("PipelineBuilder", () => {
     expect(flow).toHaveTextContent("Graph");
     expect(flow).toHaveTextContent("Answer");
     expect(await screen.findByText("Read-only map")).toBeVisible();
+  });
+
+  it("shows workflow actions for pipeline stages", async () => {
+    renderPipeline();
+
+    expect(await screen.findByRole("link", { name: "Open Documents" })).toHaveAttribute("href", "/documents");
+    expect(screen.getByRole("link", { name: "Open Settings" })).toHaveAttribute("href", "/settings");
+    expect(screen.getByRole("link", { name: "Open Variants" })).toHaveAttribute("href", "/variants");
+    expect(screen.getByRole("link", { name: "Open Query" })).toHaveAttribute("href", "/query");
+  });
+
+  it("places blocking diagnostics beside affected stages", async () => {
+    vi.mocked(apiClient.diagnostics).mockResolvedValue({
+      ...defaultDiagnostics,
+      overall_status: "failed",
+      checks: [
+        {
+          name: "neo4j",
+          status: "failed",
+          severity: "blocking",
+          detail: "Neo4j connectivity and authentication failed.",
+        },
+      ],
+      warnings: ["Native RAG-Anything scoped query is unavailable for selected-document queries."],
+    });
+
+    renderPipeline();
+
+    expect(await screen.findByText("Neo4j connectivity and authentication failed.")).toBeVisible();
+    expect(screen.getByLabelText("Graph stage")).toHaveTextContent("Neo4j connectivity and authentication failed.");
+
+    expect(screen.getByLabelText("Retrieval stage")).toHaveTextContent(
+      "Native RAG-Anything scoped query is unavailable for selected-document queries.",
+    );
   });
 });
