@@ -161,14 +161,6 @@ export function ChunkInspector() {
             onChange={setIndexOptions}
             disabled={indexDocumentJob.isPending}
             onValidityChange={setMetadataValid}
-            suggestContext={
-              selectedDocuments[0]
-                ? {
-                    filename: selectedDocuments[0].filename,
-                    content_type: selectedDocuments[0].content_type,
-                  }
-                : undefined
-            }
           />
         </div>
 

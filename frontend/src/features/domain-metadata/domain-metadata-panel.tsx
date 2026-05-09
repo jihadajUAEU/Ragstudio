@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Braces, Loader2, Wand2 } from "lucide-react";
 
 import { apiClient } from "../../api/client";
@@ -58,6 +58,7 @@ export function DomainMetadataPanel({
   suggestContext?: {
     filename: string;
     content_type: string;
+    file?: File;
   };
   onValidityChange?: (isValid: boolean) => void;
 }) {
@@ -68,6 +69,12 @@ export function DomainMetadataPanel({
   const [showCustomJsonSample, setShowCustomJsonSample] = useState(false);
   const [suggestState, setSuggestState] = useState<"idle" | "loading" | "error">("idle");
   const [autosuggestChanges, setAutosuggestChanges] = useState<MetadataChange[]>([]);
+  const [autosuggestEvidence, setAutosuggestEvidence] = useState<{
+    confidence: number;
+    evidencePages: number[];
+    rationale: string;
+    warnings: string[];
+  } | null>(null);
   const customJsonText =
     customJsonDraft ?? JSON.stringify(metadata.custom_json ?? {}, null, 2);
   const sampleCustomJsonText = JSON.stringify(sampleCustomJson, null, 2);
@@ -82,20 +89,30 @@ export function DomainMetadataPanel({
   const changedFieldProps = (field: MetadataChangeField) =>
     hasAutosuggestChange(field) ? { "data-autosuggest-changed": "true" } : {};
 
+  useEffect(() => {
+    if (autosuggestChanges.length === 0) {
+      setAutosuggestEvidence(null);
+    }
+  }, [autosuggestChanges.length]);
+
   const suggest = async () => {
-    if (!suggestContext) {
+    if (!suggestContext?.file) {
       return;
     }
     setSuggestState("loading");
     try {
       const response = await apiClient.suggestDomainMetadata({
-        filename: suggestContext.filename,
-        content_type: suggestContext.content_type,
+        file: suggestContext.file,
         profile_id: selectedProfileId || null,
-        sample_text: "",
       });
       const nextMetadata = response.domain_metadata;
       setAutosuggestChanges(buildMetadataChangeSet(metadata, nextMetadata));
+      setAutosuggestEvidence({
+        confidence: response.confidence,
+        evidencePages: response.evidence_pages,
+        rationale: response.rationale,
+        warnings: response.warnings,
+      });
       onChange({ ...value, domain_metadata: nextMetadata });
       setCustomJsonDraft(JSON.stringify(nextMetadata.custom_json ?? {}, null, 2));
       setCustomJsonError("");
@@ -132,7 +149,7 @@ export function DomainMetadataPanel({
             type="button"
             variant="secondary"
             size="sm"
-            disabled={disabled || suggestState === "loading"}
+            disabled={disabled || suggestState === "loading" || !suggestContext.file}
             onClick={() => void suggest()}
           >
             {suggestState === "loading" ? (
@@ -163,6 +180,20 @@ export function DomainMetadataPanel({
               </div>
             ))}
           </dl>
+          {autosuggestEvidence ? (
+            <div className="mt-2 rounded border border-[#cfe3ea] bg-white/70 p-2 text-xs text-[#3a4a53]">
+              <p>
+                Confidence {Math.round(autosuggestEvidence.confidence * 100)}%
+                {autosuggestEvidence.evidencePages.length > 0
+                  ? ` from pages ${autosuggestEvidence.evidencePages.join(", ")}`
+                  : ""}
+              </p>
+              {autosuggestEvidence.rationale ? <p>{autosuggestEvidence.rationale}</p> : null}
+              {autosuggestEvidence.warnings.map((warning) => (
+                <p key={warning}>{warning}</p>
+              ))}
+            </div>
+          ) : null}
         </div>
       ) : null}
       <div className="grid gap-3 sm:grid-cols-2">

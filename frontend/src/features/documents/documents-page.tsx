@@ -242,6 +242,7 @@ export function DocumentsPage() {
                   ? {
                       filename: file.name,
                       content_type: file.type || "application/octet-stream",
+                      file,
                     }
                   : undefined
               }

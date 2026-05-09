@@ -11,6 +11,7 @@ vi.mock("../src/api/client", () => ({
     documents: vi.fn(),
     jobs: vi.fn(),
     domainProfiles: vi.fn(),
+    suggestDomainMetadata: vi.fn(),
     uploadDocument: vi.fn(),
     deleteDocument: vi.fn(),
   },
@@ -32,6 +33,13 @@ describe("DocumentsPage", () => {
     vi.mocked(apiClient.documents).mockResolvedValue({ items: [], total: 0 });
     vi.mocked(apiClient.jobs).mockResolvedValue({ items: [], total: 0 });
     vi.mocked(apiClient.domainProfiles).mockResolvedValue({ items: [], total: 0 });
+    vi.mocked(apiClient.suggestDomainMetadata).mockResolvedValue({
+      domain_metadata: { domain: "policy", document_type: "admin_document" },
+      confidence: 0.91,
+      evidence_pages: [1, 2, 10, 20],
+      rationale: "The sampled pages show policy headings.",
+      warnings: [],
+    });
     vi.mocked(apiClient.deleteDocument).mockResolvedValue(undefined);
   });
 
@@ -51,6 +59,24 @@ describe("DocumentsPage", () => {
     });
 
     expect(uploadButton).toBeEnabled();
+  });
+
+  it("passes the selected upload file to metadata autosuggest", async () => {
+    renderDocumentsPage();
+
+    const file = new File(["pdf"], "policy.pdf", { type: "application/pdf" });
+    fireEvent.change(screen.getByLabelText(/upload file/i), {
+      target: { files: [file] },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /auto-suggest/i }));
+
+    await waitFor(() => {
+      expect(apiClient.suggestDomainMetadata).toHaveBeenCalledWith({
+        file,
+        profile_id: null,
+      });
+    });
   });
 
   it("places the upload action after the custom JSON editor", () => {

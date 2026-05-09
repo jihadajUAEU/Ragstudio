@@ -147,17 +147,23 @@ export const apiClient = {
       body: JSON.stringify(payload),
     }),
   domainProfiles: () => request<Page<DomainProfileOut>>("/api/domain-profiles"),
-  suggestDomainMetadata: (payload: {
-    filename: string;
-    content_type: string;
-    profile_id?: string | null;
-    sample_text?: string;
-  }) =>
-    request<{ domain_metadata: DomainMetadata }>("/api/domain-profiles/suggest", {
+  suggestDomainMetadata: (payload: { file: File; profile_id?: string | null }) => {
+    const formData = new FormData();
+    formData.set("file", payload.file);
+    if (payload.profile_id) {
+      formData.set("profile_id", payload.profile_id);
+    }
+    return request<{
+      domain_metadata: DomainMetadata;
+      confidence: number;
+      evidence_pages: number[];
+      rationale: string;
+      warnings: string[];
+    }>("/api/domain-profiles/suggest", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    }),
+      body: formData,
+    });
+  },
   indexDocumentChunks: (documentId: string, payload: IndexDocumentIn = {}) =>
     request<ChunkOut[]>(`/api/chunks/index/${encodeURIComponent(documentId)}`, {
       method: "POST",
