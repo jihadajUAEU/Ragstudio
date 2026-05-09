@@ -414,11 +414,13 @@ function filterGraphData(
 
   if (!hasNodeScopedFilter) {
     for (const entry of matchingEdgeEntries) {
-      if (nodesById.has(entry.source)) {
-        visibleNodeIds.add(entry.source);
+      const source = entry.source;
+      const target = entry.target;
+      if (source && nodesById.has(source)) {
+        visibleNodeIds.add(source);
       }
-      if (nodesById.has(entry.target)) {
-        visibleNodeIds.add(entry.target);
+      if (target && nodesById.has(target)) {
+        visibleNodeIds.add(target);
       }
     }
   } else {

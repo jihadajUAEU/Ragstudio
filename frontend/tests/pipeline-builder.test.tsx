@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
 
 import { apiClient } from "../src/api/client";
+import type { DiagnosticsOut } from "../src/api/generated";
 import { PipelineBuilder } from "../src/features/pipeline/pipeline-builder";
 
 vi.mock("@xyflow/react", () => ({
@@ -32,14 +33,14 @@ vi.mock("@xyflow/react", () => ({
   ),
 }));
 
-const defaultDiagnostics = {
+const defaultDiagnostics: DiagnosticsOut = {
   capabilities: {},
   dependency_status: {},
   warnings: [],
   runtime_mode: "runtime",
   overall_status: "ready",
   checks: [],
-} as const;
+};
 
 vi.mock("../src/api/client", () => ({
   apiClient: {

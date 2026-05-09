@@ -357,7 +357,11 @@ Use the selected variant and candidate summaries to decide whether to keep the c
 
 ## Inspect Graph and Diagnostics
 
-Open **Graph** to inspect the graph payload returned by `/api/graph`. The page shows node and edge counts, then previews up to 50 nodes and 50 edges as JSON. In fallback mode, the graph can be empty because the adapter returns placeholder graph data.
+Open **Graph** to inspect the graph payload returned by `/api/graph`. The page shows node and edge counts, renders the relationship map, and keeps node and edge payloads visible for debugging.
+
+The Graph page renders runtime Neo4j graph data when runtime graph storage is available. If native graph data is unavailable, fails, or is empty, the backend can fall back to relationship metadata stored on indexed chunks. Use the filters to narrow exploration by node type, edge type, document id, or page/reference text.
+
+Fallback graph data is best when uploaded documents include domain metadata and parser output with references, topics, or entity relationships. If both runtime graph data and chunk relationship metadata are empty, `/api/graph` reports graph unavailability instead of showing a misleading blank success.
 
 Open **Diagnostics** to inspect runtime capability and dependency status. The page shows:
 
@@ -387,6 +391,16 @@ Documents -> Chunking -> Retrieval -> Generation -> Answer
 ```
 
 The page reads live counts from documents, variants, runs, graph, and diagnostics. Use **Refresh** when another page has changed state.
+
+The Pipeline page is a live status map, not a separate pipeline editor. Use it to identify which stage needs attention, then use the stage actions to open Documents, Settings, Variants, or Query. Blocking diagnostics and warnings are shown beside affected stages when the current runtime profile exposes enough detail.
+
+### Reranker Diagnostics
+
+When a reranker is configured, query runs include reranker traces. The Query page summarizes those traces above the raw JSON so a failed, blocked, skipped, disabled, or empty reranker result is visible beside the answer. A failed or blocked reranker trace means the original retrieval order was preserved and the query still completed unless the run itself failed.
+
+### Autosuggest Review
+
+Document metadata autosuggest starts from the selected domain profile and proposes field-level changes. Review changed fields before upload. Accept a field to keep the suggested value and clear it from the review list, or reject a field to restore the value from before autosuggest while preserving the other accepted or still-pending metadata changes.
 
 ## Minimal End-to-End Checklist
 
