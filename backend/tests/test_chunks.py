@@ -1,11 +1,14 @@
+import json
+
 import pytest
 import pytest_asyncio
 from ragstudio.db.models import Chunk, Document, IndexRecord, SettingsProfile
 from ragstudio.schemas.common import StageStatus
-from ragstudio.schemas.parsing import IndexDocumentIn
+from ragstudio.schemas.parsing import DomainMetadata, IndexDocumentIn
 from ragstudio.services.adapter import AdapterChunk
 from ragstudio.services.chunk_sanitizer import sanitize_db_value
 from ragstudio.services.chunk_service import ChunkService
+from ragstudio.services.chunk_splitter import ChunkSplitter
 from ragstudio.services.runtime_types import RuntimeChunk
 from sqlalchemy import select
 
@@ -88,6 +91,60 @@ class ReferenceAdapter:
                 metadata={"backend": "fallback", "artifact_ref": "quran.txt", "chunk_index": 0},
             )
         ]
+
+
+def test_chunk_splitter_splits_mineru_content_list_by_reference_units(tmp_path):
+    content_list = tmp_path / "content_list.json"
+    content_list.write_text(
+        json.dumps(
+            [
+                {
+                    "page_idx": 0,
+                    "text": "[113:1] Say, I seek refuge in the Lord of daybreak.",
+                },
+                {
+                    "page_idx": 0,
+                    "text": "[113:2] From the evil of that which He created.",
+                },
+            ]
+        ),
+        encoding="utf-8",
+    )
+    chunk = AdapterChunk(
+        text="ignored when content_list_ref is available",
+        source_location={"artifact": "quran.pdf"},
+        metadata={
+            "parser_metadata": {
+                "backend": "mineru",
+                "artifact_extract_dir": str(tmp_path),
+                "content_list_ref": "content_list.json",
+                "chunk_index": 0,
+            }
+        },
+    )
+
+    chunks = ChunkSplitter().split(
+        [chunk],
+        domain_metadata=DomainMetadata(
+            domain="quran_tafseer",
+            document_type="commentary",
+            custom_json={
+                "reference_schema": {"type": "chapter_verse"},
+                "chunking": {"unit": "verse"},
+            },
+        ),
+        parser_mode="mineru",
+    )
+
+    assert [item.text for item in chunks] == [
+        "[113:1] Say, I seek refuge in the Lord of daybreak.",
+        "[113:2] From the evil of that which He created.",
+    ]
+    assert [item.metadata["reference_metadata"]["references"] for item in chunks] == [
+        ["113:1"],
+        ["113:2"],
+    ]
+    assert all(item.source_location["page_start"] == 1 for item in chunks)
 
 
 class PassingHealthService:
@@ -678,6 +735,72 @@ async def test_index_and_search_derives_reference_metadata_from_uploaded_text(cl
     items = response.json()["items"]
     assert items[0]["text"].startswith("[1:4]")
     assert items[0]["metadata"]["retrieval_explain"]["matched_references"] == ["1:4"]
+
+
+@pytest.mark.asyncio
+async def test_index_document_persists_relationship_aware_chunk_metadata(client):
+    upload_response = await client.post(
+        "/api/documents",
+        files={
+            "file": (
+                "quran.txt",
+                b"[113:1] Say, I seek refuge in the Lord of daybreak.\n"
+                b"[113:2] From the evil of that which He created.",
+                "text/plain",
+            )
+        },
+    )
+    document_id = upload_response.json()["id"]
+
+    index_response = await client.post(
+        f"/api/chunks/index/{document_id}",
+        json={
+            "parser_mode": "local_fallback",
+            "domain_metadata": {
+                "domain": "quran_tafseer",
+                "document_type": "commentary",
+                "citation_style": "surah_ayah",
+                "expected_structure": "surah_ayah_sections",
+                "tags": ["quran", "religious_text"],
+                "custom_json": {
+                    "reference_schema": {
+                        "type": "chapter_verse",
+                        "display": "{chapter}:{verse}",
+                        "fields": {
+                            "chapter": "surah_number",
+                            "verse": "ayah_number",
+                        },
+                    },
+                    "chunking": {"unit": "verse", "include_neighbors": 1},
+                    "graph": {
+                        "node_types": ["surah", "ayah", "chunk"],
+                        "edge_types": ["contains", "next_ayah", "references"],
+                        "materialize_from": [
+                            "mineru_structure",
+                            "reference_metadata",
+                        ],
+                        "confidence_policy": "evidence_required",
+                    },
+                },
+            },
+        },
+    )
+
+    assert index_response.status_code == 200
+    chunks = index_response.json()
+    assert chunks[0]["metadata"]["relationship_metadata"]["references"] == ["113:1"]
+    assert {
+        "type": "next_ayah",
+        "source": "ref:113:1",
+        "target": "ref:113:2",
+        "evidence": "reference_metadata",
+    } in chunks[0]["metadata"]["relationship_metadata"]["graph_relationships"]
+    assert all(
+        relationship["evidence"] == "reference_metadata"
+        for relationship in chunks[0]["metadata"]["relationship_metadata"][
+            "graph_relationships"
+        ]
+    )
 
 
 @pytest.mark.asyncio

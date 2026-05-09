@@ -97,6 +97,44 @@ def test_reference_semantics_supports_generic_chapter_verse_schema():
     assert semantics.exact_reference_top1 is False
 
 
+def test_reference_semantics_supports_book_hadith_schema():
+    semantics = ReferenceSemantics.from_metadata(
+        DomainMetadata(
+            domain="hadith",
+            document_type="collection",
+            custom_json={
+                "reference_schema": {
+                    "type": "book_hadith",
+                    "display": "Book {book}, Hadith {hadith}",
+                    "fields": {"book": "book_number", "hadith": "hadith_number"},
+                },
+                "chunking": {"unit": "hadith", "include_neighbors": 1},
+            },
+        )
+    )
+
+    assert semantics.reference_type == "book_hadith"
+    assert semantics.chunk_unit == "hadith"
+    assert semantics.extract_chunk_references("Book 1, Hadith 2 text") == [
+        {
+            "raw": "Book 1, Hadith 2",
+            "book": 1,
+            "hadith": 2,
+            "ref": "book:1:hadith:2",
+        }
+    ]
+    assert semantics.derive_reference_metadata("Book 1, Hadith 2 text") == {
+        "reference_type": "book_hadith",
+        "references": ["book:1:hadith:2"],
+        "book_start": 1,
+        "book_end": 1,
+        "hadith_start": 2,
+        "hadith_end": 2,
+        "previous_ref": "book:1:hadith:1",
+        "next_ref": "book:1:hadith:3",
+    }
+
+
 def test_reference_semantics_stays_generic_without_reference_cues():
     metadata = DomainMetadata(domain="legal", document_type="brief", tags=["contract"])
 
@@ -128,6 +166,11 @@ def test_extract_query_reference_supports_quran_bracket_and_bare_forms():
         "ref": "1:4",
         "verse": 4,
         "raw": "1:4",
+    }
+    assert semantics.extract_query_reference("what is surah 113") == {
+        "chapter": 113,
+        "ref": "surah 113",
+        "raw": "surah 113",
     }
 
 
@@ -196,7 +239,9 @@ def test_derive_reference_metadata_omits_neighbors_when_not_configured():
 def test_chunk_reference_metadata_aliases_derive_reference_metadata():
     semantics = ReferenceSemantics.from_metadata(quran_metadata())
 
-    assert semantics.chunk_reference_metadata("[1:4]") == semantics.derive_reference_metadata("[1:4]")
+    assert semantics.chunk_reference_metadata("[1:4]") == semantics.derive_reference_metadata(
+        "[1:4]"
+    )
 
 
 def test_reference_semantics_uses_custom_schema_pattern_for_legal_sections():

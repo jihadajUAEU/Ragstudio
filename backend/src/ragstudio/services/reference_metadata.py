@@ -12,12 +12,20 @@ REFERENCE_PATTERN = re.compile(
     r"(?(bracket)\])",
     flags=re.IGNORECASE,
 )
+CHAPTER_ONLY_PATTERN = re.compile(
+    r"\b(?:surah|sura|chapter)\s+(?P<chapter>\d{1,4})\b",
+    flags=re.IGNORECASE,
+)
 LEGAL_SECTION_PATTERN = re.compile(
     r"(?:\bsection\b|\bsec\.?|§)\s*(?P<section>\d+(?:\.\d+)*)",
     flags=re.IGNORECASE,
 )
 PAGE_LINE_PATTERN = re.compile(
     r"\b(?:page|p\.?)\s*(?P<page>\d+)(?:\s*(?:[:,-]\s*)?(?:line|l\.?)\s*(?P<line>\d+))?",
+    flags=re.IGNORECASE,
+)
+BOOK_HADITH_PATTERN = re.compile(
+    r"\bBook\s+(?P<book>\d+)\s*,?\s*Hadith\s+(?P<hadith>\d+)\b",
     flags=re.IGNORECASE,
 )
 
@@ -36,7 +44,7 @@ class ReferenceSemantics:
     reference_pattern: str | None = None
 
     @classmethod
-    def from_metadata(cls, metadata: DomainMetadata) -> "ReferenceSemantics":
+    def from_metadata(cls, metadata: DomainMetadata) -> ReferenceSemantics:
         custom = metadata.custom_json if isinstance(metadata.custom_json, dict) else {}
         reference_schema = custom.get("reference_schema")
         chunking = custom.get("chunking") if isinstance(custom.get("chunking"), dict) else {}
@@ -44,7 +52,9 @@ class ReferenceSemantics:
         schema_pattern = cls._schema_pattern(reference_schema)
 
         has_reference_schema = isinstance(reference_schema, dict)
-        structured_reference = has_reference_schema or cls._has_structured_reference_fields(metadata)
+        structured_reference = has_reference_schema or cls._has_structured_reference_fields(
+            metadata
+        )
         profile_name = "scripture_reference" if structured_reference else "generic"
         reference_type = cls._reference_type(metadata, reference_schema)
 
@@ -56,7 +66,10 @@ class ReferenceSemantics:
             profile_name=profile_name,
             reference_type=reference_type,
             chunk_unit=chunk_unit,
-            include_neighbors=cls._safe_nonnegative_int(chunking.get("include_neighbors"), default=0),
+            include_neighbors=cls._safe_nonnegative_int(
+                chunking.get("include_neighbors"),
+                default=0,
+            ),
             preserve_parallel_text=cls._bool_value(
                 chunking.get("preserve_parallel_text"),
                 default=(
@@ -84,7 +97,7 @@ class ReferenceSemantics:
         )
 
     def extract_query_reference(self, query: str) -> dict[str, int | str] | None:
-        for pattern in self._compiled_patterns():
+        for pattern in self._compiled_patterns(include_chapter_only=True):
             match = pattern.search(query)
             if match is not None:
                 return self._match_to_reference(match)
@@ -159,10 +172,41 @@ class ReferenceSemantics:
                     metadata["previous_ref"] = f"{chapter_start}:{previous_verse}"
                 metadata["next_ref"] = f"{chapter_end}:{verse_end + self.include_neighbors}"
 
-        for field in ("section", "page", "line"):
-            values = [ref[field] for ref in references if field in ref]
+        book_hadith_refs = [
+            ref
+            for ref in references
+            if isinstance(ref.get("book"), int) and isinstance(ref.get("hadith"), int)
+        ]
+        if book_hadith_refs:
+            book_values = [int(ref["book"]) for ref in book_hadith_refs]
+            hadith_values = [int(ref["hadith"]) for ref in book_hadith_refs]
+            book_start = min(book_values)
+            book_end = max(book_values)
+            same_book = book_start == book_end
+            hadith_start = (
+                min(hadith_values) if same_book else int(book_hadith_refs[0]["hadith"])
+            )
+            hadith_end = max(hadith_values) if same_book else int(book_hadith_refs[-1]["hadith"])
+            metadata.update(
+                {
+                    "book_start": book_start,
+                    "book_end": book_end,
+                    "hadith_start": hadith_start,
+                    "hadith_end": hadith_end,
+                }
+            )
+            if self.include_neighbors > 0 and same_book:
+                previous_hadith = hadith_start - self.include_neighbors
+                if previous_hadith > 0:
+                    metadata["previous_ref"] = f"book:{book_start}:hadith:{previous_hadith}"
+                metadata["next_ref"] = (
+                    f"book:{book_end}:hadith:{hadith_end + self.include_neighbors}"
+                )
+
+        for reference_field in ("section", "page", "line"):
+            values = [ref[reference_field] for ref in references if reference_field in ref]
             if values:
-                metadata[f"{field}s"] = values
+                metadata[f"{reference_field}s"] = values
         metadata.update(self._page_range(source_location))
 
         return metadata
@@ -180,7 +224,11 @@ class ReferenceSemantics:
             matches.extend(pattern.finditer(text))
         return sorted(matches, key=lambda match: match.start())
 
-    def _compiled_patterns(self) -> list[re.Pattern[str]]:
+    def _compiled_patterns(
+        self,
+        *,
+        include_chapter_only: bool = False,
+    ) -> list[re.Pattern[str]]:
         patterns: list[re.Pattern[str]] = []
         if self.reference_pattern:
             try:
@@ -188,12 +236,19 @@ class ReferenceSemantics:
             except re.error:
                 pass
         reference_type = (self.reference_type or "").casefold()
-        if reference_type in {"surah_ayah", "chapter_verse"} or self.profile_name == "scripture_reference":
+        if (
+            reference_type in {"surah_ayah", "chapter_verse"}
+            or self.profile_name == "scripture_reference"
+        ):
             patterns.append(REFERENCE_PATTERN)
+            if include_chapter_only:
+                patterns.append(CHAPTER_ONLY_PATTERN)
         if reference_type in {"legal_section", "section", "article_section"}:
             patterns.append(LEGAL_SECTION_PATTERN)
         if reference_type in {"page_line", "page"}:
             patterns.append(PAGE_LINE_PATTERN)
+        if reference_type in {"book_hadith", "hadith"}:
+            patterns.append(BOOK_HADITH_PATTERN)
         return patterns
 
     def _match_to_reference(self, match: re.Match[str]) -> dict[str, int | str]:
@@ -208,6 +263,8 @@ class ReferenceSemantics:
 
         if isinstance(ref.get("chapter"), int) and isinstance(ref.get("verse"), int):
             ref["ref"] = f"{ref['chapter']}:{ref['verse']}"
+        elif isinstance(ref.get("book"), int) and isinstance(ref.get("hadith"), int):
+            ref["ref"] = f"book:{ref['book']}:hadith:{ref['hadith']}"
         elif "section" in ref:
             ref["ref"] = f"section:{ref['section']}"
         elif "page" in ref and "line" in ref:
@@ -229,7 +286,10 @@ class ReferenceSemantics:
         has_parallel_structure = "parallel_text" in values
         has_strong_scripture_tag = bool({"quran", "bible", "scripture"} & values)
         has_scripture_text_type = "religious_text" in values
-        has_legal_reference = any(cls._token_mentions(value, "statute", "section", "article") for value in values)
+        has_legal_reference = any(
+            cls._token_mentions(value, "statute", "section", "article")
+            for value in values
+        )
         has_page_line_reference = any(
             cls._token_mentions(value, "page_line", "page-line", "page:line")
             or (
@@ -238,12 +298,18 @@ class ReferenceSemantics:
             )
             for value in values
         )
+        has_hadith_reference = any(
+            cls._token_mentions(value, "hadith")
+            and cls._token_mentions(value, "book", "collection")
+            for value in values
+        )
         return (
             has_reference_pattern
             or has_strong_scripture_tag
             or (has_parallel_structure and has_scripture_text_type)
             or has_legal_reference
             or has_page_line_reference
+            or has_hadith_reference
         )
 
     @classmethod
@@ -282,6 +348,11 @@ class ReferenceSemantics:
             for value in values
         ):
             return "page_line"
+        if "hadith" in values or any(
+            cls._token_mentions(value, "book") and cls._token_mentions(value, "hadith")
+            for value in values
+        ):
+            return "book_hadith"
         return None
 
     @staticmethod

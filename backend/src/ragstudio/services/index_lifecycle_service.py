@@ -10,6 +10,7 @@ from ragstudio.schemas.parsing import IndexDocumentIn
 from ragstudio.services.adapter import AdapterChunk
 from ragstudio.services.chunk_sanitizer import sanitize_db_text, sanitize_db_value
 from ragstudio.services.chunk_splitter import ChunkSplitter
+from ragstudio.services.mineru_relationship_builder import MinerURelationshipBuilder
 from ragstudio.services.runtime_factory import RAGAnythingRuntimeFactory
 from ragstudio.services.runtime_health_service import RuntimeHealthService
 from ragstudio.services.runtime_profile_service import RuntimeProfileService
@@ -84,6 +85,10 @@ class IndexLifecycleService:
             normalized_chunks,
             domain_metadata=options.domain_metadata,
             parser_mode=options.parser_mode,
+        )
+        adapter_chunks = MinerURelationshipBuilder().annotate(
+            adapter_chunks,
+            options.domain_metadata,
         )
         chunks: list[Chunk] = []
         for adapter_chunk in adapter_chunks:

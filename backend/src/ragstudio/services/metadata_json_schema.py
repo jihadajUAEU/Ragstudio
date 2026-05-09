@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from copy import deepcopy
 import re
+from copy import deepcopy
 from typing import Any
 
 SAFE_REFERENCE_PATTERN = re.compile(r"^[A-Za-z0-9_?P<>()\[\]\{\}\\\^\$\.\:\-\+\*\s|]+$")
@@ -34,6 +34,12 @@ REFERENCE_CUSTOM_JSON_EXAMPLE: dict[str, Any] = {
         "boost_same_chapter": True,
         "boost_neighbor_verses": True,
     },
+    "graph": {
+        "node_types": ["chapter", "verse", "chunk"],
+        "edge_types": ["contains", "next", "references"],
+        "materialize_from": ["mineru_structure", "reference_metadata"],
+        "confidence_policy": "evidence_required",
+    },
 }
 
 
@@ -45,6 +51,7 @@ def validate_custom_json(value: dict[str, Any]) -> dict[str, Any]:
     _validate_relationships(value.get("relationships"))
     _validate_chunking(value.get("chunking"))
     _validate_retrieval(value.get("retrieval"))
+    _validate_graph(value.get("graph"))
     return value
 
 
@@ -157,3 +164,26 @@ def _validate_retrieval(value: Any) -> None:
             raise ValueError("custom_json.retrieval keys must be strings.")
         if not isinstance(retrieval_value, bool):
             raise ValueError("custom_json.retrieval values must be booleans.")
+
+
+def _validate_graph(value: Any) -> None:
+    if value is None:
+        return
+    if not isinstance(value, dict):
+        raise ValueError("custom_json.graph must be an object.")
+
+    for key in ("node_types", "edge_types", "materialize_from"):
+        _validate_string_list(value.get(key), f"custom_json.graph.{key}")
+
+    confidence_policy = value.get("confidence_policy")
+    if confidence_policy != "evidence_required":
+        raise ValueError(
+            "custom_json.graph.confidence_policy must be 'evidence_required'."
+        )
+
+
+def _validate_string_list(value: Any, name: str) -> None:
+    if value is None:
+        return
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        raise ValueError(f"{name} must be a list of strings.")

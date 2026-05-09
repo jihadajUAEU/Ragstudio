@@ -39,7 +39,14 @@ async def suggest_domain_metadata(
     file: UploadFile = File(...),
     profile_id: str | None = Form(default=None),
 ) -> DomainMetadataSuggestOut:
-    del request, profile_id
+    service = DomainMetadataService(request.app.state.settings.data_dir)
+    baseline_profile = None
+    if profile_id:
+        profile = service.get_profile(profile_id)
+        if profile is None:
+            raise HTTPException(status_code=404, detail="Domain profile not found.")
+        baseline_profile = profile.metadata
+
     settings_profile = await session.get(SettingsProfile, "default")
     if settings_profile is None:
         raise HTTPException(
@@ -64,6 +71,7 @@ async def suggest_domain_metadata(
             content_type=content_type,
             pages=pages,
             sampler_warnings=sampler.warnings,
+            baseline_profile=baseline_profile,
         )
     except ValueError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc

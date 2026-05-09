@@ -11,6 +11,7 @@ from ragstudio.services.chunk_sanitizer import sanitize_db_text, sanitize_db_val
 from ragstudio.services.chunk_splitter import ChunkSplitter
 from ragstudio.services.hybrid_chunk_search import ChunkScore, HybridChunkSearch
 from ragstudio.services.mineru_client import MinerUClient
+from ragstudio.services.mineru_relationship_builder import MinerURelationshipBuilder
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -26,6 +27,7 @@ class ChunkService:
         mineru_client_factory: type[MinerUClient] | None = None,
         chunk_splitter: ChunkSplitter | None = None,
         chunk_search: HybridChunkSearch | None = None,
+        relationship_builder: MinerURelationshipBuilder | None = None,
     ):
         self.session = session
         self.data_dir = data_dir
@@ -33,6 +35,7 @@ class ChunkService:
         self.mineru_client_factory = mineru_client_factory or MinerUClient
         self.chunk_splitter = chunk_splitter or ChunkSplitter()
         self.chunk_search = chunk_search or HybridChunkSearch()
+        self.relationship_builder = relationship_builder or MinerURelationshipBuilder()
 
     async def index_document(
         self,
@@ -60,6 +63,10 @@ class ChunkService:
             adapter_chunks,
             domain_metadata=options.domain_metadata,
             parser_mode=options.parser_mode,
+        )
+        adapter_chunks = self.relationship_builder.annotate(
+            adapter_chunks,
+            options.domain_metadata,
         )
         await self.session.execute(delete(Chunk).where(Chunk.document_id == document.id))
 

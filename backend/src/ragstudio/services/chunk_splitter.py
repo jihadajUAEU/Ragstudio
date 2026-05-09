@@ -179,6 +179,18 @@ class ChunkSplitter:
             source_location = dict(chunk.source_location)
             source_location["page_start"] = page
             source_location["page_end"] = page
+            page_chunk = AdapterChunk(
+                text=text,
+                source_location=source_location,
+                metadata=chunk.metadata,
+                runtime_source_id=chunk.runtime_source_id,
+                content_type=chunk.content_type,
+                preview_ref=chunk.preview_ref,
+            )
+            reference_units = self._reference_unit_sections(page_chunk, profile)
+            if reference_units:
+                pieces.extend(reference_units)
+                continue
             for part in self._hard_split_text(text, profile.hard_max_words):
                 pieces.append(self._piece_from_parent(chunk, part, source_location=source_location))
         return pieces
@@ -189,6 +201,7 @@ class ChunkSplitter:
         profile: ChunkProfile,
     ) -> list[SplitPiece]:
         if profile.semantics is None or profile.semantics.chunk_unit not in {
+            "hadith",
             "verse",
             "reference",
             "section",
@@ -420,7 +433,11 @@ class ChunkSplitter:
             text,
             flags=re.IGNORECASE,
         )
-        cleaned = re.sub(r"(?m)^\s*(?:[=\-|,|]|\\(?:theta|alpha|beta|pi|rho|angle|infty))\s*$", "", cleaned)
+        cleaned = re.sub(
+            r"(?m)^\s*(?:[=\-|,|]|\\(?:theta|alpha|beta|pi|rho|angle|infty))\s*$",
+            "",
+            cleaned,
+        )
         cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
         cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
         return cleaned.strip()

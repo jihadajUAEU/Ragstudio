@@ -125,12 +125,26 @@ describe("DomainMetadataPanel", () => {
     );
   });
 
-  it("passes the selected profile to auto-suggest", async () => {
+  it("passes the selected profile to auto-suggest and applies profile-refined metadata", async () => {
     const file = new File(["pdf"], "hadith.pdf", { type: "application/pdf" });
     mocks.suggestDomainMetadata.mockResolvedValueOnce({
-      domain_metadata: { domain: "hadith", document_type: "collection" },
+      domain_metadata: {
+        domain: "hadith",
+        document_type: "collection",
+        metadata_sources: ["profile", "ai"],
+        custom_json: {
+          reference_schema: {
+            type: "book_hadith",
+          },
+          chunking: {
+            unit: "hadith",
+          },
+        },
+      },
       ...autosuggestEvidence,
     });
+    const onChange = vi.fn();
+
     render(
       <DomainMetadataPanel
         profiles={[
@@ -145,7 +159,7 @@ describe("DomainMetadataPanel", () => {
           parser_mode: "local_fallback",
           domain_metadata: { domain: "generic", document_type: "document" },
         }}
-        onChange={vi.fn()}
+        onChange={onChange}
         suggestContext={{ filename: "hadith.pdf", content_type: "application/pdf", file }}
       />,
     );
@@ -160,6 +174,24 @@ describe("DomainMetadataPanel", () => {
         expect.objectContaining({ profile_id: "hadith" }),
       );
     });
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        domain_metadata: expect.objectContaining({
+          domain: "hadith",
+          document_type: "collection",
+          metadata_sources: ["profile", "ai"],
+          custom_json: {
+            reference_schema: {
+              type: "book_hadith",
+            },
+            chunking: {
+              unit: "hadith",
+            },
+          },
+        }),
+      }),
+    );
+    expect(screen.getByDisplayValue(/book_hadith/)).toBeVisible();
   });
 
   it("keeps custom JSON synchronized with profile selection and reports validity", () => {

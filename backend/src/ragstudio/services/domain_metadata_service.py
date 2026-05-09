@@ -9,12 +9,50 @@ from ragstudio.schemas.parsing import (
     DomainProfileOut,
 )
 
+
+def reference_custom_json(
+    *,
+    reference_type: str | None = None,
+    display: str | None = None,
+    fields: dict[str, str] | None = None,
+    relationships: dict[str, list[str]] | None = None,
+    chunking: dict[str, object] | None = None,
+    retrieval: dict[str, bool] | None = None,
+    graph: dict[str, object] | None = None,
+) -> dict[str, object]:
+    value: dict[str, object] = {}
+    if reference_type or display or fields:
+        schema: dict[str, object] = {}
+        if reference_type:
+            schema["type"] = reference_type
+        if display:
+            schema["display"] = display
+        if fields:
+            schema["fields"] = fields
+        value["reference_schema"] = schema
+    if relationships:
+        value["relationships"] = relationships
+    if chunking:
+        value["chunking"] = chunking
+    if retrieval:
+        value["retrieval"] = retrieval
+    if graph:
+        value["graph"] = graph
+    return value
+
+
 BUILTIN_PROFILES: list[DomainProfileOut] = [
     DomainProfileOut(
         id="generic",
         name="Generic document",
         description="General uploaded document.",
-        metadata=DomainMetadata(domain="generic", document_type="document", tags=["document"]),
+        metadata=DomainMetadata(
+            domain="generic",
+            document_type="document",
+            tags=["document"],
+            expected_structure="sections",
+            custom_json=reference_custom_json(chunking={"unit": "section"}),
+        ),
     ),
     DomainProfileOut(
         id="research_paper",
@@ -23,8 +61,13 @@ BUILTIN_PROFILES: list[DomainProfileOut] = [
         metadata=DomainMetadata(
             domain="research",
             document_type="paper",
-            tags=["research", "paper"],
+            tags=["research", "paper", "academic", "figures", "tables"],
             citation_style="academic",
+            expected_structure="abstract_sections_references",
+            custom_json=reference_custom_json(
+                chunking={"unit": "section", "preserve_parallel_text": False},
+                retrieval={"boost_same_chapter": True},
+            ),
         ),
     ),
     DomainProfileOut(
@@ -34,8 +77,18 @@ BUILTIN_PROFILES: list[DomainProfileOut] = [
         metadata=DomainMetadata(
             domain="policy",
             document_type="admin_document",
-            tags=["policy", "admin"],
+            tags=["policy", "admin", "procedure", "governance"],
+            citation_style="section",
             expected_structure="sections",
+            reference_pattern="section_number",
+            custom_json=reference_custom_json(
+                reference_type="section",
+                display="Section {section}",
+                fields={"section": "section_number"},
+                relationships={"section": ["same_section"], "next": ["next_section"]},
+                chunking={"unit": "section"},
+                retrieval={"exact_reference_top1": True, "boost_same_chapter": True},
+            ),
         ),
     ),
     DomainProfileOut(
@@ -45,8 +98,12 @@ BUILTIN_PROFILES: list[DomainProfileOut] = [
         metadata=DomainMetadata(
             domain="data",
             document_type="table",
-            tags=["table", "spreadsheet"],
+            tags=["table", "spreadsheet", "rows", "columns"],
             expected_structure="rows",
+            custom_json=reference_custom_json(
+                chunking={"unit": "row"},
+                retrieval={"exact_reference_top1": False},
+            ),
         ),
     ),
     DomainProfileOut(
@@ -57,12 +114,49 @@ BUILTIN_PROFILES: list[DomainProfileOut] = [
             domain="hadith",
             document_type="collection",
             language="mixed",
-            tags=["hadith", "arabic", "english"],
+            tags=["hadith", "islamic_text", "arabic", "english", "religious_text"],
             citation_style="book_hadith",
-            expected_structure="book_hadith_records",
+            expected_structure="book_chapter_hadith",
             reference_pattern="Book N, Hadith N",
             script="mixed",
-            content_role="hadith",
+            content_role="primary_source",
+            custom_json=reference_custom_json(
+                reference_type="book_hadith",
+                display="Book {book}, Hadith {hadith}",
+                fields={
+                    "book": "book_number",
+                    "hadith": "hadith_number",
+                    "chapter": "chapter_title",
+                },
+                relationships={
+                    "previous": ["same_book", "hadith - 1"],
+                    "next": ["same_book", "hadith + 1"],
+                    "book": ["same_book"],
+                    "chapter": ["same_chapter"],
+                },
+                chunking={
+                    "unit": "hadith",
+                    "include_neighbors": 1,
+                    "preserve_parallel_text": True,
+                },
+                retrieval={
+                    "exact_reference_top1": True,
+                    "boost_same_chapter": True,
+                    "boost_neighbor_verses": True,
+                },
+                graph={
+                    "node_types": ["collection", "book", "chapter", "hadith", "chunk"],
+                    "edge_types": [
+                        "contains",
+                        "references",
+                        "next_hadith",
+                        "same_book",
+                        "same_chapter",
+                    ],
+                    "materialize_from": ["mineru_structure", "reference_metadata"],
+                    "confidence_policy": "evidence_required",
+                },
+            ),
         ),
     ),
     DomainProfileOut(
@@ -73,11 +167,49 @@ BUILTIN_PROFILES: list[DomainProfileOut] = [
             domain="quran_tafseer",
             document_type="commentary",
             language="mixed",
-            tags=["quran", "tafseer", "arabic", "english"],
+            tags=["quran", "tafseer", "arabic", "english", "religious_text"],
             citation_style="surah_ayah",
             expected_structure="surah_ayah_sections",
+            reference_pattern="surah_number:verse_number",
             script="mixed",
             content_role="tafseer",
+            custom_json=reference_custom_json(
+                reference_type="chapter_verse",
+                display="{chapter}:{verse}",
+                fields={
+                    "chapter": "surah_number",
+                    "verse": "ayah_number",
+                    "page": "page_number",
+                },
+                relationships={
+                    "previous": ["same_chapter", "verse - 1"],
+                    "next": ["same_chapter", "verse + 1"],
+                    "chapter": ["same_chapter"],
+                    "page": ["same_page"],
+                },
+                chunking={
+                    "unit": "verse",
+                    "include_neighbors": 1,
+                    "preserve_parallel_text": True,
+                },
+                retrieval={
+                    "exact_reference_top1": True,
+                    "boost_same_chapter": True,
+                    "boost_neighbor_verses": True,
+                },
+                graph={
+                    "node_types": ["surah", "ayah", "translation", "chunk"],
+                    "edge_types": [
+                        "contains",
+                        "references",
+                        "next_ayah",
+                        "same_surah",
+                        "translation_of",
+                    ],
+                    "materialize_from": ["mineru_structure", "reference_metadata"],
+                    "confidence_policy": "evidence_required",
+                },
+            ),
         ),
     ),
     DomainProfileOut(
@@ -88,10 +220,19 @@ BUILTIN_PROFILES: list[DomainProfileOut] = [
             domain="fiqh",
             document_type="fatwa",
             language="mixed",
-            tags=["fatwa", "fiqh", "ruling"],
+            tags=["fatwa", "fiqh", "ruling", "islamic_law", "question_answer"],
+            citation_style="question_answer",
             expected_structure="question_answer",
             script="mixed",
             content_role="fiqh ruling",
+            custom_json=reference_custom_json(
+                relationships={
+                    "topic": ["same_topic"],
+                    "question": ["answer"],
+                },
+                chunking={"unit": "question_answer"},
+                retrieval={"boost_same_chapter": True},
+            ),
         ),
     ),
 ]
@@ -104,6 +245,12 @@ class DomainMetadataService:
 
     def list_profiles(self) -> list[DomainProfileOut]:
         return [*BUILTIN_PROFILES, *self._saved_profiles()]
+
+    def get_profile(self, profile_id: str) -> DomainProfileOut | None:
+        return next(
+            (profile for profile in self.list_profiles() if profile.id == profile_id),
+            None,
+        )
 
     def upsert_profile(self, profile: DomainProfileIn) -> DomainProfileOut:
         saved = DomainProfileOut.model_validate(profile.model_dump())
