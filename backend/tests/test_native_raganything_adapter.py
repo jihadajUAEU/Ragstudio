@@ -76,8 +76,8 @@ class FakeRAGAnything:
         self.inserted_content_list = None
         self.parse_called = False
         self.initialized = False
-        self.lightrag = SimpleNamespace(adelete_by_doc_id=self._delete)
-        self.deleted = []
+        self.lightrag = FakeLightRAG()
+        self.deleted = self.lightrag.deleted
         FakeRAGAnything.instances.append(self)
 
     async def parse_document(self, file_path, output_dir, parse_method, display_stats):
@@ -97,14 +97,19 @@ class FakeRAGAnything:
     async def aquery(self, query, mode="mix", **kwargs):
         if not self.initialized:
             raise AssertionError("aquery called before LightRAG initialization")
-        return f"native answer: {query}:{mode}:{kwargs['top_k']}"
+        if "chunk_top_k" not in kwargs:
+            return f"native answer: {query}:{mode}:{kwargs['top_k']}"
+        rows = await self.lightrag.chunks_vdb.query(
+            query,
+            top_k=kwargs.get("chunk_top_k") or kwargs["top_k"],
+        )
+        if [row["full_doc_id"] for row in rows] != ["doc-1"]:
+            raise AssertionError(f"unscoped rows reached native query: {rows}")
+        return f"native scoped answer: {query}:{mode}:{kwargs['top_k']}"
 
     async def _ensure_lightrag_initialized(self):
         self.initialized = True
         return {"success": True}
-
-    async def _delete(self, doc_id):
-        self.deleted.append(doc_id)
 
 
 class FakeEmbeddingFunc:
@@ -130,6 +135,51 @@ class FakeChunkVectorStorage:
         return self.rows[:top_k]
 
 
+class FakeLightRAG:
+    def __init__(self):
+        self.deleted = []
+        self.chunks_vdb = FakeChunkVectorStorage(
+            [
+                {
+                    "id": "chunk-1",
+                    "full_doc_id": "doc-1",
+                    "content": "Sahih al-Bukhari 7277 Hadith Collection",
+                    "file_path": "bukhari.pdf",
+                    "score": 0.91,
+                },
+                {
+                    "id": "chunk-2",
+                    "full_doc_id": "doc-2",
+                    "content": "Outside document",
+                    "file_path": "other.pdf",
+                    "score": 0.88,
+                },
+            ]
+        )
+
+    async def adelete_by_doc_id(self, doc_id):
+        self.deleted.append(doc_id)
+
+    async def aquery_data(self, query, param):
+        rows = await self.chunks_vdb.query(query, top_k=param.chunk_top_k or param.top_k)
+        return {
+            "status": "success",
+            "data": {
+                "chunks": [
+                    {
+                        "chunk_id": row["id"],
+                        "content": row["content"],
+                        "file_path": row["file_path"],
+                    }
+                    for row in rows
+                ],
+                "entities": [],
+                "relationships": [],
+                "references": [],
+            },
+        }
+
+
 @pytest.fixture(autouse=True)
 def fake_upstream(monkeypatch):
     FakeRAGAnything.instances.clear()
@@ -149,6 +199,8 @@ def fake_upstream(monkeypatch):
             )
         if name == "lightrag.utils":
             return SimpleNamespace(EmbeddingFunc=FakeEmbeddingFunc)
+        if name == "lightrag.base":
+            return SimpleNamespace(QueryParam=SimpleNamespace)
         raise AssertionError(f"unexpected import {name}")
 
     monkeypatch.setattr("ragstudio.services.native_raganything_adapter.import_module", fake_import)
@@ -318,29 +370,46 @@ def test_native_adapter_reports_scoped_query_capability(tmp_path):
 
     report = adapter.capability_report()
 
-    assert report["scoped_query"] is False
+    assert report["native_scoped_query"] is True
+    assert report["scoped_query"] == "raganything_full_doc_id"
     assert (
         report["scoped_query_detail"]
-        == "Native RAG-Anything query cannot yet enforce selected document_ids."
+        == "Native RAG-Anything query scopes selected documents through "
+        "LightRAG chunk full_doc_id filtering."
     )
 
 
 @pytest.mark.asyncio
-async def test_native_adapter_refuses_unscoped_document_queries(tmp_path):
+async def test_native_adapter_queries_selected_documents_with_scoped_lightrag(tmp_path):
     adapter = NativeRAGAnythingAdapter(
         profile(runtime_working_dir=str(tmp_path / "runtime")),
         AppSettings(database_url="postgresql+asyncpg://user:pass@localhost:5432/ragstudio"),
     )
 
     result = await adapter.query(
-        "question",
+        "how many hadith in bukhari",
         document_ids=["doc-1"],
-        query_config={"mode": "hybrid", "top_k": 12},
+        query_config={"mode": "hybrid", "top_k": 12, "chunk_top_k": 4},
     )
 
-    assert result.error_type == "native_document_scope_unsupported"
-    assert "document_ids" in (result.error or "")
-    assert FakeRAGAnything.instances == []
+    assert result.error is None
+    assert result.error_type is None
+    assert result.answer == "native scoped answer: how many hadith in bukhari:hybrid:12"
+    assert result.sources == [
+        {
+            "chunk_id": "chunk-1",
+            "document_id": "doc-1",
+            "text": "Sahih al-Bukhari 7277 Hadith Collection",
+            "source_location": {"file_path": "bukhari.pdf"},
+            "metadata": {
+                "full_doc_id": "doc-1",
+                "score": 0.91,
+                "native_scope": True,
+            },
+        }
+    ]
+    assert result.timings["native_scoped_query"] is True
+    assert result.timings["runtime_query_ms"] >= 0
 
 
 @pytest.mark.asyncio

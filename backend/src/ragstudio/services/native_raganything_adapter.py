@@ -76,9 +76,11 @@ class NativeRAGAnythingAdapter:
             "indexing": "raganything",
             "query": "raganything",
             "graph": "neo4j",
-            "scoped_query": False,
+            "native_scoped_query": True,
+            "scoped_query": "raganything_full_doc_id",
             "scoped_query_detail": (
-                "Native RAG-Anything query cannot yet enforce selected document_ids."
+                "Native RAG-Anything query scopes selected documents through "
+                "LightRAG chunk full_doc_id filtering."
             ),
         }
 
@@ -133,32 +135,47 @@ class NativeRAGAnythingAdapter:
         document_ids: list[str],
         query_config: dict[str, Any],
     ) -> RuntimeQueryResult:
-        if document_ids:
-            return RuntimeQueryResult(
-                answer="",
-                sources=[],
-                timings={},
-                error=(
-                    "Native RAG-Anything query cannot yet enforce selected document_ids; "
-                    "refusing to run an unscoped runtime query."
-                ),
-                error_type="native_document_scope_unsupported",
-            )
         rag = self._raganything()
         mode = str(query_config.get("mode") or self.profile.query_mode)
         kwargs = self._query_kwargs(query_config)
         started = asyncio.get_running_loop().time()
         async with self._storage_env():
+            if document_ids:
+                async with self._scoped_chunks_vdb(rag, document_ids) as scoped_proxy:
+                    query_param = self._query_param(mode, query_config)
+                    lightrag = getattr(rag, "lightrag")
+                    if hasattr(lightrag, "aquery_data"):
+                        await lightrag.aquery_data(query, query_param)
+                    answer = await rag.aquery(query, mode=mode, **kwargs)
+                    leak = self._scope_leak_error(scoped_proxy, document_ids)
+                    if leak is not None:
+                        return leak
+                    return RuntimeQueryResult(
+                        answer=str(answer or ""),
+                        sources=self._native_sources_from_proxy(
+                            scoped_proxy,
+                            document_ids,
+                        ),
+                        timings={
+                            "runtime_query_ms": round(
+                                (asyncio.get_running_loop().time() - started) * 1000,
+                                3,
+                            ),
+                            "native_scoped_query": True,
+                        },
+                    )
+
             await self._ensure_lightrag(rag)
             answer = await rag.aquery(query, mode=mode, **kwargs)
         return RuntimeQueryResult(
             answer=str(answer or ""),
-            sources=[{"document_id": document_id} for document_id in document_ids],
+            sources=[],
             timings={
                 "runtime_query_ms": round(
                     (asyncio.get_running_loop().time() - started) * 1000,
                     3,
-                )
+                ),
+                "native_scoped_query": False,
             },
         )
 
@@ -295,6 +312,82 @@ class NativeRAGAnythingAdapter:
             result = await ensure()
             if isinstance(result, dict) and not result.get("success", True):
                 raise RuntimeError(result.get("error") or "LightRAG initialization failed.")
+
+    @asynccontextmanager
+    async def _scoped_chunks_vdb(
+        self,
+        rag: Any,
+        document_ids: list[str],
+    ) -> AsyncIterator[ScopedVectorStorageProxy]:
+        await self._ensure_lightrag(rag)
+        lightrag = getattr(rag, "lightrag", None)
+        if lightrag is None or not hasattr(lightrag, "chunks_vdb"):
+            raise RuntimeError("LightRAG chunks vector storage is not initialized.")
+
+        original_chunks_vdb = lightrag.chunks_vdb
+        proxy = ScopedVectorStorageProxy(original_chunks_vdb, document_ids)
+        lightrag.chunks_vdb = proxy
+        try:
+            yield proxy
+        finally:
+            lightrag.chunks_vdb = original_chunks_vdb
+
+    def _query_param(self, mode: str, query_config: dict[str, Any]) -> Any:
+        query_param_cls = import_module("lightrag.base").QueryParam
+        return query_param_cls(mode=mode, **self._query_kwargs(query_config))
+
+    def _native_sources_from_proxy(
+        self,
+        proxy: ScopedVectorStorageProxy,
+        document_ids: list[str],
+    ) -> list[dict[str, Any]]:
+        allowed = set(document_ids)
+        deduped: dict[str, dict[str, Any]] = {}
+        for row in proxy.collected_results:
+            document_id = str(row.get("full_doc_id") or "")
+            if document_id not in allowed:
+                continue
+            chunk_id = str(row.get("id") or "")
+            if not chunk_id or chunk_id in deduped:
+                continue
+            deduped[chunk_id] = {
+                "chunk_id": chunk_id,
+                "document_id": document_id,
+                "text": str(row.get("content") or ""),
+                "source_location": {"file_path": row.get("file_path")},
+                "metadata": {
+                    "full_doc_id": document_id,
+                    "score": row.get("score"),
+                    "native_scope": True,
+                },
+            }
+        return list(deduped.values())
+
+    def _scope_leak_error(
+        self,
+        proxy: ScopedVectorStorageProxy,
+        document_ids: list[str],
+    ) -> RuntimeQueryResult | None:
+        allowed = set(document_ids)
+        leaked_ids = sorted(
+            {
+                str(row.get("full_doc_id") or "")
+                for row in proxy.collected_results
+                if str(row.get("full_doc_id") or "") not in allowed
+            }
+        )
+        if not leaked_ids:
+            return None
+        return RuntimeQueryResult(
+            answer="",
+            sources=[],
+            timings={},
+            error=(
+                "Native RAG-Anything scoped query returned chunks outside selected "
+                f"document_ids: {', '.join(leaked_ids)}"
+            ),
+            error_type="native_document_scope_leak",
+        )
 
     @asynccontextmanager
     async def _storage_env(self) -> AsyncIterator[None]:
