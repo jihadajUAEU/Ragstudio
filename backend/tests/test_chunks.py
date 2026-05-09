@@ -347,6 +347,7 @@ async def test_search_chunks_exact_reference_returns_matching_verse_top_one(clie
     assert items[0]["metadata"]["score_breakdown"]["reference_exact"] == 100.0
     assert items[0]["metadata"]["retrieval_explain"]["query_reference"] == "1:4"
     assert items[0]["metadata"]["retrieval_explain"]["matched_references"] == ["1:4"]
+    assert items[0]["retrieval_explain"]["matched_references"] == ["1:4"]
 
 
 @pytest.mark.asyncio
@@ -449,6 +450,10 @@ async def test_exact_reference_search_includes_previous_and_next_relationships(c
     assert texts[0].startswith("[1:4]")
     assert any(text.startswith("[1:3]") for text in texts)
     assert any(text.startswith("[1:5]") for text in texts)
+    assert response.json()["items"][0]["relationship_refs"] == {
+        "previous": "1:3",
+        "next": "1:5",
+    }
 
 
 @pytest.mark.asyncio

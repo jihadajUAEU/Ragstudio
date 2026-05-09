@@ -23,7 +23,7 @@ from ragstudio.db.engine import make_engine, make_session_factory
 from ragstudio.schemas.documents import DocumentOut
 from ragstudio.schemas.parsing import IndexDocumentIn
 from ragstudio.services.chunk_service import ChunkService
-from ragstudio.services.document_service import DocumentService
+from ragstudio.services.document_service import ActiveIndexJobError, DocumentService
 from ragstudio.services.index_lifecycle_service import RuntimeHealthBlockedError
 from ragstudio.services.metadata_json_schema import validate_custom_json
 from ragstudio.services.runtime_factory import RuntimeUnavailableError
@@ -110,19 +110,16 @@ async def reindex_document(
         )
         if not await service.document_exists(document_id):
             raise HTTPException(status_code=404, detail="Document not found")
-        active_job = await service.active_index_job(document_id)
-        if active_job is not None:
-            raise HTTPException(
-                status_code=409,
-                detail=f"Document already has active indexing job {active_job.id}",
-            )
         _validate_index_options(options)
         await _ensure_runtime_ready(session, settings)
         try:
             await ChunkService(session, settings.data_dir).validate_strict_mineru_sidecar(options)
         except RuntimeError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
-        job = await service.create_index_job(document_id)
+        try:
+            job = await service.create_index_job(document_id)
+        except ActiveIndexJobError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         if job is None:
             raise HTTPException(status_code=404, detail="Document not found")
         create_background_task(

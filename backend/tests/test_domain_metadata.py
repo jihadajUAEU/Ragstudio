@@ -78,6 +78,18 @@ def test_validate_custom_json_rejects_invalid_retrieval_booleans():
         validate_custom_json({"retrieval": {"boost_same_chapter": 1}})
 
 
+def test_validate_custom_json_rejects_invalid_reference_regex():
+    with pytest.raises(ValueError, match="valid regex"):
+        validate_custom_json({"reference_schema": {"type": "legal_section", "pattern": "(?P<section>"}})
+
+
+def test_validate_custom_json_rejects_unsafe_reference_regex():
+    with pytest.raises(ValueError, match="nested or adjacent quantifiers"):
+        validate_custom_json(
+            {"reference_schema": {"type": "legal_section", "pattern": r"(?P<section>(a+)+)"}}
+        )
+
+
 @pytest.mark.asyncio
 async def test_ai_domain_metadata_suggester_uses_vision_model(monkeypatch):
     calls = []

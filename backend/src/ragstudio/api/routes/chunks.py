@@ -13,7 +13,7 @@ from ragstudio.schemas.chunks import ChunkOut, ChunkSearchIn, ChunkSearchOut
 from ragstudio.schemas.jobs import JobOut
 from ragstudio.schemas.parsing import IndexDocumentIn
 from ragstudio.services.chunk_service import ChunkService
-from ragstudio.services.document_service import DocumentService
+from ragstudio.services.document_service import ActiveIndexJobError, DocumentService
 from ragstudio.services.index_lifecycle_service import (
     IndexLifecycleService,
     RuntimeHealthBlockedError,
@@ -69,7 +69,10 @@ async def create_index_document_job(
         settings.data_dir,
         settings=settings,
     )
-    job = await service.create_index_job(document_id)
+    try:
+        job = await service.create_index_job(document_id)
+    except ActiveIndexJobError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     if job is None:
         raise HTTPException(status_code=404, detail="Document not found")
     create_background_task(

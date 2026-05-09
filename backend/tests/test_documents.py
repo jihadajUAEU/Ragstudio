@@ -2,6 +2,7 @@ import asyncio
 import json
 from pathlib import Path
 
+import httpx
 import pytest
 from ragstudio.db.models import Document, IndexRecord, Job, SettingsProfile
 from ragstudio.schemas.common import StageStatus
@@ -178,7 +179,7 @@ async def test_duplicate_upload_mineru_strict_failure_persists_failed_job(client
 
 
 @pytest.mark.asyncio
-async def test_duplicate_upload_with_explicit_default_options_creates_new_job(client):
+async def test_duplicate_upload_with_explicit_default_options_reuses_active_job(client):
     first_response = await client.post(
         "/api/documents",
         files={"file": ("notes.txt", b"same bytes", "text/plain")},
@@ -188,17 +189,16 @@ async def test_duplicate_upload_with_explicit_default_options_creates_new_job(cl
         data={"parser_mode": "local_fallback", "domain_metadata": "{}"},
         files={"file": ("notes-copy.txt", b"same bytes", "text/plain")},
     )
-    jobs = await wait_for_jobs(client, 2)
+    jobs = await wait_for_jobs(client, 1, terminal=False)
 
     assert second_response.status_code == 201
     assert second_response.json()["id"] == first_response.json()["id"]
     jobs = [job for job in jobs if job["type"] == "index_document"]
-    assert len(jobs) == 2
-    assert {job["status"] for job in jobs} == {"succeeded"}
+    assert len(jobs) == 1
 
 
 @pytest.mark.asyncio
-async def test_duplicate_upload_schedules_each_created_job_id(client, monkeypatch):
+async def test_duplicate_upload_does_not_schedule_second_active_job(client, monkeypatch):
     scheduled = []
 
     async def fake_run_index_job(settings, document_id, job_id, options):
@@ -224,22 +224,17 @@ async def test_duplicate_upload_schedules_each_created_job_id(client, monkeypatc
     )
 
     for _ in range(20):
-        if len(scheduled) == 2:
+        if len(scheduled) == 1:
             break
         await asyncio.sleep(0.01)
-    jobs = await wait_for_jobs(client, 2, terminal=False)
-    job_ids = {job["id"] for job in jobs}
+    jobs = await wait_for_jobs(client, 1, terminal=False)
 
     assert first_response.status_code == 201
     assert second_response.status_code == 201
     assert first_response.json()["id"] == second_response.json()["id"]
-    assert len(scheduled) == 2
-    assert {item["job_id"] for item in scheduled} == job_ids
-    assert scheduled[0]["job_id"] != scheduled[1]["job_id"]
-    assert [item["parser_mode"] for item in scheduled] == [
-        "local_fallback",
-        "mineru_with_fallback",
-    ]
+    assert len(scheduled) == 1
+    assert scheduled[0]["job_id"] == jobs[0]["id"]
+    assert scheduled[0]["parser_mode"] == "local_fallback"
 
 
 @pytest.mark.asyncio
@@ -386,6 +381,65 @@ async def test_reindex_document_rejects_active_index_job(client, tmp_path):
 
     assert response.status_code == 409
     assert "active indexing job" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_reindex_document_concurrent_requests_create_one_active_job(
+    client,
+    monkeypatch,
+    tmp_path,
+):
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def fake_run_index_job(settings, document_id, job_id, options):
+        started.set()
+        await release.wait()
+
+    monkeypatch.setattr("ragstudio.api.routes.documents._run_index_job", fake_run_index_job)
+    session_factory = client._transport.app.state.session_factory
+    artifact = tmp_path / "uploads" / "concurrent-reindex-sha"
+    artifact.parent.mkdir(parents=True)
+    artifact.write_text("Quran 1:4", encoding="utf-8")
+    async with session_factory() as session:
+        document = Document(
+            filename="quran.pdf",
+            content_type="application/pdf",
+            sha256="concurrent-reindex-sha",
+            artifact_path=str(artifact),
+            status=StageStatus.SUCCEEDED.value,
+        )
+        session.add(document)
+        await session.commit()
+        document_id = document.id
+
+    transport = httpx.ASGITransport(app=client._transport.app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as async_client:
+        responses = await asyncio.gather(
+            async_client.post(
+                f"/api/documents/{document_id}/reindex",
+                json={"parser_mode": "local_fallback", "domain_metadata": {}},
+            ),
+            async_client.post(
+                f"/api/documents/{document_id}/reindex",
+                json={"parser_mode": "local_fallback", "domain_metadata": {}},
+            ),
+        )
+
+    release.set()
+    statuses = sorted(response.status_code for response in responses)
+    assert statuses == [202, 409]
+    async with session_factory() as session:
+        active_jobs = (
+            await session.execute(
+                select(Job).where(
+                    Job.type == "index_document",
+                    Job.target_id == document_id,
+                    Job.status.in_([StageStatus.READY.value, StageStatus.RUNNING.value]),
+                )
+            )
+        ).scalars().all()
+    assert len(active_jobs) == 1
 
 
 @pytest.mark.asyncio

@@ -279,6 +279,8 @@ export interface ChunkOut {
   content_type: string;
   preview_ref?: string | null;
   indexed_at?: string | null;
+  retrieval_explain?: Record<string, unknown> | null;
+  relationship_refs: Record<string, string>;
 }
 
 export interface ChunkSearchIn {
@@ -286,6 +288,8 @@ export interface ChunkSearchIn {
   document_ids: string[];
   variant_id?: string | null;
   limit: number;
+  explain?: boolean;
+  include_neighbors?: boolean;
 }
 
 export interface ChunkSearchOut {

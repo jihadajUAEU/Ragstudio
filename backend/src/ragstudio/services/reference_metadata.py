@@ -17,7 +17,7 @@ LEGAL_SECTION_PATTERN = re.compile(
     flags=re.IGNORECASE,
 )
 PAGE_LINE_PATTERN = re.compile(
-    r"\b(?:page|p\.?)\s*(?P<page>\d+)(?:\s*[:,-]\s*(?:line|l\.?)\s*(?P<line>\d+))?",
+    r"\b(?:page|p\.?)\s*(?P<page>\d+)(?:\s*(?:[:,-]\s*)?(?:line|l\.?)\s*(?P<line>\d+))?",
     flags=re.IGNORECASE,
 )
 
@@ -229,10 +229,21 @@ class ReferenceSemantics:
         has_parallel_structure = "parallel_text" in values
         has_strong_scripture_tag = bool({"quran", "bible", "scripture"} & values)
         has_scripture_text_type = "religious_text" in values
+        has_legal_reference = any(cls._token_mentions(value, "statute", "section", "article") for value in values)
+        has_page_line_reference = any(
+            cls._token_mentions(value, "page_line", "page-line", "page:line")
+            or (
+                cls._token_mentions(value, "page")
+                and cls._token_mentions(value, "line")
+            )
+            for value in values
+        )
         return (
             has_reference_pattern
             or has_strong_scripture_tag
             or (has_parallel_structure and has_scripture_text_type)
+            or has_legal_reference
+            or has_page_line_reference
         )
 
     @classmethod
@@ -260,6 +271,17 @@ class ReferenceSemantics:
             for value in values
         ):
             return "chapter_verse"
+        if any(cls._token_mentions(value, "statute", "section", "article") for value in values):
+            return "legal_section"
+        if any(
+            cls._token_mentions(value, "page_line", "page-line", "page:line")
+            or (
+                cls._token_mentions(value, "page")
+                and cls._token_mentions(value, "line")
+            )
+            for value in values
+        ):
+            return "page_line"
         return None
 
     @staticmethod

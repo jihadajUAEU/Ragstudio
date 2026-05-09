@@ -26,6 +26,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 DeleteDocumentResult = Literal["deleted", "not_found"]
 
 
+class ActiveIndexJobError(RuntimeError):
+    pass
+
+
 class DocumentService:
     def __init__(self, session: AsyncSession, data_dir: Path, settings: AppSettings | None = None):
         self.session = session
@@ -137,6 +141,8 @@ class DocumentService:
         document = await self.session.get(Document, document_id)
         if document is None:
             return None
+        if await self.active_index_job(document_id) is not None:
+            raise ActiveIndexJobError("Document already has an active indexing job")
         return await self._enqueue_index_job(document)
 
     async def latest_index_job(self, document_id: str) -> Job | None:
@@ -170,7 +176,11 @@ class DocumentService:
         document.status = StageStatus.RUNNING.value
         self.queued_index_job_id = job.id
         job.logs = [*(job.logs or []), "Indexing queued."]
-        await self.session.commit()
+        try:
+            await self.session.commit()
+        except IntegrityError as exc:
+            await self.session.rollback()
+            raise ActiveIndexJobError("Document already has an active indexing job") from exc
         await self.session.refresh(document)
         await self.session.refresh(job)
         return job
@@ -180,24 +190,14 @@ class DocumentService:
         document: Document,
         options: IndexDocumentIn | None,
     ) -> None:
+        if await self.active_index_job(document.id) is not None:
+            self.queued_index_job_id = None
+            return
         if options is None:
             existing_chunk_id = await self.session.scalar(
                 select(Chunk.id).where(Chunk.document_id == document.id).limit(1)
             )
             if existing_chunk_id is not None:
-                return
-
-            active_job = await self.session.scalar(
-                select(Job)
-                .where(
-                    Job.type == "index_document",
-                    Job.target_id == document.id,
-                    Job.status.in_([StageStatus.READY.value, StageStatus.RUNNING.value]),
-                )
-                .order_by(Job.created_at.desc())
-                .limit(1)
-            )
-            if active_job is not None:
                 return
 
         await self._enqueue_index_job(document)

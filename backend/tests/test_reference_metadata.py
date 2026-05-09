@@ -225,6 +225,34 @@ def test_reference_semantics_uses_custom_schema_pattern_for_legal_sections():
     ]
 
 
+def test_reference_semantics_infers_legal_section_from_standard_metadata():
+    semantics = ReferenceSemantics.from_metadata(
+        DomainMetadata(domain="legal", document_type="statute", reference_pattern="section")
+    )
+
+    assert semantics.profile_name == "scripture_reference"
+    assert semantics.reference_type == "legal_section"
+    assert semantics.extract_query_reference("Explain Section 12.3") == {
+        "raw": "Section 12.3",
+        "section": "12.3",
+        "ref": "section:12.3",
+    }
+
+
+def test_reference_semantics_infers_page_line_from_standard_metadata():
+    semantics = ReferenceSemantics.from_metadata(
+        DomainMetadata(domain="archive", reference_pattern="page line")
+    )
+
+    assert semantics.reference_type == "page_line"
+    assert semantics.extract_query_reference("See page 5 line 8") == {
+        "raw": "page 5 line 8",
+        "page": 5,
+        "line": 8,
+        "ref": "page:5:line:8",
+    }
+
+
 def test_reference_semantics_splits_text_into_reference_units():
     semantics = ReferenceSemantics.from_metadata(quran_metadata())
 

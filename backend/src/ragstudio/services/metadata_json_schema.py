@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import re
 from typing import Any
+
+SAFE_REFERENCE_PATTERN = re.compile(r"^[A-Za-z0-9_?P<>()\[\]\{\}\\\^\$\.\:\-\+\*\s|]+$")
+UNSAFE_PATTERN_TOKENS = ("(?=", "(?!", "(?<=", "(?<!", "(?:", "\\1", "\\2")
 
 
 REFERENCE_CUSTOM_JSON_EXAMPLE: dict[str, Any] = {
@@ -68,6 +72,41 @@ def _validate_reference_schema(value: Any) -> None:
         item = value.get(key)
         if item is not None and not isinstance(item, str):
             raise ValueError(f"custom_json.reference_schema.{key} must be a string.")
+
+    for key in ("pattern", "regex"):
+        pattern = value.get(key)
+        if pattern is None:
+            continue
+        _validate_reference_pattern(pattern, key)
+
+
+def _validate_reference_pattern(pattern: Any, key: str) -> None:
+    if not isinstance(pattern, str):
+        raise ValueError(f"custom_json.reference_schema.{key} must be a string.")
+    if len(pattern) > 160:
+        raise ValueError(f"custom_json.reference_schema.{key} must be 160 characters or less.")
+    if not SAFE_REFERENCE_PATTERN.match(pattern):
+        raise ValueError(
+            f"custom_json.reference_schema.{key} contains unsupported regex characters."
+        )
+    if any(token in pattern for token in UNSAFE_PATTERN_TOKENS):
+        raise ValueError(
+            f"custom_json.reference_schema.{key} contains unsupported regex constructs."
+        )
+    if re.search(r"\([^)]*(?:\+|\*|\{\d+,?\d*\})[^)]*\)\s*(?:\+|\*|\{)", pattern):
+        raise ValueError(
+            f"custom_json.reference_schema.{key} contains nested or adjacent quantifiers."
+        )
+    try:
+        compiled = re.compile(pattern)
+    except re.error as exc:
+        raise ValueError(
+            f"custom_json.reference_schema.{key} must be a valid regex: {exc.msg}"
+        ) from exc
+    if not compiled.groupindex:
+        raise ValueError(
+            f"custom_json.reference_schema.{key} must include at least one named group."
+        )
 
 
 def _validate_relationships(value: Any) -> None:

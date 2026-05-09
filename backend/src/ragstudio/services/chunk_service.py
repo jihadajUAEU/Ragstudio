@@ -210,10 +210,25 @@ class ChunkService:
         if search_in.query.strip():
             ranked = [item for item in ranked if item[0].score > 0]
 
-        items = [self._chunk_out_with_score(chunk, score) for score, _, chunk in ranked[:limit]]
+        items = [
+            self._chunk_out_with_score(
+                chunk,
+                score,
+                explain=search_in.explain,
+                include_neighbors=search_in.include_neighbors,
+            )
+            for score, _, chunk in ranked[:limit]
+        ]
         return ChunkSearchOut(items=items, total=len(items))
 
-    def _chunk_out_with_score(self, chunk: Chunk, score: ChunkScore) -> ChunkOut:
+    def _chunk_out_with_score(
+        self,
+        chunk: Chunk,
+        score: ChunkScore,
+        *,
+        explain: bool = True,
+        include_neighbors: bool = True,
+    ) -> ChunkOut:
         output = ChunkOut.model_validate(chunk)
         breakdown = dict(score.breakdown)
         retrieval_explain = breakdown.pop("retrieval_explain", None)
@@ -222,8 +237,16 @@ class ChunkService:
             "score": score.score,
             "score_breakdown": breakdown,
         }
-        if isinstance(retrieval_explain, dict):
+        if explain and isinstance(retrieval_explain, dict):
             metadata["retrieval_explain"] = retrieval_explain
+            output.retrieval_explain = retrieval_explain
+            relationship_refs = retrieval_explain.get("relationship_refs")
+            if include_neighbors and isinstance(relationship_refs, dict):
+                output.relationship_refs = {
+                    key: value
+                    for key, value in relationship_refs.items()
+                    if isinstance(key, str) and isinstance(value, str)
+                }
         output.metadata = metadata
         return output
 

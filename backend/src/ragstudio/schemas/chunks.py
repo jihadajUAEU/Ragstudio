@@ -20,6 +20,8 @@ class ChunkOut(StudioModel):
     content_type: str = "text"
     preview_ref: str | None = None
     indexed_at: datetime | None = None
+    retrieval_explain: dict[str, Any] | None = None
+    relationship_refs: dict[str, str] = Field(default_factory=dict)
 
     @field_validator("content_type", mode="before")
     @classmethod
@@ -32,6 +34,8 @@ class ChunkSearchIn(StudioModel):
     document_ids: list[str] = []
     variant_id: str | None = None
     limit: int = 10
+    explain: bool = True
+    include_neighbors: bool = True
 
 
 class ChunkSearchOut(StudioModel):

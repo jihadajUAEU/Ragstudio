@@ -3,7 +3,7 @@ from typing import Any
 
 from ragstudio.db.base import Base
 from ragstudio.schemas.common import new_id, now_utc
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.mutable import MutableDict, MutableList
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -139,6 +139,21 @@ class IndexRecord(Base, TimestampMixin):
 
 class Job(Base, TimestampMixin):
     __tablename__ = "jobs"
+    __table_args__ = (
+        Index(
+            "uq_active_index_document_job",
+            "target_id",
+            unique=True,
+            sqlite_where=text(
+                "type = 'index_document' AND status IN ('ready', 'running') "
+                "AND target_id IS NOT NULL"
+            ),
+            postgresql_where=text(
+                "type = 'index_document' AND status IN ('ready', 'running') "
+                "AND target_id IS NOT NULL"
+            ),
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
     type: Mapped[str] = mapped_column(String)
