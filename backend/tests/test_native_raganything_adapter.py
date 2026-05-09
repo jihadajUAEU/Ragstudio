@@ -379,6 +379,7 @@ def test_native_adapter_supplies_placeholder_api_keys_for_local_runtime(tmp_path
     assert rag.kwargs["embedding_func"].kwargs["func"].keywords["api_key"] == (
         "ragstudio-local-runtime"
     )
+    assert rag.kwargs["embedding_func"].kwargs["send_dimensions"] is True
     assert rag.kwargs["vision_model_func"]._ragstudio_api_key == "ragstudio-local-runtime"
 
 

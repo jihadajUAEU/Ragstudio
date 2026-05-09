@@ -235,6 +235,7 @@ class NativeRAGAnythingAdapter:
                 base_url=self.profile.embedding_base_url,
                 api_key=self._api_key_or_placeholder(self.profile.embedding_api_key),
             ),
+            send_dimensions=True,
             model_name=self.profile.embedding_model,
         )
         vision_func = None
