@@ -200,7 +200,7 @@ async def test_graph_service_builds_fallback_graph_from_chunk_relationship_metad
     assert {node["id"] for node in graph.nodes} == {"reference:2:255", "topic:throne_verse"}
     assert graph.edges == [
         {
-            "id": "reference:2:255-topic:throne_verse-mentions",
+            "id": f"reference:2:255-topic:throne_verse-mentions-document:{document.id}",
             "source": "reference:2:255",
             "target": "topic:throne_verse",
             "type": "mentions",
@@ -296,6 +296,126 @@ async def test_graph_service_namespaces_chunk_local_relationship_nodes(client):
     }
     assert {edge["properties"]["page"] for edge in chunk_edges} == {1, 2}
     assert len({edge["source"] for edge in chunk_edges}) == 2
+
+
+@pytest.mark.asyncio
+async def test_graph_service_preserves_global_relationship_provenance_per_document(client):
+    from ragstudio.db.models import Chunk, Document
+    from ragstudio.schemas.common import StageStatus
+    from ragstudio.services.graph_service import GraphService
+
+    app = client._transport.app
+    async with app.state.session_factory() as session:
+        first_document = Document(
+            filename="global-relationships-one.txt",
+            content_type="text/plain",
+            sha256="global-relationships-one",
+            artifact_path=str(app.state.settings.data_dir / "global-relationships-one.txt"),
+            status=StageStatus.SUCCEEDED.value,
+        )
+        second_document = Document(
+            filename="global-relationships-two.txt",
+            content_type="text/plain",
+            sha256="global-relationships-two",
+            artifact_path=str(app.state.settings.data_dir / "global-relationships-two.txt"),
+            status=StageStatus.SUCCEEDED.value,
+        )
+        session.add_all([first_document, second_document])
+        await session.flush()
+        session.add_all(
+            [
+                Chunk(
+                    document_id=first_document.id,
+                    text="First global relationship.",
+                    source_location={"page": 113, "document_id": "overwritten"},
+                    metadata_json={
+                        "relationship_metadata": {
+                            "graph_relationships": [
+                                {
+                                    "source": "ref:113:1",
+                                    "target": "ref:113:2",
+                                    "type": "next_ayah",
+                                    "source_label": "113:1",
+                                    "target_label": "113:2",
+                                }
+                            ]
+                        }
+                    },
+                ),
+                Chunk(
+                    document_id=second_document.id,
+                    text="Second global relationship.",
+                    source_location={"page": 114, "label": "overwritten"},
+                    metadata_json={
+                        "relationship_metadata": {
+                            "graph_relationships": [
+                                {
+                                    "source": "ref:113:1",
+                                    "target": "ref:113:2",
+                                    "type": "next_ayah",
+                                    "source_label": "113:1",
+                                    "target_label": "113:2",
+                                }
+                            ]
+                        }
+                    },
+                ),
+            ]
+        )
+        await session.commit()
+
+        graph = await GraphService(session, app.state.settings).get_graph()
+
+    assert {node["id"] for node in graph.nodes} == {"ref:113:1", "ref:113:2"}
+    source_node = next(node for node in graph.nodes if node["id"] == "ref:113:1")
+    target_node = next(node for node in graph.nodes if node["id"] == "ref:113:2")
+    assert source_node["properties"]["label"] == "113:1"
+    assert target_node["properties"]["label"] == "113:2"
+    assert set(source_node["properties"]["document_ids"]) == {
+        first_document.id,
+        second_document.id,
+    }
+    assert set(target_node["properties"]["document_ids"]) == {
+        first_document.id,
+        second_document.id,
+    }
+    source_locations = {
+        tuple(sorted(location.items())) for location in source_node["properties"]["locations"]
+    }
+    assert source_locations == {
+        tuple(sorted({"document_id": first_document.id, "page": 113}.items())),
+        tuple(
+            sorted(
+                {
+                    "document_id": second_document.id,
+                    "page": 114,
+                    "label": "overwritten",
+                }.items()
+            )
+        ),
+    }
+
+    edges = {edge["id"]: edge for edge in graph.edges}
+    assert edges == {
+        f"ref:113:1-ref:113:2-next_ayah-document:{first_document.id}": {
+            "id": f"ref:113:1-ref:113:2-next_ayah-document:{first_document.id}",
+            "source": "ref:113:1",
+            "target": "ref:113:2",
+            "type": "next_ayah",
+            "properties": {"page": 113, "document_id": first_document.id},
+        },
+        f"ref:113:1-ref:113:2-next_ayah-document:{second_document.id}": {
+            "id": f"ref:113:1-ref:113:2-next_ayah-document:{second_document.id}",
+            "source": "ref:113:1",
+            "target": "ref:113:2",
+            "type": "next_ayah",
+            "properties": {
+                "page": 114,
+                "label": "overwritten",
+                "document_id": second_document.id,
+            },
+        },
+    }
 
 
 @pytest.mark.asyncio

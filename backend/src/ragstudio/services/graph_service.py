@@ -107,31 +107,30 @@ class GraphService:
                     continue
                 source_id = self._fallback_graph_node_id(source, document_id)
                 target_id = self._fallback_graph_node_id(target, document_id)
-                nodes.setdefault(
+                self._set_fallback_graph_node(
+                    nodes,
+                    node_id=source_id,
+                    raw_id=source,
+                    label=relationship.get("source_label", source),
+                    document_id=document_id,
+                    source_location=source_location,
+                )
+                self._set_fallback_graph_node(
+                    nodes,
+                    node_id=target_id,
+                    raw_id=target,
+                    label=relationship.get("target_label", target),
+                    document_id=document_id,
+                    source_location=source_location,
+                )
+                edge_id = self._fallback_graph_edge_id(
                     source_id,
-                    {
-                        "id": source_id,
-                        "labels": ["FallbackRelationship"],
-                        "properties": {
-                            "label": relationship.get("source_label", source),
-                            "document_id": document_id,
-                            **source_location,
-                        },
-                    },
-                )
-                nodes.setdefault(
                     target_id,
-                    {
-                        "id": target_id,
-                        "labels": ["FallbackRelationship"],
-                        "properties": {
-                            "label": relationship.get("target_label", target),
-                            "document_id": document_id,
-                            **source_location,
-                        },
-                    },
+                    rel_type,
+                    document_id,
+                    source_global=self._is_fallback_graph_global_id(source),
+                    target_global=self._is_fallback_graph_global_id(target),
                 )
-                edge_id = f"{source_id}-{target_id}-{rel_type}"
                 edges.setdefault(
                     edge_id,
                     {
@@ -140,8 +139,8 @@ class GraphService:
                         "target": target_id,
                         "type": rel_type,
                         "properties": {
-                            "document_id": document_id,
                             **source_location,
+                            "document_id": document_id,
                         },
                     },
                 )
@@ -149,6 +148,69 @@ class GraphService:
 
     @staticmethod
     def _fallback_graph_node_id(raw_id: str, document_id: str) -> str:
-        if raw_id.startswith(GLOBAL_FALLBACK_GRAPH_ID_PREFIXES):
+        if GraphService._is_fallback_graph_global_id(raw_id):
             return raw_id
         return f"document:{document_id}:{raw_id}"
+
+    @staticmethod
+    def _fallback_graph_edge_id(
+        source_id: str,
+        target_id: str,
+        rel_type: str,
+        document_id: str,
+        *,
+        source_global: bool,
+        target_global: bool,
+    ) -> str:
+        edge_id = f"{source_id}-{target_id}-{rel_type}"
+        if source_global and target_global:
+            return f"{edge_id}-document:{document_id}"
+        return edge_id
+
+    @staticmethod
+    def _set_fallback_graph_node(
+        nodes: dict[str, dict[str, Any]],
+        *,
+        node_id: str,
+        raw_id: str,
+        label: Any,
+        document_id: str,
+        source_location: dict[str, Any],
+    ) -> None:
+        if GraphService._is_fallback_graph_global_id(raw_id):
+            node = nodes.setdefault(
+                node_id,
+                {
+                    "id": node_id,
+                    "labels": ["FallbackRelationship"],
+                    "properties": {
+                        "label": label,
+                        "document_ids": [],
+                        "locations": [],
+                    },
+                },
+            )
+            properties = node["properties"]
+            if document_id not in properties["document_ids"]:
+                properties["document_ids"].append(document_id)
+            location = {**source_location, "document_id": document_id}
+            if location not in properties["locations"]:
+                properties["locations"].append(location)
+            return
+
+        nodes.setdefault(
+            node_id,
+            {
+                "id": node_id,
+                "labels": ["FallbackRelationship"],
+                "properties": {
+                    **source_location,
+                    "label": label,
+                    "document_id": document_id,
+                },
+            },
+        )
+
+    @staticmethod
+    def _is_fallback_graph_global_id(raw_id: str) -> bool:
+        return raw_id.startswith(GLOBAL_FALLBACK_GRAPH_ID_PREFIXES)
