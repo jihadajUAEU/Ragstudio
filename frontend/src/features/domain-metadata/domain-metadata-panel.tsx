@@ -79,6 +79,8 @@ export function DomainMetadataPanel({
   >("idle");
   const [suggestState, setSuggestState] = useState<"idle" | "loading" | "error">("idle");
   const [autosuggestChanges, setAutosuggestChanges] = useState<MetadataChange[]>([]);
+  const [autosuggestBaseline, setAutosuggestBaseline] = useState<DomainMetadata | null>(null);
+  const [autosuggestMetadata, setAutosuggestMetadata] = useState<DomainMetadata | null>(null);
   const [autosuggestEvidence, setAutosuggestEvidence] = useState<{
     confidence: number;
     evidencePages: number[];
@@ -89,7 +91,10 @@ export function DomainMetadataPanel({
     customJsonDraft ?? JSON.stringify(metadata.custom_json ?? {}, null, 2);
   const sampleCustomJsonText = JSON.stringify(sampleCustomJson, null, 2);
   const setMetadata = (patch: DomainMetadata) => {
-    onChange({ ...value, domain_metadata: { ...metadata, ...patch } });
+    const currentMetadata = autosuggestMetadata ?? metadata;
+    const nextMetadata = { ...currentMetadata, ...patch };
+    setAutosuggestMetadata((current) => (current ? nextMetadata : current));
+    onChange({ ...value, domain_metadata: nextMetadata });
   };
   const hasAutosuggestChange = (field: MetadataChangeField) =>
     autosuggestChanges.some((change) => change.field === field);
@@ -110,6 +115,8 @@ export function DomainMetadataPanel({
         profile_id: selectedProfileId || null,
       });
       const nextMetadata = response.domain_metadata;
+      setAutosuggestBaseline(metadata);
+      setAutosuggestMetadata(nextMetadata);
       setAutosuggestChanges(buildMetadataChangeSet(metadata, nextMetadata));
       setAutosuggestEvidence({
         confidence: response.confidence,
@@ -125,6 +132,31 @@ export function DomainMetadataPanel({
     } catch {
       setSuggestState("error");
     }
+  };
+  const acceptAutosuggestField = (field: MetadataChangeField) => {
+    clearChangedField(field);
+  };
+  const rejectAutosuggestField = (field: MetadataChangeField) => {
+    if (!autosuggestBaseline) {
+      return;
+    }
+    const nextMetadata: DomainMetadata = { ...(autosuggestMetadata ?? metadata) };
+    if (field === "tags") {
+      nextMetadata.tags = autosuggestBaseline.tags ?? [];
+    } else if (field === "metadata_sources") {
+      nextMetadata.metadata_sources = autosuggestBaseline.metadata_sources ?? [];
+    } else if (field === "custom_json") {
+      nextMetadata.custom_json = autosuggestBaseline.custom_json ?? {};
+      setCustomJsonDraft(JSON.stringify(nextMetadata.custom_json, null, 2));
+      setCustomJsonError("");
+      onValidityChange?.(true);
+    } else {
+      const key = field as keyof DomainMetadata;
+      nextMetadata[key] = autosuggestBaseline[key] as never;
+    }
+    setAutosuggestMetadata(nextMetadata);
+    clearChangedField(field);
+    onChange({ ...value, domain_metadata: nextMetadata });
   };
   const applyCustomJson = (nextValue: string) => {
     setCustomJsonDraft(nextValue);
@@ -199,6 +231,24 @@ export function DomainMetadataPanel({
                   <dt className="font-semibold">{change.label}</dt>
                   <dd className="min-w-0 break-words">
                     <span>{change.summary}</span>
+                    <div className="mt-1 flex flex-wrap gap-2">
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => acceptAutosuggestField(change.field)}
+                      >
+                        Accept {change.label}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => rejectAutosuggestField(change.field)}
+                      >
+                        Reject {change.label}
+                      </Button>
+                    </div>
                     {change.details?.length ? (
                       <ul className="mt-1 grid gap-0.5">
                         {change.details.map((detail) => (
@@ -260,6 +310,8 @@ export function DomainMetadataPanel({
                 setCustomJsonDraft(JSON.stringify(profile.metadata.custom_json ?? {}, null, 2));
                 onChange({ ...value, domain_metadata: profile.metadata });
                 setAutosuggestChanges([]);
+                setAutosuggestBaseline(null);
+                setAutosuggestMetadata(null);
                 setAutosuggestEvidence(null);
                 setCustomJsonError("");
                 onValidityChange?.(true);
