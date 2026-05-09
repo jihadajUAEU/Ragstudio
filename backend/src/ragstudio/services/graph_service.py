@@ -1,3 +1,6 @@
+from typing import Any
+
+from ragstudio.db.models import Chunk
 from ragstudio.schemas.graph import GraphOut
 from ragstudio.services.adapter import RAGAnythingAdapter
 from ragstudio.services.runtime_factory import RAGAnythingRuntimeFactory, RuntimeUnavailableError
@@ -6,6 +9,7 @@ from ragstudio.services.runtime_profile_service import (
     RuntimeProfileNotConfiguredError,
     RuntimeProfileService,
 )
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
@@ -38,8 +42,14 @@ class GraphService:
         try:
             profile = await RuntimeProfileService(self.session, self.settings).get_active_profile()
         except RuntimeProfileNotConfiguredError:
+            fallback_graph = await self._relationship_metadata_graph()
+            if fallback_graph["nodes"] or fallback_graph["edges"]:
+                return fallback_graph
             return await self.adapter.graph()
         if profile.runtime_mode == "fallback":
+            fallback_graph = await self._relationship_metadata_graph()
+            if fallback_graph["nodes"] or fallback_graph["edges"]:
+                return fallback_graph
             return await self.adapter.graph()
         try:
             health_service = self.health_service or RuntimeHealthService(
@@ -62,3 +72,70 @@ class GraphService:
             raise RuntimeGraphUnavailableError(
                 f"Runtime graph is unavailable: {exc}"
             ) from exc
+
+    async def _relationship_metadata_graph(self) -> dict[str, list[dict[str, Any]]]:
+        if self.session is None:
+            return {"nodes": [], "edges": []}
+        result = await self.session.execute(select(Chunk))
+        nodes: dict[str, dict[str, Any]] = {}
+        edges: dict[str, dict[str, Any]] = {}
+        for chunk in result.scalars().all():
+            metadata = chunk.metadata_json if isinstance(chunk.metadata_json, dict) else {}
+            source_location = (
+                chunk.source_location if isinstance(chunk.source_location, dict) else {}
+            )
+            relationship_metadata = metadata.get("relationship_metadata", {})
+            if not isinstance(relationship_metadata, dict):
+                continue
+            relationships = relationship_metadata.get("graph_relationships", [])
+            if not isinstance(relationships, list):
+                continue
+            for relationship in relationships:
+                if not isinstance(relationship, dict):
+                    continue
+                source = relationship.get("source")
+                target = relationship.get("target")
+                rel_type = relationship.get("type")
+                if not all(
+                    isinstance(value, str) and value for value in [source, target, rel_type]
+                ):
+                    continue
+                nodes.setdefault(
+                    source,
+                    {
+                        "id": source,
+                        "labels": ["FallbackRelationship"],
+                        "properties": {
+                            "label": relationship.get("source_label", source),
+                            "document_id": chunk.document_id,
+                            **source_location,
+                        },
+                    },
+                )
+                nodes.setdefault(
+                    target,
+                    {
+                        "id": target,
+                        "labels": ["FallbackRelationship"],
+                        "properties": {
+                            "label": relationship.get("target_label", target),
+                            "document_id": chunk.document_id,
+                            **source_location,
+                        },
+                    },
+                )
+                edge_id = f"{source}-{target}-{rel_type}"
+                edges.setdefault(
+                    edge_id,
+                    {
+                        "id": edge_id,
+                        "source": source,
+                        "target": target,
+                        "type": rel_type,
+                        "properties": {
+                            "document_id": chunk.document_id,
+                            **source_location,
+                        },
+                    },
+                )
+        return {"nodes": list(nodes.values()), "edges": list(edges.values())}

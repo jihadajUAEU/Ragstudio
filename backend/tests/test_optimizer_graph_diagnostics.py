@@ -157,6 +157,59 @@ async def test_graph_returns_adapter_graph_shape(client):
 
 
 @pytest.mark.asyncio
+async def test_graph_service_builds_fallback_graph_from_chunk_relationship_metadata(client):
+    from ragstudio.db.models import Chunk, Document
+    from ragstudio.schemas.common import StageStatus
+    from ragstudio.services.graph_service import GraphService
+
+    app = client._transport.app
+    async with app.state.session_factory() as session:
+        document = Document(
+            filename="relationships.txt",
+            content_type="text/plain",
+            sha256="relationships-graph",
+            artifact_path=str(app.state.settings.data_dir / "relationships.txt"),
+            status=StageStatus.SUCCEEDED.value,
+        )
+        session.add(document)
+        await session.flush()
+        session.add(
+            Chunk(
+                document_id=document.id,
+                text="Surah 2 ayah 255 mentions the Throne Verse.",
+                source_location={"page": 12},
+                metadata_json={
+                    "relationship_metadata": {
+                        "graph_relationships": [
+                            {
+                                "source": "reference:2:255",
+                                "target": "topic:throne_verse",
+                                "type": "mentions",
+                                "source_label": "2:255",
+                                "target_label": "Throne Verse",
+                            }
+                        ]
+                    }
+                },
+            )
+        )
+        await session.commit()
+
+        graph = await GraphService(session, app.state.settings).get_graph()
+
+    assert {node["id"] for node in graph.nodes} == {"reference:2:255", "topic:throne_verse"}
+    assert graph.edges == [
+        {
+            "id": "reference:2:255-topic:throne_verse-mentions",
+            "source": "reference:2:255",
+            "target": "topic:throne_verse",
+            "type": "mentions",
+            "properties": {"document_id": document.id, "page": 12},
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_graph_returns_conflict_when_native_graph_unavailable(client, monkeypatch):
     class ReadyRuntimeHealthService:
         def __init__(self, session, *, verify_storage):
