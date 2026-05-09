@@ -376,6 +376,58 @@ describe("DomainMetadataPanel", () => {
     expect(screen.getByText("Only one readable page was sampled.")).toBeVisible();
   });
 
+  it("clears autosuggest evidence when a domain profile is selected", async () => {
+    const file = new File(["pdf"], "policy.pdf", { type: "application/pdf" });
+    mocks.suggestDomainMetadata.mockResolvedValueOnce({
+      domain_metadata: {
+        domain: "generic",
+        document_type: "document",
+        tags: [],
+      },
+      confidence: 0.42,
+      evidence_pages: [1],
+      rationale: "The sampled page matches the current metadata.",
+      warnings: ["Only one readable page was sampled."],
+    });
+
+    render(
+      <DomainMetadataPanel
+        profiles={[
+          {
+            id: "hadith",
+            name: "Hadith",
+            description: "Hadith collection",
+            metadata: {
+              domain: "hadith",
+              document_type: "collection",
+              tags: ["hadith"],
+            },
+          },
+        ]}
+        value={{
+          parser_mode: "local_fallback",
+          domain_metadata: { domain: "generic", document_type: "document", tags: [] },
+        }}
+        onChange={vi.fn()}
+        suggestContext={{ filename: "policy.pdf", content_type: "application/pdf", file }}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /auto-suggest/i }));
+
+    expect(await screen.findByText("Auto-suggest reviewed metadata")).toBeVisible();
+
+    fireEvent.change(screen.getByLabelText("Domain profile"), {
+      target: { value: "hadith" },
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByText("Auto-suggest reviewed metadata")).not.toBeInTheDocument();
+    });
+    expect(screen.queryByText("The sampled page matches the current metadata.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Only one readable page was sampled.")).not.toBeInTheDocument();
+  });
+
   it("keeps previous metadata and review when autosuggest fails", async () => {
     const file = new File(["pdf"], "policy.pdf", { type: "application/pdf" });
     mocks.suggestDomainMetadata

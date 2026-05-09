@@ -233,6 +233,7 @@ export function DomainMetadataPanel({
                 setCustomJsonDraft(JSON.stringify(profile.metadata.custom_json ?? {}, null, 2));
                 onChange({ ...value, domain_metadata: profile.metadata });
                 setAutosuggestChanges([]);
+                setAutosuggestEvidence(null);
                 setCustomJsonError("");
                 onValidityChange?.(true);
               }

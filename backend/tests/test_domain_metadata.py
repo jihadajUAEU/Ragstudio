@@ -264,6 +264,59 @@ async def test_ai_domain_metadata_suggester_retries_without_response_format(monk
 
 
 @pytest.mark.asyncio
+async def test_ai_domain_metadata_suggester_does_not_retry_unrelated_bad_request(
+    monkeypatch,
+):
+    calls = []
+
+    class RejectedResponse:
+        status_code = 400
+
+        def json(self):
+            return {"error": "model does not exist"}
+
+    class FakeClient:
+        def __init__(self, timeout):
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def post(self, url, headers, json):
+            calls.append(json)
+            return RejectedResponse()
+
+    monkeypatch.setattr(
+        "ragstudio.services.domain_metadata_ai_suggester.httpx.AsyncClient",
+        FakeClient,
+    )
+
+    with pytest.raises(ValueError, match="HTTP 400"):
+        await DomainMetadataAiSuggester().suggest(
+            settings_profile=SettingsProfile(
+                id="default",
+                provider="openai-compatible",
+                llm_model="text-model",
+                llm_base_url="http://llm.test/v1",
+                embedding_model="embedding-model",
+                storage_backend="postgres",
+                vision_model="vision-model",
+                vision_base_url="http://vision.test/v1",
+            ),
+            filename="policy.txt",
+            content_type="text/plain",
+            pages=[SampledPage(page_number=1, text="Policy sections")],
+            sampler_warnings=[],
+        )
+
+    assert len(calls) == 1
+    assert "response_format" in calls[0]
+
+
+@pytest.mark.asyncio
 async def test_ai_domain_metadata_suggest_endpoint_uses_vision_model(client, monkeypatch):
     calls = []
 

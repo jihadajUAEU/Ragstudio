@@ -139,12 +139,26 @@ class DomainMetadataAiSuggester:
         url = f"{target.base_url.rstrip('/')}/chat/completions"
         async with httpx.AsyncClient(timeout=target.timeout_ms / 1000) as client:
             response = await client.post(url, headers=headers, json=payload)
-            if response.status_code not in {400, 422} or "response_format" not in payload:
+            if (
+                response.status_code not in {400, 422}
+                or "response_format" not in payload
+                or not self._is_response_format_rejection(response)
+            ):
                 return response
 
             fallback_payload = dict(payload)
             fallback_payload.pop("response_format", None)
             return await client.post(url, headers=headers, json=fallback_payload)
+
+    def _is_response_format_rejection(self, response: httpx.Response) -> bool:
+        try:
+            error_text = json.dumps(response.json())
+        except (json.JSONDecodeError, TypeError, ValueError):
+            error_text = getattr(response, "text", "")
+        lower_error = error_text.lower()
+        return "response_format" in lower_error or (
+            "response format" in lower_error and "unsupported" in lower_error
+        )
 
     def _prompt(self, *, filename: str, content_type: str, pages: list[SampledPage]) -> str:
         page_text = "\n\n".join(
