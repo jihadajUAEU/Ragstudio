@@ -68,5 +68,6 @@ describe("PipelineBuilder", () => {
     expect(flow).toHaveTextContent("Generation");
     expect(flow).toHaveTextContent("Graph");
     expect(flow).toHaveTextContent("Answer");
+    expect(await screen.findByText("Read-only map")).toBeVisible();
   });
 });

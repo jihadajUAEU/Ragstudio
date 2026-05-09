@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Any
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -20,6 +21,15 @@ class AppSettings(BaseSettings):
     neo4j_username: str = "neo4j"
     neo4j_password: str = "ragstudio-password"
     runtime_working_dir: Path | None = None
+    allowed_reranker_hosts: list[str] = Field(
+        default_factory=lambda: [
+            "localhost",
+            "127.0.0.1",
+            "::1",
+            "api.jina.ai",
+            "api.cohere.ai",
+        ]
+    )
 
     @field_validator("data_dir", "runtime_working_dir", mode="before")
     @classmethod
@@ -27,6 +37,15 @@ class AppSettings(BaseSettings):
         if value is None:
             return None
         return Path(value).expanduser().resolve()
+
+    @field_validator("allowed_reranker_hosts", mode="before")
+    @classmethod
+    def normalize_allowed_hosts(cls, value: Any) -> list[str]:
+        if isinstance(value, str):
+            return [item.strip().lower() for item in value.split(",") if item.strip()]
+        if isinstance(value, list):
+            return [str(item).strip().lower() for item in value if str(item).strip()]
+        return value
 
     @field_validator("pgvector_schema", "pgvector_table_prefix")
     @classmethod

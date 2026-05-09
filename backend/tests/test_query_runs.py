@@ -74,6 +74,210 @@ async def test_query_creates_run_with_answer_and_chunk_trace(client):
 
 
 @pytest.mark.asyncio
+async def test_query_uses_configured_reranker_in_fallback_mode(client, monkeypatch):
+    requests = []
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "results": [
+                    {"index": 1, "relevance_score": 0.98},
+                    {"index": 0, "relevance_score": 0.25},
+                ]
+            }
+
+    class FakeAsyncClient:
+        def __init__(self, timeout):
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return None
+
+        async def post(self, url, *, headers, json):
+            requests.append({"url": url, "headers": headers, "json": json, "timeout": self.timeout})
+            return FakeResponse()
+
+    monkeypatch.setattr("ragstudio.services.reranker_service.httpx.AsyncClient", FakeAsyncClient)
+    app = client._transport.app
+    async with app.state.session_factory() as session:
+        session.add(
+            SettingsProfile(
+                id="default",
+                provider="fallback",
+                llm_model="fallback",
+                embedding_model="fallback",
+                storage_backend="fallback_local",
+                runtime_mode="fallback",
+                reranker_provider="jina_compatible",
+                reranker_model="jina-reranker-v2-base-multilingual",
+                reranker_base_url="http://127.0.0.1:8002/v1/rerank",
+                reranker_api_key="secret",
+            )
+        )
+        await session.commit()
+
+    upload = await client.post(
+        "/api/documents",
+        files={"file": ("rerank.txt", b"alpha first\nalpha second", "text/plain")},
+    )
+    document_id = upload.json()["id"]
+    await client.post(f"/api/chunks/index/{document_id}")
+    variant = await client.post(
+        "/api/variants",
+        json={"name": "Rerank", "preset": "balanced", "parameters": {}},
+    )
+
+    response = await client.post(
+        "/api/query",
+        json={
+            "query": "alpha",
+            "document_ids": [document_id],
+            "variant_ids": [variant.json()["id"]],
+        },
+    )
+
+    assert response.status_code == 200
+    run = response.json()["runs"][0]
+    assert run["status"] == "succeeded"
+    assert run["sources"][0]["text"] == "alpha second"
+    assert run["reranker_traces"][0]["original_rank"] == 2
+    assert requests == [
+        {
+            "url": "http://127.0.0.1:8002/v1/rerank",
+            "headers": {
+                "Content-Type": "application/json",
+                "Authorization": "Bearer secret",
+            },
+            "json": {
+                "query": "alpha",
+                "documents": ["alpha first", "alpha second"],
+                "top_n": 2,
+                "model": "jina-reranker-v2-base-multilingual",
+            },
+            "timeout": 10.0,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_query_keeps_original_results_when_reranker_fails(client, monkeypatch):
+    class FakeAsyncClient:
+        def __init__(self, timeout):
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return None
+
+        async def post(self, url, *, headers, json):
+            raise RuntimeError("reranker offline")
+
+    monkeypatch.setattr("ragstudio.services.reranker_service.httpx.AsyncClient", FakeAsyncClient)
+    app = client._transport.app
+    async with app.state.session_factory() as session:
+        session.add(
+            SettingsProfile(
+                id="default",
+                provider="fallback",
+                llm_model="fallback",
+                embedding_model="fallback",
+                storage_backend="fallback_local",
+                runtime_mode="fallback",
+                reranker_provider="generic_http",
+                reranker_base_url="http://127.0.0.1:8002/v1/rerank",
+            )
+        )
+        await session.commit()
+
+    upload = await client.post(
+        "/api/documents",
+        files={"file": ("rerank-failure.txt", b"alpha first\nalpha second", "text/plain")},
+    )
+    document_id = upload.json()["id"]
+    await client.post(f"/api/chunks/index/{document_id}")
+    variant = await client.post(
+        "/api/variants",
+        json={"name": "Rerank Failure", "preset": "balanced", "parameters": {}},
+    )
+
+    response = await client.post(
+        "/api/query",
+        json={
+            "query": "alpha",
+            "document_ids": [document_id],
+            "variant_ids": [variant.json()["id"]],
+        },
+    )
+
+    assert response.status_code == 200
+    run = response.json()["runs"][0]
+    assert run["status"] == "succeeded"
+    assert run["sources"][0]["text"] == "alpha first"
+    assert run["reranker_traces"][0]["status"] == "failed"
+    assert run["reranker_traces"][0]["error_type"] == "RuntimeError"
+
+
+@pytest.mark.asyncio
+async def test_query_blocks_untrusted_reranker_endpoint_without_calling_it(client, monkeypatch):
+    class FakeAsyncClient:
+        def __init__(self, timeout):
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            raise AssertionError("untrusted reranker endpoint should not be called")
+
+    monkeypatch.setattr("ragstudio.services.reranker_service.httpx.AsyncClient", FakeAsyncClient)
+    app = client._transport.app
+    async with app.state.session_factory() as session:
+        session.add(
+            SettingsProfile(
+                id="default",
+                provider="fallback",
+                llm_model="fallback",
+                embedding_model="fallback",
+                storage_backend="fallback_local",
+                runtime_mode="fallback",
+                reranker_provider="generic_http",
+                reranker_base_url="http://169.254.169.254/latest/meta-data",
+            )
+        )
+        await session.commit()
+
+    upload = await client.post(
+        "/api/documents",
+        files={"file": ("rerank-blocked.txt", b"alpha first", "text/plain")},
+    )
+    document_id = upload.json()["id"]
+    await client.post(f"/api/chunks/index/{document_id}")
+    variant = await client.post(
+        "/api/variants",
+        json={"name": "Rerank Blocked", "preset": "balanced", "parameters": {}},
+    )
+
+    response = await client.post(
+        "/api/query",
+        json={
+            "query": "alpha",
+            "document_ids": [document_id],
+            "variant_ids": [variant.json()["id"]],
+        },
+    )
+
+    assert response.status_code == 200
+    run = response.json()["runs"][0]
+    assert run["status"] == "succeeded"
+    assert run["reranker_traces"][0]["status"] == "blocked_endpoint"
+
+
+@pytest.mark.asyncio
 async def test_list_runs_returns_persisted_query_runs(client):
     upload = await client.post(
         "/api/documents",

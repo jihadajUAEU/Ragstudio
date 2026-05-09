@@ -179,24 +179,6 @@ export function DomainMetadataPanel({
 
   return (
     <section className="rounded-md border border-[#d6dde1] bg-white p-4">
-      {suggestContext ? (
-        <div className="mb-3 flex justify-end">
-          <Button
-            type="button"
-            variant="secondary"
-            size="sm"
-            disabled={disabled || suggestState === "loading" || !suggestContext.file}
-            onClick={() => void suggest()}
-          >
-            {suggestState === "loading" ? (
-              <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-            ) : (
-              <Wand2 className="h-4 w-4" aria-hidden="true" />
-            )}
-            Auto-suggest
-          </Button>
-        </div>
-      ) : null}
       {autosuggestChanges.length > 0 || autosuggestEvidence ? (
         <div className="mb-3 rounded-md border border-[#9ccbd8] bg-[#edf7fa] p-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -264,7 +246,7 @@ export function DomainMetadataPanel({
             ))}
           </select>
         </label>
-        <label className="text-sm font-medium text-[#3a4a53]">
+        <div className="text-sm font-medium text-[#3a4a53]">
           <span className="mb-1.5 block">Domain profile</span>
           <select
             aria-label="Domain profile"
@@ -291,7 +273,25 @@ export function DomainMetadataPanel({
               </option>
             ))}
           </select>
-        </label>
+          {suggestContext ? (
+            <div className="mt-2 flex justify-end">
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                disabled={disabled || suggestState === "loading" || !suggestContext.file}
+                onClick={() => void suggest()}
+              >
+                {suggestState === "loading" ? (
+                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                ) : (
+                  <Wand2 className="h-4 w-4" aria-hidden="true" />
+                )}
+                Auto-suggest
+              </Button>
+            </div>
+          ) : null}
+        </div>
         <TextField
           label="Domain"
           value={metadata.domain ?? ""}

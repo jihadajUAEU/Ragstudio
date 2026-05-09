@@ -68,11 +68,26 @@ describe("DocumentsPage", () => {
   });
 
   it("passes the selected upload file to metadata autosuggest", async () => {
+    vi.mocked(apiClient.domainProfiles).mockResolvedValue({
+      items: [
+        {
+          id: "profile-1",
+          name: "Policy",
+          description: "Policy metadata",
+          metadata: { domain: "policy", document_type: "admin_document" },
+        },
+      ],
+      total: 1,
+    });
     renderDocumentsPage();
 
     const file = new File(["pdf"], "policy.pdf", { type: "application/pdf" });
     fireEvent.change(screen.getByLabelText(/upload file/i), {
       target: { files: [file] },
+    });
+    await screen.findByRole("option", { name: "Policy" });
+    fireEvent.change(screen.getByLabelText("Domain profile"), {
+      target: { value: "profile-1" },
     });
 
     fireEvent.click(screen.getByRole("button", { name: /auto-suggest/i }));
@@ -80,9 +95,26 @@ describe("DocumentsPage", () => {
     await waitFor(() => {
       expect(apiClient.suggestDomainMetadata).toHaveBeenCalledWith({
         file,
-        profile_id: null,
+        profile_id: "profile-1",
       });
     });
+  });
+
+  it("places auto-suggest after the domain profile selector", async () => {
+    renderDocumentsPage();
+
+    fireEvent.change(screen.getByLabelText(/upload file/i), {
+      target: {
+        files: [new File(["pdf"], "sample.pdf", { type: "application/pdf" })],
+      },
+    });
+
+    const domainProfile = await screen.findByLabelText("Domain profile");
+    const autoSuggest = screen.getByRole("button", { name: /auto-suggest/i });
+
+    expect(
+      domainProfile.compareDocumentPosition(autoSuggest) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
 
   it("places the upload action after the custom JSON editor", () => {

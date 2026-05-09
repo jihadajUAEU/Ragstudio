@@ -2,9 +2,36 @@ import "@testing-library/jest-dom/vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { ReactNode } from "react";
 
 import { apiClient } from "../src/api/client";
 import { GraphPage } from "../src/features/graph/graph-page";
+
+vi.mock("@xyflow/react", () => ({
+  Background: () => null,
+  Controls: () => null,
+  Handle: () => null,
+  MiniMap: () => null,
+  Position: { Left: "left", Right: "right" },
+  ReactFlow: ({
+    nodes,
+    children,
+  }: {
+    nodes: Array<{ id: string; data: { label: string; type: string; detail: string } }>;
+    children: ReactNode;
+  }) => (
+    <div aria-label="Graph relationship map">
+      {nodes.map((node) => (
+        <div key={node.id}>
+          <span>{node.data.label}</span>
+          <span>{node.data.type}</span>
+          <span>{node.data.detail}</span>
+        </div>
+      ))}
+      {children}
+    </div>
+  ),
+}));
 
 vi.mock("../src/api/client", () => ({
   apiClient: {
@@ -46,5 +73,34 @@ describe("GraphPage", () => {
     expect(
       screen.getByText("Graph is unavailable because fallback mode uses the local placeholder adapter."),
     ).toBeInTheDocument();
+  });
+
+  it("renders a relationship map when graph data is available", async () => {
+    vi.mocked(apiClient.diagnostics).mockResolvedValue({
+      capabilities: { graph: true },
+      dependency_status: {},
+      warnings: [],
+      runtime_mode: "runtime",
+      overall_status: "ready",
+      checks: [],
+    });
+    vi.mocked(apiClient.graph).mockResolvedValue({
+      nodes: [
+        {
+          id: "verse-1",
+          labels: ["Reference"],
+          properties: { label: "2:255", document_id: "doc-1", page: 12 },
+        },
+        { id: "topic-1", label: "Throne Verse", type: "topic" },
+      ],
+      edges: [{ source: "verse-1", target: "topic-1", type: "mentions" }],
+    });
+
+    renderGraphPage();
+
+    const map = await screen.findByLabelText("Graph relationship map");
+    expect(map).toHaveTextContent("2:255");
+    expect(map).toHaveTextContent("Reference");
+    expect(map).toHaveTextContent("document doc-1");
   });
 });

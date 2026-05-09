@@ -18,6 +18,7 @@ import {
   Database,
   FileText,
   GitBranch,
+  Info,
   Loader2,
   MessageSquareText,
   RefreshCcw,
@@ -124,13 +125,13 @@ export function PipelineBuilder() {
     <div className="mx-auto flex max-w-7xl flex-col gap-6">
       <section className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
-          <p className="text-sm font-medium text-[#176b87]">Pipeline Builder</p>
+          <p className="text-sm font-medium text-[#176b87]">Pipeline Status</p>
           <h2 className="mt-1 text-2xl font-semibold tracking-normal text-[#1f2933]">
             RAG flow from source files to grounded answers
           </h2>
           <p className="mt-2 max-w-3xl text-sm leading-6 text-[#62717a]">
-            The canvas shows the actual runtime path: upload, chunk, retrieve with a selected
-            variant, generate, inspect traces, and cross-check graph context.
+            The canvas reflects live counts and runtime health for each stage. Configuration and
+            execution still happen from Documents, Settings, Variants, and Query.
           </p>
         </div>
         <Button variant="secondary" onClick={refresh} disabled={isRefreshing}>
@@ -196,6 +197,14 @@ export function PipelineBuilder() {
               {diagnosticsQuery.data.warnings[0]}
             </div>
           ) : null}
+          <div className="mt-4 rounded-md border border-[#cfe3ea] bg-[#f5fafb] p-3 text-sm leading-6 text-[#3a4a53]">
+            <div className="mb-1 flex items-center gap-2 font-semibold text-[#1f2933]">
+              <Info className="h-4 w-4 text-[#176b87]" aria-hidden="true" />
+              Read-only map
+            </div>
+            This page is implemented as a status view. Use Documents, Settings, Variants, and Query
+            to edit stages, rerun work, or recover failures.
+          </div>
         </aside>
       </section>
     </div>

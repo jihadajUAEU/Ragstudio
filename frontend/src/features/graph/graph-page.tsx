@@ -1,4 +1,17 @@
+import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
+import {
+  Background,
+  Controls,
+  Handle,
+  MiniMap,
+  Position,
+  ReactFlow,
+  type Edge,
+  type Node,
+  type NodeProps,
+} from "@xyflow/react";
+import "@xyflow/react/dist/style.css";
 import {
   AlertCircle,
   CircleDot,
@@ -18,6 +31,14 @@ const queryKeys = {
   diagnostics: ["diagnostics"],
 } as const;
 
+type GraphNodeData = {
+  label: string;
+  type: string;
+  detail: string;
+};
+
+const nodeTypes = { graphEntity: GraphEntityNode };
+
 export function GraphPage() {
   const graphQuery = useQuery({ queryKey: queryKeys.graph, queryFn: apiClient.graph });
   const diagnosticsQuery = useQuery({ queryKey: queryKeys.diagnostics, queryFn: apiClient.diagnostics });
@@ -31,6 +52,7 @@ export function GraphPage() {
 
   const previewNodes = nodes.slice(0, 50);
   const previewEdges = edges.slice(0, 50);
+  const visualGraph = useMemo(() => buildVisualGraph(previewNodes, previewEdges), [previewNodes, previewEdges]);
 
   return (
     <div className="mx-auto flex max-w-7xl flex-col gap-6">
@@ -93,11 +115,42 @@ export function GraphPage() {
           description="The backend returned no nodes or edges yet."
         />
       ) : (
-        <section className="grid gap-4 xl:grid-cols-2">
-          <GraphList title="Nodes" items={previewNodes} total={nodes.length} />
-          <GraphList title="Edges" items={previewEdges} total={edges.length} />
+        <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
+          <div className="h-[560px] overflow-hidden rounded-md border border-[#d6dde1] bg-white">
+            <ReactFlow
+              nodes={visualGraph.nodes}
+              edges={visualGraph.edges}
+              nodeTypes={nodeTypes}
+              fitView
+              nodesDraggable
+              nodesConnectable={false}
+              minZoom={0.35}
+              maxZoom={1.6}
+              aria-label="Graph relationship map"
+            >
+              <Background color="#d7e0e4" gap={20} />
+              <MiniMap pannable zoomable nodeStrokeWidth={3} />
+              <Controls showInteractive={false} />
+            </ReactFlow>
+          </div>
+          <div className="grid min-w-0 gap-4">
+            <GraphList title="Nodes" items={previewNodes} total={nodes.length} />
+            <GraphList title="Edges" items={previewEdges} total={edges.length} />
+          </div>
         </section>
       )}
+    </div>
+  );
+}
+
+function GraphEntityNode({ data }: NodeProps<Node<GraphNodeData>>) {
+  return (
+    <div className="min-w-48 max-w-64 rounded-md border border-[#c9d6dc] bg-white px-3 py-2 shadow-sm">
+      <Handle type="target" position={Position.Left} className="!bg-[#176b87]" />
+      <p className="truncate text-sm font-semibold text-[#1f2933]">{data.label}</p>
+      <p className="mt-1 truncate text-xs font-medium text-[#176b87]">{data.type}</p>
+      {data.detail ? <p className="mt-1 line-clamp-2 text-xs leading-5 text-[#62717a]">{data.detail}</p> : null}
+      <Handle type="source" position={Position.Right} className="!bg-[#176b87]" />
     </div>
   );
 }
@@ -155,4 +208,112 @@ function GraphList({
       </div>
     </div>
   );
+}
+
+function buildVisualGraph(
+  rawNodes: Record<string, unknown>[],
+  rawEdges: Record<string, unknown>[],
+): { nodes: Node<GraphNodeData>[]; edges: Edge[] } {
+  const graphNodes = rawNodes.map((item, index) => {
+    const id = graphId(item, index);
+    return {
+      id,
+      type: "graphEntity",
+      position: graphPosition(index, rawNodes.length),
+      data: {
+        label: graphLabel(item, id),
+        type: graphType(item, "entity"),
+        detail: graphDetail(item),
+      },
+    };
+  });
+  const nodeIds = new Set(graphNodes.map((node) => node.id));
+  const graphEdges = rawEdges.flatMap<Edge>((item, index) => {
+    const source = graphEndpoint(item, ["source", "source_id", "from", "start"]);
+    const target = graphEndpoint(item, ["target", "target_id", "to", "end"]);
+    if (!source || !target || !nodeIds.has(source) || !nodeIds.has(target)) {
+      return [];
+    }
+    return [
+      {
+        id: String(item.id ?? item.edge_id ?? `${source}-${target}-${index}`),
+        source,
+        target,
+        label: graphType(item, "relates"),
+        animated: false,
+        style: { stroke: "#176b87", strokeWidth: 2 },
+        labelStyle: { fill: "#3a4a53", fontSize: 12, fontWeight: 600 },
+      },
+    ];
+  });
+  return { nodes: graphNodes, edges: graphEdges };
+}
+
+function graphId(item: Record<string, unknown>, index: number): string {
+  return String(item.id ?? item.node_id ?? item.name ?? item.label ?? `node-${index + 1}`);
+}
+
+function graphLabel(item: Record<string, unknown>, fallback: string): string {
+  const properties = graphProperties(item);
+  return String(
+    item.label ??
+      item.name ??
+      item.title ??
+      item.text ??
+      properties.label ??
+      properties.name ??
+      properties.title ??
+      properties.text ??
+      fallback,
+  );
+}
+
+function graphType(item: Record<string, unknown>, fallback: string): string {
+  const labels = item.labels;
+  const properties = graphProperties(item);
+  const firstLabel = Array.isArray(labels) && labels.length > 0 ? labels[0] : null;
+  return String(
+    item.type ??
+      item.kind ??
+      item.label_type ??
+      item.relationship ??
+      properties.type ??
+      properties.kind ??
+      firstLabel ??
+      fallback,
+  );
+}
+
+function graphDetail(item: Record<string, unknown>): string {
+  const properties = graphProperties(item);
+  const page = item.page ?? item.page_idx ?? item.page_start ?? properties.page ?? properties.page_idx;
+  const document =
+    item.document_id ?? item.document ?? item.source_document ?? properties.document_id;
+  return [document ? `document ${String(document)}` : null, page != null ? `page ${String(page)}` : null]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+function graphProperties(item: Record<string, unknown>): Record<string, unknown> {
+  const properties = item.properties;
+  return typeof properties === "object" && properties !== null && !Array.isArray(properties)
+    ? (properties as Record<string, unknown>)
+    : {};
+}
+
+function graphEndpoint(item: Record<string, unknown>, keys: string[]): string | null {
+  for (const key of keys) {
+    const value = item[key];
+    if (typeof value === "string" && value) {
+      return value;
+    }
+  }
+  return null;
+}
+
+function graphPosition(index: number, total: number): { x: number; y: number } {
+  const columns = Math.max(1, Math.ceil(Math.sqrt(total)));
+  const column = index % columns;
+  const row = Math.floor(index / columns);
+  return { x: column * 260, y: row * 150 };
 }
