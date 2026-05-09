@@ -446,7 +446,10 @@ function filterGraphData(
       if (!visibleNodeIds.has(entry.source) || !visibleNodeIds.has(entry.target)) {
         return false;
       }
-      return !filters.edgeType || graphType(entry.edge, "relates") === filters.edgeType;
+      if (edgeScopedFiltersActive(filters)) {
+        return edgeMatchesFilters(entry.edge, filters, normalizedSearch);
+      }
+      return true;
     })
     .map((entry) => entry.edge);
 
@@ -489,6 +492,10 @@ function edgeMatchesFilters(
 
 function hasGraphFilters(filters: GraphFilters): boolean {
   return Boolean(filters.nodeType || filters.edgeType || filters.documentId || filters.searchText.trim());
+}
+
+function edgeScopedFiltersActive(filters: GraphFilters): boolean {
+  return Boolean(filters.edgeType || filters.documentId || filters.searchText.trim());
 }
 
 function buildVisualGraph(
@@ -638,10 +645,15 @@ function graphProperties(item: Record<string, unknown>): Record<string, unknown>
 }
 
 function graphEndpoint(item: Record<string, unknown>, keys: string[]): string | null {
+  const properties = graphProperties(item);
   for (const key of keys) {
     const value = item[key];
     if (typeof value === "string" && value) {
       return value;
+    }
+    const propertyValue = properties[key];
+    if (typeof propertyValue === "string" && propertyValue) {
+      return propertyValue;
     }
   }
   return null;

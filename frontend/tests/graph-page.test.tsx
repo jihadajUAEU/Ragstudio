@@ -15,9 +15,11 @@ vi.mock("@xyflow/react", () => ({
   Position: { Left: "left", Right: "right" },
   ReactFlow: ({
     nodes,
+    edges,
     children,
   }: {
     nodes: Array<{ id: string; data: { label: string; type: string; detail: string } }>;
+    edges: Array<{ id: string; label?: string; source: string; target: string }>;
     children: ReactNode;
   }) => (
     <div aria-label="Graph relationship map">
@@ -26,6 +28,14 @@ vi.mock("@xyflow/react", () => ({
           <span>{node.data.label}</span>
           <span>{node.data.type}</span>
           <span>{node.data.detail}</span>
+        </div>
+      ))}
+      {edges.map((edge) => (
+        <div key={edge.id}>
+          <span>{edge.id}</span>
+          <span>{edge.label}</span>
+          <span>{edge.source}</span>
+          <span>{edge.target}</span>
         </div>
       ))}
       {children}
@@ -154,7 +164,7 @@ describe("GraphPage", () => {
     expect(screen.getByText("Visible nodes")).toBeInTheDocument();
   });
 
-  it("filters by document id from edge properties and keeps endpoint nodes", async () => {
+  it("filters duplicate-endpoint edges by document id from edge properties", async () => {
     vi.mocked(apiClient.diagnostics).mockResolvedValue({
       capabilities: { graph: true },
       dependency_status: {},
@@ -170,8 +180,9 @@ describe("GraphPage", () => {
         { id: "topic-2", labels: ["Topic"], properties: { label: "Different Topic" } },
       ],
       edges: [
-        { source: "verse-1", target: "topic-1", type: "mentions", properties: { document_ids: ["doc-7"] } },
-        { source: "topic-1", target: "topic-2", type: "related", properties: { document_ids: ["doc-9"] } },
+        { id: "edge-doc-7", source: "verse-1", target: "topic-1", type: "mentions", properties: { document_ids: ["doc-7"] } },
+        { id: "edge-doc-9", source: "verse-1", target: "topic-1", type: "related", properties: { document_ids: ["doc-9"] } },
+        { id: "edge-other", source: "topic-1", target: "topic-2", type: "related", properties: { document_ids: ["doc-9"] } },
       ],
     });
 
@@ -184,6 +195,86 @@ describe("GraphPage", () => {
     const map = await screen.findByLabelText("Graph relationship map");
     expect(map).toHaveTextContent("2:255");
     expect(map).toHaveTextContent("Throne Verse");
+    expect(map).toHaveTextContent("edge-doc-7");
+    expect(map).not.toHaveTextContent("edge-doc-9");
+    expect(map).not.toHaveTextContent("edge-other");
     expect(map).not.toHaveTextContent("Different Topic");
+  });
+
+  it("resolves edge endpoints from properties", async () => {
+    vi.mocked(apiClient.diagnostics).mockResolvedValue({
+      capabilities: { graph: true },
+      dependency_status: {},
+      warnings: [],
+      runtime_mode: "runtime",
+      overall_status: "ready",
+      checks: [],
+    });
+    vi.mocked(apiClient.graph).mockResolvedValue({
+      nodes: [
+        { id: "source-node", labels: ["Reference"], properties: { label: "Source ref" } },
+        { id: "target-node", labels: ["Topic"], properties: { label: "Target topic" } },
+      ],
+      edges: [
+        {
+          id: "property-edge",
+          type: "mentions",
+          properties: { source: "source-node", target: "target-node", document_id: "doc-props" },
+        },
+      ],
+    });
+
+    renderGraphPage();
+
+    const map = await screen.findByLabelText("Graph relationship map");
+    expect(map).toHaveTextContent("Source ref");
+    expect(map).toHaveTextContent("Target topic");
+    expect(map).toHaveTextContent("property-edge");
+    expect(map).toHaveTextContent("mentions");
+  });
+
+  it("filters by reference search, shows no-match state, and resets", async () => {
+    vi.mocked(apiClient.diagnostics).mockResolvedValue({
+      capabilities: { graph: true },
+      dependency_status: {},
+      warnings: [],
+      runtime_mode: "runtime",
+      overall_status: "ready",
+      checks: [],
+    });
+    vi.mocked(apiClient.graph).mockResolvedValue({
+      nodes: [
+        { id: "verse-1", labels: ["Reference"], properties: { label: "2:255", page: 12 } },
+        { id: "topic-1", labels: ["Topic"], properties: { label: "Throne Verse" } },
+      ],
+      edges: [
+        {
+          id: "edge-page-12",
+          source: "verse-1",
+          target: "topic-1",
+          type: "mentions",
+          properties: { reference: "2:255", page: 12 },
+        },
+      ],
+    });
+
+    renderGraphPage();
+
+    const search = await screen.findByLabelText("Page or reference");
+    fireEvent.change(search, { target: { value: "2:255" } });
+
+    let map = await screen.findByLabelText("Graph relationship map");
+    expect(map).toHaveTextContent("2:255");
+    expect(map).toHaveTextContent("edge-page-12");
+
+    fireEvent.change(search, { target: { value: "missing reference" } });
+
+    expect(await screen.findByText("No graph matches")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("Reset"));
+
+    map = await screen.findByLabelText("Graph relationship map");
+    expect(map).toHaveTextContent("Throne Verse");
+    expect(map).toHaveTextContent("edge-page-12");
   });
 });
