@@ -375,11 +375,11 @@ def test_native_adapter_supplies_placeholder_api_keys_for_local_runtime(tmp_path
 
     rag = adapter._raganything()
 
-    assert rag.kwargs["llm_model_func"].keywords["api_key"] == "ragstudio-local-runtime"
+    assert rag.kwargs["llm_model_func"]._ragstudio_api_key == "ragstudio-local-runtime"
     assert rag.kwargs["embedding_func"].kwargs["func"].keywords["api_key"] == (
         "ragstudio-local-runtime"
     )
-    assert rag.kwargs["vision_model_func"].keywords["api_key"] == "ragstudio-local-runtime"
+    assert rag.kwargs["vision_model_func"]._ragstudio_api_key == "ragstudio-local-runtime"
 
 
 def test_native_adapter_preserves_configured_api_keys(tmp_path):
@@ -395,11 +395,50 @@ def test_native_adapter_preserves_configured_api_keys(tmp_path):
 
     rag = adapter._raganything()
 
-    assert rag.kwargs["llm_model_func"].keywords["api_key"] == "llm-secret"
+    assert rag.kwargs["llm_model_func"]._ragstudio_api_key == "llm-secret"
     assert rag.kwargs["embedding_func"].kwargs["func"].keywords["api_key"] == (
         "embedding-secret"
     )
-    assert rag.kwargs["vision_model_func"].keywords["api_key"] == "vision-secret"
+    assert rag.kwargs["vision_model_func"]._ragstudio_api_key == "vision-secret"
+
+
+@pytest.mark.asyncio
+async def test_native_adapter_completion_wrapper_avoids_duplicate_model_kwarg(tmp_path):
+    calls = []
+
+    async def completion_impl(model, prompt, *args, **kwargs):
+        calls.append({"model": model, "prompt": prompt, "args": args, "kwargs": kwargs})
+        return "ok"
+
+    adapter = NativeRAGAnythingAdapter(
+        profile(runtime_working_dir=str(tmp_path / "runtime")),
+        AppSettings(database_url="postgresql+asyncpg://user:pass@localhost:5432/ragstudio"),
+    )
+
+    complete = adapter._completion_func(
+        completion_impl,
+        model="configured-model",
+        base_url="http://llm.example/v1",
+        api_key="secret",
+        timeout_ms=5000,
+    )
+
+    result = await complete("prompt", "system", model="caller-model", temperature=0.2)
+
+    assert result == "ok"
+    assert calls == [
+        {
+            "model": "configured-model",
+            "prompt": "prompt",
+            "args": ("system",),
+            "kwargs": {
+                "base_url": "http://llm.example/v1",
+                "api_key": "secret",
+                "timeout": 5.0,
+                "temperature": 0.2,
+            },
+        }
+    ]
 
 
 @pytest.mark.asyncio

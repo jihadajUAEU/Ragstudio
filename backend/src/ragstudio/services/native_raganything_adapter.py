@@ -219,12 +219,12 @@ class NativeRAGAnythingAdapter:
         openai_module = import_module("lightrag.llm.openai")
         utils_module = import_module("lightrag.utils")
 
-        llm_func = partial(
+        llm_func = self._completion_func(
             openai_module.openai_complete_if_cache,
             model=self.profile.llm_model,
             base_url=self.profile.llm_base_url,
             api_key=self._api_key_or_placeholder(self.profile.llm_api_key),
-            timeout=self.profile.llm_timeout_ms / 1000,
+            timeout_ms=self.profile.llm_timeout_ms,
         )
         embedding_impl = getattr(openai_module.openai_embed, "func", openai_module.openai_embed)
         embedding_func = utils_module.EmbeddingFunc(
@@ -239,14 +239,14 @@ class NativeRAGAnythingAdapter:
         )
         vision_func = None
         if self.profile.vision_base_url or "vision" in self.profile.llm_capabilities:
-            vision_func = partial(
+            vision_func = self._completion_func(
                 openai_module.openai_complete_if_cache,
                 model=self.profile.vision_model or self.profile.llm_model,
                 base_url=self.profile.vision_base_url or self.profile.llm_base_url,
                 api_key=self._api_key_or_placeholder(
                     self.profile.vision_api_key or self.profile.llm_api_key,
                 ),
-                timeout=self.profile.vision_timeout_ms / 1000,
+                timeout_ms=self.profile.vision_timeout_ms,
             )
 
         config = rag_config_module.RAGAnythingConfig(
@@ -275,6 +275,32 @@ class NativeRAGAnythingAdapter:
 
     def _api_key_or_placeholder(self, api_key: str | None) -> str:
         return api_key or "ragstudio-local-runtime"
+
+    def _completion_func(
+        self,
+        completion_impl: Any,
+        *,
+        model: str,
+        base_url: str | None,
+        api_key: str,
+        timeout_ms: int,
+    ) -> Any:
+        async def complete(prompt: str, *args: Any, **kwargs: Any) -> str:
+            kwargs.pop("model", None)
+            return await completion_impl(
+                model,
+                prompt,
+                *args,
+                base_url=base_url,
+                api_key=api_key,
+                timeout=timeout_ms / 1000,
+                **kwargs,
+            )
+
+        complete._ragstudio_model = model
+        complete._ragstudio_base_url = base_url
+        complete._ragstudio_api_key = api_key
+        return complete
 
     def _lightrag_kwargs(self) -> dict[str, Any]:
         return {
