@@ -79,10 +79,11 @@ class NativeRAGAnythingAdapter:
             "query": "raganything",
             "graph": "neo4j",
             "native_scoped_query": True,
-            "scoped_query": "raganything_full_doc_id",
+            "scoped_query": "raganything_full_doc_id_vector",
             "scoped_query_detail": (
-                "Native RAG-Anything query scopes selected documents through "
-                "LightRAG chunk full_doc_id filtering."
+                "Selected-document native query uses LightRAG chunk full_doc_id "
+                "filtering with vector/naive retrieval; graph modes are not used "
+                "under document scope."
             ),
         }
 
@@ -143,8 +144,9 @@ class NativeRAGAnythingAdapter:
         started = asyncio.get_running_loop().time()
         async with self._storage_env():
             if document_ids:
+                effective_mode = "naive"
                 async with self._scoped_chunks_vdb(rag, document_ids) as scoped_proxy:
-                    answer = await rag.aquery(query, mode=mode, **kwargs)
+                    answer = await rag.aquery(query, mode=effective_mode, **kwargs)
                     leak = self._scope_leak_error(scoped_proxy, document_ids)
                     if leak is not None:
                         return leak
@@ -160,6 +162,8 @@ class NativeRAGAnythingAdapter:
                                 3,
                             ),
                             "native_scoped_query": True,
+                            "requested_query_mode": mode,
+                            "effective_query_mode": effective_mode,
                         },
                     )
 
@@ -330,10 +334,6 @@ class NativeRAGAnythingAdapter:
         finally:
             lightrag.chunks_vdb = original_chunks_vdb
 
-    def _query_param(self, mode: str, query_config: dict[str, Any]) -> Any:
-        query_param_cls = import_module("lightrag.base").QueryParam
-        return query_param_cls(mode=mode, **self._query_kwargs(query_config))
-
     def _native_sources_from_proxy(
         self,
         proxy: ScopedVectorStorageProxy,
@@ -370,7 +370,7 @@ class NativeRAGAnythingAdapter:
         leaked_ids = sorted(
             {
                 str(row.get("full_doc_id") or "")
-                for row in proxy.raw_results
+                for row in proxy.collected_results
                 if str(row.get("full_doc_id") or "") not in allowed
             }
         )

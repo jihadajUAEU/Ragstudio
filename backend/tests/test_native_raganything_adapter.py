@@ -77,6 +77,7 @@ class FakeRAGAnything:
         self.parse_called = False
         self.initialized = False
         self.aquery_error = None
+        self.aquery_calls = []
         self.lightrag = FakeLightRAG()
         self.deleted = self.lightrag.deleted
         FakeRAGAnything.instances.append(self)
@@ -100,6 +101,7 @@ class FakeRAGAnything:
             raise AssertionError("aquery called before LightRAG initialization")
         if self.aquery_error is not None:
             raise self.aquery_error
+        self.aquery_calls.append({"query": query, "mode": mode, "kwargs": dict(kwargs)})
         if "chunk_top_k" not in kwargs:
             return f"native answer: {query}:{mode}:{kwargs['top_k']}"
         rows = await self.lightrag.chunks_vdb.query(
@@ -181,8 +183,6 @@ def fake_upstream(monkeypatch):
             )
         if name == "lightrag.utils":
             return SimpleNamespace(EmbeddingFunc=FakeEmbeddingFunc)
-        if name == "lightrag.base":
-            return SimpleNamespace(QueryParam=SimpleNamespace)
         raise AssertionError(f"unexpected import {name}")
 
     monkeypatch.setattr("ragstudio.services.native_raganything_adapter.import_module", fake_import)
@@ -358,11 +358,12 @@ def test_native_adapter_reports_scoped_query_capability(tmp_path):
     report = adapter.capability_report()
 
     assert report["native_scoped_query"] is True
-    assert report["scoped_query"] == "raganything_full_doc_id"
+    assert report["scoped_query"] == "raganything_full_doc_id_vector"
     assert (
         report["scoped_query_detail"]
-        == "Native RAG-Anything query scopes selected documents through "
-        "LightRAG chunk full_doc_id filtering."
+        == "Selected-document native query uses LightRAG chunk full_doc_id "
+        "filtering with vector/naive retrieval; graph modes are not used "
+        "under document scope."
     )
 
 
@@ -381,7 +382,7 @@ async def test_native_adapter_queries_selected_documents_with_scoped_lightrag(tm
 
     assert result.error is None
     assert result.error_type is None
-    assert result.answer == "native scoped answer: how many hadith in bukhari:hybrid:12"
+    assert result.answer == "native scoped answer: how many hadith in bukhari:naive:12"
     assert result.sources == [
         {
             "chunk_id": "chunk-1",
@@ -396,8 +397,17 @@ async def test_native_adapter_queries_selected_documents_with_scoped_lightrag(tm
         }
     ]
     assert result.timings["native_scoped_query"] is True
+    assert result.timings["requested_query_mode"] == "hybrid"
+    assert result.timings["effective_query_mode"] == "naive"
     assert result.timings["runtime_query_ms"] >= 0
     rag = FakeRAGAnything.instances[0]
+    assert rag.aquery_calls == [
+        {
+            "query": "how many hadith in bukhari",
+            "mode": "naive",
+            "kwargs": {"top_k": 12, "chunk_top_k": 4},
+        }
+    ]
     assert rag.lightrag.aquery_data_calls == 0
     assert rag.lightrag.chunks_vdb.calls == [
         {"query": "how many hadith in bukhari", "top_k": 32, "query_embedding": None}
@@ -405,7 +415,7 @@ async def test_native_adapter_queries_selected_documents_with_scoped_lightrag(tm
 
 
 @pytest.mark.asyncio
-async def test_native_adapter_reports_raw_scope_leaks(tmp_path):
+async def test_native_adapter_filters_raw_overfetch_without_scope_leak(tmp_path):
     rag = FakeRAGAnything()
     rag.lightrag.chunks_vdb = FakeChunkVectorStorage(
         [
@@ -437,10 +447,18 @@ async def test_native_adapter_reports_raw_scope_leaks(tmp_path):
         query_config={"mode": "hybrid", "top_k": 12, "chunk_top_k": 4},
     )
 
-    assert result.answer == ""
-    assert result.sources == []
-    assert result.error_type == "native_document_scope_leak"
-    assert "doc-2" in (result.error or "")
+    assert result.error is None
+    assert result.error_type is None
+    assert result.answer == "native scoped answer: how many hadith in bukhari:naive:12"
+    assert [source["chunk_id"] for source in result.sources] == ["chunk-1"]
+    assert rag.aquery_calls == [
+        {
+            "query": "how many hadith in bukhari",
+            "mode": "naive",
+            "kwargs": {"top_k": 12, "chunk_top_k": 4},
+        }
+    ]
+    assert rag.lightrag.aquery_data_calls == 0
 
 
 @pytest.mark.asyncio
