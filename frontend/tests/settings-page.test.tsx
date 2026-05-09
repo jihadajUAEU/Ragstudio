@@ -50,6 +50,7 @@ const settings: SettingsProfileOut = {
   mineru_base_url: "http://127.0.0.1:8765",
   mineru_timeout_ms: 1800000,
   mineru_poll_interval_ms: 1000,
+  mineru_require_hpc: true,
   runtime_mode: "runtime",
   vision_model: "vision-model",
   vision_base_url: "http://127.0.0.1:8004/v1",
@@ -141,6 +142,7 @@ describe("SettingsPage provider sync", () => {
     expect(await screen.findByDisplayValue("bolt://127.0.0.1:57687")).toBeVisible();
     expect(screen.getByRole("button", { name: /Test LLM/i })).toBeVisible();
     expect(await screen.findByDisplayValue("http://127.0.0.1:8765")).toBeVisible();
+    expect(screen.getByLabelText("Require HPC MinerU coordinator")).toBeChecked();
   });
 
   it("previews provider sync changes without saving", async () => {
@@ -184,6 +186,24 @@ describe("SettingsPage provider sync", () => {
         embedding_base_url: "http://10.10.9.192:8001/v1",
         mineru_base_url: "http://10.10.9.19:8765",
       }),
+    );
+  });
+
+  it("submits the MinerU HPC requirement setting", async () => {
+    vi.mocked(apiClient.defaultSettings).mockResolvedValueOnce({
+      ...settings,
+      mineru_require_hpc: false,
+    });
+    renderSettings();
+
+    await screen.findByDisplayValue("gpt-4.1");
+    const checkbox = await screen.findByLabelText("Require HPC MinerU coordinator");
+    expect(checkbox).not.toBeChecked();
+    fireEvent.click(screen.getByRole("button", { name: /save/i }));
+
+    await waitFor(() => expect(apiClient.updateDefaultSettings).toHaveBeenCalled());
+    expect(vi.mocked(apiClient.updateDefaultSettings).mock.calls[0][0]).toEqual(
+      expect.objectContaining({ mineru_require_hpc: false }),
     );
   });
 

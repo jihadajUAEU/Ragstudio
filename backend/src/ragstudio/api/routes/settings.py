@@ -16,6 +16,7 @@ from ragstudio.schemas.settings import (
 )
 from ragstudio.services.embedding_connection_service import EmbeddingConnectionService
 from ragstudio.services.llm_connection_service import LlmConnectionService
+from ragstudio.services.mineru_client import MinerUClient
 from ragstudio.services.provider_manifest_service import (
     ProviderManifestError,
     ProviderManifestService,
@@ -85,36 +86,41 @@ async def test_mineru_settings(payload: SettingsProfileIn) -> MinerUConnectionTe
 
     started = time.perf_counter()
     try:
-        async with httpx.AsyncClient(timeout=payload.mineru_timeout_ms / 1000) as client:
-            response = await client.get(f"{base_url}/health")
+        health = await MinerUClient(
+            base_url=base_url,
+            timeout_ms=payload.mineru_timeout_ms,
+            poll_interval_ms=payload.mineru_poll_interval_ms,
+        ).health()
         latency_ms = int((time.perf_counter() - started) * 1000)
-        if response.status_code >= 400:
+        if not health.ready:
             return MinerUConnectionTestOut(
                 ok=False,
                 base_url=base_url,
                 latency_ms=latency_ms,
-                detail=f"MinerU health check returned HTTP {response.status_code}.",
+                detail=health.detail or "MinerU sidecar is not ready.",
             )
-        detail = "MinerU health check succeeded."
-        try:
-            health_payload = response.json()
-            if isinstance(health_payload, dict):
-                detail_value = (
-                    health_payload.get("detail")
-                    or health_payload.get("status")
-                    or health_payload.get("service")
-                    or health_payload.get("version")
-                )
-                if detail_value:
-                    detail = str(detail_value)
-        except (AttributeError, ValueError):
-            if response.text.strip():
-                detail = response.text.strip()
+        if payload.mineru_require_hpc and not health.is_hpc_coordinator:
+            return MinerUConnectionTestOut(
+                ok=False,
+                base_url=base_url,
+                latency_ms=latency_ms,
+                detail=(
+                    "MinerU sidecar is reachable but reports local mode. "
+                    f"hpcMineru.enabled={health.hpc_enabled}; "
+                    f"mode={health.hpc_mode or 'unknown'}. "
+                    "Start the HPC coordinator sidecar or disable the HPC requirement."
+                ),
+            )
+        mode_detail = (
+            "HPC coordinator mode"
+            if health.is_hpc_coordinator
+            else f"{health.hpc_mode or 'unknown'} mode"
+        )
         return MinerUConnectionTestOut(
             ok=True,
             base_url=base_url,
             latency_ms=latency_ms,
-            detail=detail,
+            detail=f"{health.detail or 'MinerU health check succeeded.'} ({mode_detail}).",
         )
     except httpx.HTTPError as exc:
         latency_ms = int((time.perf_counter() - started) * 1000)
@@ -122,5 +128,5 @@ async def test_mineru_settings(payload: SettingsProfileIn) -> MinerUConnectionTe
             ok=False,
             base_url=base_url,
             latency_ms=latency_ms,
-            detail=str(exc),
+            detail=f"MinerU health check failed: {exc}",
         )

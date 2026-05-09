@@ -46,6 +46,7 @@ class SettingsProfile(Base, TimestampMixin):
     mineru_base_url: Mapped[str | None] = mapped_column(String, nullable=True)
     mineru_timeout_ms: Mapped[int] = mapped_column(Integer, default=14_400_000)
     mineru_poll_interval_ms: Mapped[int] = mapped_column(Integer, default=1_000)
+    mineru_require_hpc: Mapped[bool] = mapped_column(Boolean, default=True)
     runtime_mode: Mapped[str] = mapped_column(String, default="fallback")
     vision_model: Mapped[str | None] = mapped_column(String, nullable=True)
     vision_base_url: Mapped[str | None] = mapped_column(String, nullable=True)

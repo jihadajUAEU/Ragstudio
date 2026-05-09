@@ -38,6 +38,7 @@ class SettingsProfileIn(StudioModel):
     mineru_base_url: str | None = None
     mineru_timeout_ms: int = Field(default=MINERU_DEFAULT_TIMEOUT_MS, ge=100, le=28_800_000)
     mineru_poll_interval_ms: int = Field(default=1_000, ge=100, le=60_000)
+    mineru_require_hpc: bool = True
     runtime_mode: RuntimeMode = "fallback"
     vision_model: str | None = None
     vision_base_url: str | None = None
@@ -190,6 +191,7 @@ class SettingsProfileOut(StudioModel):
     mineru_base_url: str | None
     mineru_timeout_ms: int
     mineru_poll_interval_ms: int
+    mineru_require_hpc: bool
     runtime_mode: RuntimeMode
     vision_model: str | None
     vision_base_url: str | None

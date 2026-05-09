@@ -111,6 +111,7 @@ class SettingsService:
             mineru_base_url=profile.mineru_base_url,
             mineru_timeout_ms=max(profile.mineru_timeout_ms or 0, MINERU_DEFAULT_TIMEOUT_MS),
             mineru_poll_interval_ms=profile.mineru_poll_interval_ms or 1_000,
+            mineru_require_hpc=default_bool(profile.mineru_require_hpc, True),
             runtime_mode=self._runtime_mode(profile.runtime_mode, profile.storage_backend),
             vision_model=profile.vision_model,
             vision_base_url=profile.vision_base_url,

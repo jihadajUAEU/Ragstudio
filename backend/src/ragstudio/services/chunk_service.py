@@ -21,10 +21,12 @@ class ChunkService:
         session: AsyncSession,
         data_dir: Path,
         adapter: RAGAnythingAdapter | None = None,
+        mineru_client_factory: type[MinerUClient] = MinerUClient,
     ):
         self.session = session
         self.data_dir = data_dir
         self.adapter = adapter or RAGAnythingAdapter()
+        self.mineru_client_factory = mineru_client_factory
 
     async def index_document(
         self,
@@ -123,11 +125,21 @@ class ChunkService:
             raise RuntimeError("MinerU base URL is not configured.")
         if not settings.mineru_enabled:
             raise RuntimeError("MinerU is disabled in settings.")
-        client = MinerUClient(
+        client = self.mineru_client_factory(
             base_url=settings.mineru_base_url,
             timeout_ms=settings.mineru_timeout_ms or 14_400_000,
             poll_interval_ms=settings.mineru_poll_interval_ms or 1_000,
         )
+        health = await client.health()
+        if settings.mineru_require_hpc and not health.is_hpc_coordinator:
+            mode = health.hpc_mode or "unknown"
+            raise RuntimeError(
+                "MinerU sidecar is not in HPC coordinator mode. "
+                f"Health detail: {health.detail or 'no detail'}; "
+                f"hpcMineru.enabled={health.hpc_enabled}; mode={mode}. "
+                "Start the HPC MinerU sidecar/coordinator or disable "
+                "'Require HPC MinerU coordinator' in Settings."
+            )
         artifact_dir = self.data_dir / "mineru-artifacts" / document.id
         job_result = await client.parse_document(
             artifact_path=document.artifact_path,

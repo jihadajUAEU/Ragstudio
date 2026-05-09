@@ -25,6 +25,20 @@ class MinerUJobResult:
     artifact_zip: Path
 
 
+@dataclass(frozen=True)
+class MinerUSidecarHealth:
+    ready: bool
+    detail: str
+    version: str | None
+    hpc_enabled: bool
+    hpc_mode: str | None
+    raw: dict[str, Any]
+
+    @property
+    def is_hpc_coordinator(self) -> bool:
+        return self.ready and self.hpc_enabled and self.hpc_mode == "coordinator"
+
+
 MinerUStatusCallback = Callable[[dict[str, Any]], Awaitable[None]]
 
 
@@ -99,6 +113,24 @@ class MinerUClient:
             response = await client.get(f"{self.base_url}/parse-jobs/{parse_job_id}")
         response.raise_for_status()
         return response.json()
+
+    async def health(self) -> MinerUSidecarHealth:
+        async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+            response = await client.get(f"{self.base_url}/health")
+        response.raise_for_status()
+        payload = response.json()
+        if not isinstance(payload, dict):
+            payload = {}
+        hpc = payload.get("hpcMineru")
+        hpc_payload = hpc if isinstance(hpc, dict) else {}
+        return MinerUSidecarHealth(
+            ready=bool(payload.get("ready")),
+            detail=str(payload.get("detail") or payload.get("status") or ""),
+            version=str(payload["version"]) if payload.get("version") is not None else None,
+            hpc_enabled=bool(hpc_payload.get("enabled")),
+            hpc_mode=str(hpc_payload["mode"]) if hpc_payload.get("mode") is not None else None,
+            raw=payload,
+        )
 
     async def poll_until_ready(
         self,

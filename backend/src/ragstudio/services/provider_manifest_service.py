@@ -171,6 +171,8 @@ class ProviderManifestService:
             timeout_ms = self._optional_int(mineru.get("timeoutMs"))
             if isinstance(enabled, bool):
                 patch["mineru_enabled"] = enabled
+                if enabled:
+                    patch["mineru_require_hpc"] = True
             if api_url:
                 patch["mineru_base_url"] = api_url.rstrip("/")
             if timeout_ms is not None:

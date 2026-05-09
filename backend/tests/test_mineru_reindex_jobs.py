@@ -241,3 +241,66 @@ async def test_create_reindex_job_returns_conflict_when_runtime_health_blocks(cl
 
     assert response.status_code == 409
     assert "native_runtime_adapter" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_mineru_strict_blocks_when_sidecar_is_local_only(tmp_path):
+    engine = make_engine(f"sqlite+aiosqlite:///{tmp_path / 'test.sqlite3'}")
+    await init_db(engine)
+    factory = make_session_factory(engine)
+
+    class LocalHealthClient:
+        def __init__(self, base_url, timeout_ms, poll_interval_ms):
+            self.base_url = base_url
+            self.timeout_ms = timeout_ms
+            self.poll_interval_ms = poll_interval_ms
+
+        async def health(self):
+            from ragstudio.services.mineru_client import MinerUSidecarHealth
+
+            return MinerUSidecarHealth(
+                ready=True,
+                detail="RAG-Anything sidecar ready",
+                version="hybrid",
+                hpc_enabled=False,
+                hpc_mode="local",
+                raw={"hpcMineru": {"enabled": False, "mode": "local"}},
+            )
+
+        async def parse_document(self, **kwargs):
+            raise AssertionError("parse_document must not be called when HPC is required")
+
+    async with factory() as session:
+        artifact = tmp_path / "quran.pdf"
+        artifact.write_bytes(b"%PDF-1.4")
+        document = Document(
+            filename="quran.pdf",
+            content_type="application/pdf",
+            sha256="sha",
+            artifact_path=str(artifact),
+            status="ready",
+        )
+        settings = SettingsProfile(
+            id="default",
+            provider="openai-compatible",
+            llm_model="gpt-4o",
+            embedding_model="fallback",
+            storage_backend="fallback_local",
+            mineru_enabled=True,
+            mineru_base_url="http://10.10.9.19:8765",
+            mineru_require_hpc=True,
+        )
+        session.add_all([document, settings])
+        await session.commit()
+
+        with pytest.raises(RuntimeError, match="MinerU sidecar is not in HPC coordinator mode"):
+            await ChunkService(
+                session,
+                tmp_path,
+                mineru_client_factory=LocalHealthClient,
+            ).index_document(
+                document.id,
+                options=IndexDocumentIn(parser_mode="mineru_strict"),
+            )
+
+    await engine.dispose()

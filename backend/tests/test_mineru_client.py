@@ -237,3 +237,93 @@ def test_mineru_client_collects_related_artifacts_from_files_and_items(tmp_path)
         {"path": "tables/table-1.json", "kind": "application/json"},
         {"path": "images/page-1.png", "kind": "image"},
     ]
+
+
+@pytest.mark.asyncio
+async def test_mineru_client_health_reads_hpc_coordinator(monkeypatch):
+    requests = []
+
+    class FakeResponse:
+        status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "ready": True,
+                "detail": "RAG-Anything sidecar ready",
+                "version": "hybrid",
+                "hpcMineru": {"enabled": True, "mode": "coordinator"},
+            }
+
+    class FakeAsyncClient:
+        def __init__(self, timeout):
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return None
+
+        async def get(self, url):
+            requests.append({"url": url, "timeout": self.timeout})
+            return FakeResponse()
+
+    monkeypatch.setattr("ragstudio.services.mineru_client.httpx.AsyncClient", FakeAsyncClient)
+
+    health = await MinerUClient(
+        base_url="http://mineru.test",
+        timeout_ms=2000,
+        poll_interval_ms=100,
+    ).health()
+
+    assert requests == [{"url": "http://mineru.test/health", "timeout": 2.0}]
+    assert health.ready is True
+    assert health.detail == "RAG-Anything sidecar ready"
+    assert health.hpc_enabled is True
+    assert health.hpc_mode == "coordinator"
+    assert health.is_hpc_coordinator is True
+
+
+@pytest.mark.asyncio
+async def test_mineru_client_health_reads_local_sidecar(monkeypatch):
+    class FakeResponse:
+        status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "ready": True,
+                "detail": "RAG-Anything sidecar ready",
+                "hpcMineru": {"enabled": False, "mode": "local"},
+            }
+
+    class FakeAsyncClient:
+        def __init__(self, timeout):
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return None
+
+        async def get(self, url):
+            return FakeResponse()
+
+    monkeypatch.setattr("ragstudio.services.mineru_client.httpx.AsyncClient", FakeAsyncClient)
+
+    health = await MinerUClient(
+        base_url="http://mineru.test",
+        timeout_ms=2000,
+        poll_interval_ms=100,
+    ).health()
+
+    assert health.ready is True
+    assert health.hpc_enabled is False
+    assert health.hpc_mode == "local"
+    assert health.is_hpc_coordinator is False

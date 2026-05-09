@@ -304,6 +304,7 @@ async def test_provider_sync_preview_maps_manifest_without_persisting(client, mo
     assert body["patch"]["embedding_dimensions"] == 1536
     assert body["patch"]["embedding_timeout_ms"] == 10000
     assert body["patch"]["mineru_enabled"] is True
+    assert body["patch"]["mineru_require_hpc"] is True
     assert body["patch"]["mineru_base_url"] == "http://10.10.9.19:8765"
     assert body["patch"]["mineru_timeout_ms"] == 14400000
     assert "llm_base_url" in body["changed_fields"]
@@ -537,6 +538,7 @@ async def test_settings_profile_saves_mineru_config(client):
         "mineru_base_url": "http://127.0.0.1:8765/",
         "mineru_timeout_ms": 120000,
         "mineru_poll_interval_ms": 500,
+        "mineru_require_hpc": True,
     }
 
     response = await client.put("/api/settings/default", json=payload)
@@ -547,31 +549,36 @@ async def test_settings_profile_saves_mineru_config(client):
     assert body["mineru_base_url"] == "http://127.0.0.1:8765"
     assert body["mineru_timeout_ms"] == 14400000
     assert body["mineru_poll_interval_ms"] == 500
+    assert body["mineru_require_hpc"] is True
 
 
 @pytest.mark.asyncio
 async def test_mineru_connection_test(client, monkeypatch):
     requests = []
 
-    class FakeResponse:
-        status_code = 200
-        text = "ok"
+    class FakeClient:
+        def __init__(self, base_url, timeout_ms, poll_interval_ms):
+            requests.append(
+                {
+                    "base_url": base_url,
+                    "timeout_ms": timeout_ms,
+                    "poll_interval_ms": poll_interval_ms,
+                }
+            )
 
-    class FakeAsyncClient:
-        def __init__(self, timeout):
-            self.timeout = timeout
+        async def health(self):
+            from ragstudio.services.mineru_client import MinerUSidecarHealth
 
-        async def __aenter__(self):
-            return self
+            return MinerUSidecarHealth(
+                ready=True,
+                detail="RAG-Anything sidecar ready",
+                version="hybrid",
+                hpc_enabled=True,
+                hpc_mode="coordinator",
+                raw={},
+            )
 
-        async def __aexit__(self, exc_type, exc, traceback):
-            return None
-
-        async def get(self, url):
-            requests.append({"url": url, "timeout": self.timeout})
-            return FakeResponse()
-
-    monkeypatch.setattr("ragstudio.api.routes.settings.httpx.AsyncClient", FakeAsyncClient)
+    monkeypatch.setattr("ragstudio.api.routes.settings.MinerUClient", FakeClient)
     payload = {
         "provider": "openai",
         "llm_model": "gpt-4.1",
@@ -587,4 +594,82 @@ async def test_mineru_connection_test(client, monkeypatch):
 
     assert response.status_code == 200
     assert response.json()["ok"] is True
-    assert requests == [{"url": "http://127.0.0.1:8765/health", "timeout": 2.0}]
+    assert requests == [
+        {
+            "base_url": "http://127.0.0.1:8765",
+            "timeout_ms": 2000,
+            "poll_interval_ms": 500,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_mineru_connection_test_reports_hpc_mode(client, monkeypatch):
+    class FakeClient:
+        def __init__(self, base_url, timeout_ms, poll_interval_ms):
+            self.base_url = base_url
+
+        async def health(self):
+            from ragstudio.services.mineru_client import MinerUSidecarHealth
+
+            return MinerUSidecarHealth(
+                ready=True,
+                detail="RAG-Anything sidecar ready",
+                version="hybrid",
+                hpc_enabled=True,
+                hpc_mode="coordinator",
+                raw={},
+            )
+
+    monkeypatch.setattr("ragstudio.api.routes.settings.MinerUClient", FakeClient)
+    payload = {
+        "provider": "openai",
+        "llm_model": "gpt-4.1",
+        "embedding_model": "text-embedding-3-large",
+        "storage_backend": "postgres_pgvector_neo4j",
+        "mineru_enabled": True,
+        "mineru_base_url": "http://10.10.9.19:8765",
+        "mineru_require_hpc": True,
+    }
+
+    response = await client.post("/api/settings/default/test-mineru", json=payload)
+
+    assert response.status_code == 200
+    assert response.json()["ok"] is True
+    assert "HPC coordinator mode" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_mineru_connection_test_rejects_local_mode_when_required(client, monkeypatch):
+    class FakeClient:
+        def __init__(self, base_url, timeout_ms, poll_interval_ms):
+            self.base_url = base_url
+
+        async def health(self):
+            from ragstudio.services.mineru_client import MinerUSidecarHealth
+
+            return MinerUSidecarHealth(
+                ready=True,
+                detail="RAG-Anything sidecar ready",
+                version="hybrid",
+                hpc_enabled=False,
+                hpc_mode="local",
+                raw={},
+            )
+
+    monkeypatch.setattr("ragstudio.api.routes.settings.MinerUClient", FakeClient)
+    payload = {
+        "provider": "openai",
+        "llm_model": "gpt-4.1",
+        "embedding_model": "text-embedding-3-large",
+        "storage_backend": "postgres_pgvector_neo4j",
+        "mineru_enabled": True,
+        "mineru_base_url": "http://10.10.9.19:8765",
+        "mineru_require_hpc": True,
+    }
+
+    response = await client.post("/api/settings/default/test-mineru", json=payload)
+
+    assert response.status_code == 200
+    assert response.json()["ok"] is False
+    assert "local mode" in response.json()["detail"]

@@ -48,6 +48,7 @@ const DEFAULT_FORM_VALUES: SettingsProfileIn = {
   mineru_base_url: "",
   mineru_timeout_ms: DEFAULT_MINERU_TIMEOUT_MS,
   mineru_poll_interval_ms: 1_000,
+  mineru_require_hpc: true,
   runtime_mode: "fallback",
   vision_model: "",
   vision_base_url: "",
@@ -192,6 +193,7 @@ export function SettingsPage() {
       embedding_provider: formValues.embedding_provider ?? "fallback",
       embedding_tls_verify: formValues.embedding_tls_verify ?? true,
       mineru_enabled: formValues.mineru_enabled ?? false,
+      mineru_require_hpc: formValues.mineru_require_hpc ?? true,
       runtime_mode: formValues.runtime_mode ?? "fallback",
       storage_backend: formValues.storage_backend ?? "fallback_local",
       vision_timeout_ms: formValues.vision_timeout_ms ?? 10000,
@@ -667,6 +669,13 @@ export function SettingsPage() {
               disabled={busy}
               type="number"
               onChange={(value) => updateField("mineru_poll_interval_ms", Number(value))}
+            />
+            <CheckboxField
+              label="Require HPC MinerU coordinator"
+              name="mineru_require_hpc"
+              checked={formValues?.mineru_require_hpc ?? true}
+              disabled={busy}
+              onChange={(checked) => updateField("mineru_require_hpc", checked)}
             />
           </div>
           <div className="mt-5 flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -1182,6 +1191,7 @@ function settingsToFormValues(settings: SettingsProfileOut): SettingsProfileIn {
     mineru_base_url: settings.mineru_base_url ?? "",
     mineru_timeout_ms: settings.mineru_timeout_ms,
     mineru_poll_interval_ms: settings.mineru_poll_interval_ms,
+    mineru_require_hpc: settings.mineru_require_hpc,
     runtime_mode: settings.runtime_mode,
     vision_model: settings.vision_model ?? "",
     vision_base_url: settings.vision_base_url ?? "",

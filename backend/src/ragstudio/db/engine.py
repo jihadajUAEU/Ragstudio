@@ -58,6 +58,7 @@ def _ensure_runtime_columns(connection) -> None:
                 "mineru_base_url": "VARCHAR",
                 "mineru_timeout_ms": "INTEGER DEFAULT 14400000 NOT NULL",
                 "mineru_poll_interval_ms": "INTEGER DEFAULT 1000 NOT NULL",
+                "mineru_require_hpc": _bool_column(connection, True),
                 "runtime_mode": "VARCHAR DEFAULT 'fallback' NOT NULL",
                 "vision_model": "VARCHAR",
                 "vision_base_url": "VARCHAR",
@@ -145,6 +146,15 @@ def _normalize_settings_profile_values(connection) -> None:
             SET mineru_timeout_ms = 14400000
             WHERE mineru_timeout_ms IS NULL
                OR mineru_timeout_ms < 14400000
+            """
+        )
+    )
+    connection.execute(
+        text(
+            """
+            UPDATE settings_profiles
+            SET mineru_require_hpc = TRUE
+            WHERE mineru_require_hpc IS NULL
             """
         )
     )

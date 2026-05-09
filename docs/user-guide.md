@@ -289,7 +289,9 @@ For UAEU HPC or another Slurm-hosted vLLM embedding job, use an SSH tunnel or st
 
 ### MinerU parser and domain metadata
 
-Settings includes a `MinerU parser` section for connecting to an already running MinerU/RAG-Anything service. Set the base URL, normally `http://127.0.0.1:8765` when using an SSH tunnel or local sidecar, then click `Test MinerU`.
+Settings includes a `MinerU parser` section for connecting to an already running MinerU/RAG-Anything sidecar. Set the base URL, normally `http://127.0.0.1:8765` when using an SSH tunnel or local sidecar, then click `Test MinerU`.
+
+For `MinerU strict`, Ragstudio requires the sidecar health response to report `hpcMineru.enabled=true` and `hpcMineru.mode=coordinator` by default. If the sidecar reports `mode=local`, strict parsing is blocked before a job is queued because large PDFs can appear stuck at `25%` while local MinerU parsing runs inside the sidecar process. Disable `Require HPC MinerU coordinator` only when you intentionally want the sidecar to parse locally and accept the longer single-process runtime.
 
 Upload and Index actions support three parser modes:
 
