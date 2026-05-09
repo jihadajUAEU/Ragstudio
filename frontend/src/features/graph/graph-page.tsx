@@ -15,12 +15,19 @@ import { formatCount } from "../../lib/utils";
 
 const queryKeys = {
   graph: ["graph"],
+  diagnostics: ["diagnostics"],
 } as const;
 
 export function GraphPage() {
   const graphQuery = useQuery({ queryKey: queryKeys.graph, queryFn: apiClient.graph });
+  const diagnosticsQuery = useQuery({ queryKey: queryKeys.diagnostics, queryFn: apiClient.diagnostics });
   const nodes = graphQuery.data?.nodes ?? [];
   const edges = graphQuery.data?.edges ?? [];
+  const graphAvailable = diagnosticsQuery.data?.capabilities.graph ?? true;
+  const graphUnavailableDetail =
+    diagnosticsQuery.data?.warnings.find((warning) => warning.toLowerCase().includes("graph")) ??
+    diagnosticsQuery.data?.checks.find((check) => check.name === "runtime_mode")?.detail ??
+    "Graph capability is disabled by the active runtime profile.";
 
   const previewNodes = nodes.slice(0, 50);
   const previewEdges = edges.slice(0, 50);
@@ -53,7 +60,7 @@ export function GraphPage() {
         <Metric icon={GitBranch} label="Edges" value={formatCount(edges.length)} />
       </section>
 
-      {graphQuery.isLoading ? (
+      {graphQuery.isLoading || diagnosticsQuery.isLoading ? (
         <EmptyState icon={Loader2} title="Loading graph" description="Fetching graph data." />
       ) : graphQuery.isError ? (
         <EmptyState
@@ -64,6 +71,18 @@ export function GraphPage() {
             <Button variant="secondary" onClick={() => void graphQuery.refetch()}>
               <RefreshCcw className="h-4 w-4" aria-hidden="true" />
               Retry
+            </Button>
+          }
+        />
+      ) : !graphAvailable ? (
+        <EmptyState
+          icon={AlertCircle}
+          title="Graph unavailable"
+          description={graphUnavailableDetail}
+          action={
+            <Button variant="secondary" onClick={() => void diagnosticsQuery.refetch()}>
+              <RefreshCcw className="h-4 w-4" aria-hidden="true" />
+              Refresh diagnostics
             </Button>
           }
         />

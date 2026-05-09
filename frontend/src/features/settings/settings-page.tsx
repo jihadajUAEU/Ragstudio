@@ -381,7 +381,7 @@ export function SettingsPage() {
               onChange={(value) => updateRuntimeMode(value as SettingsProfileIn["runtime_mode"])}
               options={[
                 { value: "fallback", label: "Fallback" },
-                { value: "runtime", label: "Native runtime (blocked)" },
+                { value: "runtime", label: "Native runtime" },
               ]}
             />
             <SelectField
@@ -442,7 +442,7 @@ export function SettingsPage() {
           </div>
           {formValues?.runtime_mode === "runtime" ? (
             <p className="mt-4 rounded-md border border-[#f0d68a] bg-[#fff8e6] px-3 py-2 text-sm text-[#7a5b00]" role="status">
-              Native adapter pending; indexing and query requests will block.
+              Native runtime uses RAG-Anything, PGVector, and Neo4j when dependencies are healthy.
             </p>
           ) : null}
         </section>

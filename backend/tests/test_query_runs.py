@@ -289,4 +289,5 @@ async def test_query_route_returns_failed_run_when_runtime_health_blocks(client)
     assert run["status"] == "failed"
     assert run["runtime_profile_id"] == "default"
     assert run["error_type"] == "runtime_health_blocked"
-    assert "native_runtime_adapter" in run["error"]
+    error = run["error"].lower()
+    assert "raganything" in error or "lightrag" in error or "neo4j" in error

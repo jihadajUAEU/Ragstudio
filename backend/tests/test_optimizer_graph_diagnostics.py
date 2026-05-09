@@ -1,6 +1,8 @@
 import pytest
 from ragstudio.db.models import Experiment, Run, Score
+from ragstudio.schemas.runtime import RuntimeHealthCheck
 from ragstudio.services.diagnostics_service import DiagnosticsService
+from ragstudio.services.runtime_factory import RuntimeUnavailableError
 
 
 @pytest.mark.asyncio
@@ -155,6 +157,175 @@ async def test_graph_returns_adapter_graph_shape(client):
 
 
 @pytest.mark.asyncio
+async def test_graph_returns_conflict_when_native_graph_unavailable(client, monkeypatch):
+    class ReadyRuntimeHealthService:
+        def __init__(self, session, *, verify_storage):
+            self.session = session
+            self.verify_storage = verify_storage
+
+        async def check(self, profile):
+            return []
+
+        def blocking_failures(self, checks):
+            return []
+
+    class BrokenRuntime:
+        async def graph(self):
+            raise RuntimeUnavailableError("Neo4j is not reachable")
+
+    class BrokenRuntimeFactory:
+        def __init__(self, settings):
+            self.settings = settings
+
+        def build(self, profile):
+            return BrokenRuntime()
+
+    monkeypatch.setattr(
+        "ragstudio.services.graph_service.RAGAnythingRuntimeFactory",
+        BrokenRuntimeFactory,
+    )
+    monkeypatch.setattr(
+        "ragstudio.services.graph_service.RuntimeHealthService",
+        ReadyRuntimeHealthService,
+    )
+
+    settings = await client.put(
+        "/api/settings/default",
+        json={
+            "provider": "openai-compatible",
+            "runtime_mode": "runtime",
+            "llm_model": "gpt-4o",
+            "embedding_model": "text-embedding-3-large",
+            "storage_backend": "postgres_pgvector_neo4j",
+        },
+    )
+    assert settings.status_code == 200
+
+    response = await client.get("/api/graph")
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Neo4j is not reachable"
+
+
+@pytest.mark.asyncio
+async def test_graph_returns_conflict_when_runtime_health_blocks(client, monkeypatch):
+    class BlockingRuntimeHealthService:
+        def __init__(self, session, *, verify_storage):
+            self.session = session
+            self.verify_storage = verify_storage
+
+        async def check(self, profile):
+            return [
+                RuntimeHealthCheck(
+                    name="pgvector",
+                    status="failed",
+                    severity="blocking",
+                    detail="PGVector health check failed.",
+                ),
+                RuntimeHealthCheck(
+                    name="neo4j",
+                    status="ok",
+                    detail="Neo4j connectivity and authentication succeeded.",
+                ),
+            ]
+
+        def blocking_failures(self, checks):
+            return [item for item in checks if item.status == "failed"]
+
+    class UnusedRuntimeFactory:
+        def __init__(self, settings):
+            self.settings = settings
+
+        def build(self, profile):
+            raise AssertionError("runtime graph should not be built when health fails")
+
+    monkeypatch.setattr(
+        "ragstudio.services.graph_service.RAGAnythingRuntimeFactory",
+        UnusedRuntimeFactory,
+    )
+    monkeypatch.setattr(
+        "ragstudio.services.graph_service.RuntimeHealthService",
+        BlockingRuntimeHealthService,
+    )
+
+    settings = await client.put(
+        "/api/settings/default",
+        json={
+            "provider": "openai-compatible",
+            "runtime_mode": "runtime",
+            "llm_model": "gpt-4o",
+            "embedding_model": "text-embedding-3-large",
+            "storage_backend": "postgres_pgvector_neo4j",
+        },
+    )
+    assert settings.status_code == 200
+
+    response = await client.get("/api/graph")
+
+    assert response.status_code == 409
+    assert "PGVector health check failed" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_graph_returns_conflict_when_neo4j_health_blocks(client, monkeypatch):
+    class BlockingRuntimeHealthService:
+        def __init__(self, session, *, verify_storage):
+            self.session = session
+            self.verify_storage = verify_storage
+
+        async def check(self, profile):
+            return [
+                RuntimeHealthCheck(
+                    name="pgvector",
+                    status="ok",
+                    detail="PGVector extension and schema are reachable.",
+                ),
+                RuntimeHealthCheck(
+                    name="neo4j",
+                    status="failed",
+                    severity="blocking",
+                    detail="Neo4j URI is not configured.",
+                ),
+            ]
+
+        def blocking_failures(self, checks):
+            return [item for item in checks if item.status == "failed"]
+
+    class UnusedRuntimeFactory:
+        def __init__(self, settings):
+            self.settings = settings
+
+        def build(self, profile):
+            raise AssertionError("runtime graph should not be built when health fails")
+
+    monkeypatch.setattr(
+        "ragstudio.services.graph_service.RAGAnythingRuntimeFactory",
+        UnusedRuntimeFactory,
+    )
+    monkeypatch.setattr(
+        "ragstudio.services.graph_service.RuntimeHealthService",
+        BlockingRuntimeHealthService,
+    )
+
+    settings = await client.put(
+        "/api/settings/default",
+        json={
+            "provider": "openai-compatible",
+            "runtime_mode": "runtime",
+            "llm_model": "gpt-4o",
+            "embedding_model": "text-embedding-3-large",
+            "storage_backend": "postgres_pgvector_neo4j",
+        },
+    )
+    assert settings.status_code == 200
+
+    response = await client.get("/api/graph")
+
+    assert response.status_code == 409
+    assert "Neo4j URI is not configured" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
 async def test_diagnostics_returns_capabilities_and_dependency_status(client):
     response = await client.get("/api/diagnostics")
 
@@ -173,6 +344,135 @@ async def test_diagnostics_returns_capabilities_and_dependency_status(client):
         )
     else:
         assert any("./scripts/setup.sh" in warning for warning in payload["warnings"])
+
+
+@pytest.mark.asyncio
+async def test_diagnostics_warns_when_graph_is_disabled_by_fallback_mode(client):
+    response = await client.put(
+        "/api/settings/default",
+        json={
+            "provider": "openai-compatible",
+            "runtime_mode": "fallback",
+            "llm_model": "gpt-4o",
+            "embedding_model": "text-embedding-3-large",
+            "storage_backend": "fallback_local",
+        },
+    )
+    assert response.status_code == 200
+
+    diagnostics = await client.get("/api/diagnostics")
+
+    assert diagnostics.status_code == 200
+    payload = diagnostics.json()
+    assert payload["capabilities"]["graph"] is False
+    assert any(
+        "Graph is unavailable because fallback mode" in warning
+        for warning in payload["warnings"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_diagnostics_reports_native_dependency_status_for_runtime_mode(client):
+    class ReadyRuntimeHealthService:
+        async def check(self, profile):
+            return [
+                RuntimeHealthCheck(
+                    name="raganything",
+                    status="ok",
+                    detail="RAG-Anything package is importable.",
+                ),
+                RuntimeHealthCheck(
+                    name="lightrag",
+                    status="ok",
+                    detail="LightRAG package is importable.",
+                ),
+                RuntimeHealthCheck(
+                    name="neo4j",
+                    status="ok",
+                    detail="Neo4j connectivity and authentication succeeded.",
+                ),
+            ]
+
+        def blocking_failures(self, checks):
+            return []
+
+    settings = await client.put(
+        "/api/settings/default",
+        json={
+            "provider": "openai-compatible",
+            "runtime_mode": "runtime",
+            "llm_model": "gpt-4o",
+            "embedding_model": "text-embedding-3-large",
+            "storage_backend": "postgres_pgvector_neo4j",
+        },
+    )
+    assert settings.status_code == 200
+
+    transport = client._transport
+    async with transport.app.state.session_factory() as session:
+        payload = await DiagnosticsService(
+            session,
+            transport.app.state.settings,
+            health_service=ReadyRuntimeHealthService(),
+        ).get_diagnostics()
+
+    assert payload.capabilities["fallback_active"] is False
+    assert payload.capabilities["graph"] is True
+    assert payload.dependency_status["active_backend"] == "runtime"
+    assert payload.dependency_status["indexing"] == "raganything"
+    assert payload.dependency_status["query"] == "raganything"
+    assert payload.dependency_status["graph"] == "neo4j"
+
+
+@pytest.mark.asyncio
+async def test_diagnostics_requires_runtime_packages_for_native_graph(client):
+    class MissingPackageHealthService:
+        async def check(self, profile):
+            return [
+                RuntimeHealthCheck(
+                    name="raganything",
+                    status="failed",
+                    severity="blocking",
+                    detail="RAG-Anything package is not importable.",
+                ),
+                RuntimeHealthCheck(
+                    name="lightrag",
+                    status="ok",
+                    detail="LightRAG package is importable.",
+                ),
+                RuntimeHealthCheck(
+                    name="neo4j",
+                    status="ok",
+                    detail="Neo4j connectivity and authentication succeeded.",
+                ),
+            ]
+
+        def blocking_failures(self, checks):
+            return [item for item in checks if item.status == "failed"]
+
+    settings = await client.put(
+        "/api/settings/default",
+        json={
+            "provider": "openai-compatible",
+            "runtime_mode": "runtime",
+            "llm_model": "gpt-4o",
+            "embedding_model": "text-embedding-3-large",
+            "storage_backend": "postgres_pgvector_neo4j",
+        },
+    )
+    assert settings.status_code == 200
+
+    transport = client._transport
+    async with transport.app.state.session_factory() as session:
+        payload = await DiagnosticsService(
+            session,
+            transport.app.state.settings,
+            health_service=MissingPackageHealthService(),
+        ).get_diagnostics()
+
+    assert payload.capabilities["graph"] is False
+    assert payload.dependency_status["graph"] == "unavailable"
+    assert payload.overall_status == "failed"
 
 
 def test_diagnostics_suppresses_missing_dependency_warning_when_package_available():

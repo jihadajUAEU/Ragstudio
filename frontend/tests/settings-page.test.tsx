@@ -211,8 +211,8 @@ describe("SettingsPage provider sync", () => {
     renderSettings();
 
     await screen.findByDisplayValue("gpt-4.1");
-    expect(screen.getByRole("option", { name: "Native runtime (blocked)" })).toBeVisible();
-    expect(screen.getByText("Native adapter pending; indexing and query requests will block.")).toBeVisible();
+    expect(screen.getByRole("option", { name: "Native runtime" })).toBeVisible();
+    expect(screen.getByText("Native runtime uses RAG-Anything, PGVector, and Neo4j when dependencies are healthy.")).toBeVisible();
 
     const runtimeMode = screen.getByLabelText("Runtime mode") as HTMLSelectElement;
     const storageBackend = screen.getByLabelText("Storage backend") as HTMLSelectElement;
@@ -220,13 +220,13 @@ describe("SettingsPage provider sync", () => {
     fireEvent.change(runtimeMode, { target: { value: "fallback" } });
     expect(storageBackend.value).toBe("postgres_pgvector_neo4j");
     expect(
-      screen.queryByText("Native adapter pending; indexing and query requests will block."),
+      screen.queryByText("Native runtime uses RAG-Anything, PGVector, and Neo4j when dependencies are healthy."),
     ).not.toBeInTheDocument();
 
     fireEvent.change(storageBackend, { target: { value: "fallback_local" } });
     expect(runtimeMode.value).toBe("fallback");
     expect(
-      screen.queryByText("Native adapter pending; indexing and query requests will block."),
+      screen.queryByText("Native runtime uses RAG-Anything, PGVector, and Neo4j when dependencies are healthy."),
     ).not.toBeInTheDocument();
 
     fireEvent.change(storageBackend, { target: { value: "postgres_pgvector_neo4j" } });
@@ -234,7 +234,7 @@ describe("SettingsPage provider sync", () => {
 
     fireEvent.change(runtimeMode, { target: { value: "runtime" } });
     expect(storageBackend.value).toBe("postgres_pgvector_neo4j");
-    expect(screen.getByText("Native adapter pending; indexing and query requests will block.")).toBeVisible();
+    expect(screen.getByText("Native runtime uses RAG-Anything, PGVector, and Neo4j when dependencies are healthy.")).toBeVisible();
   });
 
   it("submits newly typed secret values", async () => {

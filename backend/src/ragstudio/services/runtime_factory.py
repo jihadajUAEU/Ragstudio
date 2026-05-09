@@ -1,7 +1,9 @@
 from importlib import import_module
 
+from ragstudio.config import AppSettings
 from ragstudio.schemas.runtime import RuntimeProfile
 from ragstudio.services.adapter import RAGAnythingAdapter
+from ragstudio.services.native_raganything_adapter import NativeRAGAnythingAdapter
 from ragstudio.services.runtime_types import RuntimeAdapter
 
 
@@ -10,6 +12,9 @@ class RuntimeUnavailableError(RuntimeError):
 
 
 class RAGAnythingRuntimeFactory:
+    def __init__(self, settings: AppSettings | None = None):
+        self.settings = settings
+
     def build(self, profile: RuntimeProfile) -> RuntimeAdapter:
         if profile.runtime_mode == "fallback":
             return RAGAnythingAdapter()
@@ -20,7 +25,4 @@ class RAGAnythingRuntimeFactory:
             raise RuntimeUnavailableError(
                 "RAG-Anything runtime dependencies are not importable."
             ) from exc
-        raise RuntimeUnavailableError(
-            "Native RAG-Anything runtime adapter is not implemented yet; "
-            "set runtime_mode='fallback' for local fallback behavior."
-        )
+        return NativeRAGAnythingAdapter(profile, self.settings)

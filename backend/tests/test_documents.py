@@ -4,7 +4,7 @@ from pathlib import Path
 
 import httpx
 import pytest
-from ragstudio.db.models import Document, IndexRecord, Job, SettingsProfile
+from ragstudio.db.models import Chunk, Document, IndexRecord, Job, SettingsProfile
 from ragstudio.schemas.common import StageStatus
 from ragstudio.services.document_service import DocumentService
 from ragstudio.services.runtime_types import RuntimeChunk
@@ -94,6 +94,137 @@ async def test_upload_accepts_parser_mode_and_domain_metadata(client):
     )
     assert search_response.status_code == 200
     assert search_response.json()["items"][0]["metadata"]["domain_metadata"]["domain"] == "policy"
+
+
+@pytest.mark.asyncio
+async def test_documents_list_includes_latest_index_options(client, tmp_path):
+    session_factory = client._transport.app.state.session_factory
+    artifact = tmp_path / "uploads" / "indexed-sha"
+    artifact.parent.mkdir(parents=True)
+    artifact.write_text("Quran 1:4", encoding="utf-8")
+    async with session_factory() as session:
+        document = Document(
+            filename="quran.pdf",
+            content_type="application/pdf",
+            sha256="indexed-sha",
+            artifact_path=str(artifact),
+            status=StageStatus.SUCCEEDED.value,
+        )
+        session.add(document)
+        await session.flush()
+        session.add(
+            Chunk(
+                document_id=document.id,
+                text="[1:4] It is You we worship and You we ask for help.",
+                source_location={"page": 2},
+                metadata_json={
+                    "parser_metadata": {
+                        "backend": "mineru",
+                        "parser_mode": "mineru_strict",
+                    },
+                    "domain_metadata": {
+                        "domain": "quran_tafseer",
+                        "document_type": "commentary",
+                        "tags": ["quran"],
+                        "custom_json": {
+                            "reference_schema": {"type": "chapter_verse"},
+                        },
+                    },
+                },
+            )
+        )
+        await session.commit()
+
+    response = await client.get("/api/documents")
+
+    assert response.status_code == 200
+    document = response.json()["items"][0]
+    assert document["latest_index_options"]["parser_mode"] == "mineru_strict"
+    assert document["latest_index_options"]["domain_metadata"]["domain"] == "quran_tafseer"
+    assert document["latest_index_options"]["domain_metadata"]["custom_json"] == {
+        "reference_schema": {"type": "chapter_verse"},
+    }
+
+
+@pytest.mark.asyncio
+async def test_documents_list_infers_mineru_index_options_without_parser_mode(client, tmp_path):
+    session_factory = client._transport.app.state.session_factory
+    artifact = tmp_path / "uploads" / "legacy-mineru-sha"
+    artifact.parent.mkdir(parents=True)
+    artifact.write_text("Quran 1:4", encoding="utf-8")
+    async with session_factory() as session:
+        document = Document(
+            filename="legacy-quran.pdf",
+            content_type="application/pdf",
+            sha256="legacy-mineru-sha",
+            artifact_path=str(artifact),
+            status=StageStatus.SUCCEEDED.value,
+        )
+        session.add(document)
+        await session.flush()
+        session.add(
+            Chunk(
+                document_id=document.id,
+                text="[1:4] It is You we worship and You we ask for help.",
+                source_location={"page": 2},
+                metadata_json={
+                    "parser_metadata": {"backend": "mineru"},
+                    "domain_metadata": {
+                        "domain": "quran_tafseer",
+                        "document_type": "commentary",
+                    },
+                },
+            )
+        )
+        await session.commit()
+
+    response = await client.get("/api/documents")
+
+    document = response.json()["items"][0]
+    assert document["latest_index_options"]["parser_mode"] == "mineru_strict"
+    assert document["latest_index_options"]["domain_metadata"]["domain"] == "quran_tafseer"
+
+
+@pytest.mark.asyncio
+async def test_documents_list_preserves_parser_mode_when_domain_metadata_is_invalid(
+    client,
+    tmp_path,
+):
+    session_factory = client._transport.app.state.session_factory
+    artifact = tmp_path / "uploads" / "invalid-domain-sha"
+    artifact.parent.mkdir(parents=True)
+    artifact.write_text("Quran 1:4", encoding="utf-8")
+    async with session_factory() as session:
+        document = Document(
+            filename="invalid-domain.pdf",
+            content_type="application/pdf",
+            sha256="invalid-domain-sha",
+            artifact_path=str(artifact),
+            status=StageStatus.SUCCEEDED.value,
+        )
+        session.add(document)
+        await session.flush()
+        session.add(
+            Chunk(
+                document_id=document.id,
+                text="[1:4] It is You we worship and You we ask for help.",
+                source_location={"page": 2},
+                metadata_json={
+                    "parser_metadata": {
+                        "backend": "mineru",
+                        "parser_mode": "mineru_strict",
+                    },
+                    "domain_metadata": {"domain": 123, "tags": "quran"},
+                },
+            )
+        )
+        await session.commit()
+
+    response = await client.get("/api/documents")
+
+    document = response.json()["items"][0]
+    assert document["latest_index_options"]["parser_mode"] == "mineru_strict"
+    assert document["latest_index_options"]["domain_metadata"]["domain"] == "generic"
 
 
 @pytest.mark.asyncio
@@ -555,7 +686,8 @@ async def test_duplicate_upload_requires_runtime_index_when_profile_changes(clie
     )
 
     assert second_response.status_code == 409
-    assert "native_runtime_adapter" in second_response.json()["detail"]
+    detail = second_response.json()["detail"].lower()
+    assert "raganything" in detail or "lightrag" in detail or "neo4j" in detail
 
 
 @pytest.mark.asyncio
@@ -583,7 +715,8 @@ async def test_runtime_blocked_mineru_strict_upload_returns_conflict(client):
     )
 
     assert response.status_code == 409
-    assert "native_runtime_adapter" in response.json()["detail"]
+    detail = response.json()["detail"].lower()
+    assert "raganything" in detail or "lightrag" in detail or "neo4j" in detail
 
 
 @pytest.mark.asyncio
@@ -617,7 +750,8 @@ async def test_duplicate_runtime_blocked_mineru_strict_upload_returns_conflict(c
     )
 
     assert second_response.status_code == 409
-    assert "native_runtime_adapter" in second_response.json()["detail"]
+    detail = second_response.json()["detail"].lower()
+    assert "raganything" in detail or "lightrag" in detail or "neo4j" in detail
 
 
 @pytest.mark.asyncio

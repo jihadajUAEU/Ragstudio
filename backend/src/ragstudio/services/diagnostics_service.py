@@ -54,12 +54,23 @@ class DiagnosticsService:
         blocking = health_service.blocking_failures(checks)
         runtime_mode = profile.runtime_mode if profile else "fallback"
         overall_status = self._overall_status(runtime_mode, checks, blocking)
-        raganything_available = bool(report.get("raganything_available"))
+        dependency_report = (
+            report
+            if runtime_mode == "fallback"
+            else self._runtime_dependency_report(checks, blocking)
+        )
+        raganything_available = bool(dependency_report.get("raganything_available"))
 
         if not raganything_available:
             warnings.append(
                 "raganything runtime dependencies are not importable in this Python "
                 "environment; runtime mode cannot execute. Run ./scripts/setup.sh."
+            )
+        if runtime_mode == "fallback":
+            warnings.append(
+                "Graph is unavailable because fallback mode uses the local placeholder "
+                "adapter. Native graph support requires runtime mode with healthy "
+                "RAG-Anything and Neo4j dependencies."
             )
 
         return DiagnosticsOut(
@@ -68,11 +79,9 @@ class DiagnosticsService:
                 "fallback_active": runtime_mode == "fallback",
                 "indexing": not blocking,
                 "query": not blocking,
-                "graph": any(
-                    item.name == "neo4j" and item.status == "ok" for item in checks
-                ),
+                "graph": dependency_report.get("graph") == "neo4j",
             },
-            dependency_status=self._dependency_status(report),
+            dependency_status=self._dependency_status(dependency_report),
             warnings=warnings,
             runtime_mode=runtime_mode,
             overall_status=overall_status,
@@ -109,6 +118,30 @@ class DiagnosticsService:
             "indexing": report.get("indexing"),
             "query": report.get("query"),
             "graph": report.get("graph"),
+        }
+
+    def _runtime_dependency_report(
+        self,
+        checks: list[Any],
+        blocking: list[Any],
+    ) -> dict[str, Any]:
+        by_name = {item.name: item for item in checks}
+        runtime_available = not blocking
+        graph_available = (
+            runtime_available
+            and by_name.get("neo4j") is not None
+            and by_name["neo4j"].status == "ok"
+        )
+        raganything_available = (
+            by_name.get("raganything") is not None
+            and by_name["raganything"].status == "ok"
+        )
+        return {
+            "raganything_available": raganything_available,
+            "active_backend": "runtime",
+            "indexing": "raganything" if runtime_available else "unavailable",
+            "query": "raganything" if runtime_available else "unavailable",
+            "graph": "neo4j" if graph_available else "unavailable",
         }
 
     def _overall_status(

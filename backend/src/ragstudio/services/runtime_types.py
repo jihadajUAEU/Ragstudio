@@ -31,7 +31,12 @@ class RuntimeAdapter(Protocol):
     def capability_report(self) -> dict[str, Any]:
         raise NotImplementedError
 
-    async def index_document(self, artifact_path: str | Path) -> list[RuntimeChunk]:
+    async def index_document(
+        self,
+        artifact_path: str | Path,
+        *,
+        document_id: str | None = None,
+    ) -> list[RuntimeChunk]:
         raise NotImplementedError
 
     async def query(
@@ -44,4 +49,7 @@ class RuntimeAdapter(Protocol):
         raise NotImplementedError
 
     async def delete_document_index(self, document_id: str) -> None:
+        raise NotImplementedError
+
+    async def graph(self) -> dict[str, Any]:
         raise NotImplementedError

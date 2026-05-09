@@ -503,6 +503,78 @@ async def test_search_exact_reference_uses_explicit_reference_list_across_chapte
 
 
 @pytest.mark.asyncio
+async def test_search_chapter_only_reference_returns_requested_surah(client):
+    upload_response = await client.post(
+        "/api/documents",
+        files={"file": ("quran.txt", b"surah sample", "text/plain")},
+    )
+    document_id = upload_response.json()["id"]
+
+    app = client._transport.app
+    async with app.state.session_factory() as session:
+        session.add_all(
+            [
+                Chunk(
+                    document_id=document_id,
+                    text="Surah 109\n\n[109:2]\n\nI do not worship what you worship.",
+                    source_location={"page_start": 602},
+                    metadata_json={
+                        "domain_metadata": {
+                            "custom_json": {
+                                "reference_schema": {"type": "surah_ayah"},
+                                "retrieval": {"boost_same_chapter": True},
+                            }
+                        },
+                        "reference_metadata": {
+                            "chapter_start": 109,
+                            "chapter_end": 109,
+                            "verse_start": 1,
+                            "verse_end": 6,
+                            "references": ["109:1", "109:2"],
+                        },
+                    },
+                ),
+                Chunk(
+                    document_id=document_id,
+                    text=(
+                        "Surah 113\n\n"
+                        "[113:1]\n\nSay, I seek refuge in the Lord of daybreak.\n\n"
+                        "[113:2]\n\nFrom the evil of that which He created."
+                    ),
+                    source_location={"page_start": 605},
+                    metadata_json={
+                        "domain_metadata": {
+                            "custom_json": {
+                                "reference_schema": {"type": "surah_ayah"},
+                                "retrieval": {"boost_same_chapter": True},
+                            }
+                        },
+                        "reference_metadata": {
+                            "chapter_start": 113,
+                            "chapter_end": 113,
+                            "verse_start": 1,
+                            "verse_end": 5,
+                            "references": ["113:1", "113:2"],
+                        },
+                    },
+                ),
+            ]
+        )
+        await session.commit()
+
+    response = await client.post(
+        "/api/chunks/search",
+        json={"query": "what is surah 113", "document_ids": [document_id], "limit": 2},
+    )
+
+    assert response.status_code == 200
+    items = response.json()["items"]
+    assert items[0]["text"].startswith("Surah 113")
+    assert items[0]["metadata"]["score_breakdown"]["same_chapter"] == 60.0
+    assert items[0]["metadata"]["retrieval_explain"]["query_reference"] == "chapter:113"
+
+
+@pytest.mark.asyncio
 async def test_search_respects_disabled_reference_boosts(client):
     upload_response = await client.post(
         "/api/documents",
@@ -924,7 +996,8 @@ async def test_runtime_index_route_reports_blocking_health_as_conflict(client):
     response = await client.post(f"/api/chunks/index/{document_id}")
 
     assert response.status_code == 409
-    assert "native_runtime_adapter" in response.json()["detail"]
+    detail = response.json()["detail"].lower()
+    assert "raganything" in detail or "lightrag" in detail or "neo4j" in detail
 
 
 @pytest.mark.asyncio

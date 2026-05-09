@@ -45,8 +45,8 @@ class QueryService:
         self.data_dir = data_dir
         self.adapter = adapter or RAGAnythingAdapter()
         self.settings = settings
-        self.runtime_factory = runtime_factory or RAGAnythingRuntimeFactory()
-        self.health_service = health_service or RuntimeHealthService()
+        self.runtime_factory = runtime_factory or self._runtime_factory(settings)
+        self.health_service = health_service or self._health_service(session)
         self.normalizer = normalizer or TraceNormalizer()
 
     async def run_query(self, payload: QueryIn) -> QueryOut:
@@ -419,3 +419,15 @@ class QueryService:
 
     def _elapsed_ms(self, started_at: float) -> float:
         return round((perf_counter() - started_at) * 1000, 3)
+
+    def _runtime_factory(self, settings: AppSettings | None) -> Any:
+        try:
+            return RAGAnythingRuntimeFactory(settings)
+        except TypeError:
+            return RAGAnythingRuntimeFactory()
+
+    def _health_service(self, session: AsyncSession) -> Any:
+        try:
+            return RuntimeHealthService(session, verify_storage=True)
+        except TypeError:
+            return RuntimeHealthService()

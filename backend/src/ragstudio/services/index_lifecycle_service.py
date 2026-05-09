@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from inspect import signature
 from typing import Any
 
 from ragstudio.config import AppSettings
@@ -7,8 +8,8 @@ from ragstudio.schemas.chunks import ChunkOut
 from ragstudio.schemas.common import StageStatus
 from ragstudio.schemas.parsing import IndexDocumentIn
 from ragstudio.services.adapter import AdapterChunk
-from ragstudio.services.chunk_splitter import ChunkSplitter
 from ragstudio.services.chunk_sanitizer import sanitize_db_text, sanitize_db_value
+from ragstudio.services.chunk_splitter import ChunkSplitter
 from ragstudio.services.runtime_factory import RAGAnythingRuntimeFactory
 from ragstudio.services.runtime_health_service import RuntimeHealthService
 from ragstudio.services.runtime_profile_service import RuntimeProfileService
@@ -33,8 +34,8 @@ class IndexLifecycleService:
     ):
         self.session = session
         self.settings = settings
-        self.runtime_factory = runtime_factory or RAGAnythingRuntimeFactory()
-        self.health_service = health_service or RuntimeHealthService()
+        self.runtime_factory = runtime_factory or self._runtime_factory(settings)
+        self.health_service = health_service or self._health_service(session)
         self.normalizer = normalizer or TraceNormalizer()
 
     async def reindex_document(
@@ -64,7 +65,11 @@ class IndexLifecycleService:
             delete(IndexRecord).where(IndexRecord.document_id == document.id)
         )
 
-        runtime_chunks = await runtime.index_document(document.artifact_path)
+        runtime_chunks = await self._index_runtime_document(
+            runtime,
+            document.artifact_path,
+            document.id,
+        )
         indexed_at = datetime.now(UTC)
         normalized_chunks: list[AdapterChunk] = [
             self.normalizer.chunk_to_adapter_chunk(
@@ -117,6 +122,29 @@ class IndexLifecycleService:
         for chunk in chunks:
             await self.session.refresh(chunk)
         return [ChunkOut.model_validate(chunk) for chunk in chunks]
+
+    async def _index_runtime_document(
+        self,
+        runtime: Any,
+        artifact_path: str,
+        document_id: str,
+    ) -> list[Any]:
+        parameters = signature(runtime.index_document).parameters
+        if "document_id" in parameters:
+            return await runtime.index_document(artifact_path, document_id=document_id)
+        return await runtime.index_document(artifact_path)
+
+    def _runtime_factory(self, settings: AppSettings) -> Any:
+        try:
+            return RAGAnythingRuntimeFactory(settings)
+        except TypeError:
+            return RAGAnythingRuntimeFactory()
+
+    def _health_service(self, session: AsyncSession) -> RuntimeHealthService:
+        try:
+            return RuntimeHealthService(session, verify_storage=True)
+        except TypeError:
+            return RuntimeHealthService()
 
     def _merge_options_metadata(
         self,

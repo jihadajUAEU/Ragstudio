@@ -52,17 +52,6 @@ class RuntimeHealthService:
         return [
             self._package_check("raganything", "RAG-Anything package"),
             self._package_check("lightrag", "LightRAG package"),
-            RuntimeHealthCheck(
-                name="native_runtime_adapter",
-                status="failed",
-                severity="blocking",
-                detail=(
-                    "Native RAG-Anything adapter mapping is not implemented yet; "
-                    "use fallback mode until the upstream adapter is completed."
-                ),
-                error_type="runtime_adapter_not_implemented",
-                remediation="Set runtime mode to fallback or implement the native adapter.",
-            ),
             self._required_url_check("llm", profile.llm_base_url, "LLM base URL"),
             self._vision_check(profile),
             self._required_url_check(

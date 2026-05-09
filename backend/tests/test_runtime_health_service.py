@@ -92,13 +92,11 @@ async def test_runtime_health_skips_native_checks_in_fallback_mode():
 
 
 @pytest.mark.asyncio
-async def test_runtime_health_blocks_until_native_adapter_is_implemented():
+async def test_runtime_health_uses_dependency_checks_for_native_runtime():
     checks = await RuntimeHealthService().check(profile())
 
-    adapter = next(item for item in checks if item.name == "native_runtime_adapter")
-    assert adapter.status == "failed"
-    assert adapter.severity == "blocking"
-    assert adapter.error_type == "runtime_adapter_not_implemented"
+    assert all(item.name != "native_runtime_adapter" for item in checks)
+    assert {item.name for item in checks} >= {"raganything", "lightrag", "neo4j"}
 
 
 @pytest.mark.asyncio
