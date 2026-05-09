@@ -17,6 +17,9 @@ class RuntimeGraphUnavailableError(RuntimeError):
     pass
 
 
+GLOBAL_FALLBACK_GRAPH_ID_PREFIXES = ("ref:", "reference:", "topic:")
+
+
 class GraphService:
     def __init__(
         self,
@@ -76,13 +79,15 @@ class GraphService:
     async def _relationship_metadata_graph(self) -> dict[str, list[dict[str, Any]]]:
         if self.session is None:
             return {"nodes": [], "edges": []}
-        result = await self.session.execute(select(Chunk))
+        result = await self.session.execute(
+            select(Chunk.id, Chunk.document_id, Chunk.source_location, Chunk.metadata_json)
+        )
         nodes: dict[str, dict[str, Any]] = {}
         edges: dict[str, dict[str, Any]] = {}
-        for chunk in result.scalars().all():
-            metadata = chunk.metadata_json if isinstance(chunk.metadata_json, dict) else {}
+        for _chunk_id, document_id, source_location_raw, metadata_raw in result.all():
+            metadata = metadata_raw if isinstance(metadata_raw, dict) else {}
             source_location = (
-                chunk.source_location if isinstance(chunk.source_location, dict) else {}
+                source_location_raw if isinstance(source_location_raw, dict) else {}
             )
             relationship_metadata = metadata.get("relationship_metadata", {})
             if not isinstance(relationship_metadata, dict):
@@ -100,42 +105,50 @@ class GraphService:
                     isinstance(value, str) and value for value in [source, target, rel_type]
                 ):
                     continue
+                source_id = self._fallback_graph_node_id(source, document_id)
+                target_id = self._fallback_graph_node_id(target, document_id)
                 nodes.setdefault(
-                    source,
+                    source_id,
                     {
-                        "id": source,
+                        "id": source_id,
                         "labels": ["FallbackRelationship"],
                         "properties": {
                             "label": relationship.get("source_label", source),
-                            "document_id": chunk.document_id,
+                            "document_id": document_id,
                             **source_location,
                         },
                     },
                 )
                 nodes.setdefault(
-                    target,
+                    target_id,
                     {
-                        "id": target,
+                        "id": target_id,
                         "labels": ["FallbackRelationship"],
                         "properties": {
                             "label": relationship.get("target_label", target),
-                            "document_id": chunk.document_id,
+                            "document_id": document_id,
                             **source_location,
                         },
                     },
                 )
-                edge_id = f"{source}-{target}-{rel_type}"
+                edge_id = f"{source_id}-{target_id}-{rel_type}"
                 edges.setdefault(
                     edge_id,
                     {
                         "id": edge_id,
-                        "source": source,
-                        "target": target,
+                        "source": source_id,
+                        "target": target_id,
                         "type": rel_type,
                         "properties": {
-                            "document_id": chunk.document_id,
+                            "document_id": document_id,
                             **source_location,
                         },
                     },
                 )
         return {"nodes": list(nodes.values()), "edges": list(edges.values())}
+
+    @staticmethod
+    def _fallback_graph_node_id(raw_id: str, document_id: str) -> str:
+        if raw_id.startswith(GLOBAL_FALLBACK_GRAPH_ID_PREFIXES):
+            return raw_id
+        return f"document:{document_id}:{raw_id}"

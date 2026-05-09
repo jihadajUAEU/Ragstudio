@@ -210,6 +210,95 @@ async def test_graph_service_builds_fallback_graph_from_chunk_relationship_metad
 
 
 @pytest.mark.asyncio
+async def test_graph_service_namespaces_chunk_local_relationship_nodes(client):
+    from ragstudio.db.models import Chunk, Document
+    from ragstudio.schemas.common import StageStatus
+    from ragstudio.services.graph_service import GraphService
+
+    app = client._transport.app
+    async with app.state.session_factory() as session:
+        first_document = Document(
+            filename="relationships-one.txt",
+            content_type="text/plain",
+            sha256="relationships-graph-one",
+            artifact_path=str(app.state.settings.data_dir / "relationships-one.txt"),
+            status=StageStatus.SUCCEEDED.value,
+        )
+        second_document = Document(
+            filename="relationships-two.txt",
+            content_type="text/plain",
+            sha256="relationships-graph-two",
+            artifact_path=str(app.state.settings.data_dir / "relationships-two.txt"),
+            status=StageStatus.SUCCEEDED.value,
+        )
+        session.add_all([first_document, second_document])
+        await session.flush()
+        session.add_all(
+            [
+                Chunk(
+                    document_id=first_document.id,
+                    text="First document chunk.",
+                    source_location={"page": 1},
+                    metadata_json={
+                        "relationship_metadata": {
+                            "graph_relationships": [
+                                {
+                                    "source": "chunk:0",
+                                    "target": "topic:shared",
+                                    "type": "mentions",
+                                    "source_label": "First chunk",
+                                    "target_label": "Shared topic",
+                                }
+                            ]
+                        }
+                    },
+                ),
+                Chunk(
+                    document_id=second_document.id,
+                    text="Second document chunk.",
+                    source_location={"page": 2},
+                    metadata_json={
+                        "relationship_metadata": {
+                            "graph_relationships": [
+                                {
+                                    "source": "chunk:0",
+                                    "target": "topic:shared",
+                                    "type": "mentions",
+                                    "source_label": "Second chunk",
+                                    "target_label": "Shared topic",
+                                }
+                            ]
+                        }
+                    },
+                ),
+            ]
+        )
+        await session.commit()
+
+        graph = await GraphService(session, app.state.settings).get_graph()
+
+    chunk_nodes = [node for node in graph.nodes if node["id"].endswith(":chunk:0")]
+    assert len(chunk_nodes) == 2
+    assert {node["properties"]["document_id"] for node in chunk_nodes} == {
+        first_document.id,
+        second_document.id,
+    }
+    assert {node["properties"]["page"] for node in chunk_nodes} == {1, 2}
+    assert {node["id"] for node in graph.nodes if node["id"] == "topic:shared"} == {
+        "topic:shared"
+    }
+
+    chunk_edges = [edge for edge in graph.edges if edge["target"] == "topic:shared"]
+    assert len(chunk_edges) == 2
+    assert {edge["properties"]["document_id"] for edge in chunk_edges} == {
+        first_document.id,
+        second_document.id,
+    }
+    assert {edge["properties"]["page"] for edge in chunk_edges} == {1, 2}
+    assert len({edge["source"] for edge in chunk_edges}) == 2
+
+
+@pytest.mark.asyncio
 async def test_graph_returns_conflict_when_native_graph_unavailable(client, monkeypatch):
     class ReadyRuntimeHealthService:
         def __init__(self, session, *, verify_storage):
