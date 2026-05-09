@@ -90,6 +90,50 @@ async def upload_document(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
+@router.post("/{document_id}/reindex", status_code=status.HTTP_202_ACCEPTED)
+async def reindex_document(
+    document_id: str,
+    options: IndexDocumentIn,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, str]:
+    settings = request.app.state.settings
+    try:
+        service = DocumentService(
+            session,
+            settings.data_dir,
+            settings=settings,
+        )
+        if not await service.document_exists(document_id):
+            raise HTTPException(status_code=404, detail="Document not found")
+        await _ensure_runtime_ready(session, settings)
+        job = await service.create_index_job(document_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="Document not found")
+        create_background_task(
+            request.app,
+            _run_index_job(settings, document_id, job.id, options),
+        )
+        return {"document_id": document_id, "job_id": job.id, "status": job.status}
+    except (RuntimeHealthBlockedError, RuntimeUnavailableError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+async def _ensure_runtime_ready(session: AsyncSession, settings: AppSettings) -> None:
+    try:
+        profile = await RuntimeProfileService(session, settings).get_active_profile()
+    except RuntimeProfileNotConfiguredError:
+        profile = None
+    if profile is None or profile.runtime_mode == "fallback":
+        return
+    health_service = RuntimeHealthService()
+    checks = await health_service.check(profile)
+    blocking = health_service.blocking_failures(checks)
+    if blocking:
+        detail = "; ".join(f"{item.name}: {item.detail}" for item in blocking)
+        raise HTTPException(status_code=409, detail=detail)
+
+
 async def _run_index_job(
     settings: AppSettings,
     document_id: str,
@@ -190,6 +234,4 @@ async def delete_document(
     ).delete_document(document_id)
     if result == "not_found":
         raise HTTPException(status_code=404, detail="Document not found")
-    if result == "active_job":
-        raise HTTPException(status_code=409, detail="Document has an active indexing job")
     return Response(status_code=status.HTTP_204_NO_CONTENT)

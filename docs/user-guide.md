@@ -91,7 +91,7 @@ Fields and controls:
 
 Tables:
 
-- `Documents`: `Document`, `Status`, and `SHA-256`.
+- `Documents`: `Document`, `Status`, and available row actions.
 - `Jobs`: `Job`, `Progress`, `Status`, and `Latest log`.
 
 Duplicate uploads are detected by SHA-256. If a duplicate document is missing chunks, Studio re-indexes it.

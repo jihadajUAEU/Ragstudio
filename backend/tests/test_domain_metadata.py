@@ -3,6 +3,7 @@ import httpx
 
 from ragstudio.db.models import SettingsProfile
 from ragstudio.services.domain_metadata_ai_suggester import DomainMetadataAiSuggester
+from ragstudio.services.metadata_json_schema import validate_custom_json
 from ragstudio.services.page_sampler import SampledPage
 
 
@@ -19,6 +20,62 @@ async def test_domain_profiles_include_general_and_islamic_builtins(client):
     assert "Hadith" in names
     assert "Quran/Tafseer" in names
     assert "Fatwa/Fiqh" in names
+
+
+@pytest.mark.asyncio
+async def test_reference_json_example_endpoint(client):
+    response = await client.get("/api/domain-profiles/reference-json-example")
+
+    assert response.status_code == 200
+    custom_json = response.json()["custom_json"]
+    assert "reference_schema" in custom_json
+    assert "chunking" in custom_json
+    assert "retrieval" in custom_json
+
+
+def test_validate_custom_json_accepts_quran_style_relationships():
+    custom_json = {
+        "reference_schema": {
+            "type": "surah_ayah",
+            "display": "Quran {chapter}:{verse}",
+            "fields": {
+                "chapter": "surah",
+                "verse": "ayah",
+                "page": "page_start",
+            },
+        },
+        "relationships": {
+            "previous": ["same_chapter", "verse - 1"],
+            "next": ["same_chapter", "verse + 1"],
+            "chapter": ["same_chapter"],
+            "page": ["same_page"],
+        },
+        "chunking": {
+            "unit": "verse",
+            "include_neighbors": 1,
+            "preserve_parallel_text": True,
+        },
+        "retrieval": {
+            "exact_reference_top1": True,
+            "boost_same_chapter": True,
+            "boost_neighbor_verses": True,
+        },
+    }
+
+    assert validate_custom_json(custom_json) is custom_json
+
+
+def test_validate_custom_json_rejects_invalid_include_neighbors_boolean():
+    with pytest.raises(ValueError, match="include_neighbors"):
+        validate_custom_json({"chunking": {"include_neighbors": True}})
+
+
+def test_validate_custom_json_rejects_invalid_retrieval_booleans():
+    with pytest.raises(ValueError, match="retrieval values must be booleans"):
+        validate_custom_json({"retrieval": {"exact_reference_top1": "true"}})
+
+    with pytest.raises(ValueError, match="retrieval values must be booleans"):
+        validate_custom_json({"retrieval": {"boost_same_chapter": 1}})
 
 
 @pytest.mark.asyncio
@@ -186,6 +243,127 @@ async def test_ai_domain_metadata_suggester_uses_images_for_vision_capable_llm(m
     assert result.evidence_pages == [2]
     assert calls[0]["url"] == "http://llm.test/v1/chat/completions"
     assert calls[0]["json"]["messages"][0]["content"][1]["type"] == "image_url"
+
+
+@pytest.mark.asyncio
+async def test_ai_domain_metadata_suggester_preserves_reference_custom_json(monkeypatch):
+    calls = []
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": """{
+                              "domain_metadata": {
+                                "domain": "reference_text",
+                                "document_type": "annotated_source",
+                                "language": "mixed",
+                                "tags": ["reference-heavy"],
+                                "reference_pattern": "chapter:verse",
+                                "expected_structure": "numbered_reference_units",
+                                "custom_json": {
+                                  "reference_schema": {
+                                    "type": "chapter_verse",
+                                    "display": "{chapter}:{verse}",
+                                    "fields": {
+                                      "chapter": "chapter_number",
+                                      "verse": "verse_number",
+                                      "page": "page_number"
+                                    }
+                                  },
+                                  "relationships": {
+                                    "previous": ["same_chapter", "verse - 1"],
+                                    "next": ["same_chapter", "verse + 1"],
+                                    "page": ["same_page"]
+                                  },
+                                  "chunking": {
+                                    "unit": "verse",
+                                    "include_neighbors": 1,
+                                    "preserve_parallel_text": true
+                                  },
+                                  "retrieval": {
+                                    "exact_reference_top1": true,
+                                    "boost_neighbor_verses": true
+                                  }
+                                },
+                                "metadata_sources": ["model_supplied"]
+                              },
+                              "confidence": 0.86,
+                              "evidence_pages": [1, 2, 3, 4],
+                              "rationale": "Samples show repeated structured references.",
+                              "warnings": []
+                            }"""
+                        }
+                    }
+                ]
+            }
+
+    class FakeClient:
+        def __init__(self, timeout):
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def post(self, url, headers, json):
+            calls.append({"url": url, "headers": headers, "json": json})
+            return FakeResponse()
+
+    monkeypatch.setattr(
+        "ragstudio.services.domain_metadata_ai_suggester.httpx.AsyncClient",
+        FakeClient,
+    )
+
+    result = await DomainMetadataAiSuggester().suggest(
+        settings_profile=SettingsProfile(
+            id="default",
+            provider="openai-compatible",
+            llm_model="vision-capable-model",
+            llm_base_url="http://llm.test/v1",
+            llm_capabilities=["vision"],
+            embedding_model="embedding-model",
+            storage_backend="postgres",
+        ),
+        filename="reference-text.pdf",
+        content_type="application/pdf",
+        pages=[
+            SampledPage(
+                page_number=page_number,
+                text=f"[1:{page_number}] Structured referenced text",
+                image_data_url=f"data:image/png;base64,page{page_number}",
+            )
+            for page_number in range(1, 6)
+        ],
+        sampler_warnings=[],
+    )
+
+    prompt = calls[0]["json"]["messages"][0]["content"][0]["text"]
+    assert "custom_json.reference_schema" in prompt
+    assert "custom_json.relationships" in prompt
+    assert "custom_json.chunking" in prompt
+    assert "custom_json.retrieval" in prompt
+    assert "legal sections/subsections" in prompt
+    assert "page-line references" in prompt
+    assert "Page 4 text excerpt" in prompt
+    assert "Page 5 text excerpt" not in prompt
+    assert len(calls[0]["json"]["messages"][0]["content"]) == 5
+
+    custom_json = result.domain_metadata.custom_json
+    assert custom_json["reference_schema"]["type"] == "chapter_verse"
+    assert custom_json["reference_schema"]["fields"]["verse"] == "verse_number"
+    assert custom_json["relationships"]["next"] == ["same_chapter", "verse + 1"]
+    assert custom_json["chunking"]["unit"] == "verse"
+    assert custom_json["chunking"]["include_neighbors"] == 1
+    assert custom_json["retrieval"]["exact_reference_top1"] is True
+    assert custom_json["retrieval"]["boost_neighbor_verses"] is True
+    assert result.domain_metadata.metadata_sources == ["ai_vision"]
 
 
 @pytest.mark.asyncio

@@ -159,3 +159,127 @@ def test_chunk_splitter_invalid_content_list_falls_back_to_markdown(tmp_path: Pa
 
     assert len(split) == 2
     assert all(len(item.text.split()) <= 1500 for item in split)
+
+
+def test_chunk_splitter_uses_scripture_profile_from_editable_metadata_json():
+    chunk = AdapterChunk(
+        text=(
+            "Surah 1\n\n"
+            "[1:1]\n\n[All] praise is [due] to Allah, Lord of the worlds -\n\n"
+            "[1:2]\n\nThe Entirely Merciful, the Especially Merciful,"
+        ),
+        source_location={"artifact": "source/auto/source.md", "page_start": 2, "page_end": 2},
+        metadata={"parser_metadata": {"backend": "mineru", "chunk_index": 0}},
+    )
+    metadata = DomainMetadata(
+        domain="religion",
+        document_type="religious_text",
+        tags=["quran"],
+        custom_json={
+            "reference_schema": {"type": "surah_ayah"},
+            "chunking": {"unit": "verse", "include_neighbors": 1, "preserve_parallel_text": True},
+            "retrieval": {"exact_reference_top1": True},
+        },
+    )
+
+    split = ChunkSplitter(max_words=1500).split(
+        [chunk],
+        domain_metadata=metadata,
+        parser_mode="mineru_strict",
+    )
+
+    assert split[0].metadata["parser_metadata"]["split_profile"] == "scripture_reference"
+    assert split[0].metadata["reference_metadata"]["reference_type"] == "surah_ayah"
+    assert split[0].metadata["reference_metadata"]["references"] == ["1:1", "1:2"]
+    assert split[0].metadata["reference_metadata"]["page_start"] == 2
+    assert split[0].metadata["reference_metadata"]["page_end"] == 2
+    assert "previous_ref" not in split[0].metadata["reference_metadata"]
+    assert split[0].metadata["reference_metadata"]["next_ref"] == "1:3"
+
+
+def test_chunk_splitter_selects_scripture_profile_from_standard_fields():
+    chunk = AdapterChunk(
+        text="Surah 2\n\n[2:2]\n\nThis is the Book about which there is no doubt.",
+        source_location={"artifact": "source/auto/source.md", "page_start": 3, "page_end": 3},
+        metadata={"parser_metadata": {"backend": "mineru", "chunk_index": 0}},
+    )
+
+    split = ChunkSplitter(max_words=1500).split(
+        [chunk],
+        domain_metadata=DomainMetadata(
+            domain="religion",
+            document_type="religious_text",
+            tags=["quran", "translation"],
+            reference_pattern="surah_number:verse_number",
+            expected_structure="parallel_text",
+        ),
+        parser_mode="mineru_strict",
+    )
+
+    assert split[0].metadata["parser_metadata"]["split_profile"] == "scripture_reference"
+    assert split[0].metadata["reference_metadata"]["chapter_start"] == 2
+    assert split[0].metadata["reference_metadata"]["verse_start"] == 2
+
+
+def test_chunk_splitter_preserves_title_as_small_metadata_chunk():
+    chunk = AdapterChunk(
+        text=(
+            "The Holy Quran\n\n"
+            "Arabic Text with English Translation\n\n"
+            "Surah 1\n\n[1:1]\n\n[All] praise is [due] to Allah, Lord of the worlds -"
+        ),
+        source_location={"artifact": "source/auto/source.md", "page_start": 1, "page_end": 2},
+        metadata={"parser_metadata": {"backend": "mineru", "chunk_index": 0}},
+    )
+
+    split = ChunkSplitter(max_words=1500).split(
+        [chunk],
+        domain_metadata=DomainMetadata(
+            domain="religion",
+            tags=["quran"],
+            reference_pattern="surah_number:verse_number",
+        ),
+        parser_mode="mineru_strict",
+    )
+
+    assert [item.text for item in split] == [
+        "The Holy Quran\n\nArabic Text with English Translation",
+        "Surah 1\n\n[1:1]\n\n[All] praise is [due] to Allah, Lord of the worlds -",
+    ]
+    title_chunk = split[0]
+    assert title_chunk.metadata["parser_metadata"]["split_profile"] == "scripture_reference"
+    assert title_chunk.metadata["document_metadata"]["title"] == (
+        "The Holy Quran Arabic Text with English Translation"
+    )
+
+
+def test_chunk_splitter_cleans_obvious_mineru_noise_without_removing_text():
+    arabic_text = "\u0627\u0644\u062d\u0645\u062f \u0644\u0644\u0647"
+    chunk = AdapterChunk(
+        text=(
+            "Surah 1\n\n"
+            "$$ \\theta = \\alpha \\beta $$\n\n"
+            "[1:3]\n\n"
+            f"Arabic text stays. {arabic_text}\n\n"
+            "|\n\n"
+            "English text stays."
+        ),
+        source_location={"artifact": "source/auto/source.md", "page_start": 4, "page_end": 4},
+        metadata={"parser_metadata": {"backend": "mineru", "chunk_index": 0}},
+    )
+
+    split = ChunkSplitter(max_words=1500).split(
+        [chunk],
+        domain_metadata=DomainMetadata(
+            domain="religion",
+            tags=["quran"],
+            reference_pattern="surah_number:verse_number",
+        ),
+        parser_mode="mineru_strict",
+    )
+
+    assert "$$" not in split[0].text
+    assert "\n|\n" not in split[0].text
+    assert f"Arabic text stays. {arabic_text}" in split[0].text
+    assert "English text stays." in split[0].text
+    assert split[0].metadata["reference_metadata"]["references"] == ["1:3"]

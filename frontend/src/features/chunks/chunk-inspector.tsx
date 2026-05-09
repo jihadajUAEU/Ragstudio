@@ -36,6 +36,13 @@ interface SearchRequest {
   filters: ChunkSearchIn;
 }
 
+interface RetrievalExplain {
+  query_reference?: string | null;
+  matched_references?: string[];
+  relationship_refs?: Record<string, string>;
+  signals?: Array<{ name: string; value: number }>;
+}
+
 export function ChunkInspector() {
   const queryClient = useQueryClient();
   const documentsQuery = useQuery({ queryKey: queryKeys.documents, queryFn: apiClient.documents });
@@ -253,6 +260,8 @@ export function ChunkInspector() {
 }
 
 function ChunkCard({ chunk }: { chunk: ChunkOut }) {
+  const retrievalExplain = getRetrievalExplain(chunk.metadata);
+
   return (
     <article className="rounded-md border border-[#d6dde1] bg-white p-4">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
@@ -270,11 +279,64 @@ function ChunkCard({ chunk }: { chunk: ChunkOut }) {
         </div>
       </div>
       <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-[#24313a]">{chunk.text}</p>
+      {retrievalExplain ? <RetrievalExplainPanel explain={retrievalExplain} /> : null}
       <div className="mt-4 grid gap-3 lg:grid-cols-2">
         <JsonBlock title="Source location" value={chunk.source_location} />
         <JsonBlock title="Snapshot metadata" value={chunk.metadata} />
       </div>
     </article>
+  );
+}
+
+function RetrievalExplainPanel({ explain }: { explain: RetrievalExplain }) {
+  const relationshipRefs = Object.entries(explain.relationship_refs ?? {});
+  const signals = explain.signals ?? [];
+
+  return (
+    <section
+      aria-label="Retrieval explain"
+      className="mt-4 rounded-md border border-[#dce5e8] bg-[#f8fafb] p-3 text-xs text-[#3a4a53]"
+    >
+      <div className="mb-2 flex flex-wrap items-center gap-2">
+        <h4 className="font-semibold uppercase text-[#62717a]">Retrieval explain</h4>
+        {explain.query_reference ? <Badge>query {explain.query_reference}</Badge> : null}
+      </div>
+      <div className="grid gap-2 sm:grid-cols-2">
+        {explain.matched_references?.length ? (
+          <CompactExplainList title="Matched references" values={explain.matched_references} />
+        ) : null}
+        {relationshipRefs.length ? (
+          <CompactExplainList
+            title="Relationship refs"
+            values={relationshipRefs.map(([name, reference]) => `${name}: ${reference}`)}
+          />
+        ) : null}
+        {signals.length ? (
+          <CompactExplainList
+            title="Signals"
+            values={signals.map((signal) => `${signal.name}: ${formatValue(signal.value)}`)}
+          />
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
+function CompactExplainList({ title, values }: { title: string; values: string[] }) {
+  return (
+    <div className="min-w-0">
+      <p className="mb-1 font-semibold text-[#62717a]">{title}</p>
+      <div className="flex flex-wrap gap-1.5">
+        {values.map((value) => (
+          <span
+            key={value}
+            className="min-w-0 max-w-full break-words rounded-md border border-[#e1e7ea] bg-white px-2 py-1 text-[#24313a]"
+          >
+            {value}
+          </span>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -331,6 +393,15 @@ function metadataValue(metadata: Record<string, unknown>, path: string[], fallba
     return current ? "true" : "false";
   }
   return fallback;
+}
+
+function getRetrievalExplain(metadata: Record<string, unknown>): RetrievalExplain | null {
+  const explain = metadata.retrieval_explain;
+  if (typeof explain !== "object" || explain === null || Array.isArray(explain)) {
+    return null;
+  }
+
+  return explain as RetrievalExplain;
 }
 
 function normalizeSearchFilters(filters: ChunkSearchIn): ChunkSearchIn {

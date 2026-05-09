@@ -1,4 +1,3 @@
-import re
 from collections.abc import Awaitable, Callable
 from pathlib import Path, PureWindowsPath
 from typing import Any
@@ -10,6 +9,7 @@ from ragstudio.schemas.parsing import DomainMetadata, IndexDocumentIn, ParserMod
 from ragstudio.services.adapter import AdapterChunk, RAGAnythingAdapter
 from ragstudio.services.chunk_sanitizer import sanitize_db_text, sanitize_db_value
 from ragstudio.services.chunk_splitter import ChunkSplitter
+from ragstudio.services.hybrid_chunk_search import ChunkScore, HybridChunkSearch
 from ragstudio.services.mineru_client import MinerUClient
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,12 +25,14 @@ class ChunkService:
         adapter: RAGAnythingAdapter | None = None,
         mineru_client_factory: type[MinerUClient] | None = None,
         chunk_splitter: ChunkSplitter | None = None,
+        chunk_search: HybridChunkSearch | None = None,
     ):
         self.session = session
         self.data_dir = data_dir
         self.adapter = adapter or RAGAnythingAdapter()
         self.mineru_client_factory = mineru_client_factory or MinerUClient
         self.chunk_splitter = chunk_splitter or ChunkSplitter()
+        self.chunk_search = chunk_search or HybridChunkSearch()
 
     async def index_document(
         self,
@@ -197,23 +199,32 @@ class ChunkService:
 
         ranked = sorted(
             (
-                (self._score(search_in.query, chunk), source_order, chunk)
+                (self.chunk_search.score(search_in.query, chunk), source_order, chunk)
                 for source_order, chunk in enumerate(chunks)
             ),
             key=lambda item: (
-                -item[0],
+                -item[0].score,
                 self._source_order(item[2], item[1]),
             ),
         )
         if search_in.query.strip():
-            ranked = [item for item in ranked if item[0] > 0]
+            ranked = [item for item in ranked if item[0].score > 0]
 
         items = [self._chunk_out_with_score(chunk, score) for score, _, chunk in ranked[:limit]]
         return ChunkSearchOut(items=items, total=len(items))
 
-    def _chunk_out_with_score(self, chunk: Chunk, score: float) -> ChunkOut:
+    def _chunk_out_with_score(self, chunk: Chunk, score: ChunkScore) -> ChunkOut:
         output = ChunkOut.model_validate(chunk)
-        output.metadata = {**output.metadata, "score": score}
+        breakdown = dict(score.breakdown)
+        retrieval_explain = breakdown.pop("retrieval_explain", None)
+        metadata = {
+            **output.metadata,
+            "score": score.score,
+            "score_breakdown": breakdown,
+        }
+        if isinstance(retrieval_explain, dict):
+            metadata["retrieval_explain"] = retrieval_explain
+        output.metadata = metadata
         return output
 
     def _safe_metadata(self, metadata: dict[str, Any], document_id: str) -> dict[str, Any]:
@@ -283,26 +294,3 @@ class ChunkService:
         if isinstance(chunk_index, int):
             return (0, chunk_index, chunk.created_at, chunk.id)
         return (1, fallback_order, chunk.created_at, chunk.id)
-
-    def _score(self, query: str, chunk: Chunk) -> float:
-        query_text = query.strip().lower()
-        chunk_text = chunk.text.lower()
-        if not query_text:
-            return 1.0
-
-        query_terms = self._terms(query_text)
-        chunk_terms = self._terms(chunk_text)
-        if not query_terms or not chunk_terms:
-            return 0.0
-
-        overlap = query_terms & chunk_terms
-        coverage = len(overlap) / len(query_terms)
-        density = len(overlap) / len(chunk_terms)
-        phrase_bonus = 1.0 if query_text in chunk_text else 0.0
-        return (coverage * 10.0) + (density * 2.0) + phrase_bonus
-
-    def _terms(self, value: str) -> set[str]:
-        return {
-            match.group(0).lower()
-            for match in re.finditer(r"[\w\u0600-\u06FF]+", value, flags=re.UNICODE)
-        }

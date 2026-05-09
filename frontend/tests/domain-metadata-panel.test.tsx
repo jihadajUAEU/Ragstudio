@@ -1,15 +1,17 @@
 import "@testing-library/jest-dom/vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { DomainMetadataPanel } from "../src/features/domain-metadata/domain-metadata-panel";
 
 const mocks = vi.hoisted(() => ({
+  getReferenceJsonExample: vi.fn(),
   suggestDomainMetadata: vi.fn(),
 }));
 
 vi.mock("../src/api/client", () => ({
   apiClient: {
+    getReferenceJsonExample: mocks.getReferenceJsonExample,
     suggestDomainMetadata: mocks.suggestDomainMetadata,
   },
 }));
@@ -22,6 +24,11 @@ const autosuggestEvidence = {
 };
 
 describe("DomainMetadataPanel", () => {
+  beforeEach(() => {
+    mocks.getReferenceJsonExample.mockReset();
+    mocks.suggestDomainMetadata.mockReset();
+  });
+
   it("renders parser modes and applies a selected domain profile", async () => {
     const onChange = vi.fn();
     render(
@@ -285,7 +292,8 @@ describe("DomainMetadataPanel", () => {
     expectVisibleText("Metadata sources");
     expect(screen.getByText("added heuristic, profile; removed user")).toBeVisible();
     expectVisibleText("Custom JSON");
-    expect(screen.getByText("changed audience")).toBeVisible();
+    expect(screen.getByText("1 custom JSON change")).toBeVisible();
+    expect(screen.getByText('audience changed to "research"')).toBeVisible();
     expect(screen.getByText("Confidence 91% from pages 1, 2, 10, 20")).toBeVisible();
     expect(screen.getByText("The sampled pages show policy headings.")).toBeVisible();
 
@@ -494,5 +502,114 @@ describe("DomainMetadataPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: /hide sample/i }));
 
     expect(screen.queryByText("Sample custom JSON")).not.toBeInTheDocument();
+  });
+
+  it("inserts the reference schema helper into custom JSON", async () => {
+    mocks.getReferenceJsonExample.mockResolvedValueOnce({
+      custom_json: {
+        reference_schema: {
+          type: "chapter_verse",
+          fields: {
+            chapter: "chapter_number",
+            verse: "verse_number",
+          },
+        },
+        chunking: {
+          unit: "verse",
+          include_neighbors: 1,
+        },
+        retrieval: {
+          exact_reference_top1: true,
+        },
+      },
+    });
+    const onChange = vi.fn();
+    render(
+      <DomainMetadataPanel
+        profiles={[]}
+        value={{
+          parser_mode: "local_fallback",
+          domain_metadata: {
+            domain: "generic",
+            document_type: "document",
+            custom_json: { source_system: "library_upload" },
+          },
+        }}
+        onChange={onChange}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /insert reference schema/i }));
+
+    const customJsonInput = screen.getByLabelText("Custom JSON") as HTMLTextAreaElement;
+    await waitFor(() => {
+      expect(customJsonInput.value).toContain("reference_schema");
+    });
+    expect(customJsonInput.value).toContain("chunking");
+    expect(customJsonInput.value).toContain("retrieval");
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        domain_metadata: expect.objectContaining({
+          custom_json: expect.objectContaining({
+            source_system: "library_upload",
+            reference_schema: expect.any(Object),
+            chunking: expect.any(Object),
+            retrieval: expect.any(Object),
+          }),
+        }),
+      }),
+    );
+  });
+
+  it("shows nested autosuggest custom JSON changes", async () => {
+    const file = new File(["pdf"], "quran.pdf", { type: "application/pdf" });
+    mocks.suggestDomainMetadata.mockResolvedValueOnce({
+      domain_metadata: {
+        domain: "religion",
+        document_type: "religious_text",
+        custom_json: {
+          reference_schema: {
+            type: "surah_ayah",
+          },
+          chunking: {
+            unit: "verse",
+          },
+          retrieval: {
+            exact_reference_top1: true,
+          },
+        },
+      },
+      confidence: 0.95,
+      evidence_pages: [1, 2, 507, 1012],
+      rationale: "The sampled pages show Quran references.",
+      warnings: [],
+    });
+
+    render(
+      <DomainMetadataPanel
+        profiles={[]}
+        value={{
+          parser_mode: "mineru_strict",
+          domain_metadata: {
+            domain: "generic",
+            document_type: "document",
+            custom_json: {
+              chunking: {
+                unit: "section",
+              },
+            },
+          },
+        }}
+        onChange={vi.fn()}
+        suggestContext={{ filename: "quran.pdf", content_type: "application/pdf", file }}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /auto-suggest/i }));
+
+    expect(await screen.findByText("Confidence 95% from pages 1, 2, 507, 1012")).toBeVisible();
+    expect(screen.getByText('reference_schema.type added as "surah_ayah"')).toBeVisible();
+    expect(screen.getByText('chunking.unit changed to "verse"')).toBeVisible();
+    expect(screen.getByText("retrieval.exact_reference_top1 added as true")).toBeVisible();
   });
 });

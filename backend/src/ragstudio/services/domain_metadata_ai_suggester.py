@@ -107,14 +107,19 @@ class DomainMetadataAiSuggester:
         content_type: str,
         pages: list[SampledPage],
     ) -> dict[str, object]:
+        sampled_pages = pages[:4]
         content: list[dict[str, object]] = [
             {
                 "type": "text",
-                "text": self._prompt(filename=filename, content_type=content_type, pages=pages),
+                "text": self._prompt(
+                    filename=filename,
+                    content_type=content_type,
+                    pages=sampled_pages,
+                ),
             }
         ]
         if target.supports_images:
-            for page in pages:
+            for page in sampled_pages:
                 if page.image_data_url:
                     content.append(
                         {
@@ -168,6 +173,11 @@ class DomainMetadataAiSuggester:
         return f"""You classify documents for a RAG indexing system.
 Be honest. Use only the sampled pages and filename as evidence.
 Do not guess a specific collection unless the pages show it.
+Review the 3-4 sampled pages/images when available. If the samples show structured
+references that users may need to edit or tune, propose generic reference semantics
+in custom_json instead of relying on a hardcoded local strategy. Examples include
+Quran chapter:verse references, legal sections/subsections, page-line references,
+case or article citations, and similar cited corpora.
 Return JSON only with this shape:
 {{
   "domain_metadata": {{
@@ -180,7 +190,12 @@ Return JSON only with this shape:
     "collection": null,
     "citation_style": null,
     "expected_structure": null,
-    "custom_json": {{}},
+    "custom_json": {{
+      "reference_schema": null,
+      "relationships": null,
+      "chunking": null,
+      "retrieval": null
+    }},
     "reference_pattern": null,
     "script": null,
     "content_role": null,
@@ -191,6 +206,19 @@ Return JSON only with this shape:
   "rationale": "one sentence explaining evidence",
   "warnings": []
 }}
+
+For custom_json.reference_schema, describe the editable reference type, display
+format, fields, and any observed pattern only when supported by the samples.
+For custom_json.relationships, describe useful relationships such as previous,
+next, same_section, same_page, same_article, or same_chapter when they are visible
+or strongly implied by the reference system.
+For custom_json.chunking, suggest the natural chunk unit and whether neighboring
+references, parallel text, headings, page-line spans, or section boundaries should
+be preserved.
+For custom_json.retrieval, suggest honest retrieval hints such as exact reference
+top result, same-section boosting, neighbor expansion, or page-line matching only
+when the samples justify them. Leave these custom_json keys null or omit details
+when the document does not show structured references.
 
 Filename: {filename}
 Content type: {content_type}

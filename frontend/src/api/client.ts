@@ -44,6 +44,12 @@ export class ApiError extends Error {
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "";
 
+export interface ReindexDocumentOut {
+  document_id: string;
+  job_id: string;
+  status: string;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers);
   if (!headers.has("Accept")) {
@@ -107,6 +113,12 @@ export const apiClient = {
     request<void>(`/api/documents/${encodeURIComponent(documentId)}`, {
       method: "DELETE",
     }),
+  reindexDocument: (documentId: string, payload: IndexDocumentIn = {}) =>
+    request<ReindexDocumentOut>(`/api/documents/${encodeURIComponent(documentId)}/reindex`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }),
   jobs: () => request<Page<JobOut>>("/api/jobs"),
   variants: () => request<Page<VariantOut>>("/api/variants"),
   createVariant: (payload: VariantIn) =>
@@ -147,6 +159,10 @@ export const apiClient = {
       body: JSON.stringify(payload),
     }),
   domainProfiles: () => request<Page<DomainProfileOut>>("/api/domain-profiles"),
+  getReferenceJsonExample: () =>
+    request<{ custom_json: Record<string, unknown> }>(
+      "/api/domain-profiles/reference-json-example",
+    ),
   suggestDomainMetadata: (payload: { file: File; profile_id?: string | null }) => {
     const formData = new FormData();
     formData.set("file", payload.file);

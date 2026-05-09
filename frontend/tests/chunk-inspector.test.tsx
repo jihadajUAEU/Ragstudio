@@ -34,6 +34,15 @@ vi.mock("../src/api/client", () => ({
             mirrored_snapshot: true,
             domain_metadata: { domain: "hadith" },
             parser_metadata: { backend: "mineru" },
+            retrieval_explain: {
+              query_reference: "sahih-bukhari:1",
+              matched_references: ["book-1", "hadith-1"],
+              relationship_refs: { collection: "sahih-bukhari", neighbor: "chunk-2" },
+              signals: [
+                { name: "semantic", value: 0.92 },
+                { name: "reference", value: 1 },
+              ],
+            },
           },
           runtime_profile_id: "default",
           runtime_source_id: "runtime-chunk-1",
@@ -75,5 +84,29 @@ describe("ChunkInspector metadata", () => {
 
     expect(await screen.findByText("profile default")).toBeVisible();
     expect(screen.getByText("snapshot true")).toBeVisible();
+  });
+
+  it("renders retrieval explain details after search", async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ChunkInspector />
+      </QueryClientProvider>,
+    );
+
+    fireEvent.click(await screen.findByRole("checkbox"));
+    fireEvent.change(screen.getByLabelText("Question or search text"), {
+      target: { value: "hadith" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^Search$/i }));
+
+    expect(await screen.findByRole("region", { name: "Retrieval explain" })).toBeVisible();
+    expect(screen.getByText("query sahih-bukhari:1")).toBeVisible();
+    expect(screen.getByText("book-1")).toBeVisible();
+    expect(screen.getByText("hadith-1")).toBeVisible();
+    expect(screen.getByText("collection: sahih-bukhari")).toBeVisible();
+    expect(screen.getByText("neighbor: chunk-2")).toBeVisible();
+    expect(screen.getByText("semantic: 0.92")).toBeVisible();
+    expect(screen.getByText("reference: 1.00")).toBeVisible();
   });
 });

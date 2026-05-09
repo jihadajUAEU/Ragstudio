@@ -243,6 +243,86 @@ async def test_duplicate_upload_schedules_each_created_job_id(client, monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_reindex_document_queues_job_with_updated_metadata(client, monkeypatch, tmp_path):
+    scheduled = []
+
+    async def fake_run_index_job(settings, document_id, job_id, options):
+        scheduled.append(
+            {
+                "document_id": document_id,
+                "job_id": job_id,
+                "parser_mode": options.parser_mode,
+                "domain_metadata": options.domain_metadata.model_dump(exclude_none=True),
+            }
+        )
+
+    monkeypatch.setattr("ragstudio.api.routes.documents._run_index_job", fake_run_index_job)
+    session_factory = client._transport.app.state.session_factory
+    artifact = tmp_path / "uploads" / "reindex-sha"
+    artifact.parent.mkdir(parents=True)
+    artifact.write_text("Quran 1:4", encoding="utf-8")
+    async with session_factory() as session:
+        document = Document(
+            filename="quran.pdf",
+            content_type="application/pdf",
+            sha256="reindex-sha",
+            artifact_path=str(artifact),
+            status=StageStatus.SUCCEEDED.value,
+        )
+        session.add(document)
+        await session.commit()
+        document_id = document.id
+
+    response = await client.post(
+        f"/api/documents/{document_id}/reindex",
+        json={
+            "parser_mode": "local_fallback",
+            "domain_metadata": {
+                "domain": "religion",
+                "document_type": "religious_text",
+                "tags": ["quran"],
+                "custom_json": {
+                    "reference_schema": {"type": "surah_ayah"},
+                    "retrieval": {"exact_reference_top1": True},
+                },
+            },
+        },
+    )
+
+    for _ in range(20):
+        if scheduled:
+            break
+        await asyncio.sleep(0.01)
+
+    assert response.status_code == 202
+    body = response.json()
+    assert body["document_id"] == document_id
+    assert body["job_id"]
+    assert body["status"] == "ready"
+    assert scheduled[0]["document_id"] == document_id
+    assert scheduled[0]["job_id"] == body["job_id"]
+    assert scheduled[0]["parser_mode"] == "local_fallback"
+    assert scheduled[0]["domain_metadata"]["domain"] == "religion"
+    assert scheduled[0]["domain_metadata"]["document_type"] == "religious_text"
+    assert scheduled[0]["domain_metadata"]["tags"] == ["quran"]
+    assert scheduled[0]["domain_metadata"]["custom_json"] == {
+        "reference_schema": {"type": "surah_ayah"},
+        "retrieval": {"exact_reference_top1": True},
+    }
+
+
+@pytest.mark.asyncio
+async def test_reindex_missing_document_returns_404(client):
+    response = await client.post(
+        "/api/documents/missing-document/reindex",
+        json={"parser_mode": "local_fallback", "domain_metadata": {}},
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Document not found"
+
+
+@pytest.mark.asyncio
 async def test_upload_uses_runtime_index_lifecycle_when_profile_exists(client, monkeypatch):
     monkeypatch.setattr(
         "ragstudio.services.index_lifecycle_service.RAGAnythingRuntimeFactory",
@@ -500,7 +580,10 @@ async def test_delete_missing_document_returns_404(client):
 
 
 @pytest.mark.asyncio
-async def test_delete_document_with_active_index_job_returns_409(client, tmp_path):
+async def test_delete_document_with_active_index_job_removes_document_job_and_artifact(
+    client,
+    tmp_path,
+):
     session_factory = client._transport.app.state.session_factory
     async with session_factory() as session:
         artifact = tmp_path / "uploads" / "active-delete-sha"
@@ -528,9 +611,13 @@ async def test_delete_document_with_active_index_job_returns_409(client, tmp_pat
 
     response = await client.delete(f"/api/documents/{document_id}")
 
-    assert response.status_code == 409
-    assert response.json()["detail"] == "Document has an active indexing job"
-    assert artifact.exists()
+    assert response.status_code == 204
+    assert response.content == b""
+    assert not artifact.exists()
+    async with session_factory() as session:
+        assert await session.get(Document, document_id) is None
+        job_id = await session.scalar(select(Job.id).where(Job.target_id == document_id))
+    assert job_id is None
 
 
 @pytest.mark.asyncio

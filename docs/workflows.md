@@ -106,7 +106,7 @@ Open **Documents** to upload source files and monitor ingestion jobs.
 
 1. Choose a file in **Upload file**.
 2. Click **Upload**.
-3. Watch the Documents table for filename, content type, status, and SHA-256.
+3. Watch the Documents table for filename, content type, status, and available row actions.
 4. Watch the Jobs table for job type, target id, progress, status, and latest log.
 
 Uploading a new document creates an `index_document` job and indexes the document immediately. Re-uploading the same content reuses the existing document by SHA-256 and ensures chunks exist.

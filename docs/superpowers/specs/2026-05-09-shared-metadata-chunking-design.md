@@ -149,3 +149,10 @@ Recommended tests:
 - UI controls for chunk profile tuning.
 - Changing the MinerU HPC sidecar.
 
+## Excel Regression Runner
+
+Excel-style retrieval regression workbooks should use dated sheet names such as
+`retrieval_2026-05-09` so runs can be compared without overwriting prior results.
+Output rows should include the case id, query, expected text, required rank,
+matched rank, verdict, and debug columns populated from the top retrieval
+`metadata.retrieval_explain` payloads.

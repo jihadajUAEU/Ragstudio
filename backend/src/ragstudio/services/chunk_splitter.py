@@ -8,6 +8,7 @@ from typing import Any
 
 from ragstudio.schemas.parsing import DomainMetadata, ParserMode
 from ragstudio.services.adapter import AdapterChunk
+from ragstudio.services.reference_metadata import ReferenceSemantics
 
 
 @dataclass(frozen=True)
@@ -15,6 +16,7 @@ class ChunkProfile:
     name: str
     target_words: int
     hard_max_words: int
+    semantics: ReferenceSemantics | None = None
 
 
 @dataclass(frozen=True)
@@ -45,6 +47,17 @@ class ChunkSplitter:
         for chunk in chunks:
             pieces = self._split_chunk(chunk, profile)
             if len(pieces) == 1 and pieces[0].text == chunk.text:
+                if self._should_enrich_unchanged(pieces[0], profile):
+                    output.append(
+                        self._with_split_metadata(
+                            pieces[0],
+                            parent=chunk,
+                            profile=profile,
+                            split_index=0,
+                            split_count=1,
+                        )
+                    )
+                    continue
                 output.append(chunk)
                 continue
 
@@ -63,16 +76,19 @@ class ChunkSplitter:
         return [item for item in output if item.text.strip()]
 
     def _profile(self, metadata: DomainMetadata) -> ChunkProfile:
+        semantics = ReferenceSemantics.from_metadata(metadata)
+        if semantics.profile_name == "scripture_reference":
+            return ChunkProfile(
+                "scripture_reference",
+                target_words=500,
+                hard_max_words=min(self.max_words, 900),
+                semantics=semantics,
+            )
+
         domain = (metadata.domain or "").casefold()
         document_type = (metadata.document_type or "").casefold()
         if domain == "tafseer" or document_type == "book":
             return ChunkProfile("tafseer_book", target_words=1000, hard_max_words=self.max_words)
-        if domain == "quran":
-            return ChunkProfile(
-                "quran_verse",
-                target_words=500,
-                hard_max_words=min(self.max_words, 900),
-            )
         if document_type == "paper":
             return ChunkProfile(
                 "paper_section",
@@ -93,7 +109,8 @@ class ChunkSplitter:
             return content_list_chunks
 
         sections = self._markdown_sections(chunk.text)
-        pieces = self._pack_sections(sections, profile)
+        title_sections, body_sections = self._split_title_sections(sections, chunk, profile)
+        pieces = [*title_sections, *self._pack_sections(body_sections, profile)]
         return [
             self._piece_from_parent(chunk, text, source_location=dict(chunk.source_location))
             for text in pieces
@@ -166,7 +183,9 @@ class ChunkSplitter:
         patterns = (
             r"^#{1,6}\s+",
             r"^Verse\s+\d+:\d+\b",
+            r"^Surah\s+\d+\b",
             r"^\[\[?page\s+\d+\]?\]",
+            r"^\[\d+\s*:\s*\d+\]",
             r"^page\s+\d+\b",
             r"^\d+[:.]\d+\b",
         )
@@ -215,6 +234,7 @@ class ChunkSplitter:
         split_count: int,
     ) -> AdapterChunk:
         metadata = dict(piece.metadata)
+        self._enrich_metadata(metadata, piece=piece, profile=profile)
         parser_metadata = dict(self._parser_metadata(parent))
         parser_metadata.update(self._parser_metadata(piece))
         parent_parser_metadata = self._parser_metadata(parent)
@@ -247,8 +267,9 @@ class ChunkSplitter:
         *,
         source_location: dict[str, Any],
     ) -> SplitPiece:
+        cleaned = self._clean_mineru_noise(text)
         return SplitPiece(
-            text=text.strip(),
+            text=cleaned.strip(),
             source_location=dict(source_location),
             metadata=dict(parent.metadata),
             runtime_source_id=parent.runtime_source_id,
@@ -262,3 +283,103 @@ class ChunkSplitter:
 
     def _word_count(self, text: str) -> int:
         return len(text.split())
+
+    def _should_enrich_unchanged(self, piece: SplitPiece, profile: ChunkProfile) -> bool:
+        if profile.semantics is None:
+            return False
+        if profile.semantics.derive_reference_metadata(piece.text, piece.source_location):
+            return True
+        return self._document_title(piece.text, piece.source_location) is not None
+
+    def _enrich_metadata(
+        self,
+        metadata: dict[str, Any],
+        *,
+        piece: SplitPiece,
+        profile: ChunkProfile,
+    ) -> None:
+        if profile.semantics is None:
+            return
+
+        reference_metadata = profile.semantics.derive_reference_metadata(
+            piece.text,
+            piece.source_location,
+        )
+        if reference_metadata:
+            metadata["reference_metadata"] = reference_metadata
+
+        title = self._document_title(piece.text, piece.source_location)
+        if title:
+            document_metadata = dict(metadata.get("document_metadata") or {})
+            document_metadata["title"] = title
+            metadata["document_metadata"] = document_metadata
+
+    def _split_title_sections(
+        self,
+        sections: list[str],
+        chunk: AdapterChunk,
+        profile: ChunkProfile,
+    ) -> tuple[list[str], list[str]]:
+        if profile.semantics is None or not self._is_early_source_location(chunk.source_location):
+            return [], sections
+
+        first_blocks = [
+            block.strip()
+            for block in re.split(r"\n{2,}", sections[0] if sections else "")
+            if block.strip()
+        ]
+        if len(first_blocks) >= 2:
+            candidate = "\n\n".join(first_blocks[:2]).strip()
+            if self._document_title(candidate, chunk.source_location) is not None:
+                remaining = sections[1:]
+                if len(first_blocks) > 2:
+                    remaining = ["\n\n".join(first_blocks[2:]).strip(), *remaining]
+                return [candidate], remaining
+
+        if len(sections) < 3:
+            return [], sections
+        candidate = "\n\n".join(sections[:2]).strip()
+        if self._document_title(candidate, chunk.source_location) is not None:
+            return [candidate], sections[2:]
+        return [], sections
+
+    def _document_title(
+        self,
+        text: str,
+        source_location: dict[str, Any] | None = None,
+    ) -> str | None:
+        if not self._is_early_source_location(source_location):
+            return None
+
+        blocks = [block.strip() for block in re.split(r"\n{2,}", text) if block.strip()]
+        if len(blocks) < 2:
+            return None
+
+        title_blocks = blocks[:2]
+        if any(self._starts_boundary(block) for block in title_blocks):
+            return None
+        joined = " ".join(title_blocks).strip()
+        if "quran" in joined.casefold() and "translation" in joined.casefold():
+            return joined
+        return None
+
+    def _is_early_source_location(self, source_location: dict[str, Any] | None) -> bool:
+        if not isinstance(source_location, dict):
+            return True
+        page = source_location.get("page_start", source_location.get("page"))
+        if page is None:
+            return True
+        return isinstance(page, int) and page <= 2
+
+    def _clean_mineru_noise(self, text: str) -> str:
+        # Remove isolated LaTeX math blocks that MinerU sometimes hallucinates around OCR text.
+        cleaned = re.sub(
+            r"\$\$\s*(?:(?:\\?(?:sin|cos|tan|cot|theta|alpha|beta|pi|rho|angle|infty|Join|hookrightarrow))|[,|=\s])+\s*\$\$",
+            " ",
+            text,
+            flags=re.IGNORECASE,
+        )
+        cleaned = re.sub(r"(?m)^\s*(?:[=\-|,|]|\\(?:theta|alpha|beta|pi|rho|angle|infty))\s*$", "", cleaned)
+        cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+        cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+        return cleaned.strip()

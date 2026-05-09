@@ -47,6 +47,7 @@ type MetadataChange = {
   field: MetadataChangeField;
   label: string;
   summary: string;
+  details?: string[];
 };
 
 export function DomainMetadataPanel({
@@ -73,6 +74,9 @@ export function DomainMetadataPanel({
   const [customJsonDraft, setCustomJsonDraft] = useState<string | null>(null);
   const [customJsonError, setCustomJsonError] = useState("");
   const [showCustomJsonSample, setShowCustomJsonSample] = useState(false);
+  const [referenceSchemaState, setReferenceSchemaState] = useState<
+    "idle" | "loading" | "error"
+  >("idle");
   const [suggestState, setSuggestState] = useState<"idle" | "loading" | "error">("idle");
   const [autosuggestChanges, setAutosuggestChanges] = useState<MetadataChange[]>([]);
   const [autosuggestEvidence, setAutosuggestEvidence] = useState<{
@@ -140,6 +144,38 @@ export function DomainMetadataPanel({
       onValidityChange?.(false);
     }
   };
+  const insertReferenceSchema = async () => {
+    setReferenceSchemaState("loading");
+    let current: Record<string, unknown>;
+    try {
+      const parsed = JSON.parse(customJsonText || "{}");
+      if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+        setCustomJsonError("Custom JSON must be an object.");
+        onValidityChange?.(false);
+        setReferenceSchemaState("idle");
+        return;
+      }
+      current = parsed as Record<string, unknown>;
+    } catch {
+      setCustomJsonError("Custom JSON must be valid JSON.");
+      onValidityChange?.(false);
+      setReferenceSchemaState("idle");
+      return;
+    }
+
+    try {
+      const response = await apiClient.getReferenceJsonExample();
+      const merged = mergeJsonObjects(response.custom_json, current);
+      setCustomJsonDraft(JSON.stringify(merged, null, 2));
+      setCustomJsonError("");
+      setReferenceSchemaState("idle");
+      onValidityChange?.(true);
+      clearChangedField("custom_json");
+      onChange({ ...value, domain_metadata: { ...metadata, custom_json: merged } });
+    } catch {
+      setReferenceSchemaState("error");
+    }
+  };
 
   return (
     <section className="rounded-md border border-[#d6dde1] bg-white p-4">
@@ -179,7 +215,16 @@ export function DomainMetadataPanel({
               {autosuggestChanges.map((change) => (
                 <div key={change.field} className="grid gap-1 sm:grid-cols-[150px_minmax(0,1fr)]">
                   <dt className="font-semibold">{change.label}</dt>
-                  <dd className="min-w-0 break-words">{change.summary}</dd>
+                  <dd className="min-w-0 break-words">
+                    <span>{change.summary}</span>
+                    {change.details?.length ? (
+                      <ul className="mt-1 grid gap-0.5">
+                        {change.details.map((detail) => (
+                          <li key={detail}>{detail}</li>
+                        ))}
+                      </ul>
+                    ) : null}
+                  </dd>
                 </div>
               ))}
             </dl>
@@ -307,15 +352,31 @@ export function DomainMetadataPanel({
         >
           <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
             <span id="custom-json-label">Custom JSON</span>
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              onClick={() => setShowCustomJsonSample((isVisible) => !isVisible)}
-            >
-              <Braces className="h-4 w-4" aria-hidden="true" />
-              {showCustomJsonSample ? "Hide sample" : "View sample"}
-            </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                disabled={disabled || referenceSchemaState === "loading"}
+                onClick={() => void insertReferenceSchema()}
+              >
+                {referenceSchemaState === "loading" ? (
+                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                ) : (
+                  <Braces className="h-4 w-4" aria-hidden="true" />
+                )}
+                Insert reference schema
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() => setShowCustomJsonSample((isVisible) => !isVisible)}
+              >
+                <Braces className="h-4 w-4" aria-hidden="true" />
+                {showCustomJsonSample ? "Hide sample" : "View sample"}
+              </Button>
+            </div>
           </div>
           <textarea
             aria-labelledby="custom-json-label"
@@ -335,10 +396,30 @@ export function DomainMetadataPanel({
         ) : null}
       </div>
       <p className="mt-2 min-h-5 text-sm text-[#62717a]" role="status">
-        {customJsonError || (suggestState === "error" ? "Metadata suggestion failed." : "")}
+        {customJsonError ||
+          (suggestState === "error" ? "Metadata suggestion failed." : "") ||
+          (referenceSchemaState === "error" ? "Reference schema helper failed." : "")}
       </p>
     </section>
   );
+}
+
+function mergeJsonObjects(
+  source: Record<string, unknown>,
+  existing: Record<string, unknown>,
+): Record<string, unknown> {
+  const merged: Record<string, unknown> = { ...source, ...existing };
+  for (const [key, sourceValue] of Object.entries(source)) {
+    const existingValue = existing[key];
+    if (isPlainObject(sourceValue) && isPlainObject(existingValue)) {
+      merged[key] = mergeJsonObjects(sourceValue, existingValue);
+    }
+  }
+  return merged;
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function TextField({
@@ -431,15 +512,18 @@ function buildMetadataChangeSet(
     after.metadata_sources ?? [],
   );
 
-  const customJsonSummary = formatCustomJsonChange(
+  const customJsonDetails = formatCustomJsonChange(
     before.custom_json ?? {},
     after.custom_json ?? {},
   );
-  if (customJsonSummary) {
+  if (customJsonDetails.length > 0) {
     changes.push({
       field: "custom_json",
       label: metadataFieldLabels.custom_json,
-      summary: customJsonSummary,
+      summary: `${customJsonDetails.length} custom JSON ${
+        customJsonDetails.length === 1 ? "change" : "changes"
+      }`,
+      details: customJsonDetails,
     });
   }
 
@@ -480,28 +564,38 @@ function addArrayChange(
 function formatCustomJsonChange(
   before: Record<string, unknown>,
   after: Record<string, unknown>,
-): string | null {
-  const beforeKeys = Object.keys(before).sort();
-  const afterKeys = Object.keys(after).sort();
-  const added = afterKeys.filter((key) => !beforeKeys.includes(key));
-  const removed = beforeKeys.filter((key) => !afterKeys.includes(key));
-  const changed = afterKeys.filter(
-    (key) =>
-      beforeKeys.includes(key) &&
-      JSON.stringify(before[key]) !== JSON.stringify(after[key]),
-  );
+): string[] {
+  const beforeValues = flattenCustomJson(before);
+  const afterValues = flattenCustomJson(after);
+  return Array.from(new Set([...Object.keys(beforeValues), ...Object.keys(afterValues)]))
+    .sort()
+    .flatMap((path) => {
+      if (!(path in beforeValues)) {
+        return [`${path} added as ${afterValues[path]}`];
+      }
+      if (!(path in afterValues)) {
+        return [`${path} removed`];
+      }
+      if (beforeValues[path] !== afterValues[path]) {
+        return [`${path} changed to ${afterValues[path]}`];
+      }
+      return [];
+    });
+}
 
-  if (added.length === 0 && removed.length === 0 && changed.length === 0) {
-    return null;
-  }
-
-  return [
-    added.length > 0 ? `added ${added.join(", ")}` : null,
-    removed.length > 0 ? `removed ${removed.join(", ")}` : null,
-    changed.length > 0 ? `changed ${changed.join(", ")}` : null,
-  ]
-    .filter(Boolean)
-    .join("; ");
+function flattenCustomJson(
+  value: Record<string, unknown>,
+  prefix = "",
+): Record<string, string> {
+  return Object.entries(value).reduce<Record<string, string>>((accumulator, [key, raw]) => {
+    const path = prefix ? `${prefix}.${key}` : key;
+    if (isPlainObject(raw)) {
+      Object.assign(accumulator, flattenCustomJson(raw, path));
+    } else {
+      accumulator[path] = JSON.stringify(raw);
+    }
+    return accumulator;
+  }, {});
 }
 
 function formatMetadataValue(value: string): string {

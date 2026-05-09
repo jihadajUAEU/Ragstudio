@@ -12,6 +12,7 @@ from ragstudio.schemas.parsing import (
 )
 from ragstudio.services.domain_metadata_ai_suggester import DomainMetadataAiSuggester
 from ragstudio.services.domain_metadata_service import DomainMetadataService
+from ragstudio.services.metadata_json_schema import reference_custom_json_example
 from ragstudio.services.page_sampler import PageSampler
 
 router = APIRouter(prefix="/api/domain-profiles", tags=["domain-profiles"])
@@ -21,6 +22,11 @@ router = APIRouter(prefix="/api/domain-profiles", tags=["domain-profiles"])
 async def list_domain_profiles(request: Request) -> DomainProfileListOut:
     items = DomainMetadataService(request.app.state.settings.data_dir).list_profiles()
     return DomainProfileListOut(items=items, total=len(items))
+
+
+@router.get("/reference-json-example")
+async def get_reference_json_example() -> dict[str, object]:
+    return {"custom_json": reference_custom_json_example()}
 
 
 @router.post("/suggest", response_model=DomainMetadataSuggestOut)

@@ -243,6 +243,197 @@ async def test_search_chunks_preserves_source_order_for_ties_and_empty_query(cli
 
 
 @pytest.mark.asyncio
+async def test_search_chunks_exact_reference_returns_matching_verse_top_one(client):
+    upload_response = await client.post(
+        "/api/documents",
+        files={"file": ("quran.txt", b"surah sample", "text/plain")},
+    )
+    document_id = upload_response.json()["id"]
+
+    app = client._transport.app
+    async with app.state.session_factory() as session:
+        session.add_all(
+            [
+                Chunk(
+                    document_id=document_id,
+                    text="[1:3]\n\nSovereign of the Day of Recompense.",
+                    source_location={"page_start": 2, "page_end": 2},
+                    metadata_json={
+                        "domain_metadata": {
+                            "tags": ["quran"],
+                            "reference_pattern": "surah_number:verse_number",
+                        },
+                        "reference_metadata": {
+                            "reference_type": "surah_ayah",
+                            "chapter_start": 1,
+                            "chapter_end": 1,
+                            "verse_start": 3,
+                            "verse_end": 3,
+                            "references": ["1:3"],
+                            "next_ref": "1:4",
+                        },
+                    },
+                ),
+                Chunk(
+                    document_id=document_id,
+                    text="[1:4]\n\nIt is You we worship and You we ask for help.",
+                    source_location={"page_start": 2, "page_end": 2},
+                    metadata_json={
+                        "domain_metadata": {
+                            "tags": ["quran"],
+                            "reference_pattern": "surah_number:verse_number",
+                        },
+                        "reference_metadata": {
+                            "reference_type": "surah_ayah",
+                            "chapter_start": 1,
+                            "chapter_end": 1,
+                            "verse_start": 4,
+                            "verse_end": 4,
+                            "references": ["1:4"],
+                            "previous_ref": "1:3",
+                            "next_ref": "1:5",
+                        },
+                    },
+                ),
+                Chunk(
+                    document_id=document_id,
+                    text="[2:4]\n\nAnd who believe in what has been revealed to you.",
+                    source_location={"page_start": 3, "page_end": 3},
+                    metadata_json={
+                        "domain_metadata": {
+                            "tags": ["quran"],
+                            "reference_pattern": "surah_number:verse_number",
+                        },
+                        "reference_metadata": {
+                            "reference_type": "surah_ayah",
+                            "chapter_start": 2,
+                            "chapter_end": 2,
+                            "verse_start": 4,
+                            "verse_end": 4,
+                            "references": ["2:4"],
+                        },
+                    },
+                ),
+            ]
+        )
+        await session.commit()
+
+    response = await client.post(
+        "/api/chunks/search",
+        json={"query": "What does Quran 1:4 say?", "document_ids": [document_id], "limit": 3},
+    )
+
+    assert response.status_code == 200
+    items = response.json()["items"]
+    assert items[0]["text"].startswith("[1:4]")
+    assert items[0]["metadata"]["score_breakdown"]["reference_exact"] == 100.0
+    assert items[0]["metadata"]["retrieval_explain"]["query_reference"] == "1:4"
+    assert items[0]["metadata"]["retrieval_explain"]["matched_references"] == ["1:4"]
+
+
+@pytest.mark.asyncio
+async def test_search_chunks_natural_language_returns_exact_phrase_in_top_five(client):
+    upload_response = await client.post(
+        "/api/documents",
+        files={"file": ("quran.txt", b"surah sample", "text/plain")},
+    )
+    document_id = upload_response.json()["id"]
+
+    app = client._transport.app
+    async with app.state.session_factory() as session:
+        for index in range(8):
+            session.add(
+                Chunk(
+                    document_id=document_id,
+                    text=f"Generic Allah guidance chunk {index}",
+                    source_location={"page_start": index + 10},
+                    metadata_json={"domain_metadata": {"tags": ["quran"]}},
+                )
+            )
+        session.add(
+            Chunk(
+                document_id=document_id,
+                text="[1:5]\n\nGuide us to the straight path.",
+                source_location={"page_start": 2, "page_end": 2},
+                metadata_json={
+                    "domain_metadata": {
+                        "tags": ["quran"],
+                        "reference_pattern": "surah_number:verse_number",
+                    },
+                    "reference_metadata": {
+                        "reference_type": "surah_ayah",
+                        "chapter_start": 1,
+                        "chapter_end": 1,
+                        "verse_start": 5,
+                        "verse_end": 5,
+                        "references": ["1:5"],
+                    },
+                },
+            )
+        )
+        await session.commit()
+
+    response = await client.post(
+        "/api/chunks/search",
+        json={
+            "query": "What guidance is requested in Quran 1:5?",
+            "document_ids": [document_id],
+            "limit": 5,
+        },
+    )
+
+    assert response.status_code == 200
+    texts = [item["text"] for item in response.json()["items"]]
+    assert any(text.startswith("[1:5]") for text in texts)
+
+
+@pytest.mark.asyncio
+async def test_exact_reference_search_includes_previous_and_next_relationships(client):
+    upload_response = await client.post(
+        "/api/documents",
+        files={"file": ("quran.txt", b"surah sample", "text/plain")},
+    )
+    document_id = upload_response.json()["id"]
+
+    app = client._transport.app
+    async with app.state.session_factory() as session:
+        for verse in (3, 4, 5):
+            session.add(
+                Chunk(
+                    document_id=document_id,
+                    text=f"[1:{verse}]\n\nVerse {verse}",
+                    source_location={"page_start": 2},
+                    metadata_json={
+                        "domain_metadata": {
+                            "tags": ["quran"],
+                            "reference_pattern": "surah_number:verse_number",
+                        },
+                        "reference_metadata": {
+                            "chapter_start": 1,
+                            "chapter_end": 1,
+                            "verse_start": verse,
+                            "verse_end": verse,
+                            "references": [f"1:{verse}"],
+                            "previous_ref": f"1:{verse - 1}" if verse > 1 else None,
+                            "next_ref": f"1:{verse + 1}",
+                        },
+                    },
+                )
+            )
+        await session.commit()
+
+    response = await client.post(
+        "/api/chunks/search",
+        json={"query": "Quran 1:4", "document_ids": [document_id], "limit": 3},
+    )
+
+    texts = [item["text"] for item in response.json()["items"]]
+    assert texts[0].startswith("[1:4]")
+    assert any(text.startswith("[1:3]") for text in texts)
+    assert any(text.startswith("[1:5]") for text in texts)
+
+
+@pytest.mark.asyncio
 async def test_index_missing_document_returns_404(client):
     response = await client.post("/api/chunks/index/missing-document")
 

@@ -23,7 +23,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-DeleteDocumentResult = Literal["deleted", "not_found", "active_job"]
+DeleteDocumentResult = Literal["deleted", "not_found"]
 
 
 class DocumentService:
@@ -97,22 +97,13 @@ class DocumentService:
         result = await self.session.execute(select(Document).order_by(Document.created_at.desc()))
         return [DocumentOut.model_validate(item) for item in result.scalars().all()]
 
+    async def document_exists(self, document_id: str) -> bool:
+        return await self.session.get(Document, document_id) is not None
+
     async def delete_document(self, document_id: str) -> DeleteDocumentResult:
         document = await self.session.get(Document, document_id)
         if document is None:
             return "not_found"
-
-        active_job_id = await self.session.scalar(
-            select(Job.id)
-            .where(
-                Job.type == "index_document",
-                Job.target_id == document.id,
-                Job.status.in_([StageStatus.READY.value, StageStatus.RUNNING.value]),
-            )
-            .limit(1)
-        )
-        if active_job_id is not None:
-            return "active_job"
 
         artifact_path = Path(document.artifact_path)
         await self.session.execute(

@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
 import { AlertCircle, FileUp, Loader2, RefreshCcw, Trash2, Upload } from "lucide-react";
@@ -20,8 +20,10 @@ const queryKeys = {
 export function DocumentsPage() {
   const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const hadActiveJobsRef = useRef(false);
   const [file, setFile] = useState<File | null>(null);
   const [deletedFilename, setDeletedFilename] = useState("");
+  const [reindexedFilename, setReindexedFilename] = useState("");
   const [indexOptions, setIndexOptions] = useState<IndexDocumentIn>({
     parser_mode: "local_fallback",
     domain_metadata: { domain: "generic", document_type: "document", tags: [] },
@@ -59,6 +61,17 @@ export function DocumentsPage() {
       ]);
     },
   });
+  const reindexDocument = useMutation({
+    mutationFn: ({ documentId, options }: { documentId: string; options: IndexDocumentIn }) =>
+      apiClient.reindexDocument(documentId, options),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.documents }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.jobs }),
+        queryClient.invalidateQueries({ queryKey: ["chunks"] }),
+      ]);
+    },
+  });
 
   const confirmAndDeleteDocument = useCallback(
     (document: DocumentOut) => {
@@ -73,11 +86,35 @@ export function DocumentsPage() {
     },
     [deleteDocument],
   );
+  const reindexExistingDocument = useCallback(
+    (document: DocumentOut) => {
+      setReindexedFilename(document.filename);
+      reindexDocument.mutate({ documentId: document.id, options: indexOptions });
+    },
+    [indexOptions, reindexDocument],
+  );
 
   const refresh = () => {
     void documentsQuery.refetch();
     void jobsQuery.refetch();
   };
+  const jobs = jobsQuery.data?.items ?? [];
+  const activeJobs = hasActiveJobs(jobs);
+  const documentsById = useMemo(
+    () => new Map((documentsQuery.data?.items ?? []).map((document) => [document.id, document])),
+    [documentsQuery.data?.items],
+  );
+
+  const refetchDocuments = documentsQuery.refetch;
+
+  useEffect(() => {
+    const shouldSyncDocuments = activeJobs || hadActiveJobsRef.current;
+    hadActiveJobsRef.current = activeJobs;
+    if (!shouldSyncDocuments) {
+      return;
+    }
+    void refetchDocuments();
+  }, [activeJobs, jobsQuery.dataUpdatedAt, refetchDocuments]);
 
   const documentColumns = useMemo<ColumnDef<DocumentOut>[]>(
     () => [
@@ -97,40 +134,60 @@ export function DocumentsPage() {
         cell: ({ row }) => <StatusBadge status={row.original.status} />,
       },
       {
-        accessorKey: "sha256",
-        header: "SHA-256",
-        cell: ({ row }) => (
-          <code className="block truncate text-xs text-[#62717a]">{row.original.sha256}</code>
-        ),
-      },
-      {
         id: "actions",
         header: "Actions",
         cell: ({ row }) => {
           const document = row.original;
           const isDeleting = deleteDocument.isPending && deleteDocument.variables === document.id;
+          const isReindexing =
+            reindexDocument.isPending && reindexDocument.variables?.documentId === document.id;
 
           return (
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              onClick={() => confirmAndDeleteDocument(document)}
-              disabled={isDeleting}
-              aria-label={`Delete ${document.filename}`}
-            >
-              {isDeleting ? (
-                <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-              ) : (
-                <Trash2 className="h-4 w-4" aria-hidden="true" />
-              )}
-              Delete
-            </Button>
+            <div className="flex flex-wrap justify-end gap-2">
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() => reindexExistingDocument(document)}
+                disabled={!metadataValid || reindexDocument.isPending}
+                aria-label={`Reindex ${document.filename}`}
+              >
+                {isReindexing ? (
+                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                ) : (
+                  <RefreshCcw className="h-4 w-4" aria-hidden="true" />
+                )}
+                Reindex
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() => confirmAndDeleteDocument(document)}
+                disabled={isDeleting}
+                aria-label={`Delete ${document.filename}`}
+              >
+                {isDeleting ? (
+                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                ) : (
+                  <Trash2 className="h-4 w-4" aria-hidden="true" />
+                )}
+                Delete
+              </Button>
+            </div>
           );
         },
       },
     ],
-    [confirmAndDeleteDocument, deleteDocument.isPending, deleteDocument.variables],
+    [
+      confirmAndDeleteDocument,
+      deleteDocument.isPending,
+      deleteDocument.variables,
+      metadataValid,
+      reindexDocument.isPending,
+      reindexDocument.variables,
+      reindexExistingDocument,
+    ],
   );
 
   const jobColumns = useMemo<ColumnDef<JobOut>[]>(
@@ -138,29 +195,47 @@ export function DocumentsPage() {
       {
         accessorKey: "type",
         header: "Job",
-        cell: ({ row }) => (
-          <div className="min-w-0">
-            <p className="truncate font-medium">{titleCase(row.original.type)}</p>
-            <code className="block truncate text-xs text-[#62717a]">
-              {row.original.target_id ?? "workspace"}
-            </code>
-          </div>
-        ),
+        cell: ({ row }) => {
+          const document = row.original.target_id
+            ? documentsById.get(row.original.target_id)
+            : undefined;
+
+          return (
+            <div className="min-w-0">
+              <p className="truncate font-medium">{formatJobName(row.original, document)}</p>
+              <code className="block truncate text-xs text-[#62717a]">
+                {document
+                  ? `${formatJobType(row.original.type)} · ${row.original.id}`
+                  : row.original.target_id ?? "workspace"}
+              </code>
+            </div>
+          );
+        },
       },
       {
         accessorKey: "progress",
         header: "Progress",
-        cell: ({ row }) => (
-          <div className="flex min-w-28 items-center gap-2">
-            <div className="h-2 flex-1 overflow-hidden rounded-full bg-[#e6ecef]">
-              <div
-                className="h-full rounded-full bg-[#176b87]"
-                style={{ width: `${Math.min(row.original.progress, 100)}%` }}
-              />
+        cell: ({ row }) => {
+          const progress = getJobProgress(row.original);
+          const mineruStatus = getMinerUStatus(row.original.result);
+
+          return (
+            <div className="min-w-32 space-y-1">
+              <div className="flex items-center gap-2">
+                <div className="h-2 flex-1 overflow-hidden rounded-full bg-[#e6ecef]">
+                  <div
+                    className="h-full rounded-full bg-[#176b87]"
+                    style={{ width: `${progress}%` }}
+                  />
+                </div>
+                <span className="w-9 text-right text-xs text-[#62717a]">{progress}%</span>
+              </div>
+              {mineruStatus?.status ? (
+                <p className="truncate text-xs text-[#62717a]">MinerU {mineruStatus.status}</p>
+              ) : null}
             </div>
-            <span className="w-9 text-right text-xs text-[#62717a]">{row.original.progress}%</span>
-          </div>
-        ),
+          );
+        },
       },
       {
         accessorKey: "status",
@@ -184,7 +259,7 @@ export function DocumentsPage() {
         },
       },
     ],
-    [],
+    [documentsById],
   );
 
   const isRefreshing = documentsQuery.isFetching || jobsQuery.isFetching;
@@ -264,7 +339,7 @@ export function DocumentsPage() {
         </p>
       </section>
 
-      <section className="grid gap-4 xl:grid-cols-[minmax(0,1.3fr)_minmax(360px,0.7fr)]">
+      <section className="grid gap-4">
         <Panel title="Documents" icon={FileUp}>
           <div className="space-y-3">
             {documentsQuery.isLoading ? (
@@ -298,6 +373,11 @@ export function DocumentsPage() {
                 ? `Deleted ${deletedFilename}`
                 : deleteDocument.error?.message}
             </p>
+            <p className="min-h-5 text-sm text-[#62717a]" role="status">
+              {reindexDocument.isSuccess
+                ? `Reindex queued for ${reindexedFilename}`
+                : reindexDocument.error?.message}
+            </p>
           </div>
         </Panel>
 
@@ -319,7 +399,7 @@ export function DocumentsPage() {
           ) : (
             <DataTable
               columns={jobColumns}
-              data={jobsQuery.data?.items ?? []}
+              data={jobs}
               emptyTitle="No jobs"
               emptyDescription="Upload and indexing jobs will appear here."
             />
@@ -334,17 +414,53 @@ function hasActiveJobs(jobs: JobOut[]): boolean {
   return jobs.some((job) => job.status === "ready" || job.status === "running");
 }
 
+function formatJobName(job: JobOut, document: DocumentOut | undefined): string {
+  if (document && job.type === "index_document") {
+    return `Index ${document.filename}`;
+  }
+  if (document) {
+    return `${formatJobType(job.type)} ${document.filename}`;
+  }
+  return formatJobType(job.type);
+}
+
+function formatJobType(type: string): string {
+  return titleCase(type.replaceAll("_", " "));
+}
+
+function getJobProgress(job: JobOut): number {
+  const mineru = getMinerUStatus(job.result);
+  const progress = mineru?.progress ?? job.progress;
+
+  return Math.max(0, Math.min(Math.round(progress), 100));
+}
+
 function formatMinerUResult(result: Record<string, unknown>): string | null {
+  const mineru = getMinerUStatus(result);
+  if (!mineru) {
+    return null;
+  }
+
+  const progress = typeof mineru.progress === "number" ? `${Math.round(mineru.progress)}%` : null;
+
+  return [mineru.status, progress, mineru.detail].filter(Boolean).join(" · ") || null;
+}
+
+function getMinerUStatus(result: Record<string, unknown>): {
+  status: string | null;
+  progress: number | null;
+  detail: string | null;
+} | null {
   const mineru = result.mineru;
   if (!isRecord(mineru)) {
     return null;
   }
 
-  const status = typeof mineru.status === "string" ? titleCase(mineru.status) : null;
-  const progress = typeof mineru.progress === "number" ? `${mineru.progress}%` : null;
-  const detail = typeof mineru.detail === "string" && mineru.detail.length > 0 ? mineru.detail : null;
-
-  return [status, progress, detail].filter(Boolean).join(" · ") || null;
+  return {
+    status: typeof mineru.status === "string" ? titleCase(mineru.status) : null,
+    progress: typeof mineru.progress === "number" ? mineru.progress : null,
+    detail: typeof mineru.detail === "string" && mineru.detail.length > 0 ? mineru.detail : null,
+  };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
