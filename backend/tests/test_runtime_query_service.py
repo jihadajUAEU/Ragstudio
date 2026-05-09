@@ -26,7 +26,9 @@ class FakeRuntime:
             return self.result
         return RuntimeQueryResult(
             answer=f"runtime answer: {query}",
-            sources=[{"document_id": document_ids[0], "text": "source"}],
+            sources=(
+                [{"document_id": document_ids[0], "text": "source"}] if document_ids else []
+            ),
             chunk_traces=[{"rank": 1, "inclusion_status": "prompt-included"}],
             reranker_traces=[{"rank": 1, "score": 0.9}],
             timings={"runtime_query_ms": 5},
@@ -123,6 +125,56 @@ async def test_query_service_uses_runtime_without_chunk_search(client):
     assert run.query_config["top_k"] == 12
     assert run.reranker_traces[0]["score"] == 0.9
     assert run.token_metadata["prompt_tokens"] == 11
+
+
+@pytest.mark.asyncio
+async def test_query_service_records_native_scope_limitation_as_failed_run(client):
+    app = client._transport.app
+    runtime = FakeRuntime(
+        RuntimeQueryResult(
+            answer="",
+            sources=[],
+            error=(
+                "Native RAG-Anything query cannot yet enforce selected document_ids; "
+                "refusing to run an unscoped runtime query."
+            ),
+            error_type="native_document_scope_unsupported",
+        )
+    )
+    async with app.state.session_factory() as session:
+        document, variant = await _create_runtime_records(session, app)
+
+        result = await QueryService(
+            session,
+            app.state.settings.data_dir,
+            settings=app.state.settings,
+            runtime_factory=FakeFactory(runtime),
+            health_service=FakeHealthService(),
+        ).run_query(QueryIn(query="scoped?", document_ids=[document.id], variant_ids=[variant.id]))
+
+    run = result.runs[0]
+    assert run.status == StageStatus.FAILED
+    assert run.error_type == "native_document_scope_unsupported"
+    assert "cannot yet enforce selected document_ids" in (run.error or "")
+
+
+@pytest.mark.asyncio
+async def test_query_service_allows_unscoped_runtime_query_when_no_documents_requested(client):
+    app = client._transport.app
+    async with app.state.session_factory() as session:
+        _, variant = await _create_runtime_records(session, app, indexed=False)
+
+        result = await QueryService(
+            session,
+            app.state.settings.data_dir,
+            settings=app.state.settings,
+            runtime_factory=FakeFactory(),
+            health_service=FakeHealthService(),
+        ).run_query(QueryIn(query="unscoped?", document_ids=[], variant_ids=[variant.id]))
+
+    run = result.runs[0]
+    assert run.status == StageStatus.SUCCEEDED
+    assert run.answer == "runtime answer: unscoped?"
 
 
 @pytest.mark.asyncio

@@ -35,6 +35,10 @@ class NativeRAGAnythingAdapter:
             "indexing": "raganything",
             "query": "raganything",
             "graph": "neo4j",
+            "scoped_query": False,
+            "scoped_query_detail": (
+                "Native RAG-Anything query cannot yet enforce selected document_ids."
+            ),
         }
 
     async def index_document(
