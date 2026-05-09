@@ -72,6 +72,11 @@ class DiagnosticsService:
                 "adapter. Native graph support requires runtime mode with healthy "
                 "RAG-Anything and Neo4j dependencies."
             )
+        elif not blocking:
+            warnings.append(
+                "Native RAG-Anything scoped query is unavailable; selected-document "
+                "queries use Ragstudio's mirrored chunk fallback."
+            )
 
         return DiagnosticsOut(
             capabilities={
@@ -80,6 +85,10 @@ class DiagnosticsService:
                 "indexing": not blocking,
                 "query": not blocking,
                 "graph": dependency_report.get("graph") == "neo4j",
+                "native_scoped_query": dependency_report.get("native_scoped_query") is True,
+                "scoped_query_fallback": (
+                    dependency_report.get("scoped_query") == "mirrored_chunks_fallback"
+                ),
             },
             dependency_status=self._dependency_status(dependency_report),
             warnings=warnings,
@@ -118,6 +127,7 @@ class DiagnosticsService:
             "indexing": report.get("indexing"),
             "query": report.get("query"),
             "graph": report.get("graph"),
+            "native_scoped_query": report.get("native_scoped_query"),
             "scoped_query": report.get("scoped_query"),
             "scoped_query_detail": report.get("scoped_query_detail"),
         }
@@ -144,9 +154,13 @@ class DiagnosticsService:
             "indexing": "raganything" if runtime_available else "unavailable",
             "query": "raganything" if runtime_available else "unavailable",
             "graph": "neo4j" if graph_available else "unavailable",
-            "scoped_query": False,
+            "native_scoped_query": False,
+            "scoped_query": (
+                "mirrored_chunks_fallback" if runtime_available else "unavailable"
+            ),
             "scoped_query_detail": (
-                "Native RAG-Anything query cannot yet enforce selected document_ids."
+                "Native RAG-Anything query cannot yet enforce selected document_ids; "
+                "selected-document queries use Ragstudio's mirrored chunk fallback."
             ),
         }
 

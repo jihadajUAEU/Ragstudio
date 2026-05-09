@@ -201,6 +201,19 @@ class QueryService:
                     query_config=query_config,
                 )
                 normalized = self.normalizer.query_result(runtime_result)
+                if (
+                    normalized.get("error_type") == "native_document_scope_unsupported"
+                    and payload.document_ids
+                ):
+                    await self._run_scoped_mirrored_runtime_query(
+                        run,
+                        payload,
+                        profile,
+                        variant_id,
+                        started_at,
+                    )
+                    runs.append(run)
+                    continue
                 run.status = (
                     StageStatus.FAILED.value
                     if normalized.get("error")
@@ -226,6 +239,54 @@ class QueryService:
         for run in runs:
             await self.session.refresh(run)
         return QueryOut(runs=[RunOut.model_validate(run) for run in runs])
+
+    async def _run_scoped_mirrored_runtime_query(
+        self,
+        run: Run,
+        payload: QueryIn,
+        profile: Any,
+        variant_id: str,
+        started_at: float,
+    ) -> None:
+        search_started_at = perf_counter()
+        search = await ChunkService(self.session, self.data_dir, self.adapter).search(
+            ChunkSearchIn(
+                query=payload.query,
+                document_ids=payload.document_ids,
+                variant_id=variant_id,
+                limit=payload.limit,
+            )
+        )
+        search_ms = self._elapsed_ms(search_started_at)
+        reranked_items, reranker_traces = await self._rerank_chunks(
+            payload.query,
+            search.items,
+            profile,
+        )
+        adapter_chunks = [self._adapter_chunk(chunk) for chunk in reranked_items]
+        query_started_at = perf_counter()
+        result = await self.adapter.query(payload.query, adapter_chunks, limit=payload.limit)
+        query_ms = self._elapsed_ms(query_started_at)
+
+        result_timings = result.get("timings", {})
+        if not isinstance(result_timings, dict):
+            result_timings = {}
+        run.status = StageStatus.SUCCEEDED.value
+        run.answer = str(result.get("answer", ""))
+        run.sources = self._result_list(result.get("sources")) or [
+            self._source(chunk) for chunk in reranked_items
+        ]
+        run.chunk_traces = self._result_list(result.get("chunk_traces"))
+        run.reranker_traces = reranker_traces
+        run.error = None
+        run.error_type = None
+        run.timings = {
+            **result_timings,
+            "search_ms": search_ms,
+            "query_ms": query_ms,
+            "total_ms": self._elapsed_ms(started_at),
+            "scoped_runtime_fallback": True,
+        }
 
     async def _validate_query_inputs(self, payload: QueryIn) -> None:
         missing_variants = await self._missing_ids(Variant, payload.variant_ids)

@@ -1,5 +1,5 @@
 import pytest
-from ragstudio.db.models import Document, IndexRecord, SettingsProfile, Variant
+from ragstudio.db.models import Chunk, Document, IndexRecord, SettingsProfile, Variant
 from ragstudio.schemas.common import StageStatus
 from ragstudio.schemas.query import QueryIn
 from ragstudio.schemas.runtime import RuntimeHealthCheck
@@ -128,7 +128,7 @@ async def test_query_service_uses_runtime_without_chunk_search(client):
 
 
 @pytest.mark.asyncio
-async def test_query_service_records_native_scope_limitation_as_failed_run(client):
+async def test_query_service_falls_back_to_mirrored_chunks_for_native_scope_limitation(client):
     app = client._transport.app
     runtime = FakeRuntime(
         RuntimeQueryResult(
@@ -143,6 +143,16 @@ async def test_query_service_records_native_scope_limitation_as_failed_run(clien
     )
     async with app.state.session_factory() as session:
         document, variant = await _create_runtime_records(session, app)
+        session.add(
+            Chunk(
+                document_id=document.id,
+                text="Sahih al-Bukhari 7277 Hadith Collection",
+                source_location={"page": 1},
+                metadata_json={"runtime_profile_id": "default"},
+                runtime_profile_id="default",
+            )
+        )
+        await session.commit()
 
         result = await QueryService(
             session,
@@ -150,12 +160,21 @@ async def test_query_service_records_native_scope_limitation_as_failed_run(clien
             settings=app.state.settings,
             runtime_factory=FakeFactory(runtime),
             health_service=FakeHealthService(),
-        ).run_query(QueryIn(query="scoped?", document_ids=[document.id], variant_ids=[variant.id]))
+        ).run_query(
+            QueryIn(
+                query="how many hadith in bukhari",
+                document_ids=[document.id],
+                variant_ids=[variant.id],
+            )
+        )
 
     run = result.runs[0]
-    assert run.status == StageStatus.FAILED
-    assert run.error_type == "native_document_scope_unsupported"
-    assert "cannot yet enforce selected document_ids" in (run.error or "")
+    assert run.status == StageStatus.SUCCEEDED
+    assert run.error_type is None
+    assert run.error is None
+    assert "7277 Hadith Collection" in run.answer
+    assert run.timings["scoped_runtime_fallback"] is True
+    assert run.sources[0]["document_id"] == document.id
 
 
 @pytest.mark.asyncio

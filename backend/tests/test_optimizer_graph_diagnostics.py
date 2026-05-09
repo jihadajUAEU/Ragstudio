@@ -1049,10 +1049,18 @@ async def test_diagnostics_reports_native_dependency_status_for_runtime_mode(cli
     assert payload.dependency_status["indexing"] == "raganything"
     assert payload.dependency_status["query"] == "raganything"
     assert payload.dependency_status["graph"] == "neo4j"
-    assert payload.dependency_status["scoped_query"] is False
+    assert payload.capabilities["native_scoped_query"] is False
+    assert payload.capabilities["scoped_query_fallback"] is True
+    assert payload.dependency_status["native_scoped_query"] is False
+    assert payload.dependency_status["scoped_query"] == "mirrored_chunks_fallback"
     assert (
         payload.dependency_status["scoped_query_detail"]
-        == "Native RAG-Anything query cannot yet enforce selected document_ids."
+        == "Native RAG-Anything query cannot yet enforce selected document_ids; "
+        "selected-document queries use Ragstudio's mirrored chunk fallback."
+    )
+    assert any(
+        "Native RAG-Anything scoped query is unavailable" in warning
+        for warning in payload.warnings
     )
 
 
