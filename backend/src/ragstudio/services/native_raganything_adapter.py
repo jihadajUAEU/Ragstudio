@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -12,6 +13,7 @@ from urllib.parse import unquote
 
 from ragstudio.config import AppSettings
 from ragstudio.schemas.runtime import RuntimeProfile
+from ragstudio.services.adapter import AdapterChunk
 from ragstudio.services.runtime_types import RuntimeChunk, RuntimeQueryResult
 from sqlalchemy.engine import make_url
 
@@ -59,6 +61,25 @@ class NativeRAGAnythingAdapter:
                 display_stats=False,
             )
         return self._mirrored_chunks(content_list, path)
+
+    async def index_preparsed_chunks(
+        self,
+        artifact_path: str | Path,
+        chunks: list[AdapterChunk],
+        *,
+        document_id: str,
+    ) -> list[RuntimeChunk]:
+        path = Path(artifact_path)
+        content_list = self._content_list_from_preparsed_chunks(chunks)
+        rag = self._raganything()
+        async with self._storage_env():
+            await rag.insert_content_list(
+                content_list,
+                file_path=str(path),
+                doc_id=document_id,
+                display_stats=False,
+            )
+        return self._runtime_chunks_from_adapter_chunks(chunks, path)
 
     async def query(
         self,
@@ -310,6 +331,70 @@ class NativeRAGAnythingAdapter:
                 )
             )
         return chunks
+
+    def _content_list_from_preparsed_chunks(
+        self,
+        chunks: list[AdapterChunk],
+    ) -> list[dict[str, Any]]:
+        for chunk in chunks:
+            parser_metadata = chunk.metadata.get("parser_metadata")
+            if not isinstance(parser_metadata, dict):
+                continue
+            extract_dir = parser_metadata.get("artifact_extract_dir")
+            content_ref = parser_metadata.get("content_list_ref")
+            if not isinstance(extract_dir, str) or not isinstance(content_ref, str):
+                continue
+            root = Path(extract_dir).resolve()
+            target = (root / content_ref).resolve()
+            if target != root and root not in target.parents:
+                continue
+            try:
+                data = json.loads(target.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if isinstance(data, list) and data:
+                return [item for item in data if isinstance(item, dict)]
+
+        content_list: list[dict[str, Any]] = []
+        for chunk in chunks:
+            page_idx = chunk.source_location.get("page")
+            if not isinstance(page_idx, int):
+                page = chunk.source_location.get("page_start")
+                page_idx = page - 1 if isinstance(page, int) and page > 0 else None
+            item: dict[str, Any] = {"type": chunk.content_type or "text", "text": chunk.text}
+            if isinstance(page_idx, int):
+                item["page_idx"] = page_idx
+            content_list.append(item)
+        return content_list
+
+    def _runtime_chunks_from_adapter_chunks(
+        self,
+        chunks: list[AdapterChunk],
+        path: Path,
+    ) -> list[RuntimeChunk]:
+        output: list[RuntimeChunk] = []
+        for index, chunk in enumerate(chunks):
+            parser_metadata = chunk.metadata.get("parser_metadata")
+            metadata = dict(parser_metadata) if isinstance(parser_metadata, dict) else {}
+            metadata.update(
+                {
+                    "backend": metadata.get("backend", "mineru"),
+                    "artifact_ref": metadata.get("artifact_ref", path.name),
+                    "chunk_index": metadata.get("chunk_index", index),
+                    "source_type": metadata.get("content_type", chunk.content_type),
+                }
+            )
+            output.append(
+                RuntimeChunk(
+                    text=chunk.text,
+                    source_location=chunk.source_location,
+                    metadata=metadata,
+                    runtime_source_id=str(metadata.get("artifact_ref") or index),
+                    content_type=chunk.content_type,
+                    preview_ref=chunk.preview_ref,
+                )
+            )
+        return output
 
     def _content_text(self, item: dict[str, Any]) -> str:
         for key in ("text", "content", "table_body", "latex"):

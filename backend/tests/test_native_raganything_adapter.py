@@ -3,6 +3,7 @@ from types import SimpleNamespace
 import pytest
 from ragstudio.config import AppSettings
 from ragstudio.schemas.runtime import RuntimeProfile
+from ragstudio.services.adapter import AdapterChunk
 from ragstudio.services.native_raganything_adapter import NativeRAGAnythingAdapter
 
 
@@ -72,12 +73,15 @@ class FakeRAGAnything:
     def __init__(self, **kwargs):
         self.kwargs = kwargs
         self.inserted_doc_id = None
+        self.inserted_content_list = None
+        self.parse_called = False
         self.initialized = False
         self.lightrag = SimpleNamespace(adelete_by_doc_id=self._delete)
         self.deleted = []
         FakeRAGAnything.instances.append(self)
 
     async def parse_document(self, file_path, output_dir, parse_method, display_stats):
+        self.parse_called = True
         return (
             [
                 {"type": "text", "text": "Native chunk", "page_idx": 0},
@@ -88,6 +92,7 @@ class FakeRAGAnything:
 
     async def insert_content_list(self, content_list, file_path, doc_id, display_stats):
         self.inserted_doc_id = doc_id
+        self.inserted_content_list = content_list
 
     async def aquery(self, query, mode="mix", **kwargs):
         if not self.initialized:
@@ -150,6 +155,50 @@ async def test_native_adapter_indexes_with_studio_document_id(tmp_path):
     assert FakeRAGAnything.instances[0].inserted_doc_id == "studio-doc-id"
     assert [chunk.text for chunk in chunks] == ["Native chunk", "|A|B|"]
     assert chunks[0].metadata["backend"] == "raganything"
+
+
+@pytest.mark.asyncio
+async def test_native_adapter_indexes_preparsed_chunks_without_local_parse(tmp_path):
+    artifact = tmp_path / "paper.pdf"
+    artifact.write_text("pdf", encoding="utf-8")
+    extract_dir = tmp_path / "mineru"
+    extract_dir.mkdir()
+    (extract_dir / "source_content_list.json").write_text(
+        '[{"type": "text", "text": "Remote MinerU text", "page_idx": 2}]',
+        encoding="utf-8",
+    )
+    adapter = NativeRAGAnythingAdapter(
+        profile(runtime_working_dir=str(tmp_path / "runtime")),
+        AppSettings(database_url="postgresql+asyncpg://user:pass@localhost:5432/ragstudio"),
+    )
+
+    chunks = await adapter.index_preparsed_chunks(
+        artifact,
+        [
+            AdapterChunk(
+                text="Remote MinerU text",
+                source_location={"page_start": 3, "page_end": 3},
+                metadata={
+                    "parser_metadata": {
+                        "backend": "mineru",
+                        "artifact_extract_dir": str(extract_dir),
+                        "content_list_ref": "source_content_list.json",
+                        "artifact_ref": "page.md",
+                    }
+                },
+            )
+        ],
+        document_id="studio-doc-id",
+    )
+
+    rag = FakeRAGAnything.instances[0]
+    assert rag.parse_called is False
+    assert rag.inserted_doc_id == "studio-doc-id"
+    assert rag.inserted_content_list == [
+        {"type": "text", "text": "Remote MinerU text", "page_idx": 2}
+    ]
+    assert chunks[0].text == "Remote MinerU text"
+    assert chunks[0].metadata["backend"] == "mineru"
 
 
 @pytest.mark.asyncio

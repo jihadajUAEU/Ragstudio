@@ -4,6 +4,7 @@ import pytest
 from ragstudio.db.models import Chunk, Document, IndexRecord, SettingsProfile
 from ragstudio.schemas.common import StageStatus
 from ragstudio.schemas.parsing import IndexDocumentIn
+from ragstudio.services.adapter import AdapterChunk
 from ragstudio.services.index_lifecycle_service import IndexLifecycleService
 from ragstudio.services.runtime_types import RuntimeChunk
 from sqlalchemy import select
@@ -33,6 +34,45 @@ class FakeRuntime:
     async def index_document(self, artifact_path):
         self.indexed_paths.append(artifact_path)
         return self.chunks
+
+
+class TransactionInspectingRuntime(FakeRuntime):
+    def __init__(self, session):
+        super().__init__()
+        self.session = session
+        self.in_transaction_during_delete: bool | None = None
+        self.in_transaction_during_index: bool | None = None
+
+    async def delete_document_index(self, document_id):
+        self.in_transaction_during_delete = self.session.in_transaction()
+        await super().delete_document_index(document_id)
+
+    async def index_document(self, artifact_path):
+        self.in_transaction_during_index = self.session.in_transaction()
+        return await super().index_document(artifact_path)
+
+
+class PreparsedRuntime(FakeRuntime):
+    def __init__(self):
+        super().__init__([])
+        self.preparsed_paths: list[str | Path] = []
+        self.preparsed_chunks = []
+
+    async def index_document(self, artifact_path):
+        raise AssertionError("runtime local parse must not be used for strict MinerU")
+
+    async def index_preparsed_chunks(self, artifact_path, chunks, *, document_id):
+        self.preparsed_paths.append(artifact_path)
+        self.preparsed_chunks = chunks
+        return [
+            RuntimeChunk(
+                text=chunks[0].text,
+                source_location=chunks[0].source_location,
+                metadata={"backend": "mineru", "document_id": document_id},
+                runtime_source_id="mineru-preparsed-1",
+                content_type="text",
+            )
+        ]
 
 
 class FakeFactory:
@@ -130,6 +170,113 @@ async def test_lifecycle_deletes_existing_chunks_and_mirrors_runtime_chunks(clie
     assert records[0].chunk_count == 1
     assert refreshed_document is not None
     assert refreshed_document.status == StageStatus.SUCCEEDED.value
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_releases_studio_transaction_before_runtime_storage_work(client):
+    app = client._transport.app
+    artifact_path = app.state.settings.data_dir / "transaction-release.txt"
+    artifact_path.write_text("runtime text", encoding="utf-8")
+
+    async with app.state.session_factory() as session:
+        session.add(
+            SettingsProfile(
+                id="default",
+                provider="openai-compatible",
+                llm_model="gpt-4o",
+                llm_base_url="http://llm.test",
+                embedding_model="text-embedding-3-large",
+                embedding_base_url="http://embedding.test",
+                storage_backend="postgres_pgvector_neo4j",
+                runtime_mode="runtime",
+            )
+        )
+        document = Document(
+            filename="transaction-release.txt",
+            content_type="text/plain",
+            sha256="transaction-release",
+            artifact_path=str(artifact_path),
+            status=StageStatus.READY.value,
+        )
+        session.add(document)
+        await session.commit()
+
+        runtime = TransactionInspectingRuntime(session)
+
+        await IndexLifecycleService(
+            session,
+            app.state.settings,
+            runtime_factory=FakeFactory(runtime),
+            health_service=FakeHealthService(),
+        ).reindex_document(document.id, options=IndexDocumentIn())
+
+    assert runtime.in_transaction_during_delete is False
+    assert runtime.in_transaction_during_index is False
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_uses_preparsed_mineru_chunks_for_strict_runtime_reindex(
+    client,
+    monkeypatch,
+):
+    app = client._transport.app
+    artifact_path = app.state.settings.data_dir / "strict-mineru-runtime.pdf"
+    artifact_path.write_text("runtime text", encoding="utf-8")
+
+    async with app.state.session_factory() as session:
+        session.add(
+            SettingsProfile(
+                id="default",
+                provider="openai-compatible",
+                llm_model="gpt-4o",
+                llm_base_url="http://llm.test",
+                embedding_model="text-embedding-3-large",
+                embedding_base_url="http://embedding.test",
+                storage_backend="postgres_pgvector_neo4j",
+                runtime_mode="runtime",
+            )
+        )
+        document = Document(
+            filename="strict-mineru-runtime.pdf",
+            content_type="application/pdf",
+            sha256="strict-mineru-runtime",
+            artifact_path=str(artifact_path),
+            status=StageStatus.READY.value,
+        )
+        session.add(document)
+        await session.commit()
+
+        async def fake_mineru_chunks(self, document_arg, options):
+            assert document_arg.id == document.id
+            assert options.parser_mode == "mineru_strict"
+            return [
+                AdapterChunk(
+                    text="Remote MinerU chunk",
+                    source_location={"page_start": 1, "page_end": 1},
+                    metadata={"parser_metadata": {"backend": "mineru"}},
+                )
+            ]
+
+        monkeypatch.setattr(
+            IndexLifecycleService,
+            "_mineru_adapter_chunks",
+            fake_mineru_chunks,
+        )
+        runtime = PreparsedRuntime()
+
+        chunks = await IndexLifecycleService(
+            session,
+            app.state.settings,
+            runtime_factory=FakeFactory(runtime),
+            health_service=FakeHealthService(),
+        ).reindex_document(
+            document.id,
+            options=IndexDocumentIn(parser_mode="mineru_strict"),
+        )
+
+    assert runtime.preparsed_paths == [str(artifact_path)]
+    assert chunks is not None
+    assert [chunk.text for chunk in chunks] == ["Remote MinerU chunk"]
 
 
 @pytest.mark.asyncio
