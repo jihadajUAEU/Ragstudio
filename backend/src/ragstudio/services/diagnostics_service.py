@@ -72,11 +72,6 @@ class DiagnosticsService:
                 "adapter. Native graph support requires runtime mode with healthy "
                 "RAG-Anything and Neo4j dependencies."
             )
-        elif not blocking:
-            warnings.append(
-                "Native RAG-Anything scoped query is unavailable; selected-document "
-                "queries use Ragstudio's mirrored chunk fallback."
-            )
 
         return DiagnosticsOut(
             capabilities={
@@ -154,13 +149,17 @@ class DiagnosticsService:
             "indexing": "raganything" if runtime_available else "unavailable",
             "query": "raganything" if runtime_available else "unavailable",
             "graph": "neo4j" if graph_available else "unavailable",
-            "native_scoped_query": False,
+            "native_scoped_query": runtime_available,
             "scoped_query": (
-                "mirrored_chunks_fallback" if runtime_available else "unavailable"
+                "raganything_full_doc_id_vector" if runtime_available else "unavailable"
             ),
             "scoped_query_detail": (
-                "Native RAG-Anything query cannot yet enforce selected document_ids; "
-                "selected-document queries use Ragstudio's mirrored chunk fallback."
+                "Native RAG-Anything query scopes selected documents through LightRAG "
+                "chunk full_doc_id filtering with vector retrieval; graph modes are not "
+                "used under document scope."
+                if runtime_available
+                else "Native RAG-Anything scoped query is unavailable because runtime "
+                "health checks are blocking."
             ),
         }
 
