@@ -62,6 +62,9 @@ class GraphService:
             checks = await health_service.check(profile)
             blocking = health_service.blocking_failures(checks)
             if blocking:
+                fallback_graph = await self._relationship_metadata_graph()
+                if fallback_graph["nodes"] or fallback_graph["edges"]:
+                    return fallback_graph
                 details = "; ".join(item.detail for item in blocking)
                 raise RuntimeGraphUnavailableError(
                     f"Runtime graph prerequisites are unavailable: {details}"
@@ -70,6 +73,9 @@ class GraphService:
         except RuntimeGraphUnavailableError:
             raise
         except RuntimeUnavailableError as exc:
+            fallback_graph = await self._relationship_metadata_graph()
+            if fallback_graph["nodes"] or fallback_graph["edges"]:
+                return fallback_graph
             raise RuntimeGraphUnavailableError(str(exc)) from exc
         except Exception as exc:
             raise RuntimeGraphUnavailableError(

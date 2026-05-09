@@ -470,6 +470,111 @@ async def test_graph_returns_conflict_when_native_graph_unavailable(client, monk
 
 
 @pytest.mark.asyncio
+async def test_graph_returns_fallback_relationships_when_native_graph_unavailable(
+    client, monkeypatch
+):
+    from ragstudio.db.models import Chunk, Document
+    from ragstudio.schemas.common import StageStatus
+
+    class ReadyRuntimeHealthService:
+        def __init__(self, session, *, verify_storage):
+            self.session = session
+            self.verify_storage = verify_storage
+
+        async def check(self, profile):
+            return []
+
+        def blocking_failures(self, checks):
+            return []
+
+    class BrokenRuntime:
+        async def graph(self):
+            raise RuntimeUnavailableError("Neo4j is not reachable")
+
+    class BrokenRuntimeFactory:
+        def __init__(self, settings):
+            self.settings = settings
+
+        def build(self, profile):
+            return BrokenRuntime()
+
+    monkeypatch.setattr(
+        "ragstudio.services.graph_service.RAGAnythingRuntimeFactory",
+        BrokenRuntimeFactory,
+    )
+    monkeypatch.setattr(
+        "ragstudio.services.graph_service.RuntimeHealthService",
+        ReadyRuntimeHealthService,
+    )
+
+    settings = await client.put(
+        "/api/settings/default",
+        json={
+            "provider": "openai-compatible",
+            "runtime_mode": "runtime",
+            "llm_model": "gpt-4o",
+            "embedding_model": "text-embedding-3-large",
+            "storage_backend": "postgres_pgvector_neo4j",
+        },
+    )
+    assert settings.status_code == 200
+
+    app = client._transport.app
+    async with app.state.session_factory() as session:
+        document = Document(
+            filename="runtime-fallback-relationships.txt",
+            content_type="text/plain",
+            sha256="runtime-fallback-relationships",
+            artifact_path=str(app.state.settings.data_dir / "runtime-fallback-relationships.txt"),
+            status=StageStatus.SUCCEEDED.value,
+        )
+        session.add(document)
+        await session.flush()
+        session.add(
+            Chunk(
+                document_id=document.id,
+                text="Runtime fallback relationship chunk.",
+                source_location={"page": 7},
+                metadata_json={
+                    "relationship_metadata": {
+                        "graph_relationships": [
+                            {
+                                "source": "chunk:0",
+                                "target": "topic:runtime_fallback",
+                                "type": "mentions",
+                                "source_label": "Runtime chunk",
+                                "target_label": "Runtime fallback",
+                            }
+                        ]
+                    }
+                },
+            )
+        )
+        await session.commit()
+
+    response = await client.get("/api/graph")
+
+    assert response.status_code == 200
+    payload = response.json()
+    chunk_node = next(node for node in payload["nodes"] if node["id"].endswith(":chunk:0"))
+    assert chunk_node["properties"] == {
+        "page": 7,
+        "label": "Runtime chunk",
+        "document_id": document.id,
+    }
+    assert any(node["id"] == "topic:runtime_fallback" for node in payload["nodes"])
+    assert payload["edges"] == [
+        {
+            "id": f"{chunk_node['id']}-topic:runtime_fallback-mentions",
+            "source": chunk_node["id"],
+            "target": "topic:runtime_fallback",
+            "type": "mentions",
+            "properties": {"page": 7, "document_id": document.id},
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_graph_returns_conflict_when_runtime_health_blocks(client, monkeypatch):
     class BlockingRuntimeHealthService:
         def __init__(self, session, *, verify_storage):
