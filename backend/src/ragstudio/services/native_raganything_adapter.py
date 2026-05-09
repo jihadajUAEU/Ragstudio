@@ -145,6 +145,7 @@ class NativeRAGAnythingAdapter:
         async with self._storage_env():
             if document_ids:
                 effective_mode = "naive"
+                kwargs["vlm_enhanced"] = False
                 async with self._scoped_chunks_vdb(rag, document_ids) as scoped_proxy:
                     answer = await rag.aquery(query, mode=effective_mode, **kwargs)
                     leak = self._scope_leak_error(scoped_proxy, document_ids)
@@ -357,6 +358,9 @@ class NativeRAGAnythingAdapter:
                     "full_doc_id": document_id,
                     "score": row.get("score"),
                     "native_scope": True,
+                    "source_role": "retrieved_candidate",
+                    "retrieval_scope": "document_ids",
+                    "retrieval_mode": "native_vector_naive",
                 },
             }
         return list(deduped.values())

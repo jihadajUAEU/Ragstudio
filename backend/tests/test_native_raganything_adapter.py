@@ -393,6 +393,9 @@ async def test_native_adapter_queries_selected_documents_with_scoped_lightrag(tm
                 "full_doc_id": "doc-1",
                 "score": 0.91,
                 "native_scope": True,
+                "source_role": "retrieved_candidate",
+                "retrieval_scope": "document_ids",
+                "retrieval_mode": "native_vector_naive",
             },
         }
     ]
@@ -405,7 +408,7 @@ async def test_native_adapter_queries_selected_documents_with_scoped_lightrag(tm
         {
             "query": "how many hadith in bukhari",
             "mode": "naive",
-            "kwargs": {"top_k": 12, "chunk_top_k": 4},
+            "kwargs": {"top_k": 12, "chunk_top_k": 4, "vlm_enhanced": False},
         }
     ]
     assert rag.lightrag.aquery_data_calls == 0
@@ -455,10 +458,29 @@ async def test_native_adapter_filters_raw_overfetch_without_scope_leak(tmp_path)
         {
             "query": "how many hadith in bukhari",
             "mode": "naive",
-            "kwargs": {"top_k": 12, "chunk_top_k": 4},
+            "kwargs": {"top_k": 12, "chunk_top_k": 4, "vlm_enhanced": False},
         }
     ]
     assert rag.lightrag.aquery_data_calls == 0
+
+
+def test_scope_leak_error_detects_polluted_collected_results(tmp_path):
+    adapter = NativeRAGAnythingAdapter(
+        profile(runtime_working_dir=str(tmp_path / "runtime")),
+        AppSettings(database_url="postgresql+asyncpg://user:pass@localhost:5432/ragstudio"),
+    )
+    proxy = SimpleNamespace(
+        collected_results=[
+            {"id": "chunk-1", "full_doc_id": "doc-1"},
+            {"id": "chunk-2", "full_doc_id": "doc-2"},
+        ]
+    )
+
+    result = adapter._scope_leak_error(proxy, ["doc-1"])
+
+    assert result is not None
+    assert result.error_type == "native_document_scope_leak"
+    assert "doc-2" in (result.error or "")
 
 
 @pytest.mark.asyncio
