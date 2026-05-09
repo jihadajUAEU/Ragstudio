@@ -274,6 +274,7 @@ function RunResult({ run, variant }: { run: RunOut; variant?: VariantOut }) {
         <Badge>documents {run.document_ids.length}</Badge>
         {run.error_type ? <Badge>{run.error_type}</Badge> : null}
       </div>
+      <RerankerSummary traces={run.reranker_traces} />
 
       {run.error ? (
         <p className="mt-3 rounded-md border border-[#e19a9a] bg-[#fff0f0] p-3 text-sm text-[#8c2525]">
@@ -302,6 +303,78 @@ function Badge({ children }: { children: ReactNode }) {
       {children}
     </span>
   );
+}
+
+function RerankerSummary({ traces }: { traces: Record<string, unknown>[] }) {
+  if (!traces.length) {
+    return null;
+  }
+
+  const first = traces[0];
+  const status = textValue(first.status) ?? "applied";
+  const provider = textValue(first.provider);
+  const model = textValue(first.model);
+  const errorType = textValue(first.error_type);
+  const rankCount = rerankerRankCount(traces, first);
+  const detail = [provider, model, errorType, rankCount ? formatRankCount(rankCount) : ""]
+    .filter(Boolean)
+    .join(" · ");
+
+  return (
+    <div className="mt-3 rounded-md border border-[#cfe3ea] bg-[#f5fafb] p-3 text-sm text-[#3a4a53]">
+      <p className="font-semibold text-[#1f2933]">{rerankerStatusTitle(status)}</p>
+      {detail ? <p className="mt-1 text-xs text-[#62717a]">{detail}</p> : null}
+    </div>
+  );
+}
+
+function rerankerStatusTitle(status: string) {
+  switch (status) {
+    case "failed":
+      return "Reranker failed";
+    case "blocked_endpoint":
+      return "Reranker blocked";
+    case "no_results":
+    case "no_usable_results":
+      return "Reranker returned no results";
+    case "skipped":
+      return "Reranker skipped";
+    case "disabled":
+      return "Reranker disabled";
+    case "succeeded":
+    case "applied":
+    default:
+      return "Reranker applied";
+  }
+}
+
+function rerankerRankCount(traces: Record<string, unknown>[], first: Record<string, unknown>) {
+  const explicitCount =
+    numberValue(first.rank_count) ??
+    numberValue(first.ranked_count) ??
+    numberValue(first.result_count) ??
+    numberValue(first.results_count);
+  if (explicitCount !== undefined) {
+    return explicitCount;
+  }
+  const rankedTraces = traces.filter(hasRankDetails);
+  return rankedTraces.length || undefined;
+}
+
+function hasRankDetails(trace: Record<string, unknown>) {
+  return numberValue(trace.rank) !== undefined || numberValue(trace.original_rank) !== undefined;
+}
+
+function formatRankCount(count: number) {
+  return `${count} ${count === 1 ? "rank" : "ranks"}`;
+}
+
+function textValue(value: unknown) {
+  return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function numberValue(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 function JsonPanel({
