@@ -1,12 +1,10 @@
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 
 from ragstudio.schemas.parsing import (
     DomainMetadata,
-    DomainMetadataSuggestIn,
     DomainProfileIn,
     DomainProfileOut,
 )
@@ -119,35 +117,6 @@ class DomainMetadataService:
             encoding="utf-8",
         )
         return saved
-
-    def suggest(self, payload: DomainMetadataSuggestIn) -> DomainMetadata:
-        profile = next(
-            (item for item in self.list_profiles() if item.id == payload.profile_id),
-            BUILTIN_PROFILES[0],
-        )
-        metadata = profile.metadata.model_copy(deep=True)
-        sources = set(metadata.metadata_sources)
-        sources.add("profile")
-        filename_text = f"{payload.filename} {payload.sample_text}".casefold()
-        if "bukhari" in filename_text:
-            metadata.collection = "Sahih al-Bukhari"
-            sources.add("heuristic")
-        elif "tirmidhi" in filename_text:
-            metadata.collection = "Jami at-Tirmidhi"
-            sources.add("heuristic")
-        elif "muslim" in filename_text:
-            metadata.collection = "Sahih Muslim"
-            sources.add("heuristic")
-        if re.search(r"book\s+\d+\s*,?\s*hadith\s+\d+", filename_text):
-            metadata.reference_pattern = "Book N, Hadith N"
-            sources.add("heuristic")
-        if payload.filename.lower().endswith((".csv", ".xlsx", ".xls")):
-            metadata.domain = "data"
-            metadata.document_type = "table"
-            metadata.tags = sorted({*metadata.tags, "table"})
-            sources.add("heuristic")
-        metadata.metadata_sources = sorted(sources)
-        return metadata
 
     def _saved_profiles(self) -> list[DomainProfileOut]:
         if not self.profile_path.exists():

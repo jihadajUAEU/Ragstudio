@@ -1,13 +1,17 @@
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from ragstudio.api.deps import get_session
+from ragstudio.db.models import SettingsProfile
 from ragstudio.schemas.parsing import (
-    DomainMetadataSuggestIn,
     DomainMetadataSuggestOut,
     DomainProfileIn,
     DomainProfileListOut,
     DomainProfileOut,
 )
+from ragstudio.services.domain_metadata_ai_suggester import DomainMetadataAiSuggester
 from ragstudio.services.domain_metadata_service import DomainMetadataService
+from ragstudio.services.page_sampler import PageSampler
 
 router = APIRouter(prefix="/api/domain-profiles", tags=["domain-profiles"])
 
@@ -20,11 +24,39 @@ async def list_domain_profiles(request: Request) -> DomainProfileListOut:
 
 @router.post("/suggest", response_model=DomainMetadataSuggestOut)
 async def suggest_domain_metadata(
-    payload: DomainMetadataSuggestIn,
     request: Request,
+    session: AsyncSession = Depends(get_session),
+    file: UploadFile = File(...),
+    profile_id: str | None = Form(default=None),
 ) -> DomainMetadataSuggestOut:
-    metadata = DomainMetadataService(request.app.state.settings.data_dir).suggest(payload)
-    return DomainMetadataSuggestOut(domain_metadata=metadata)
+    del request, profile_id
+    settings_profile = await session.get(SettingsProfile, "default")
+    if settings_profile is None:
+        raise HTTPException(
+            status_code=409,
+            detail="Default settings profile is required for AI metadata autosuggest.",
+        )
+
+    filename = file.filename or "upload"
+    content_type = file.content_type or "application/octet-stream"
+    data = await file.read()
+    sampler = PageSampler()
+    pages = sampler.sample(data, filename=filename, content_type=content_type)
+    if not pages:
+        raise HTTPException(
+            status_code=422,
+            detail="Could not sample pages from this file for AI metadata autosuggest.",
+        )
+    try:
+        return await DomainMetadataAiSuggester().suggest(
+            settings_profile=settings_profile,
+            filename=filename,
+            content_type=content_type,
+            pages=pages,
+            sampler_warnings=sampler.warnings,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @router.put("/{profile_id}", response_model=DomainProfileOut)
