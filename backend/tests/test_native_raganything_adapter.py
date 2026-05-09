@@ -78,6 +78,7 @@ class FakeRAGAnything:
         self.initialized = False
         self.aquery_error = None
         self.aquery_calls = []
+        self.status_upserts = []
         self.lightrag = FakeLightRAG()
         self.deleted = self.lightrag.deleted
         FakeRAGAnything.instances.append(self)
@@ -93,8 +94,10 @@ class FakeRAGAnything:
         )
 
     async def insert_content_list(self, content_list, file_path, doc_id, display_stats):
+        await self._upsert_doc_status(doc_id, file_path, status="handling", error_msg="")
         self.inserted_doc_id = doc_id
         self.inserted_content_list = content_list
+        await self._upsert_doc_status(doc_id, file_path, status="processed", error_msg="")
 
     async def aquery(self, query, mode="mix", **kwargs):
         if not self.initialized:
@@ -115,6 +118,16 @@ class FakeRAGAnything:
     async def _ensure_lightrag_initialized(self):
         self.initialized = True
         return {"success": True}
+
+    async def _upsert_doc_status(self, doc_id, file_path, *, status, error_msg):
+        self.status_upserts.append(
+            {
+                "doc_id": doc_id,
+                "file_path": file_path,
+                "status": status,
+                "error_msg": error_msg,
+            }
+        )
 
 
 class FakeEmbeddingFunc:
@@ -237,6 +250,14 @@ async def test_native_adapter_indexes_with_studio_document_id(tmp_path):
     chunks = await adapter.index_document(artifact, document_id="studio-doc-id")
 
     assert FakeRAGAnything.instances[0].inserted_doc_id == "studio-doc-id"
+    assert FakeRAGAnything.instances[0].status_upserts == [
+        {
+            "doc_id": "studio-doc-id",
+            "file_path": str(artifact),
+            "status": "processed",
+            "error_msg": "",
+        }
+    ]
     assert [chunk.text for chunk in chunks] == ["Native chunk", "|A|B|"]
     assert chunks[0].metadata["backend"] == "raganything"
 
@@ -278,11 +299,70 @@ async def test_native_adapter_indexes_preparsed_chunks_without_local_parse(tmp_p
     rag = FakeRAGAnything.instances[0]
     assert rag.parse_called is False
     assert rag.inserted_doc_id == "studio-doc-id"
+    assert rag.status_upserts == [
+        {
+            "doc_id": "studio-doc-id",
+            "file_path": str(artifact),
+            "status": "processed",
+            "error_msg": "",
+        }
+    ]
     assert rag.inserted_content_list == [
         {"type": "text", "text": "Remote MinerU text", "page_idx": 2}
     ]
     assert chunks[0].text == "Remote MinerU text"
     assert chunks[0].metadata["backend"] == "mineru"
+
+
+@pytest.mark.asyncio
+async def test_native_adapter_keeps_preinsert_status_for_multimodal_only_content(tmp_path):
+    artifact = tmp_path / "paper.pdf"
+    artifact.write_text("pdf", encoding="utf-8")
+    extract_dir = tmp_path / "mineru"
+    extract_dir.mkdir()
+    (extract_dir / "source_content_list.json").write_text(
+        '[{"type": "image", "image_caption": ["Figure caption"], "page_idx": 0}]',
+        encoding="utf-8",
+    )
+    adapter = NativeRAGAnythingAdapter(
+        profile(runtime_working_dir=str(tmp_path / "runtime")),
+        AppSettings(database_url="postgresql+asyncpg://user:pass@localhost:5432/ragstudio"),
+    )
+
+    chunks = await adapter.index_preparsed_chunks(
+        artifact,
+        [
+            AdapterChunk(
+                text="Figure caption",
+                source_location={"page_start": 1, "page_end": 1},
+                metadata={
+                    "parser_metadata": {
+                        "backend": "mineru",
+                        "artifact_extract_dir": str(extract_dir),
+                        "content_list_ref": "source_content_list.json",
+                    }
+                },
+            )
+        ],
+        document_id="studio-doc-id",
+    )
+
+    rag = FakeRAGAnything.instances[0]
+    assert chunks[0].text == "Figure caption"
+    assert rag.status_upserts == [
+        {
+            "doc_id": "studio-doc-id",
+            "file_path": str(artifact),
+            "status": "handling",
+            "error_msg": "",
+        },
+        {
+            "doc_id": "studio-doc-id",
+            "file_path": str(artifact),
+            "status": "processed",
+            "error_msg": "",
+        },
+    ]
 
 
 @pytest.mark.asyncio

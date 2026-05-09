@@ -104,12 +104,17 @@ class NativeRAGAnythingAdapter:
                 self.profile.parse_method,
                 False,
             )
-            await rag.insert_content_list(
+            async with self._skip_preinsert_doc_status(
+                rag,
+                document_id or generated_doc_id,
                 content_list,
-                file_path=str(path),
-                doc_id=document_id or generated_doc_id,
-                display_stats=False,
-            )
+            ):
+                await rag.insert_content_list(
+                    content_list,
+                    file_path=str(path),
+                    doc_id=document_id or generated_doc_id,
+                    display_stats=False,
+                )
         return self._mirrored_chunks(content_list, path)
 
     async def index_preparsed_chunks(
@@ -123,12 +128,13 @@ class NativeRAGAnythingAdapter:
         content_list = self._content_list_from_preparsed_chunks(chunks)
         rag = self._raganything()
         async with self._storage_env():
-            await rag.insert_content_list(
-                content_list,
-                file_path=str(path),
-                doc_id=document_id,
-                display_stats=False,
-            )
+            async with self._skip_preinsert_doc_status(rag, document_id, content_list):
+                await rag.insert_content_list(
+                    content_list,
+                    file_path=str(path),
+                    doc_id=document_id,
+                    display_stats=False,
+                )
         return self._runtime_chunks_from_adapter_chunks(chunks, path)
 
     async def query(
@@ -366,6 +372,62 @@ class NativeRAGAnythingAdapter:
             yield proxy
         finally:
             lightrag.chunks_vdb = original_chunks_vdb
+
+    @asynccontextmanager
+    async def _skip_preinsert_doc_status(
+        self,
+        rag: Any,
+        document_id: str,
+        content_list: list[dict[str, Any]],
+    ) -> AsyncIterator[None]:
+        if not self._has_lightrag_text_content(content_list):
+            yield
+            return
+
+        original = getattr(rag, "_upsert_doc_status", None)
+        if original is None:
+            yield
+            return
+
+        skipped = False
+
+        async def guarded_upsert(
+            target_doc_id: str,
+            *args: Any,
+            status: Any = None,
+            error_msg: str = "",
+            **kwargs: Any,
+        ) -> Any:
+            nonlocal skipped
+            status_value = str(getattr(status, "value", status) or "")
+            if (
+                not skipped
+                and target_doc_id == document_id
+                and status_value.lower() == "handling"
+                and not error_msg
+            ):
+                skipped = True
+                return None
+            return await original(
+                target_doc_id,
+                *args,
+                status=status,
+                error_msg=error_msg,
+                **kwargs,
+            )
+
+        rag._upsert_doc_status = guarded_upsert
+        try:
+            yield
+        finally:
+            rag._upsert_doc_status = original
+
+    def _has_lightrag_text_content(self, content_list: list[dict[str, Any]]) -> bool:
+        return any(
+            str(item.get("text") or "").strip()
+            for item in content_list
+            if isinstance(item, dict) and item.get("type") == "text"
+        )
 
     def _native_sources_from_proxy(
         self,
