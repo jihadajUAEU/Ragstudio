@@ -575,6 +575,111 @@ async def test_graph_returns_fallback_relationships_when_native_graph_unavailabl
 
 
 @pytest.mark.asyncio
+async def test_graph_returns_fallback_relationships_when_native_graph_raises_generic_error(
+    client, monkeypatch
+):
+    from ragstudio.db.models import Chunk, Document
+    from ragstudio.schemas.common import StageStatus
+
+    class ReadyRuntimeHealthService:
+        def __init__(self, session, *, verify_storage):
+            self.session = session
+            self.verify_storage = verify_storage
+
+        async def check(self, profile):
+            return []
+
+        def blocking_failures(self, checks):
+            return []
+
+    class BrokenRuntime:
+        async def graph(self):
+            raise RuntimeError("Neo4j read failed")
+
+    class BrokenRuntimeFactory:
+        def __init__(self, settings):
+            self.settings = settings
+
+        def build(self, profile):
+            return BrokenRuntime()
+
+    monkeypatch.setattr(
+        "ragstudio.services.graph_service.RAGAnythingRuntimeFactory",
+        BrokenRuntimeFactory,
+    )
+    monkeypatch.setattr(
+        "ragstudio.services.graph_service.RuntimeHealthService",
+        ReadyRuntimeHealthService,
+    )
+
+    settings = await client.put(
+        "/api/settings/default",
+        json={
+            "provider": "openai-compatible",
+            "runtime_mode": "runtime",
+            "llm_model": "gpt-4o",
+            "embedding_model": "text-embedding-3-large",
+            "storage_backend": "postgres_pgvector_neo4j",
+        },
+    )
+    assert settings.status_code == 200
+
+    app = client._transport.app
+    async with app.state.session_factory() as session:
+        document = Document(
+            filename="runtime-generic-error-relationships.txt",
+            content_type="text/plain",
+            sha256="runtime-generic-error-relationships",
+            artifact_path=str(app.state.settings.data_dir / "runtime-generic-error-relationships.txt"),
+            status=StageStatus.SUCCEEDED.value,
+        )
+        session.add(document)
+        await session.flush()
+        session.add(
+            Chunk(
+                document_id=document.id,
+                text="Runtime generic error fallback relationship chunk.",
+                source_location={"page": 9},
+                metadata_json={
+                    "relationship_metadata": {
+                        "graph_relationships": [
+                            {
+                                "source": "chunk:0",
+                                "target": "topic:generic_runtime_error",
+                                "type": "mentions",
+                                "source_label": "Generic error chunk",
+                                "target_label": "Generic runtime error",
+                            }
+                        ]
+                    }
+                },
+            )
+        )
+        await session.commit()
+
+    response = await client.get("/api/graph")
+
+    assert response.status_code == 200
+    payload = response.json()
+    chunk_node = next(node for node in payload["nodes"] if node["id"].endswith(":chunk:0"))
+    assert chunk_node["properties"] == {
+        "page": 9,
+        "label": "Generic error chunk",
+        "document_id": document.id,
+    }
+    assert any(node["id"] == "topic:generic_runtime_error" for node in payload["nodes"])
+    assert payload["edges"] == [
+        {
+            "id": f"{chunk_node['id']}-topic:generic_runtime_error-mentions",
+            "source": chunk_node["id"],
+            "target": "topic:generic_runtime_error",
+            "type": "mentions",
+            "properties": {"page": 9, "document_id": document.id},
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_graph_returns_fallback_relationships_when_native_graph_is_empty(
     client, monkeypatch
 ):

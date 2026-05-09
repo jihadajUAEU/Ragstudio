@@ -86,6 +86,9 @@ class GraphService:
                 return fallback_graph
             raise RuntimeGraphUnavailableError(str(exc)) from exc
         except Exception as exc:
+            fallback_graph = await self._relationship_metadata_graph()
+            if fallback_graph["nodes"] or fallback_graph["edges"]:
+                return fallback_graph
             raise RuntimeGraphUnavailableError(
                 f"Runtime graph is unavailable: {exc}"
             ) from exc
