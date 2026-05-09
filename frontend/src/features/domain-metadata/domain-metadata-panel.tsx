@@ -27,6 +27,22 @@ const sampleCustomJson = {
   },
 };
 
+type MetadataChangeField =
+  | "domain"
+  | "document_type"
+  | "language"
+  | "collection"
+  | "tags"
+  | "reference_pattern"
+  | "metadata_sources"
+  | "custom_json";
+
+type MetadataChange = {
+  field: MetadataChangeField;
+  label: string;
+  summary: string;
+};
+
 export function DomainMetadataPanel({
   profiles,
   value,
@@ -51,12 +67,20 @@ export function DomainMetadataPanel({
   const [customJsonError, setCustomJsonError] = useState("");
   const [showCustomJsonSample, setShowCustomJsonSample] = useState(false);
   const [suggestState, setSuggestState] = useState<"idle" | "loading" | "error">("idle");
+  const [autosuggestChanges, setAutosuggestChanges] = useState<MetadataChange[]>([]);
   const customJsonText =
     customJsonDraft ?? JSON.stringify(metadata.custom_json ?? {}, null, 2);
   const sampleCustomJsonText = JSON.stringify(sampleCustomJson, null, 2);
   const setMetadata = (patch: DomainMetadata) => {
     onChange({ ...value, domain_metadata: { ...metadata, ...patch } });
   };
+  const hasAutosuggestChange = (field: MetadataChangeField) =>
+    autosuggestChanges.some((change) => change.field === field);
+  const clearChangedField = (field: MetadataChangeField) => {
+    setAutosuggestChanges((changes) => changes.filter((change) => change.field !== field));
+  };
+  const changedFieldProps = (field: MetadataChangeField) =>
+    hasAutosuggestChange(field) ? { "data-autosuggest-changed": "true" } : {};
 
   const suggest = async () => {
     if (!suggestContext) {
@@ -70,8 +94,10 @@ export function DomainMetadataPanel({
         profile_id: selectedProfileId || null,
         sample_text: "",
       });
-      onChange({ ...value, domain_metadata: response.domain_metadata });
-      setCustomJsonDraft(JSON.stringify(response.domain_metadata.custom_json ?? {}, null, 2));
+      const nextMetadata = response.domain_metadata;
+      setAutosuggestChanges(buildMetadataChangeSet(metadata, nextMetadata));
+      onChange({ ...value, domain_metadata: nextMetadata });
+      setCustomJsonDraft(JSON.stringify(nextMetadata.custom_json ?? {}, null, 2));
       setCustomJsonError("");
       onValidityChange?.(true);
       setSuggestState("idle");
@@ -90,6 +116,7 @@ export function DomainMetadataPanel({
       }
       setCustomJsonError("");
       onValidityChange?.(true);
+      clearChangedField("custom_json");
       setMetadata({ custom_json: parsed as Record<string, unknown> });
     } catch {
       setCustomJsonError("Custom JSON must be valid JSON.");
@@ -115,6 +142,27 @@ export function DomainMetadataPanel({
             )}
             Auto-suggest
           </Button>
+        </div>
+      ) : null}
+      {autosuggestChanges.length > 0 ? (
+        <div className="mb-3 rounded-md border border-[#9ccbd8] bg-[#edf7fa] p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-sm font-semibold text-[#1f2933]">
+              Auto-suggest updated metadata
+            </p>
+            <p className="text-xs font-medium text-[#176b87]">
+              {autosuggestChanges.length}{" "}
+              {autosuggestChanges.length === 1 ? "field changed" : "fields changed"}
+            </p>
+          </div>
+          <dl className="mt-2 grid gap-1.5 text-xs text-[#3a4a53]">
+            {autosuggestChanges.map((change) => (
+              <div key={change.field} className="grid gap-1 sm:grid-cols-[150px_minmax(0,1fr)]">
+                <dt className="font-semibold">{change.label}</dt>
+                <dd className="min-w-0 break-words">{change.summary}</dd>
+              </div>
+            ))}
+          </dl>
         </div>
       ) : null}
       <div className="grid gap-3 sm:grid-cols-2">
@@ -149,6 +197,7 @@ export function DomainMetadataPanel({
               if (profile) {
                 setCustomJsonDraft(JSON.stringify(profile.metadata.custom_json ?? {}, null, 2));
                 onChange({ ...value, domain_metadata: profile.metadata });
+                setAutosuggestChanges([]);
                 setCustomJsonError("");
                 onValidityChange?.(true);
               }
@@ -166,35 +215,60 @@ export function DomainMetadataPanel({
           label="Domain"
           value={metadata.domain ?? ""}
           disabled={disabled}
-          onChange={(domain) => setMetadata({ domain })}
+          changed={hasAutosuggestChange("domain")}
+          onChange={(domain) => {
+            clearChangedField("domain");
+            setMetadata({ domain });
+          }}
         />
         <TextField
           label="Document type"
           value={metadata.document_type ?? ""}
           disabled={disabled}
-          onChange={(document_type) => setMetadata({ document_type })}
+          changed={hasAutosuggestChange("document_type")}
+          onChange={(document_type) => {
+            clearChangedField("document_type");
+            setMetadata({ document_type });
+          }}
         />
         <TextField
           label="Language"
           value={metadata.language ?? ""}
           disabled={disabled}
-          onChange={(language) => setMetadata({ language })}
+          changed={hasAutosuggestChange("language")}
+          onChange={(language) => {
+            clearChangedField("language");
+            setMetadata({ language });
+          }}
         />
         <TextField
           label="Collection"
           value={metadata.collection ?? ""}
           disabled={disabled}
-          onChange={(collection) => setMetadata({ collection })}
+          changed={hasAutosuggestChange("collection")}
+          onChange={(collection) => {
+            clearChangedField("collection");
+            setMetadata({ collection });
+          }}
         />
         <TextField
           label="Tags"
           value={(metadata.tags ?? []).join(", ")}
           disabled={disabled}
-          onChange={(tags) =>
-            setMetadata({ tags: tags.split(",").map((tag) => tag.trim()).filter(Boolean) })
-          }
+          changed={hasAutosuggestChange("tags")}
+          onChange={(tags) => {
+            clearChangedField("tags");
+            setMetadata({ tags: tags.split(",").map((tag) => tag.trim()).filter(Boolean) });
+          }}
         />
-        <div className="text-sm font-medium text-[#3a4a53] sm:col-span-2">
+        <div
+          className={
+            hasAutosuggestChange("custom_json")
+              ? "rounded-md border border-[#9ccbd8] bg-[#f3fafc] p-2 text-sm font-medium text-[#3a4a53] sm:col-span-2"
+              : "text-sm font-medium text-[#3a4a53] sm:col-span-2"
+          }
+          {...changedFieldProps("custom_json")}
+        >
           <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
             <span id="custom-json-label">Custom JSON</span>
             <Button
@@ -235,17 +309,27 @@ function TextField({
   label,
   value,
   disabled,
+  changed,
   onChange,
 }: {
   label: string;
   value: string;
   disabled: boolean;
+  changed?: boolean;
   onChange: (value: string) => void;
 }) {
   return (
-    <label className="text-sm font-medium text-[#3a4a53]">
+    <label
+      className={
+        changed
+          ? "rounded-md border border-[#9ccbd8] bg-[#f3fafc] p-2 text-sm font-medium text-[#3a4a53]"
+          : "text-sm font-medium text-[#3a4a53]"
+      }
+      {...(changed ? { "data-autosuggest-changed": "true" } : {})}
+    >
       <span className="mb-1.5 block">{label}</span>
       <input
+        aria-label={label}
         className="h-10 w-full rounded-md border border-[#cfd8dd] bg-white px-3 text-sm"
         value={value}
         disabled={disabled}
@@ -253,4 +337,125 @@ function TextField({
       />
     </label>
   );
+}
+
+const metadataFieldLabels: Record<MetadataChangeField, string> = {
+  domain: "Domain",
+  document_type: "Document type",
+  language: "Language",
+  collection: "Collection",
+  tags: "Tags",
+  reference_pattern: "Reference pattern",
+  metadata_sources: "Metadata sources",
+  custom_json: "Custom JSON",
+};
+
+function buildMetadataChangeSet(
+  before: DomainMetadata,
+  after: DomainMetadata,
+): MetadataChange[] {
+  const changes: MetadataChange[] = [];
+  const scalarFields: MetadataChangeField[] = [
+    "domain",
+    "document_type",
+    "language",
+    "collection",
+    "reference_pattern",
+  ];
+
+  for (const field of scalarFields) {
+    const beforeValue = getStringField(before, field);
+    const afterValue = getStringField(after, field);
+    if (beforeValue !== afterValue) {
+      changes.push({
+        field,
+        label: metadataFieldLabels[field],
+        summary: `${formatMetadataValue(beforeValue)} -> ${formatMetadataValue(afterValue)}`,
+      });
+    }
+  }
+
+  addArrayChange(changes, "tags", before.tags ?? [], after.tags ?? []);
+  addArrayChange(
+    changes,
+    "metadata_sources",
+    before.metadata_sources ?? [],
+    after.metadata_sources ?? [],
+  );
+
+  const customJsonSummary = formatCustomJsonChange(
+    before.custom_json ?? {},
+    after.custom_json ?? {},
+  );
+  if (customJsonSummary) {
+    changes.push({
+      field: "custom_json",
+      label: metadataFieldLabels.custom_json,
+      summary: customJsonSummary,
+    });
+  }
+
+  return changes;
+}
+
+function getStringField(metadata: DomainMetadata, field: MetadataChangeField): string {
+  const value = metadata[field as keyof DomainMetadata];
+  return typeof value === "string" ? value : "";
+}
+
+function addArrayChange(
+  changes: MetadataChange[],
+  field: "tags" | "metadata_sources",
+  beforeValues: string[],
+  afterValues: string[],
+) {
+  const added = afterValues.filter((item) => !beforeValues.includes(item));
+  const removed = beforeValues.filter((item) => !afterValues.includes(item));
+  if (added.length === 0 && removed.length === 0) {
+    return;
+  }
+
+  const summary = [
+    added.length > 0 ? `added ${added.join(", ")}` : null,
+    removed.length > 0 ? `removed ${removed.join(", ")}` : null,
+  ]
+    .filter(Boolean)
+    .join("; ");
+
+  changes.push({
+    field,
+    label: metadataFieldLabels[field],
+    summary,
+  });
+}
+
+function formatCustomJsonChange(
+  before: Record<string, unknown>,
+  after: Record<string, unknown>,
+): string | null {
+  const beforeKeys = Object.keys(before).sort();
+  const afterKeys = Object.keys(after).sort();
+  const added = afterKeys.filter((key) => !beforeKeys.includes(key));
+  const removed = beforeKeys.filter((key) => !afterKeys.includes(key));
+  const changed = afterKeys.filter(
+    (key) =>
+      beforeKeys.includes(key) &&
+      JSON.stringify(before[key]) !== JSON.stringify(after[key]),
+  );
+
+  if (added.length === 0 && removed.length === 0 && changed.length === 0) {
+    return null;
+  }
+
+  return [
+    added.length > 0 ? `added ${added.join(", ")}` : null,
+    removed.length > 0 ? `removed ${removed.join(", ")}` : null,
+    changed.length > 0 ? `changed ${changed.join(", ")}` : null,
+  ]
+    .filter(Boolean)
+    .join("; ");
+}
+
+function formatMetadataValue(value: string): string {
+  return value.length > 0 ? value : "empty";
 }

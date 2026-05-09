@@ -184,6 +184,161 @@ describe("DomainMetadataPanel", () => {
     expect(onValidityChange).toHaveBeenCalledWith(false);
   });
 
+  it("shows all autosuggested metadata changes and marks changed fields", async () => {
+    mocks.suggestDomainMetadata.mockResolvedValueOnce({
+      domain_metadata: {
+        domain: "tafseer",
+        document_type: "book",
+        language: "mixed",
+        collection: "Tafseer Ibn Kathir",
+        tags: ["quran", "tafseer"],
+        reference_pattern: "Surah N, Ayah N",
+        metadata_sources: ["heuristic", "profile"],
+        custom_json: {
+          audience: "research",
+          citation_style: "surah_ayah",
+        },
+      },
+    });
+
+    render(
+      <DomainMetadataPanel
+        profiles={[]}
+        value={{
+          parser_mode: "mineru_strict",
+          domain_metadata: {
+            domain: "generic",
+            document_type: "document",
+            language: "",
+            collection: "",
+            tags: ["quran"],
+            metadata_sources: ["user"],
+            custom_json: { audience: "general" },
+          },
+        }}
+        onChange={vi.fn()}
+        suggestContext={{ filename: "tafseer_ibn_kathir.pdf", content_type: "application/pdf" }}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /auto-suggest/i }));
+
+    const expectVisibleText = (text: string) => {
+      expect(screen.getAllByText(text)[0]).toBeVisible();
+    };
+
+    expect(await screen.findByText("Auto-suggest updated metadata")).toBeVisible();
+    expect(screen.getByText("8 fields changed")).toBeVisible();
+    expectVisibleText("Domain");
+    expect(screen.getByText("generic -> tafseer")).toBeVisible();
+    expectVisibleText("Document type");
+    expect(screen.getByText("document -> book")).toBeVisible();
+    expectVisibleText("Language");
+    expect(screen.getByText("empty -> mixed")).toBeVisible();
+    expectVisibleText("Collection");
+    expect(screen.getByText("empty -> Tafseer Ibn Kathir")).toBeVisible();
+    expectVisibleText("Tags");
+    expect(screen.getByText("added tafseer")).toBeVisible();
+    expectVisibleText("Reference pattern");
+    expect(screen.getByText("empty -> Surah N, Ayah N")).toBeVisible();
+    expectVisibleText("Metadata sources");
+    expect(screen.getByText("added heuristic, profile; removed user")).toBeVisible();
+    expectVisibleText("Custom JSON");
+    expect(screen.getByText("added citation_style; changed audience")).toBeVisible();
+
+    expect(screen.getByLabelText("Domain").closest("[data-autosuggest-changed]")).toHaveAttribute(
+      "data-autosuggest-changed",
+      "true",
+    );
+    expect(
+      screen.getByLabelText("Document type").closest("[data-autosuggest-changed]"),
+    ).toHaveAttribute("data-autosuggest-changed", "true");
+    expect(
+      screen.getByLabelText("Custom JSON").closest("[data-autosuggest-changed]"),
+    ).toHaveAttribute("data-autosuggest-changed", "true");
+  });
+
+  it("clears a changed field from the autosuggest review after manual edit", async () => {
+    mocks.suggestDomainMetadata.mockResolvedValueOnce({
+      domain_metadata: {
+        domain: "policy",
+        document_type: "admin_document",
+        tags: [],
+      },
+    });
+
+    render(
+      <DomainMetadataPanel
+        profiles={[]}
+        value={{
+          parser_mode: "local_fallback",
+          domain_metadata: { domain: "generic", document_type: "document", tags: [] },
+        }}
+        onChange={vi.fn()}
+        suggestContext={{ filename: "policy.pdf", content_type: "application/pdf" }}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /auto-suggest/i }));
+
+    expect(await screen.findByText("2 fields changed")).toBeVisible();
+    expect(screen.getByText("generic -> policy")).toBeVisible();
+
+    fireEvent.change(screen.getByLabelText("Domain"), {
+      target: { value: "policy-final" },
+    });
+
+    expect(screen.queryByText("generic -> policy")).not.toBeInTheDocument();
+    expect(screen.getByText("1 field changed")).toBeVisible();
+    expect(screen.getByLabelText("Domain").closest("[data-autosuggest-changed]")).toBeNull();
+    expect(
+      screen.getByLabelText("Document type").closest("[data-autosuggest-changed]"),
+    ).toHaveAttribute("data-autosuggest-changed", "true");
+  });
+
+  it("keeps previous metadata and review when autosuggest fails", async () => {
+    mocks.suggestDomainMetadata
+      .mockResolvedValueOnce({
+        domain_metadata: {
+          domain: "policy",
+          document_type: "admin_document",
+          custom_json: { department: "research" },
+        },
+      })
+      .mockRejectedValueOnce(new Error("suggestion failed"));
+
+    const onChange = vi.fn();
+    render(
+      <DomainMetadataPanel
+        profiles={[]}
+        value={{
+          parser_mode: "local_fallback",
+          domain_metadata: {
+            domain: "generic",
+            document_type: "document",
+            custom_json: { department: "general" },
+          },
+        }}
+        onChange={onChange}
+        suggestContext={{ filename: "policy.pdf", content_type: "application/pdf" }}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /auto-suggest/i }));
+
+    expect(await screen.findByText("Auto-suggest updated metadata")).toBeVisible();
+    expect(screen.getByText("generic -> policy")).toBeVisible();
+    expect(screen.getByDisplayValue(/research/)).toBeVisible();
+
+    onChange.mockClear();
+    fireEvent.click(screen.getByRole("button", { name: /auto-suggest/i }));
+
+    expect(await screen.findByText("Metadata suggestion failed.")).toBeVisible();
+    expect(screen.getByText("generic -> policy")).toBeVisible();
+    expect(screen.getByDisplayValue(/research/)).toBeVisible();
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
   it("shows and hides a sample custom JSON object", () => {
     render(
       <DomainMetadataPanel
