@@ -199,6 +199,91 @@ describe("DocumentsPage", () => {
     expect(await screen.findByText("Reindex queued for tafseer.pdf")).toBeVisible();
   });
 
+  it("reindexes with the document's current index options when available", async () => {
+    vi.mocked(apiClient.documents).mockResolvedValue({
+      items: [
+        {
+          id: "doc-1",
+          filename: "quran.pdf",
+          content_type: "application/pdf",
+          status: "succeeded",
+          sha256: "sha-1",
+          latest_index_options: {
+            parser_mode: "mineru_strict",
+            domain_metadata: {
+              domain: "quran_tafseer",
+              document_type: "commentary",
+              tags: ["quran"],
+              custom_json: {
+                reference_schema: { type: "chapter_verse" },
+                retrieval: { exact_reference_top1: true },
+              },
+            },
+          },
+        },
+      ],
+      total: 1,
+    });
+
+    renderDocumentsPage();
+
+    fireEvent.click(await screen.findByRole("button", { name: /reindex quran\.pdf/i }));
+
+    await waitFor(() => {
+      expect(apiClient.reindexDocument).toHaveBeenCalledWith("doc-1", {
+        parser_mode: "mineru_strict",
+        domain_metadata: expect.objectContaining({
+          domain: "quran_tafseer",
+          document_type: "commentary",
+          custom_json: {
+            reference_schema: { type: "chapter_verse" },
+            retrieval: { exact_reference_top1: true },
+          },
+        }),
+      });
+    });
+  });
+
+  it("allows stored-option reindex while the upload metadata form is invalid", async () => {
+    vi.mocked(apiClient.documents).mockResolvedValue({
+      items: [
+        {
+          id: "doc-1",
+          filename: "quran.pdf",
+          content_type: "application/pdf",
+          status: "succeeded",
+          sha256: "sha-1",
+          latest_index_options: {
+            parser_mode: "mineru_strict",
+            domain_metadata: {
+              domain: "quran_tafseer",
+              document_type: "commentary",
+              tags: ["quran"],
+            },
+          },
+        },
+      ],
+      total: 1,
+    });
+
+    renderDocumentsPage();
+
+    fireEvent.change(await screen.findByLabelText("Custom JSON"), {
+      target: { value: "{not-json" },
+    });
+    const reindexButton = await screen.findByRole("button", { name: /reindex quran\.pdf/i });
+    expect(reindexButton).toBeEnabled();
+
+    fireEvent.click(reindexButton);
+
+    await waitFor(() => {
+      expect(apiClient.reindexDocument).toHaveBeenCalledWith("doc-1", {
+        parser_mode: "mineru_strict",
+        domain_metadata: expect.objectContaining({ domain: "quran_tafseer" }),
+      });
+    });
+  });
+
   it("uses document filenames and MinerU progress in the jobs table", async () => {
     vi.mocked(apiClient.documents).mockResolvedValue({
       items: [

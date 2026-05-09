@@ -44,6 +44,7 @@ export interface DocumentOut {
   content_type: string;
   sha256: string;
   status: StageStatus;
+  latest_index_options?: IndexDocumentIn | null;
 }
 
 export interface SettingsProfileIn {

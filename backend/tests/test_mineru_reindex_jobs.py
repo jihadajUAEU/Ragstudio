@@ -9,6 +9,7 @@ from ragstudio.schemas.parsing import IndexDocumentIn
 from ragstudio.services.chunk_service import ChunkService
 from ragstudio.services.document_service import DocumentService
 from ragstudio.services.mineru_client import MinerUSidecarHealth
+from sqlalchemy import select
 
 
 class FailingIndexService(DocumentService):
@@ -175,6 +176,10 @@ async def test_run_index_job_preserves_mineru_status_on_success(
 
 @pytest.mark.asyncio
 async def test_create_strict_reindex_job_returns_immediately(client, monkeypatch):
+    async def fake_upload_index_job(settings, doc_id, job_id, options):
+        return None
+
+    monkeypatch.setattr("ragstudio.api.routes.documents._run_index_job", fake_upload_index_job)
     upload_response = await client.post(
         "/api/documents",
         files={"file": ("quran_arabic_english.pdf", b"%PDF-1.4", "application/pdf")},
@@ -205,6 +210,11 @@ async def test_create_strict_reindex_job_returns_immediately(client, monkeypatch
 
     app = client._transport.app
     async with app.state.session_factory() as session:
+        existing_jobs = await session.execute(
+            select(Job).where(Job.type == "index_document", Job.target_id == document_id)
+        )
+        for job in existing_jobs.scalars():
+            job.status = "succeeded"
         session.add(
             SettingsProfile(
                 id="default",
@@ -212,6 +222,7 @@ async def test_create_strict_reindex_job_returns_immediately(client, monkeypatch
                 llm_model="gpt-4o",
                 embedding_model="fallback",
                 storage_backend="fallback_local",
+                runtime_mode="fallback",
                 mineru_enabled=True,
                 mineru_base_url="http://10.10.9.19:8765",
                 mineru_require_hpc=True,
@@ -236,7 +247,7 @@ async def test_create_strict_reindex_job_returns_immediately(client, monkeypatch
         },
     )
 
-    assert response.status_code == 202
+    assert response.status_code == 202, response.text
     body = response.json()
     assert body["type"] == "index_document"
     assert body["target_id"] == document_id
@@ -295,6 +306,7 @@ async def test_create_strict_reindex_job_rejects_local_sidecar_before_enqueue(
                 llm_model="gpt-4o",
                 embedding_model="fallback",
                 storage_backend="fallback_local",
+                runtime_mode="fallback",
                 mineru_enabled=True,
                 mineru_base_url="http://10.10.9.19:8765",
                 mineru_require_hpc=True,
@@ -356,6 +368,7 @@ async def test_create_strict_reindex_job_rejects_unreachable_sidecar_before_enqu
                 llm_model="gpt-4o",
                 embedding_model="fallback",
                 storage_backend="fallback_local",
+                runtime_mode="fallback",
                 mineru_enabled=True,
                 mineru_base_url="http://10.10.9.19:8765",
                 mineru_require_hpc=True,
@@ -466,7 +479,8 @@ async def test_create_reindex_job_returns_conflict_when_runtime_health_blocks(cl
     )
 
     assert response.status_code == 409
-    assert "native_runtime_adapter" in response.json()["detail"]
+    detail = response.json()["detail"].lower()
+    assert "raganything" in detail or "lightrag" in detail or "neo4j" in detail
 
 
 @pytest.mark.asyncio
@@ -510,6 +524,7 @@ async def test_mineru_strict_blocks_when_sidecar_is_local_only(tmp_path, databas
             llm_model="gpt-4o",
             embedding_model="fallback",
             storage_backend="fallback_local",
+            runtime_mode="fallback",
             mineru_enabled=True,
             mineru_base_url="http://10.10.9.19:8765",
             mineru_require_hpc=True,

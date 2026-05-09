@@ -89,7 +89,10 @@ export function DocumentsPage() {
   const reindexExistingDocument = useCallback(
     (document: DocumentOut) => {
       setReindexedFilename(document.filename);
-      reindexDocument.mutate({ documentId: document.id, options: indexOptions });
+      reindexDocument.mutate({
+        documentId: document.id,
+        options: document.latest_index_options ?? indexOptions,
+      });
     },
     [indexOptions, reindexDocument],
   );
@@ -141,6 +144,8 @@ export function DocumentsPage() {
           const isDeleting = deleteDocument.isPending && deleteDocument.variables === document.id;
           const isReindexing =
             reindexDocument.isPending && reindexDocument.variables?.documentId === document.id;
+          const canUseStoredIndexOptions = document.latest_index_options != null;
+          const canReindex = canUseStoredIndexOptions || metadataValid;
 
           return (
             <div className="flex flex-wrap justify-end gap-2">
@@ -149,7 +154,7 @@ export function DocumentsPage() {
                 variant="secondary"
                 size="sm"
                 onClick={() => reindexExistingDocument(document)}
-                disabled={!metadataValid || reindexDocument.isPending}
+                disabled={!canReindex || reindexDocument.isPending}
                 aria-label={`Reindex ${document.filename}`}
               >
                 {isReindexing ? (

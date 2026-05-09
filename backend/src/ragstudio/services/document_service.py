@@ -1,11 +1,14 @@
+from __future__ import annotations
+
 from pathlib import Path
 from typing import Any, Literal
 
+from pydantic import ValidationError
 from ragstudio.config import AppSettings
 from ragstudio.db.models import Chunk, Document, IndexRecord, Job
 from ragstudio.schemas.common import StageStatus
 from ragstudio.schemas.documents import DocumentOut
-from ragstudio.schemas.parsing import IndexDocumentIn
+from ragstudio.schemas.parsing import DomainMetadata, IndexDocumentIn, ParserMode
 from ragstudio.schemas.runtime import RuntimeProfile
 from ragstudio.services.artifact_store import ArtifactStore
 from ragstudio.services.chunk_service import ChunkService
@@ -19,7 +22,7 @@ from ragstudio.services.runtime_profile_service import (
     RuntimeProfileNotConfiguredError,
     RuntimeProfileService,
 )
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -99,7 +102,16 @@ class DocumentService:
 
     async def list(self) -> list[DocumentOut]:
         result = await self.session.execute(select(Document).order_by(Document.created_at.desc()))
-        return [DocumentOut.model_validate(item) for item in result.scalars().all()]
+        documents = list(result.scalars().all())
+        latest_options = await self._latest_index_options_by_document(
+            [document.id for document in documents]
+        )
+        outputs = []
+        for document in documents:
+            output = DocumentOut.model_validate(document)
+            output.latest_index_options = latest_options.get(document.id)
+            outputs.append(output)
+        return outputs
 
     async def document_exists(self, document_id: str) -> bool:
         return await self.session.get(Document, document_id) is not None
@@ -184,6 +196,76 @@ class DocumentService:
         await self.session.refresh(document)
         await self.session.refresh(job)
         return job
+
+    async def _latest_index_options_by_document(
+        self,
+        document_ids: list[str],
+    ) -> dict[str, IndexDocumentIn]:
+        if not document_ids:
+            return {}
+
+        ranked_chunks = (
+            select(
+                Chunk.document_id.label("document_id"),
+                Chunk.metadata_json.label("metadata_json"),
+                func.row_number()
+                .over(
+                    partition_by=Chunk.document_id,
+                    order_by=(Chunk.created_at.desc(), Chunk.id.desc()),
+                )
+                .label("rank"),
+            )
+            .where(Chunk.document_id.in_(document_ids))
+            .subquery()
+        )
+        result = await self.session.execute(
+            select(ranked_chunks.c.document_id, ranked_chunks.c.metadata_json).where(
+                ranked_chunks.c.rank == 1
+            )
+        )
+
+        options: dict[str, IndexDocumentIn] = {}
+        for document_id, metadata in result.all():
+            latest = self._index_options_from_metadata(metadata)
+            if latest is not None:
+                options[document_id] = latest
+        return options
+
+    def _index_options_from_metadata(self, metadata: Any) -> IndexDocumentIn | None:
+        if not isinstance(metadata, dict):
+            return None
+        parser_metadata = metadata.get("parser_metadata")
+        domain_metadata = metadata.get("domain_metadata")
+        parser_mode = self._parser_mode_from_metadata(parser_metadata)
+        if parser_mode is None:
+            return None
+
+        try:
+            metadata_model = (
+                DomainMetadata.model_validate(domain_metadata)
+                if isinstance(domain_metadata, dict)
+                else DomainMetadata()
+            )
+        except ValidationError:
+            metadata_model = DomainMetadata()
+        return IndexDocumentIn(parser_mode=parser_mode, domain_metadata=metadata_model)
+
+    def _parser_mode_from_metadata(self, parser_metadata: Any) -> ParserMode | None:
+        if not isinstance(parser_metadata, dict):
+            return None
+
+        parser_mode = parser_metadata.get("parser_mode")
+        if parser_mode in {"local_fallback", "mineru_strict", "mineru_with_fallback"}:
+            return parser_mode
+
+        backend = parser_metadata.get("backend")
+        if backend == "mineru":
+            return "mineru_strict"
+        if parser_metadata.get("fallback_used") is True:
+            return "mineru_with_fallback"
+        if backend == "fallback":
+            return "local_fallback"
+        return None
 
     async def _ensure_queued_index_job(
         self,

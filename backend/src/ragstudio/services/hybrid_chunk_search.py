@@ -72,7 +72,7 @@ class HybridChunkSearch:
                 and isinstance(chapter_end, int)
                 and chapter_start <= q_chapter <= chapter_end
             ):
-                same_chapter = 5.0
+                same_chapter = 60.0 if q_verse is None else 5.0
 
             if semantics and semantics.boost_neighbor_verses and requested_ref in {
                 reference_metadata.get("previous_ref"),
@@ -156,6 +156,8 @@ class HybridChunkSearch:
         verse = query_ref.get("verse")
         if isinstance(chapter, int) and isinstance(verse, int):
             return f"{chapter}:{verse}"
+        if isinstance(chapter, int):
+            return f"chapter:{chapter}"
         ref = query_ref.get("ref")
         if isinstance(ref, str) and ref:
             return ref
