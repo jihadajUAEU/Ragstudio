@@ -33,6 +33,7 @@ class ScopedVectorStorageProxy:
         self.document_ids = {str(document_id) for document_id in document_ids}
         self.overfetch_multiplier = max(1, overfetch_multiplier)
         self.max_fetch = max(1, max_fetch)
+        self.raw_results: list[dict[str, Any]] = []
         self.collected_results: list[dict[str, Any]] = []
 
     async def query(
@@ -47,6 +48,7 @@ class ScopedVectorStorageProxy:
             top_k=requested_top_k,
             query_embedding=query_embedding,
         )
+        self.raw_results.extend(rows)
         scoped_rows = [
             row
             for row in rows
@@ -142,10 +144,6 @@ class NativeRAGAnythingAdapter:
         async with self._storage_env():
             if document_ids:
                 async with self._scoped_chunks_vdb(rag, document_ids) as scoped_proxy:
-                    query_param = self._query_param(mode, query_config)
-                    lightrag = getattr(rag, "lightrag")
-                    if hasattr(lightrag, "aquery_data"):
-                        await lightrag.aquery_data(query, query_param)
                     answer = await rag.aquery(query, mode=mode, **kwargs)
                     leak = self._scope_leak_error(scoped_proxy, document_ids)
                     if leak is not None:
@@ -372,7 +370,7 @@ class NativeRAGAnythingAdapter:
         leaked_ids = sorted(
             {
                 str(row.get("full_doc_id") or "")
-                for row in proxy.collected_results
+                for row in proxy.raw_results
                 if str(row.get("full_doc_id") or "") not in allowed
             }
         )
