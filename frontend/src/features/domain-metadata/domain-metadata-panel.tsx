@@ -203,7 +203,7 @@ export function DomainMetadataPanel({
       setReferenceSchemaState("idle");
       onValidityChange?.(true);
       clearChangedField("custom_json");
-      onChange({ ...value, domain_metadata: { ...metadata, custom_json: merged } });
+      setMetadata({ custom_json: merged });
     } catch {
       setReferenceSchemaState("error");
     }
