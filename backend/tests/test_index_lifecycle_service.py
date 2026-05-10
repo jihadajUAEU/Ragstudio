@@ -1362,6 +1362,70 @@ async def test_graph_projection_runner_deletes_using_recorded_target_after_profi
 
 
 @pytest.mark.asyncio
+async def test_graph_projection_runner_uses_settings_auth_for_stored_target_without_password(
+    client,
+):
+    app = client._transport.app
+
+    async with app.state.session_factory() as session:
+        session.add(
+            SettingsProfile(
+                id="default",
+                provider="openai-compatible",
+                llm_model="gpt-4o",
+                embedding_model="text-embedding-3-large",
+                storage_backend="postgres_pgvector_neo4j",
+                runtime_mode="runtime",
+                neo4j_uri="bolt://neo4j.test:7687",
+                neo4j_username=None,
+                neo4j_password=None,
+            )
+        )
+        document = Document(
+            filename="graph-delete-settings-auth.txt",
+            content_type="text/plain",
+            sha256="graph-delete-settings-auth",
+            artifact_path=str(app.state.settings.data_dir / "graph-delete-settings-auth.txt"),
+            status=StageStatus.SUCCEEDED.value,
+        )
+        session.add(document)
+        await session.flush()
+        session.add(
+            GraphProjectionRecord(
+                document_id=document.id,
+                runtime_profile_id="default",
+                status="succeeded",
+                graph_workspace_label="ragstudio_default",
+                graph_storage_uri="bolt://neo4j.test:7687",
+                graph_storage_username=None,
+                graph_storage_password=None,
+                node_count=2,
+                edge_count=1,
+            )
+        )
+        await session.flush()
+
+        fake = FakeGraphMaterializationService()
+        result = await GraphProjectionRunner(
+            session,
+            app.state.settings,
+            materialization_service=fake,
+        ).delete_document_graph(document.id)
+
+    assert result["status"] == "succeeded"
+    assert fake.delete_calls == [
+        {
+            "document_id": document.id,
+            "profile_id": "default",
+            "neo4j_uri": "bolt://neo4j.test:7687",
+            "neo4j_username": app.state.settings.neo4j_username,
+            "neo4j_password": app.state.settings.neo4j_password,
+            "graph_workspace_label": "ragstudio_default",
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_graph_projection_runner_deletes_using_recorded_target_without_live_profile(client):
     app = client._transport.app
 
@@ -1408,6 +1472,48 @@ async def test_graph_projection_runner_deletes_using_recorded_target_without_liv
         }
     ]
     assert result["status"] == "succeeded"
+
+
+@pytest.mark.asyncio
+async def test_graph_projection_runner_reports_default_profile_message_for_incomplete_target(
+    client,
+):
+    app = client._transport.app
+
+    async with app.state.session_factory() as session:
+        document = Document(
+            filename="graph-delete-default-missing.txt",
+            content_type="text/plain",
+            sha256="graph-delete-default-missing",
+            artifact_path=str(app.state.settings.data_dir / "graph-delete-default-missing.txt"),
+            status=StageStatus.SUCCEEDED.value,
+        )
+        session.add(document)
+        await session.flush()
+        session.add(
+            GraphProjectionRecord(
+                document_id=document.id,
+                runtime_profile_id="default",
+                status="succeeded",
+                graph_workspace_label=None,
+                graph_storage_uri=None,
+                graph_storage_username=None,
+                graph_storage_password=None,
+                node_count=2,
+                edge_count=1,
+            )
+        )
+        await session.flush()
+
+        with pytest.raises(
+            GraphProjectionCleanupError,
+            match="Default runtime profile is not configured.",
+        ):
+            await GraphProjectionRunner(
+                session,
+                app.state.settings,
+                materialization_service=FakeGraphMaterializationService(),
+            ).delete_document_graph(document.id)
 
 
 @pytest.mark.asyncio

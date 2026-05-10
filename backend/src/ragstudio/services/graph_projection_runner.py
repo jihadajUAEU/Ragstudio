@@ -143,19 +143,22 @@ class GraphProjectionRunner:
                 and _needs_graph_cleanup(record)
             ]
             targets = {_target_key(record): record for record in profile_records}
+            live_profile, missing_profile_error = await self._cleanup_live_profile(
+                profile_service,
+                runtime_profile_id,
+            )
             for target_record in targets.values():
-                try:
-                    profile = await profile_service.get_profile(runtime_profile_id)
-                except RuntimeProfileNotConfiguredError as exc:
-                    if _has_stored_graph_target(target_record):
-                        profile = SimpleNamespace(id=runtime_profile_id)
-                    else:
-                        raise GraphProjectionCleanupError(str(exc)) from exc
-                if not _has_stored_graph_target(target_record):
-                    self._ensure_projection_target(target_record, profile)
+                if live_profile is None and not _has_stored_graph_target(target_record):
+                    raise GraphProjectionCleanupError(missing_profile_error)
+                if live_profile is not None:
+                    self._ensure_projection_target(
+                        target_record,
+                        live_profile,
+                        preserve_password=True,
+                    )
                 result = await self.materialization_service.delete_document_graph(
                     document_id=document_id,
-                    profile=self._profile_for_record(profile, target_record),
+                    profile=self._profile_for_record(live_profile, target_record),
                 )
                 if result.status != "succeeded":
                     detail = f": {result.reason}" if result.reason else ""
@@ -205,6 +208,16 @@ class GraphProjectionRunner:
             .all()
         )
 
+    async def _cleanup_live_profile(
+        self,
+        profile_service: RuntimeProfileService,
+        runtime_profile_id: str,
+    ) -> tuple[Any | None, str | None]:
+        try:
+            return await profile_service.get_profile(runtime_profile_id), None
+        except RuntimeProfileNotConfiguredError as exc:
+            return None, str(exc)
+
     async def _delete_stale_records_for_target(self, record: GraphProjectionRecord) -> None:
         stale_records = await self._projection_records(record.document_id)
         target = _target_key(record)
@@ -223,6 +236,8 @@ class GraphProjectionRunner:
         self,
         record: GraphProjectionRecord,
         profile: Any,
+        *,
+        preserve_password: bool = False,
     ) -> None:
         if not record.graph_workspace_label:
             record.graph_workspace_label = workspace_label(profile)
@@ -230,20 +245,22 @@ class GraphProjectionRunner:
             record.graph_storage_uri = getattr(profile, "neo4j_uri", None)
         if not record.graph_storage_username:
             record.graph_storage_username = getattr(profile, "neo4j_username", None)
-        record.graph_storage_password = None
+        if not preserve_password:
+            record.graph_storage_password = None
 
     def _profile_for_record(
         self,
-        profile: Any,
+        profile: Any | None,
         record: GraphProjectionRecord,
     ) -> Any:
-        neo4j_password = record.graph_storage_password or getattr(profile, "neo4j_password", None)
+        fallback_username = getattr(profile, "neo4j_username", None)
+        fallback_password = getattr(profile, "neo4j_password", None)
         return SimpleNamespace(
             id=getattr(profile, "id", record.runtime_profile_id),
             graph_workspace_label=record.graph_workspace_label,
-            neo4j_uri=record.graph_storage_uri,
-            neo4j_username=record.graph_storage_username,
-            neo4j_password=neo4j_password,
+            neo4j_uri=record.graph_storage_uri or getattr(profile, "neo4j_uri", None),
+            neo4j_username=record.graph_storage_username or fallback_username,
+            neo4j_password=record.graph_storage_password or fallback_password,
         )
 
     async def _latest_record(
