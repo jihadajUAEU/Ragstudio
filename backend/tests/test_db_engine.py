@@ -230,6 +230,9 @@ async def test_init_db_backfills_runtime_columns_for_existing_postgres_tables(
     assert "graph_storage_uri" in columns["graph_projection_records"]
     assert "graph_storage_username" in columns["graph_projection_records"]
     assert "graph_storage_password" in columns["graph_projection_records"]
+    assert "cleanup_status" in columns["graph_projection_records"]
+    assert "cleanup_error" in columns["graph_projection_records"]
+    assert "cleanup_attempted_at" in columns["graph_projection_records"]
     assert settings_row["runtime_mode"] == "fallback"
     assert settings_row["storage_backend"] == "fallback_local"
     assert settings_row["pgvector_schema"] == "public"

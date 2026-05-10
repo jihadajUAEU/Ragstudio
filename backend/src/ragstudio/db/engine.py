@@ -143,6 +143,9 @@ def _ensure_runtime_columns(connection) -> None:
                 "graph_storage_uri": "VARCHAR",
                 "graph_storage_username": "VARCHAR",
                 "graph_storage_password": "VARCHAR",
+                "cleanup_status": "VARCHAR",
+                "cleanup_error": "TEXT",
+                "cleanup_attempted_at": _datetime_column(connection),
             },
         )
         if "settings_profiles" in table_names:

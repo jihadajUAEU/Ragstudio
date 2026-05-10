@@ -160,6 +160,12 @@ class GraphProjectionRecord(Base, TimestampMixin):
     node_count: Mapped[int] = mapped_column(Integer, default=0)
     edge_count: Mapped[int] = mapped_column(Integer, default=0)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    cleanup_status: Mapped[str | None] = mapped_column(String, nullable=True)
+    cleanup_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    cleanup_attempted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
 
 
 class Job(Base, TimestampMixin):
