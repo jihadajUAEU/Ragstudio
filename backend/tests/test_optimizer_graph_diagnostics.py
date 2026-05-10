@@ -7,13 +7,14 @@ from ragstudio.services.runtime_factory import RuntimeUnavailableError
 
 
 @pytest.mark.asyncio
-async def test_optimizer_recommends_best_variant_from_experiment_runs(client):
+async def test_optimizer_recommends_best_variant_from_experiment_runs(client, reindex_document):
     upload = await client.post(
         "/api/documents",
         files={"file": ("optimizer.txt", b"alpha beta answer", "text/plain")},
+        data={"parser_mode": "local_fallback", "domain_metadata": "{}"},
     )
     document_id = upload.json()["id"]
-    await client.post(f"/api/chunks/index/{document_id}")
+    await reindex_document(document_id)
     first = await client.post(
         "/api/variants", json={"name": "First", "preset": "balanced", "parameters": {}}
     )

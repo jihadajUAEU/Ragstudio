@@ -23,6 +23,7 @@ async def test_static_serving_falls_back_to_index_for_spa_routes(tmp_path):
         spa_response = await client.get("/query")
         api_response = await client.get("/api/health")
         missing_api_response = await client.get("/api/missing")
+        missing_api_post_response = await client.post("/api/missing")
         openapi_response = await client.get("/openapi.json")
 
     assert spa_response.status_code == 200
@@ -30,4 +31,5 @@ async def test_static_serving_falls_back_to_index_for_spa_routes(tmp_path):
     assert api_response.status_code == 200
     assert api_response.json() == {"status": "ok"}
     assert missing_api_response.status_code == 404
+    assert missing_api_post_response.status_code == 404
     assert openapi_response.status_code == 200

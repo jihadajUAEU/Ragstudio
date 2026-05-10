@@ -59,16 +59,14 @@ class PassingHealthService:
 
 
 @pytest.mark.asyncio
-async def test_query_creates_run_with_answer_and_chunk_trace(client):
+async def test_query_creates_run_with_answer_and_chunk_trace(client, reindex_document):
     upload = await client.post(
         "/api/documents",
         files={"file": ("sample.txt", b"alpha answer source", "text/plain")},
+        data={"parser_mode": "local_fallback", "domain_metadata": "{}"},
     )
     document_id = upload.json()["id"]
-    await client.post(
-        f"/api/chunks/index/{document_id}",
-        json={"parser_mode": "local_fallback", "domain_metadata": {}},
-    )
+    await reindex_document(document_id)
     variant = await client.post(
         "/api/variants",
         json={"name": "Balanced", "preset": "balanced", "parameters": {}},
@@ -93,7 +91,9 @@ async def test_query_creates_run_with_answer_and_chunk_trace(client):
 
 
 @pytest.mark.asyncio
-async def test_query_uses_configured_reranker_in_fallback_mode(client, monkeypatch):
+async def test_query_uses_configured_reranker_in_fallback_mode(
+    client, monkeypatch, reindex_document
+):
     requests = []
 
     class FakeResponse:
@@ -144,12 +144,10 @@ async def test_query_uses_configured_reranker_in_fallback_mode(client, monkeypat
     upload = await client.post(
         "/api/documents",
         files={"file": ("rerank.txt", b"alpha first\nalpha second", "text/plain")},
+        data={"parser_mode": "local_fallback", "domain_metadata": "{}"},
     )
     document_id = upload.json()["id"]
-    await client.post(
-        f"/api/chunks/index/{document_id}",
-        json={"parser_mode": "local_fallback", "domain_metadata": {}},
-    )
+    await reindex_document(document_id)
     variant = await client.post(
         "/api/variants",
         json={"name": "Rerank", "preset": "balanced", "parameters": {}},
@@ -188,7 +186,9 @@ async def test_query_uses_configured_reranker_in_fallback_mode(client, monkeypat
 
 
 @pytest.mark.asyncio
-async def test_query_keeps_original_results_when_reranker_fails(client, monkeypatch):
+async def test_query_keeps_original_results_when_reranker_fails(
+    client, monkeypatch, reindex_document
+):
     class FakeAsyncClient:
         def __init__(self, timeout):
             self.timeout = timeout
@@ -222,12 +222,10 @@ async def test_query_keeps_original_results_when_reranker_fails(client, monkeypa
     upload = await client.post(
         "/api/documents",
         files={"file": ("rerank-failure.txt", b"alpha first\nalpha second", "text/plain")},
+        data={"parser_mode": "local_fallback", "domain_metadata": "{}"},
     )
     document_id = upload.json()["id"]
-    await client.post(
-        f"/api/chunks/index/{document_id}",
-        json={"parser_mode": "local_fallback", "domain_metadata": {}},
-    )
+    await reindex_document(document_id)
     variant = await client.post(
         "/api/variants",
         json={"name": "Rerank Failure", "preset": "balanced", "parameters": {}},
@@ -251,7 +249,9 @@ async def test_query_keeps_original_results_when_reranker_fails(client, monkeypa
 
 
 @pytest.mark.asyncio
-async def test_query_blocks_untrusted_reranker_endpoint_without_calling_it(client, monkeypatch):
+async def test_query_blocks_untrusted_reranker_endpoint_without_calling_it(
+    client, monkeypatch, reindex_document
+):
     class FakeAsyncClient:
         def __init__(self, timeout):
             self.timeout = timeout
@@ -279,12 +279,10 @@ async def test_query_blocks_untrusted_reranker_endpoint_without_calling_it(clien
     upload = await client.post(
         "/api/documents",
         files={"file": ("rerank-blocked.txt", b"alpha first", "text/plain")},
+        data={"parser_mode": "local_fallback", "domain_metadata": "{}"},
     )
     document_id = upload.json()["id"]
-    await client.post(
-        f"/api/chunks/index/{document_id}",
-        json={"parser_mode": "local_fallback", "domain_metadata": {}},
-    )
+    await reindex_document(document_id)
     variant = await client.post(
         "/api/variants",
         json={"name": "Rerank Blocked", "preset": "balanced", "parameters": {}},
@@ -306,16 +304,14 @@ async def test_query_blocks_untrusted_reranker_endpoint_without_calling_it(clien
 
 
 @pytest.mark.asyncio
-async def test_list_runs_returns_persisted_query_runs(client):
+async def test_list_runs_returns_persisted_query_runs(client, reindex_document):
     upload = await client.post(
         "/api/documents",
         files={"file": ("history.txt", b"history answer", "text/plain")},
+        data={"parser_mode": "local_fallback", "domain_metadata": "{}"},
     )
     document_id = upload.json()["id"]
-    await client.post(
-        f"/api/chunks/index/{document_id}",
-        json={"parser_mode": "local_fallback", "domain_metadata": {}},
-    )
+    await reindex_document(document_id)
     variant = await client.post(
         "/api/variants",
         json={"name": "History", "preset": "balanced", "parameters": {}},
@@ -340,16 +336,16 @@ async def test_list_runs_returns_persisted_query_runs(client):
 
 
 @pytest.mark.asyncio
-async def test_query_invalid_variant_id_returns_error_without_persisting_runs(client):
+async def test_query_invalid_variant_id_returns_error_without_persisting_runs(
+    client, reindex_document
+):
     upload = await client.post(
         "/api/documents",
         files={"file": ("variant-missing.txt", b"variant missing", "text/plain")},
+        data={"parser_mode": "local_fallback", "domain_metadata": "{}"},
     )
     document_id = upload.json()["id"]
-    await client.post(
-        f"/api/chunks/index/{document_id}",
-        json={"parser_mode": "local_fallback", "domain_metadata": {}},
-    )
+    await reindex_document(document_id)
 
     response = await client.post(
         "/api/query",
@@ -387,16 +383,14 @@ async def test_query_invalid_document_id_returns_error_without_persisting_runs(c
 
 
 @pytest.mark.asyncio
-async def test_query_creates_one_run_per_variant(client):
+async def test_query_creates_one_run_per_variant(client, reindex_document):
     upload = await client.post(
         "/api/documents",
         files={"file": ("multi.txt", b"shared answer", "text/plain")},
+        data={"parser_mode": "local_fallback", "domain_metadata": "{}"},
     )
     document_id = upload.json()["id"]
-    await client.post(
-        f"/api/chunks/index/{document_id}",
-        json={"parser_mode": "local_fallback", "domain_metadata": {}},
-    )
+    await reindex_document(document_id)
     first = await client.post(
         "/api/variants", json={"name": "First", "preset": "balanced", "parameters": {}}
     )

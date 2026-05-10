@@ -14,7 +14,7 @@ vi.mock("../src/api/client", () => ({
     suggestDomainMetadata: vi.fn(),
     uploadDocument: vi.fn(),
     deleteDocument: vi.fn(),
-    reindexDocument: vi.fn(),
+    createDocumentReindexJob: vi.fn(),
   },
 }));
 
@@ -42,7 +42,7 @@ describe("DocumentsPage", () => {
       warnings: [],
     });
     vi.mocked(apiClient.deleteDocument).mockResolvedValue(undefined);
-    vi.mocked(apiClient.reindexDocument).mockResolvedValue({
+    vi.mocked(apiClient.createDocumentReindexJob).mockResolvedValue({
       document_id: "doc-1",
       job_id: "job-1",
       status: "ready",
@@ -216,7 +216,7 @@ describe("DocumentsPage", () => {
     fireEvent.click(screen.getByRole("button", { name: /reindex tafseer\.pdf/i }));
 
     await waitFor(() => {
-      expect(apiClient.reindexDocument).toHaveBeenCalledWith("doc-1", {
+      expect(apiClient.createDocumentReindexJob).toHaveBeenCalledWith("doc-1", {
         parser_mode: "mineru_with_fallback",
         domain_metadata: expect.objectContaining({
           domain: "generic",
@@ -262,7 +262,7 @@ describe("DocumentsPage", () => {
     fireEvent.click(await screen.findByRole("button", { name: /reindex quran\.pdf/i }));
 
     await waitFor(() => {
-      expect(apiClient.reindexDocument).toHaveBeenCalledWith("doc-1", {
+      expect(apiClient.createDocumentReindexJob).toHaveBeenCalledWith("doc-1", {
         parser_mode: "mineru_strict",
         domain_metadata: expect.objectContaining({
           domain: "quran_tafseer",
@@ -309,7 +309,7 @@ describe("DocumentsPage", () => {
     fireEvent.click(reindexButton);
 
     await waitFor(() => {
-      expect(apiClient.reindexDocument).toHaveBeenCalledWith("doc-1", {
+      expect(apiClient.createDocumentReindexJob).toHaveBeenCalledWith("doc-1", {
         parser_mode: "mineru_strict",
         domain_metadata: expect.objectContaining({ domain: "quran_tafseer" }),
       });

@@ -1,3 +1,4 @@
+import asyncio
 import os
 import uuid
 from collections.abc import AsyncIterator
@@ -8,6 +9,9 @@ import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from ragstudio.app import create_app
 from ragstudio.config import AppSettings
+from ragstudio.db.models import Job
+from ragstudio.schemas.common import StageStatus
+from sqlalchemy import select
 from sqlalchemy.engine import make_url
 
 
@@ -68,3 +72,51 @@ async def client(tmp_path, database_url: str) -> AsyncIterator[AsyncClient]:
     async with app.router.lifespan_context(app):
         async with AsyncClient(transport=transport, base_url="http://test") as test_client:
             yield test_client
+
+
+@pytest.fixture
+def reindex_document(client):
+    async def _active_index_job(document_id: str) -> Job | None:
+        async with client._transport.app.state.session_factory() as session:
+            return await session.scalar(
+                select(Job)
+                .where(
+                    Job.type == "index_document",
+                    Job.target_id == document_id,
+                    Job.status.in_([StageStatus.READY.value, StageStatus.RUNNING.value]),
+                )
+                .order_by(Job.created_at.desc())
+                .limit(1)
+            )
+
+    async def _wait_for_job(job_id: str) -> dict:
+        for _ in range(50):
+            async with client._transport.app.state.session_factory() as session:
+                job = await session.get(Job, job_id)
+                if job is not None and job.status == StageStatus.SUCCEEDED.value:
+                    return {"job_id": job.id, "status": job.status, "document_id": job.target_id}
+                if job is not None and job.status == StageStatus.FAILED.value:
+                    pytest.fail(f"Reindex job failed: {job.result}")
+            await asyncio.sleep(0.02)
+
+        pytest.fail(f"Timed out waiting for reindex job {job_id}")
+
+    async def _reindex_document(document_id: str, options: dict[str, object] | None = None) -> dict:
+        existing_job = await _active_index_job(document_id)
+        if existing_job is not None:
+            return await _wait_for_job(existing_job.id)
+
+        response = await client.post(
+            f"/api/documents/{document_id}/reindex",
+            json=options or {"parser_mode": "local_fallback", "domain_metadata": {}},
+        )
+        if response.status_code == 409 and "active indexing job" in response.text:
+            active_job = await _active_index_job(document_id)
+            if active_job is not None:
+                return await _wait_for_job(active_job.id)
+        assert response.status_code == 202, response.text
+        body = response.json()
+        await _wait_for_job(body["job_id"])
+        return body
+
+    return _reindex_document

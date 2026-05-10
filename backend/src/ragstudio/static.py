@@ -16,6 +16,8 @@ def mount_frontend(app: FastAPI, static_dir: Path | None = None) -> None:
 
 class SPAStaticFiles(StaticFiles):
     async def get_response(self, path: str, scope) -> Response:
+        if path.startswith(("api/", "openapi.json")) and scope["method"] not in {"GET", "HEAD"}:
+            raise StarletteHTTPException(status_code=404)
         try:
             response = await super().get_response(path, scope)
         except StarletteHTTPException as exc:

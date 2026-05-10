@@ -69,7 +69,7 @@ export function DocumentsPage() {
   });
   const reindexDocument = useMutation({
     mutationFn: ({ documentId, options }: { documentId: string; options: IndexDocumentIn }) =>
-      apiClient.reindexDocument(documentId, options),
+      apiClient.createDocumentReindexJob(documentId, options),
     onSuccess: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: queryKeys.documents }),

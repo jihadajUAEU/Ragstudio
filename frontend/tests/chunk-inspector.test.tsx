@@ -20,7 +20,7 @@ vi.mock("../src/api/client", () => ({
       total: 1,
     }),
     domainProfiles: vi.fn().mockResolvedValue({ items: [], total: 0 }),
-    createIndexDocumentJob: vi.fn(),
+    createDocumentReindexJob: vi.fn(),
     searchChunks: vi.fn().mockResolvedValue({
       total: 1,
       items: [

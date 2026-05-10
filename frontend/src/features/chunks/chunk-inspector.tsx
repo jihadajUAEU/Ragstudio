@@ -73,7 +73,7 @@ export function ChunkInspector() {
     },
   });
   const indexDocumentJob = useMutation({
-    mutationFn: (documentId: string) => apiClient.createIndexDocumentJob(documentId, indexOptions),
+    mutationFn: (documentId: string) => apiClient.createDocumentReindexJob(documentId, indexOptions),
     onSuccess: () => {
       setSearchResult(null);
       void queryClient.invalidateQueries({ queryKey: queryKeys.jobs });
@@ -209,7 +209,7 @@ export function ChunkInspector() {
           {formError ||
             indexDocumentJob.error?.message ||
             searchChunks.error?.message ||
-            (indexDocumentJob.isSuccess ? `Index job queued: ${indexDocumentJob.data.id}` : "")}
+            (indexDocumentJob.isSuccess ? `Index job queued: ${indexDocumentJob.data.job_id}` : "")}
         </p>
       </aside>
 

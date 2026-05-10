@@ -19,7 +19,6 @@ import type {
   Page,
   ProviderSyncPreviewIn,
   ProviderSyncPreviewOut,
-  ChunkOut,
   ChunkSearchIn,
   ChunkSearchOut,
   QueryIn,
@@ -115,7 +114,7 @@ export const apiClient = {
     request<void>(`/api/documents/${encodeURIComponent(documentId)}`, {
       method: "DELETE",
     }),
-  reindexDocument: (documentId: string, payload: IndexDocumentIn = {}) =>
+  createDocumentReindexJob: (documentId: string, payload: IndexDocumentIn = {}) =>
     request<ReindexDocumentOut>(`/api/documents/${encodeURIComponent(documentId)}/reindex`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -192,18 +191,6 @@ export const apiClient = {
       body: formData,
     });
   },
-  indexDocumentChunks: (documentId: string, payload: IndexDocumentIn = {}) =>
-    request<ChunkOut[]>(`/api/chunks/index/${encodeURIComponent(documentId)}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    }),
-  createIndexDocumentJob: (documentId: string, payload: IndexDocumentIn = {}) =>
-    request<JobOut>(`/api/chunks/index/${encodeURIComponent(documentId)}/jobs`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    }),
   searchChunks: (payload: ChunkSearchIn) =>
     request<ChunkSearchOut>("/api/chunks/search", {
       method: "POST",

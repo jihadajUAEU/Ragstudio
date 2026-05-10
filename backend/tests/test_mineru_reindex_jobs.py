@@ -231,10 +231,10 @@ async def test_create_strict_reindex_job_returns_immediately(client, monkeypatch
         await session.commit()
 
     monkeypatch.setattr("ragstudio.services.chunk_service.MinerUClient", HealthyHpcClient)
-    monkeypatch.setattr("ragstudio.api.routes.chunks._run_index_document_job", fake_run_index_job)
+    monkeypatch.setattr("ragstudio.api.routes.documents._run_index_job", fake_run_index_job)
 
     response = await client.post(
-        f"/api/chunks/index/{document_id}/jobs",
+        f"/api/documents/{document_id}/reindex",
         json={
             "parser_mode": "mineru_strict",
             "domain_metadata": {
@@ -249,15 +249,15 @@ async def test_create_strict_reindex_job_returns_immediately(client, monkeypatch
 
     assert response.status_code == 202, response.text
     body = response.json()
-    assert body["type"] == "index_document"
-    assert body["target_id"] == document_id
+    assert body["document_id"] == document_id
+    assert body["job_id"]
     assert body["status"] == "ready"
     for _ in range(20):
         if scheduled:
             break
         await asyncio.sleep(0.01)
     assert scheduled["document_id"] == document_id
-    assert scheduled["job_id"] == body["id"]
+    assert scheduled["job_id"] == body["job_id"]
     assert scheduled["parser_mode"] == "mineru_strict"
 
 
@@ -316,10 +316,10 @@ async def test_create_strict_reindex_job_rejects_local_sidecar_before_enqueue(
 
     before = (await client.get("/api/jobs")).json()["total"]
     monkeypatch.setattr("ragstudio.services.chunk_service.MinerUClient", LocalHealthClient)
-    monkeypatch.setattr("ragstudio.api.routes.chunks._run_index_document_job", fake_reindex_job)
+    monkeypatch.setattr("ragstudio.api.routes.documents._run_index_job", fake_reindex_job)
 
     response = await client.post(
-        f"/api/chunks/index/{document_id}/jobs",
+        f"/api/documents/{document_id}/reindex",
         json={"parser_mode": "mineru_strict", "domain_metadata": {}},
     )
 
@@ -378,10 +378,10 @@ async def test_create_strict_reindex_job_rejects_unreachable_sidecar_before_enqu
 
     before = (await client.get("/api/jobs")).json()["total"]
     monkeypatch.setattr("ragstudio.services.chunk_service.MinerUClient", UnreachableHealthClient)
-    monkeypatch.setattr("ragstudio.api.routes.chunks._run_index_document_job", fake_reindex_job)
+    monkeypatch.setattr("ragstudio.api.routes.documents._run_index_job", fake_reindex_job)
 
     response = await client.post(
-        f"/api/chunks/index/{document_id}/jobs",
+        f"/api/documents/{document_id}/reindex",
         json={"parser_mode": "mineru_strict", "domain_metadata": {}},
     )
 
@@ -434,12 +434,12 @@ async def test_create_strict_reindex_job_returns_not_found_before_sidecar_check(
     before = (await client.get("/api/jobs")).json()["total"]
     monkeypatch.setattr("ragstudio.services.chunk_service.MinerUClient", FailingHealthClient)
     monkeypatch.setattr(
-        "ragstudio.api.routes.chunks.RuntimeHealthService.check",
+        "ragstudio.api.routes.documents.RuntimeHealthService.check",
         fail_runtime_check,
     )
 
     response = await client.post(
-        "/api/chunks/index/missing-document/jobs",
+        "/api/documents/missing-document/reindex",
         json={"parser_mode": "mineru_strict", "domain_metadata": {}},
     )
 
@@ -474,7 +474,7 @@ async def test_create_reindex_job_returns_conflict_when_runtime_health_blocks(cl
         await session.commit()
 
     response = await client.post(
-        f"/api/chunks/index/{document_id}/jobs",
+        f"/api/documents/{document_id}/reindex",
         json={"parser_mode": "mineru_strict", "domain_metadata": {}},
     )
 

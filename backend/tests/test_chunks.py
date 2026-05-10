@@ -1,8 +1,10 @@
+import asyncio
+import hashlib
 import json
 
 import pytest
 import pytest_asyncio
-from ragstudio.db.models import Chunk, Document, IndexRecord, SettingsProfile
+from ragstudio.db.models import Chunk, Document, IndexRecord, Job, SettingsProfile
 from ragstudio.schemas.common import StageStatus
 from ragstudio.schemas.parsing import DomainMetadata, IndexDocumentIn
 from ragstudio.services.adapter import AdapterChunk
@@ -161,6 +163,61 @@ class PassingHealthService:
         return []
 
 
+async def create_document_record(
+    client,
+    filename: str,
+    content: bytes,
+    content_type: str = "text/plain",
+) -> str:
+    app = client._transport.app
+    digest = hashlib.sha256(content + filename.encode()).hexdigest()
+    artifact_path = app.state.settings.data_dir / digest
+    artifact_path.write_bytes(content)
+    async with app.state.session_factory() as session:
+        document = Document(
+            filename=filename,
+            content_type=content_type,
+            sha256=digest,
+            artifact_path=str(artifact_path),
+            status=StageStatus.READY.value,
+        )
+        session.add(document)
+        await session.commit()
+        return document.id
+
+
+async def reindex_document_and_fetch_chunks(
+    client,
+    document_id: str,
+    options: dict[str, object] | None = None,
+) -> tuple[dict[str, str], list[Chunk]]:
+    response = await client.post(
+        f"/api/documents/{document_id}/reindex",
+        json=options or {"parser_mode": "local_fallback", "domain_metadata": {}},
+    )
+    assert response.status_code == 202, response.text
+    body = response.json()
+    job_id = body["job_id"]
+
+    for _ in range(50):
+        async with client._transport.app.state.session_factory() as session:
+            job = await session.get(Job, job_id)
+            chunks = (
+                await session.execute(
+                    select(Chunk)
+                    .where(Chunk.document_id == document_id)
+                    .order_by(Chunk.created_at.asc(), Chunk.id.asc())
+                )
+            ).scalars().all()
+        if job is not None and job.status == StageStatus.SUCCEEDED.value:
+            return body, chunks
+        if job is not None and job.status == StageStatus.FAILED.value:
+            pytest.fail(f"Reindex job failed: {job.result}")
+        await asyncio.sleep(0.02)
+
+    pytest.fail(f"Timed out waiting for reindex job {job_id}")
+
+
 @pytest_asyncio.fixture(autouse=True)
 async def fallback_runtime_profile(client):
     app = client._transport.app
@@ -180,29 +237,29 @@ async def fallback_runtime_profile(client):
 
 @pytest.mark.asyncio
 async def test_index_uploaded_document_creates_line_chunks(client):
-    upload_response = await client.post(
-        "/api/documents",
-        files={"file": ("notes.txt", b"alpha beta\n\ngamma delta\n", "text/plain")},
-    )
-    document_id = upload_response.json()["id"]
-
-    index_response = await client.post(
-        f"/api/chunks/index/{document_id}",
-        json={"parser_mode": "local_fallback", "domain_metadata": {}},
+    document_id = await create_document_record(
+        client,
+        "notes.txt",
+        b"alpha beta\n\ngamma delta\n",
     )
 
-    assert index_response.status_code == 200
-    chunks = index_response.json()
-    assert [chunk["text"] for chunk in chunks] == ["alpha beta", "gamma delta"]
-    assert chunks[0]["document_id"] == document_id
-    assert chunks[0]["source_location"] == {"line": 1}
-    assert chunks[1]["source_location"] == {"line": 3}
-    assert chunks[0]["metadata"]["document_id"] == document_id
-    assert chunks[0]["metadata"]["parser_metadata"]["backend"] == "fallback"
-    assert chunks[0]["metadata"]["parser_metadata"]["artifact_ref"]
-    assert chunks[0]["runtime_profile_id"] is None
-    assert "artifact_path" not in chunks[0]["metadata"]
-    assert not chunks[0]["metadata"]["parser_metadata"]["artifact_ref"].startswith("/")
+    body, chunks = await reindex_document_and_fetch_chunks(
+        client,
+        document_id,
+        {"parser_mode": "local_fallback", "domain_metadata": {}},
+    )
+
+    assert body["document_id"] == document_id
+    assert [chunk.text for chunk in chunks] == ["alpha beta", "gamma delta"]
+    assert chunks[0].document_id == document_id
+    assert chunks[0].source_location == {"line": 1}
+    assert chunks[1].source_location == {"line": 3}
+    assert chunks[0].metadata_json["document_id"] == document_id
+    assert chunks[0].metadata_json["parser_metadata"]["backend"] == "fallback"
+    assert chunks[0].metadata_json["parser_metadata"]["artifact_ref"]
+    assert chunks[0].runtime_profile_id is None
+    assert "artifact_path" not in chunks[0].metadata_json
+    assert not chunks[0].metadata_json["parser_metadata"]["artifact_ref"].startswith("/")
     app = client._transport.app
     async with app.state.session_factory() as session:
         record = await session.scalar(
@@ -267,20 +324,15 @@ def test_sanitize_db_value_converts_json_unsafe_values(tmp_path):
 
 @pytest.mark.asyncio
 async def test_search_chunks_returns_ranked_matches(client):
-    upload_response = await client.post(
-        "/api/documents",
-        files={
-            "file": (
-                "ranked.txt",
-                b"apple banana\nbanana carrot\nzebra only\napple banana carrot\n",
-                "text/plain",
-            )
-        },
+    document_id = await create_document_record(
+        client,
+        "ranked.txt",
+        b"apple banana\nbanana carrot\nzebra only\napple banana carrot\n",
     )
-    document_id = upload_response.json()["id"]
-    await client.post(
-        f"/api/chunks/index/{document_id}",
-        json={"parser_mode": "local_fallback", "domain_metadata": {}},
+    await reindex_document_and_fetch_chunks(
+        client,
+        document_id,
+        {"parser_mode": "local_fallback", "domain_metadata": {}},
     )
 
     search_response = await client.post(
@@ -300,20 +352,15 @@ async def test_search_chunks_returns_ranked_matches(client):
 
 @pytest.mark.asyncio
 async def test_search_chunks_preserves_source_order_for_ties_and_empty_query(client):
-    upload_response = await client.post(
-        "/api/documents",
-        files={
-            "file": (
-                "ties.txt",
-                b"same match first\nsame match second\nsame match third\n",
-                "text/plain",
-            )
-        },
+    document_id = await create_document_record(
+        client,
+        "ties.txt",
+        b"same match first\nsame match second\nsame match third\n",
     )
-    document_id = upload_response.json()["id"]
-    await client.post(
-        f"/api/chunks/index/{document_id}",
-        json={"parser_mode": "local_fallback", "domain_metadata": {}},
+    await reindex_document_and_fetch_chunks(
+        client,
+        document_id,
+        {"parser_mode": "local_fallback", "domain_metadata": {}},
     )
 
     tie_response = await client.post(
@@ -802,22 +849,17 @@ async def test_index_and_search_derives_reference_metadata_from_uploaded_text(cl
 
 @pytest.mark.asyncio
 async def test_index_document_persists_relationship_aware_chunk_metadata(client):
-    upload_response = await client.post(
-        "/api/documents",
-        files={
-            "file": (
-                "quran.txt",
-                b"[113:1] Say, I seek refuge in the Lord of daybreak.\n"
-                b"[113:2] From the evil of that which He created.",
-                "text/plain",
-            )
-        },
+    document_id = await create_document_record(
+        client,
+        "quran.txt",
+        b"[113:1] Say, I seek refuge in the Lord of daybreak.\n"
+        b"[113:2] From the evil of that which He created.",
     )
-    document_id = upload_response.json()["id"]
 
-    index_response = await client.post(
-        f"/api/chunks/index/{document_id}",
-        json={
+    _body, chunks = await reindex_document_and_fetch_chunks(
+        client,
+        document_id,
+        {
             "parser_mode": "local_fallback",
             "domain_metadata": {
                 "domain": "quran_tafseer",
@@ -849,50 +891,61 @@ async def test_index_document_persists_relationship_aware_chunk_metadata(client)
         },
     )
 
-    assert index_response.status_code == 200
-    chunks = index_response.json()
-    assert chunks[0]["metadata"]["relationship_metadata"]["references"] == ["113:1"]
+    assert chunks[0].metadata_json["relationship_metadata"]["references"] == ["113:1"]
     assert {
         "type": "next_ayah",
         "source": "ref:113:1",
         "target": "ref:113:2",
         "evidence": "reference_metadata",
-    } in chunks[0]["metadata"]["relationship_metadata"]["graph_relationships"]
+    } in chunks[0].metadata_json["relationship_metadata"]["graph_relationships"]
     assert all(
         relationship["evidence"] == "reference_metadata"
-        for relationship in chunks[0]["metadata"]["relationship_metadata"][
+        for relationship in chunks[0].metadata_json["relationship_metadata"][
             "graph_relationships"
         ]
     )
 
 
 @pytest.mark.asyncio
-async def test_index_missing_document_returns_404(client):
-    response = await client.post("/api/chunks/index/missing-document")
+async def test_removed_chunk_index_endpoints_return_404(client):
+    document_id = await create_document_record(client, "removed-route.txt", b"removed")
+    response = await client.post(
+        f"/api/chunks/index/{document_id}",
+        json={"parser_mode": "local_fallback", "domain_metadata": {}},
+    )
+    job_response = await client.post(
+        f"/api/chunks/index/{document_id}/jobs",
+        json={"parser_mode": "local_fallback", "domain_metadata": {}},
+    )
 
     assert response.status_code == 404
+    assert job_response.status_code == 404
 
 
 @pytest.mark.asyncio
 async def test_reindex_replaces_existing_chunks(client):
-    upload_response = await client.post(
-        "/api/documents",
-        files={"file": ("replace.txt", b"first line\nsecond line\n", "text/plain")},
-    )
-    document_id = upload_response.json()["id"]
-
-    first_index_response = await client.post(
-        f"/api/chunks/index/{document_id}",
-        json={"parser_mode": "local_fallback", "domain_metadata": {}},
-    )
-    second_index_response = await client.post(
-        f"/api/chunks/index/{document_id}",
-        json={"parser_mode": "local_fallback", "domain_metadata": {}},
+    document_id = await create_document_record(
+        client,
+        "replace.txt",
+        b"first line\nsecond line\n",
     )
 
-    assert first_index_response.status_code == 200
-    assert second_index_response.status_code == 200
-    assert [chunk["text"] for chunk in second_index_response.json()] == [
+    _first_body, first_chunks = await reindex_document_and_fetch_chunks(
+        client,
+        document_id,
+        {"parser_mode": "local_fallback", "domain_metadata": {}},
+    )
+    _second_body, second_chunks = await reindex_document_and_fetch_chunks(
+        client,
+        document_id,
+        {"parser_mode": "local_fallback", "domain_metadata": {}},
+    )
+
+    assert [chunk.text for chunk in first_chunks] == [
+        "first line",
+        "second line",
+    ]
+    assert [chunk.text for chunk in second_chunks] == [
         "first line",
         "second line",
     ]
@@ -908,15 +961,16 @@ async def test_reindex_replaces_existing_chunks(client):
 
 @pytest.mark.asyncio
 async def test_index_local_chunks_copies_domain_metadata(client):
-    upload_response = await client.post(
-        "/api/documents",
-        files={"file": ("hadith.txt", b"Book 1, Hadith 1\n", "text/plain")},
+    document_id = await create_document_record(
+        client,
+        "hadith.txt",
+        b"Book 1, Hadith 1\n",
     )
-    document_id = upload_response.json()["id"]
 
-    response = await client.post(
-        f"/api/chunks/index/{document_id}",
-        json={
+    _body, chunks = await reindex_document_and_fetch_chunks(
+        client,
+        document_id,
+        {
             "parser_mode": "local_fallback",
             "domain_metadata": {
                 "domain": "hadith",
@@ -929,8 +983,7 @@ async def test_index_local_chunks_copies_domain_metadata(client):
         },
     )
 
-    assert response.status_code == 200
-    metadata = response.json()[0]["metadata"]
+    metadata = chunks[0].metadata_json
     assert metadata["domain_metadata"]["domain"] == "hadith"
     assert metadata["domain_metadata"]["collection"] == "Sahih al-Bukhari"
     assert metadata["parser_metadata"]["backend"] == "fallback"
@@ -1117,6 +1170,10 @@ async def test_runtime_index_route_persists_chunks_and_index_record(client, monk
         "ragstudio.services.index_lifecycle_service.RuntimeHealthService",
         PassingHealthService,
     )
+    monkeypatch.setattr(
+        "ragstudio.api.routes.documents.RuntimeHealthService",
+        PassingHealthService,
+    )
     app = client._transport.app
     artifact_path = app.state.settings.data_dir / "runtime-index.txt"
     artifact_path.write_text("runtime text", encoding="utf-8")
@@ -1141,13 +1198,13 @@ async def test_runtime_index_route_persists_chunks_and_index_record(client, monk
         await session.commit()
         document_id = document.id
 
-    response = await client.post(
-        f"/api/chunks/index/{document_id}",
-        json={"parser_mode": "local_fallback", "domain_metadata": {}},
+    _body, route_chunks = await reindex_document_and_fetch_chunks(
+        client,
+        document_id,
+        {"parser_mode": "local_fallback", "domain_metadata": {}},
     )
 
-    assert response.status_code == 200
-    assert response.json()[0]["runtime_profile_id"] == "default"
+    assert route_chunks[0].runtime_profile_id == "default"
     async with app.state.session_factory() as session:
         chunks = (
             await session.execute(select(Chunk).where(Chunk.document_id == document_id))
@@ -1192,7 +1249,7 @@ async def test_runtime_index_route_reports_blocking_health_as_conflict(client):
         document_id = document.id
 
     response = await client.post(
-        f"/api/chunks/index/{document_id}",
+        f"/api/documents/{document_id}/reindex",
         json={"parser_mode": "local_fallback", "domain_metadata": {}},
     )
 
@@ -1203,21 +1260,21 @@ async def test_runtime_index_route_reports_blocking_health_as_conflict(client):
 
 @pytest.mark.asyncio
 async def test_saved_fallback_profile_uses_legacy_chunk_indexing(client):
-    upload_response = await client.post(
-        "/api/documents",
-        files={"file": ("saved-fallback.txt", b"fallback profile text\n", "text/plain")},
-    )
-    document_id = upload_response.json()["id"]
-
-    response = await client.post(
-        f"/api/chunks/index/{document_id}",
-        json={"parser_mode": "local_fallback", "domain_metadata": {}},
+    document_id = await create_document_record(
+        client,
+        "saved-fallback.txt",
+        b"fallback profile text\n",
     )
 
-    assert response.status_code == 200
-    chunk = response.json()[0]
-    assert chunk["runtime_profile_id"] is None
-    assert chunk["metadata"]["parser_metadata"]["backend"] == "fallback"
+    _body, chunks = await reindex_document_and_fetch_chunks(
+        client,
+        document_id,
+        {"parser_mode": "local_fallback", "domain_metadata": {}},
+    )
+
+    chunk = chunks[0]
+    assert chunk.runtime_profile_id is None
+    assert chunk.metadata_json["parser_metadata"]["backend"] == "fallback"
     async with client._transport.app.state.session_factory() as session:
         record = await session.scalar(
             select(IndexRecord).where(IndexRecord.document_id == document_id)

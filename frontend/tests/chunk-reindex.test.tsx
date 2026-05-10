@@ -10,7 +10,7 @@ vi.mock("../src/api/client", () => ({
   apiClient: {
     documents: vi.fn(),
     domainProfiles: vi.fn(),
-    createIndexDocumentJob: vi.fn(),
+    createDocumentReindexJob: vi.fn(),
     searchChunks: vi.fn(),
   },
 }));
@@ -40,14 +40,10 @@ describe("ChunkInspector reindex jobs", () => {
       total: 1,
     });
     vi.mocked(apiClient.domainProfiles).mockResolvedValue({ items: [], total: 0 });
-    vi.mocked(apiClient.createIndexDocumentJob).mockResolvedValue({
-      id: "job-1",
-      type: "index_document",
+    vi.mocked(apiClient.createDocumentReindexJob).mockResolvedValue({
+      document_id: "doc-1",
+      job_id: "job-1",
       status: "ready",
-      target_id: "doc-1",
-      progress: 0,
-      logs: [],
-      result: {},
     });
   });
 
@@ -60,7 +56,7 @@ describe("ChunkInspector reindex jobs", () => {
     fireEvent.click(screen.getByRole("button", { name: /index/i }));
 
     await waitFor(() => {
-      expect(apiClient.createIndexDocumentJob).toHaveBeenCalledWith("doc-1", {
+      expect(apiClient.createDocumentReindexJob).toHaveBeenCalledWith("doc-1", {
         parser_mode: "mineru_strict",
         domain_metadata: { domain: "generic", document_type: "document", tags: [] },
       });

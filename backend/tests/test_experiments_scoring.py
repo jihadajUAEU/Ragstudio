@@ -60,13 +60,14 @@ def test_scoring_service_marks_rubric_only_case_unscoreable():
 
 
 @pytest.mark.asyncio
-async def test_create_experiment_runs_cases_and_persists_runs(client):
+async def test_create_experiment_runs_cases_and_persists_runs(client, reindex_document):
     upload = await client.post(
         "/api/documents",
         files={"file": ("experiment.txt", b"alpha beta answer", "text/plain")},
+        data={"parser_mode": "local_fallback", "domain_metadata": "{}"},
     )
     document_id = upload.json()["id"]
-    await client.post(f"/api/chunks/index/{document_id}")
+    await reindex_document(document_id)
     variant = await client.post(
         "/api/variants", json={"name": "Balanced", "preset": "balanced", "parameters": {}}
     )
@@ -142,13 +143,16 @@ async def test_create_experiment_missing_evaluation_set_returns_404(client):
 
 
 @pytest.mark.asyncio
-async def test_create_experiment_prevalidates_missing_variant_without_persisting_rows(client):
+async def test_create_experiment_prevalidates_missing_variant_without_persisting_rows(
+    client, reindex_document
+):
     upload = await client.post(
         "/api/documents",
         files={"file": ("validation.txt", b"alpha beta answer", "text/plain")},
+        data={"parser_mode": "local_fallback", "domain_metadata": "{}"},
     )
     document_id = upload.json()["id"]
-    await client.post(f"/api/chunks/index/{document_id}")
+    await reindex_document(document_id)
     evaluation = await client.post(
         "/api/evaluation-sets/import?name=Validation",
         files={
@@ -230,6 +234,9 @@ async def test_create_experiment_prevalidates_runtime_index_without_persisting_r
     monkeypatch,
 ):
     class PassingHealthService:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
         async def check(self, profile):
             return []
 
