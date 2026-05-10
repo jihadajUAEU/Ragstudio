@@ -467,7 +467,7 @@ class RetrievalOrchestrator:
         chunk_lookup = getattr(self.chunk_service, "chunks_by_id", None)
         if chunk_lookup is None:
             timings["graph_hydration_ms"] = _elapsed_ms(hydration_started)
-            return candidates, [
+            return [], [
                 {
                     "stage": "graph_hydration",
                     "status": "skipped",
@@ -483,7 +483,7 @@ class RetrievalOrchestrator:
         ]
         if not chunk_ids:
             timings["graph_hydration_ms"] = _elapsed_ms(hydration_started)
-            return candidates, [
+            return [], [
                 {
                     "stage": "graph_hydration",
                     "status": "skipped",
@@ -498,7 +498,7 @@ class RetrievalOrchestrator:
             timings["graph_hydration_ms"] = _elapsed_ms(hydration_started)
             timings["graph_hydration_degraded"] = True
             timings["graph_hydration_error_type"] = exc.__class__.__name__
-            return candidates, [
+            return [], [
                 {
                     "stage": "graph_hydration",
                     "status": "failed",
@@ -517,15 +517,7 @@ class RetrievalOrchestrator:
             chunk = chunks_by_id.get(chunk_id or "")
             if chunk is None:
                 missing_count += 1 if chunk_id else 0
-                if chunk_id and _candidate_uses_preview_text(candidate):
-                    dropped_preview_count += 1
-                    continue
-                hydrated.append(
-                    _graph_candidate_with_hydration_status(
-                        candidate,
-                        status="missing_chunk",
-                    )
-                )
+                dropped_preview_count += 1
                 continue
             hydrated.append(_hydrated_graph_candidate(candidate, chunk))
 
@@ -593,15 +585,6 @@ def _graph_candidate_chunk_id(candidate: EvidenceCandidate) -> str | None:
     return chunk_id
 
 
-def _candidate_uses_preview_text(candidate: EvidenceCandidate) -> bool:
-    preview = candidate.metadata.get("text_preview")
-    if not isinstance(preview, str) or not preview:
-        return False
-    if any(isinstance(candidate.metadata.get(key), str) for key in ("text", "content")):
-        return False
-    return candidate.text == preview
-
-
 def _hydrated_graph_candidate(
     candidate: EvidenceCandidate,
     chunk: ChunkOut,
@@ -626,30 +609,6 @@ def _hydrated_graph_candidate(
         boost_score=candidate.boost_score + 1.0,
         final_score=candidate.final_score,
         reasons=[*candidate.reasons, "graph_hydrated_chunk"],
-    )
-
-
-def _graph_candidate_with_hydration_status(
-    candidate: EvidenceCandidate,
-    *,
-    status: str,
-) -> EvidenceCandidate:
-    return EvidenceCandidate(
-        candidate_id=candidate.candidate_id,
-        text=candidate.text,
-        document_id=candidate.document_id,
-        chunk_id=candidate.chunk_id,
-        source_location=candidate.source_location,
-        metadata={
-            **candidate.metadata,
-            "graph_hydration": {"status": status},
-        },
-        tool=candidate.tool,
-        tool_rank=candidate.tool_rank,
-        base_score=candidate.base_score,
-        boost_score=candidate.boost_score,
-        final_score=candidate.final_score,
-        reasons=candidate.reasons,
     )
 
 

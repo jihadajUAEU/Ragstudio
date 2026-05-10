@@ -191,6 +191,34 @@ async def test_replace_document_graph_creates_projection_indexes_without_apoc():
 
 
 @pytest.mark.asyncio
+async def test_replace_document_graph_json_encodes_complex_relationship_evidence():
+    chunk = chunk_with_relationships()
+    metadata = dict(chunk.metadata_json)
+    relationship_metadata = dict(metadata["relationship_metadata"])
+    relationship = dict(relationship_metadata["graph_relationships"][0])
+    relationship["evidence"] = {"source": "metadata", "confidence": 0.9}
+    relationship_metadata["graph_relationships"] = [relationship]
+    metadata["relationship_metadata"] = relationship_metadata
+    chunk.metadata_json = metadata
+    driver = FakeDriver()
+    service = GraphMaterializationService(driver_factory=lambda *args, **kwargs: driver)
+
+    result = await service.replace_document_graph(
+        document_id="doc-1",
+        profile=profile(),
+        chunks=[chunk],
+    )
+
+    relationship_call = next(
+        call for call in driver.session_instance.calls if "UNWIND $relationships AS rel" in call[0]
+    )
+    relationship_payload = relationship_call[1]["relationships"][0]
+    assert result.status == "succeeded"
+    assert relationship_payload["evidence"] is None
+    assert relationship_payload["evidence_json"] == '{"source": "metadata", "confidence": 0.9}'
+
+
+@pytest.mark.asyncio
 async def test_graph_projection_record_is_separate_from_index_readiness(
     tmp_path,
     database_url,

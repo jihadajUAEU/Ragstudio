@@ -6,7 +6,10 @@ from ragstudio.schemas.common import StageStatus
 from ragstudio.schemas.parsing import IndexDocumentIn
 from ragstudio.services.adapter import AdapterChunk
 from ragstudio.services.graph_materialization_service import GraphMaterializationResult
-from ragstudio.services.graph_projection_runner import GraphProjectionRunner
+from ragstudio.services.graph_projection_runner import (
+    GraphProjectionCleanupError,
+    GraphProjectionRunner,
+)
 from ragstudio.services.index_lifecycle_service import IndexLifecycleService
 from ragstudio.services.runtime_types import RuntimeChunk
 from sqlalchemy import select
@@ -726,6 +729,80 @@ async def test_graph_projection_runner_materializes_pending_record(client):
 
 
 @pytest.mark.asyncio
+async def test_graph_projection_runner_uses_record_runtime_profile(client):
+    app = client._transport.app
+
+    async with app.state.session_factory() as session:
+        session.add_all(
+            [
+                SettingsProfile(
+                    id="default",
+                    provider="openai-compatible",
+                    llm_model="gpt-4o",
+                    llm_base_url="http://default-llm.test",
+                    embedding_model="text-embedding-3-large",
+                    embedding_base_url="http://default-embedding.test",
+                    storage_backend="postgres_pgvector_neo4j",
+                    runtime_mode="runtime",
+                    neo4j_uri="bolt://default-neo4j.test:7687",
+                ),
+                SettingsProfile(
+                    id="archived",
+                    provider="openai-compatible",
+                    llm_model="gpt-4o",
+                    llm_base_url="http://archived-llm.test",
+                    embedding_model="text-embedding-3-large",
+                    embedding_base_url="http://archived-embedding.test",
+                    storage_backend="postgres_pgvector_neo4j",
+                    runtime_mode="runtime",
+                    neo4j_uri="bolt://archived-neo4j.test:7687",
+                ),
+            ]
+        )
+        document = Document(
+            filename="graph-runner-profile.txt",
+            content_type="text/plain",
+            sha256="graph-runner-profile",
+            artifact_path=str(app.state.settings.data_dir / "graph-runner-profile.txt"),
+            status=StageStatus.SUCCEEDED.value,
+        )
+        session.add(document)
+        await session.flush()
+        session.add(
+            Chunk(
+                document_id=document.id,
+                text="Graph runner profile chunk",
+                source_location={},
+                metadata_json={},
+                runtime_profile_id="archived",
+            )
+        )
+        session.add(
+            GraphProjectionRecord(
+                document_id=document.id,
+                runtime_profile_id="archived",
+                status="pending",
+            )
+        )
+        await session.flush()
+
+        fake = FakeGraphMaterializationService()
+        await GraphProjectionRunner(
+            session,
+            app.state.settings,
+            materialization_service=fake,
+        ).materialize_pending(document.id)
+
+    assert fake.calls == [
+        {
+            "document_id": document.id,
+            "profile_id": "archived",
+            "chunk_count": 1,
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_graph_projection_runner_records_non_blocking_failure(client):
     app = client._transport.app
 
@@ -902,6 +979,63 @@ async def test_graph_projection_runner_deletes_projection_records_with_graph(cli
     assert fake.delete_calls == [{"document_id": document.id, "profile_id": "default"}]
     assert result["status"] == "succeeded"
     assert deleted_record_id is None
+
+
+@pytest.mark.asyncio
+async def test_graph_projection_runner_preserves_records_when_graph_delete_fails(client):
+    app = client._transport.app
+
+    async with app.state.session_factory() as session:
+        session.add(
+            SettingsProfile(
+                id="default",
+                provider="openai-compatible",
+                llm_model="gpt-4o",
+                llm_base_url="http://llm.test",
+                embedding_model="text-embedding-3-large",
+                embedding_base_url="http://embedding.test",
+                storage_backend="postgres_pgvector_neo4j",
+                runtime_mode="runtime",
+                neo4j_uri="bolt://neo4j.test:7687",
+            )
+        )
+        document = Document(
+            filename="graph-delete-fails.txt",
+            content_type="text/plain",
+            sha256="graph-delete-fails",
+            artifact_path=str(app.state.settings.data_dir / "graph-delete-fails.txt"),
+            status=StageStatus.SUCCEEDED.value,
+        )
+        session.add(document)
+        await session.flush()
+        projection_record = GraphProjectionRecord(
+            document_id=document.id,
+            runtime_profile_id="default",
+            status="succeeded",
+            node_count=2,
+            edge_count=1,
+        )
+        session.add(projection_record)
+        await session.flush()
+
+        with pytest.raises(GraphProjectionCleanupError, match="Graph projection cleanup failed"):
+            await GraphProjectionRunner(
+                session,
+                app.state.settings,
+                materialization_service=FakeGraphMaterializationService(
+                    result=GraphMaterializationResult(
+                        status="failed",
+                        node_count=0,
+                        edge_count=0,
+                        reason="neo4j unavailable",
+                    )
+                ),
+            ).delete_document_graph(document.id)
+        preserved_record_id = await session.scalar(
+            select(GraphProjectionRecord.id).where(GraphProjectionRecord.id == projection_record.id)
+        )
+
+    assert preserved_record_id == projection_record.id
 
 
 @pytest.mark.asyncio

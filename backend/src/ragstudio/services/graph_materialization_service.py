@@ -238,7 +238,8 @@ class GraphMaterializationService:
                         "target": target,
                         "type": rel_type,
                         "document_id": document_id,
-                        "evidence": relationship.get("evidence"),
+                        "evidence": _neo4j_property(relationship.get("evidence")),
+                        "evidence_json": _neo4j_json_property(relationship.get("evidence")),
                     }
                 )
 
@@ -305,7 +306,8 @@ class GraphMaterializationService:
                     WHERE target.document_id = rel.document_id
                     MERGE (source)-[relationship:`{rel_type}`]->(target)
                     SET relationship.document_id = rel.document_id,
-                        relationship.evidence = rel.evidence
+                        relationship.evidence = rel.evidence,
+                        relationship.evidence_json = rel.evidence_json
                     """,
                     relationships=typed_relationships,
                 )
@@ -407,6 +409,22 @@ def _source_location_properties(value: Any) -> dict[str, Any]:
         if source_location
         else None,
     }
+
+
+def _neo4j_property(value: Any) -> Any:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, list) and all(
+        isinstance(item, (str, int, float, bool)) for item in value
+    ):
+        return value
+    return None
+
+
+def _neo4j_json_property(value: Any) -> str | None:
+    if _neo4j_property(value) is not None or value is None:
+        return None
+    return json.dumps(value, ensure_ascii=False, default=str)
 
 
 def _graph_node_id(

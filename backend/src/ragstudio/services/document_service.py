@@ -142,7 +142,6 @@ class DocumentService:
             delete(IndexRecord).where(IndexRecord.document_id == document.id)
         )
         try:
-            artifact_path.unlink(missing_ok=True)
             if self.settings is not None:
                 await GraphProjectionRunner(
                     self.session,
@@ -154,9 +153,10 @@ class DocumentService:
                         GraphProjectionRecord.document_id == document.id
                     )
                 )
+            artifact_path.unlink(missing_ok=True)
             await self.session.delete(document)
             await self.session.commit()
-        except OSError:
+        except Exception:
             await self.session.rollback()
             raise
         return "deleted"

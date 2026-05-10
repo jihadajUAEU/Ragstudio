@@ -204,6 +204,17 @@ class ExplodingChunkSearchService:
         raise RuntimeError("metadata search exploded")
 
 
+class GraphHydrationFailingChunkSearchService(FakeChunkSearchService):
+    async def chunks_by_id(self, chunk_ids):
+        raise RuntimeError("chunk lookup failed")
+
+
+class GraphHydrationMissingChunkSearchService(FakeChunkSearchService):
+    async def chunks_by_id(self, chunk_ids):
+        self.chunk_lookup_calls.append(chunk_ids)
+        return []
+
+
 class MetadataSearchShouldNotRun:
     def __init__(self):
         self.calls = 0
@@ -397,6 +408,63 @@ async def test_orchestrator_graph_failure_degrades_gracefully():
     assert result.timings["graph_ms"] >= 0
     assert result.timings["graph_degraded"] is True
     assert result.timings["graph_error_type"] == "RuntimeError"
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_drops_graph_candidates_when_hydration_fails():
+    answer_service = FakeAnswerService()
+    orchestrator = RetrievalOrchestrator(
+        chunk_service=GraphHydrationFailingChunkSearchService(),
+        answer_service=answer_service,
+        reranker_service=FakeRerankerService(),
+        graph_expansion_service=FakeGraphExpansionService(),
+    )
+
+    result = await orchestrator.query(
+        "how many hadith in bukhari",
+        runtime=FakeRuntimeTool(),
+        profile=type("Profile", (), {"enable_rerank": False, "reranker_provider": "disabled"})(),
+        document_ids=["doc-1"],
+        variant_id="variant-1",
+        query_config={"limit": 8},
+    )
+
+    assert result.error is None
+    assert all(candidate.tool != "graph" for candidate in answer_service.evidence)
+    assert all(source["metadata"]["retrieval_tool"] != "graph" for source in result.sources)
+    hydration_trace = next(
+        trace for trace in result.chunk_traces if trace["stage"] == "graph_hydration"
+    )
+    assert hydration_trace["status"] == "failed"
+    assert result.timings["graph_hydration_degraded"] is True
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_drops_graph_candidates_missing_postgres_chunks():
+    answer_service = FakeAnswerService()
+    orchestrator = RetrievalOrchestrator(
+        chunk_service=GraphHydrationMissingChunkSearchService(),
+        answer_service=answer_service,
+        reranker_service=FakeRerankerService(),
+        graph_expansion_service=FakeGraphExpansionService(),
+    )
+
+    result = await orchestrator.query(
+        "how many hadith in bukhari",
+        runtime=FakeRuntimeTool(),
+        profile=type("Profile", (), {"enable_rerank": False, "reranker_provider": "disabled"})(),
+        document_ids=["doc-1"],
+        variant_id="variant-1",
+        query_config={"limit": 8},
+    )
+
+    assert result.error is None
+    assert all(candidate.tool != "graph" for candidate in answer_service.evidence)
+    hydration_trace = next(
+        trace for trace in result.chunk_traces if trace["stage"] == "graph_hydration"
+    )
+    assert hydration_trace["missing_candidates"] == 1
+    assert hydration_trace["dropped_preview_candidates"] == 1
 
 
 @pytest.mark.asyncio

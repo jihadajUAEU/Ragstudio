@@ -937,8 +937,8 @@ async def test_delete_document_removes_runtime_index_records(client, tmp_path):
             GraphProjectionRecord(
                 document_id=document.id,
                 runtime_profile_id="default",
-                status="succeeded",
-                node_count=1,
+                status="skipped",
+                node_count=0,
                 edge_count=0,
             )
         )
@@ -957,6 +957,57 @@ async def test_delete_document_removes_runtime_index_records(client, tmp_path):
         )
     assert record is None
     assert projection_record is None
+
+
+@pytest.mark.asyncio
+async def test_delete_document_blocks_when_graph_projection_cleanup_fails(client, tmp_path):
+    session_factory = client._transport.app.state.session_factory
+    artifact = tmp_path / "uploads" / "graph-delete-cleanup-fails"
+    artifact.parent.mkdir(parents=True, exist_ok=True)
+    artifact.write_text("alpha", encoding="utf-8")
+    async with session_factory() as session:
+        session.add(
+            SettingsProfile(
+                id="default",
+                provider="openai-compatible",
+                llm_model="gpt-4o",
+                embedding_model="text-embedding-3-large",
+                storage_backend="postgres_pgvector_neo4j",
+                runtime_mode="runtime",
+            )
+        )
+        document = Document(
+            filename="graph-delete-cleanup-fails.txt",
+            content_type="text/plain",
+            sha256="graph-delete-cleanup-fails",
+            artifact_path=str(artifact),
+            status=StageStatus.SUCCEEDED.value,
+        )
+        session.add(document)
+        await session.flush()
+        session.add(
+            GraphProjectionRecord(
+                document_id=document.id,
+                runtime_profile_id="missing-profile",
+                status="succeeded",
+                node_count=1,
+                edge_count=0,
+            )
+        )
+        await session.commit()
+        document_id = document.id
+
+    response = await client.delete(f"/api/documents/{document_id}")
+
+    assert response.status_code == 409
+    assert "Runtime profile 'missing-profile' is not configured" in response.json()["detail"]
+    assert artifact.exists()
+    async with session_factory() as session:
+        assert await session.get(Document, document_id) is not None
+        projection_record = await session.scalar(
+            select(GraphProjectionRecord).where(GraphProjectionRecord.document_id == document_id)
+        )
+    assert projection_record is not None
 
 
 @pytest.mark.asyncio

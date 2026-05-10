@@ -14,6 +14,10 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
+class GraphProjectionCleanupError(RuntimeError):
+    pass
+
+
 class GraphProjectionRunner:
     def __init__(
         self,
@@ -38,7 +42,9 @@ class GraphProjectionRunner:
 
         record.projection_run_id = new_id()
         try:
-            profile = await RuntimeProfileService(self.session, self.settings).get_active_profile()
+            profile = await RuntimeProfileService(self.session, self.settings).get_profile(
+                record.runtime_profile_id
+            )
             chunks = await self._chunks(document_id)
             result = await self.materialization_service.replace_document_graph(
                 document_id=document_id,
@@ -91,29 +97,60 @@ class GraphProjectionRunner:
         return result.to_dict()
 
     async def delete_document_graph(self, document_id: str) -> dict[str, Any]:
-        try:
-            profile = await RuntimeProfileService(self.session, self.settings).get_active_profile()
-        except RuntimeProfileNotConfiguredError:
+        records = await self._projection_records(document_id)
+        if not records:
+            return {
+                "status": "skipped",
+                "node_count": 0,
+                "edge_count": 0,
+                "reason": "no_projection_records",
+            }
+
+        cleanup_profile_ids = sorted(
+            {
+                record.runtime_profile_id
+                for record in records
+                if _needs_graph_cleanup(record)
+            }
+        )
+        if not cleanup_profile_ids:
             await self._delete_projection_records(document_id)
             await self.session.flush()
             return {
                 "status": "skipped",
                 "node_count": 0,
                 "edge_count": 0,
-                "reason": "runtime_profile_missing",
+                "reason": "no_materialized_projection",
             }
-        except Exception as exc:
-            await self._delete_projection_records(document_id)
-            await self.session.flush()
-            return GraphMaterializationService.failure(str(exc)).to_dict()
 
-        result = await self.materialization_service.delete_document_graph(
-            document_id=document_id,
-            profile=profile,
-        )
+        node_count = 0
+        edge_count = 0
+        profile_service = RuntimeProfileService(self.session, self.settings)
+        for runtime_profile_id in cleanup_profile_ids:
+            try:
+                profile = await profile_service.get_profile(runtime_profile_id)
+            except RuntimeProfileNotConfiguredError as exc:
+                raise GraphProjectionCleanupError(str(exc)) from exc
+            result = await self.materialization_service.delete_document_graph(
+                document_id=document_id,
+                profile=profile,
+            )
+            if result.status != "succeeded":
+                detail = f": {result.reason}" if result.reason else ""
+                raise GraphProjectionCleanupError(
+                    f"Graph projection cleanup {result.status}{detail}"
+                )
+            node_count += result.node_count
+            edge_count += result.edge_count
+
         await self._delete_projection_records(document_id)
         await self.session.flush()
-        return result.to_dict()
+        return {
+            "status": "succeeded",
+            "node_count": node_count,
+            "edge_count": edge_count,
+            "reason": None,
+        }
 
     async def _chunks(self, document_id: str) -> list[Chunk]:
         return list(
@@ -133,6 +170,19 @@ class GraphProjectionRunner:
             delete(GraphProjectionRecord).where(GraphProjectionRecord.document_id == document_id)
         )
 
+    async def _projection_records(self, document_id: str) -> list[GraphProjectionRecord]:
+        return list(
+            (
+                await self.session.execute(
+                    select(GraphProjectionRecord).where(
+                        GraphProjectionRecord.document_id == document_id
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+
     async def _latest_record(
         self,
         document_id: str,
@@ -146,3 +196,13 @@ class GraphProjectionRunner:
             statement = statement.where(GraphProjectionRecord.status == status)
         statement = statement.order_by(GraphProjectionRecord.created_at.desc()).limit(1)
         return await self.session.scalar(statement)
+
+
+def _needs_graph_cleanup(record: GraphProjectionRecord) -> bool:
+    if (
+        record.status in {"pending", "skipped"}
+        and record.node_count == 0
+        and record.edge_count == 0
+    ):
+        return False
+    return True

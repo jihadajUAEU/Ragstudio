@@ -27,9 +27,18 @@ class RuntimeProfileService:
         self.settings = settings
 
     async def get_active_profile(self) -> RuntimeProfile:
-        profile = await self.session.get(SettingsProfile, "default")
+        return await self.get_profile("default")
+
+    async def get_profile(self, profile_id: str) -> RuntimeProfile:
+        profile = await self.session.get(SettingsProfile, profile_id)
         if profile is None:
-            raise RuntimeProfileNotConfiguredError("Default runtime profile is not configured.")
+            if profile_id == "default":
+                raise RuntimeProfileNotConfiguredError(
+                    "Default runtime profile is not configured."
+                )
+            raise RuntimeProfileNotConfiguredError(
+                f"Runtime profile '{profile_id}' is not configured."
+            )
 
         storage_backend = normalize_storage_backend(profile.storage_backend)
         runtime_mode = normalize_runtime_mode(profile.runtime_mode, storage_backend)
