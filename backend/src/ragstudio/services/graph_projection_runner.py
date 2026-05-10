@@ -78,7 +78,7 @@ class GraphProjectionRunner:
                 graph_workspace_label=workspace_label(profile),
                 graph_storage_uri=profile.neo4j_uri,
                 graph_storage_username=profile.neo4j_username,
-                graph_storage_password=profile.neo4j_password,
+                graph_storage_password=None,
             )
             self.session.add(record)
             await self.session.flush()
@@ -229,20 +229,20 @@ class GraphProjectionRunner:
             record.graph_storage_uri = getattr(profile, "neo4j_uri", None)
         if not record.graph_storage_username:
             record.graph_storage_username = getattr(profile, "neo4j_username", None)
-        if not record.graph_storage_password:
-            record.graph_storage_password = getattr(profile, "neo4j_password", None)
+        record.graph_storage_password = None
 
     def _profile_for_record(
         self,
         profile: Any,
         record: GraphProjectionRecord,
     ) -> Any:
+        neo4j_password = record.graph_storage_password or getattr(profile, "neo4j_password", None)
         return SimpleNamespace(
             id=getattr(profile, "id", record.runtime_profile_id),
             graph_workspace_label=record.graph_workspace_label,
             neo4j_uri=record.graph_storage_uri,
             neo4j_username=record.graph_storage_username,
-            neo4j_password=record.graph_storage_password,
+            neo4j_password=neo4j_password,
         )
 
     async def _latest_record(

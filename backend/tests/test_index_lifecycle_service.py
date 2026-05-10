@@ -300,6 +300,55 @@ async def test_lifecycle_deletes_existing_chunks_and_mirrors_runtime_chunks(clie
 
 
 @pytest.mark.asyncio
+async def test_lifecycle_does_not_snapshot_neo4j_password(client):
+    app = client._transport.app
+    runtime = FakeRuntime()
+    artifact_path = app.state.settings.data_dir / "graph-no-password.txt"
+    artifact_path.write_text("Graph password snapshot", encoding="utf-8")
+
+    async with app.state.session_factory() as session:
+        session.add(
+            SettingsProfile(
+                id="default",
+                provider="openai-compatible",
+                llm_model="gpt-4o",
+                embedding_model="text-embedding-3-large",
+                storage_backend="postgres_pgvector_neo4j",
+                runtime_mode="runtime",
+                neo4j_uri="bolt://neo4j.test:7687",
+                neo4j_username="neo4j",
+                neo4j_password="do-not-copy",
+            )
+        )
+        document = Document(
+            filename="graph-no-password.txt",
+            content_type="text/plain",
+            sha256="graph-no-password",
+            artifact_path=str(artifact_path),
+            status=StageStatus.READY.value,
+        )
+        session.add(document)
+        await session.flush()
+
+        result = await IndexLifecycleService(
+            session,
+            app.state.settings,
+            runtime_factory=FakeFactory(runtime),
+            health_service=FakeHealthService(),
+        ).reindex_document(document.id)
+
+        projection_record = await session.scalar(
+            select(GraphProjectionRecord).where(GraphProjectionRecord.document_id == document.id)
+        )
+
+    assert result is not None
+    assert projection_record is not None
+    assert projection_record.graph_storage_uri == "bolt://neo4j.test:7687"
+    assert projection_record.graph_storage_username == "neo4j"
+    assert projection_record.graph_storage_password is None
+
+
+@pytest.mark.asyncio
 async def test_lifecycle_releases_studio_transaction_before_runtime_storage_work(client):
     app = client._transport.app
     artifact_path = app.state.settings.data_dir / "transaction-release.txt"
@@ -761,6 +810,7 @@ async def test_graph_projection_runner_materializes_pending_record(client):
     assert refreshed_record.edge_count == 1
     assert refreshed_record.error is None
     assert refreshed_record.projection_run_id is not None
+    assert refreshed_record.graph_storage_password is None
 
 
 @pytest.mark.asyncio
@@ -1044,6 +1094,73 @@ async def test_graph_projection_runner_rematerializes_from_mirrored_chunks(clien
     assert projection_record.status == "succeeded"
     assert projection_record.node_count == 2
     assert projection_record.edge_count == 1
+    assert projection_record.graph_storage_password is None
+
+
+@pytest.mark.asyncio
+async def test_graph_projection_runner_rematerialize_does_not_snapshot_neo4j_password(client):
+    app = client._transport.app
+
+    async with app.state.session_factory() as session:
+        session.add(
+            SettingsProfile(
+                id="default",
+                provider="openai-compatible",
+                llm_model="gpt-4o",
+                embedding_model="text-embedding-3-large",
+                storage_backend="postgres_pgvector_neo4j",
+                runtime_mode="runtime",
+                neo4j_uri="bolt://neo4j.test:7687",
+                neo4j_username="neo4j",
+                neo4j_password="do-not-copy",
+            )
+        )
+        document = Document(
+            filename="graph-rematerialize-no-password.txt",
+            content_type="text/plain",
+            sha256="graph-rematerialize-no-password",
+            artifact_path=str(app.state.settings.data_dir / "graph-rematerialize-no-password.txt"),
+            status=StageStatus.SUCCEEDED.value,
+        )
+        session.add(document)
+        await session.flush()
+        session.add(
+            Chunk(
+                document_id=document.id,
+                text="Graph rematerialize no password chunk",
+                source_location={},
+                metadata_json={},
+                runtime_profile_id="default",
+            )
+        )
+        await session.flush()
+
+        fake = FakeGraphMaterializationService()
+        result = await GraphProjectionRunner(
+            session,
+            app.state.settings,
+            materialization_service=fake,
+        ).rematerialize_document(document.id)
+        projection_record = await session.scalar(
+            select(GraphProjectionRecord).where(GraphProjectionRecord.document_id == document.id)
+        )
+
+    assert result["status"] == "succeeded"
+    assert fake.calls == [
+        {
+            "document_id": document.id,
+            "profile_id": "default",
+            "neo4j_uri": "bolt://neo4j.test:7687",
+            "neo4j_username": "neo4j",
+            "neo4j_password": "do-not-copy",
+            "graph_workspace_label": "ragstudio_default",
+            "chunk_count": 1,
+        }
+    ]
+    assert projection_record is not None
+    assert projection_record.graph_storage_uri == "bolt://neo4j.test:7687"
+    assert projection_record.graph_storage_username == "neo4j"
+    assert projection_record.graph_storage_password is None
 
 
 @pytest.mark.asyncio
