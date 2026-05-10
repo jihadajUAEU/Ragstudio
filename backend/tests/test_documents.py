@@ -15,6 +15,7 @@ from ragstudio.db.models import (
 from ragstudio.schemas.common import StageStatus
 from ragstudio.schemas.runtime import RuntimeHealthCheck
 from ragstudio.services.document_service import DocumentService
+from ragstudio.services.graph_projection_runner import GraphProjectionCleanupError
 from ragstudio.services.runtime_types import RuntimeChunk
 from sqlalchemy import select
 
@@ -1146,3 +1147,74 @@ async def test_delete_document_rolls_back_when_artifact_cleanup_fails(client, tm
 
     assert artifact.exists()
     assert job_id is not None
+
+
+@pytest.mark.asyncio
+async def test_delete_document_preserves_job_and_index_record_when_graph_cleanup_fails(
+    client,
+    tmp_path,
+    monkeypatch,
+):
+    app = client._transport.app
+    session_factory = app.state.session_factory
+    artifact = tmp_path / "uploads" / "graph-cleanup-fails.txt"
+    artifact.parent.mkdir(parents=True, exist_ok=True)
+    artifact.write_text("alpha", encoding="utf-8")
+
+    async with session_factory() as session:
+        document = Document(
+            filename="graph-cleanup-fails.txt",
+            content_type="text/plain",
+            sha256="graph-cleanup-fails-sha",
+            artifact_path=str(artifact),
+            status=StageStatus.SUCCEEDED.value,
+        )
+        session.add(document)
+        await session.flush()
+        session.add(
+            Job(
+                type="index_document",
+                target_id=document.id,
+                status=StageStatus.SUCCEEDED.value,
+                progress=100,
+            )
+        )
+        session.add(
+            IndexRecord(
+                document_id=document.id,
+                runtime_profile_id="default",
+                status=StageStatus.SUCCEEDED.value,
+                chunk_count=1,
+            )
+        )
+        await session.commit()
+        document_id = document.id
+
+    async def fail_after_cleanup_state_commit(self, document_id):
+        await self.session.commit()
+        raise GraphProjectionCleanupError("Graph projection cleanup failed: neo4j unavailable")
+
+    monkeypatch.setattr(
+        "ragstudio.services.document_service.GraphProjectionRunner.delete_document_graph",
+        fail_after_cleanup_state_commit,
+    )
+
+    async with session_factory() as session:
+        with pytest.raises(GraphProjectionCleanupError, match="neo4j unavailable"):
+            await DocumentService(
+                session,
+                tmp_path,
+                settings=app.state.settings,
+            ).delete_document(document_id)
+
+    async with session_factory() as session:
+        document_exists = await session.get(Document, document_id)
+        job_id = await session.scalar(select(Job.id).where(Job.target_id == document_id))
+        index_record_id = await session.scalar(
+            select(IndexRecord.id).where(IndexRecord.document_id == document_id)
+        )
+
+    assert artifact.exists()
+    assert document_exists is not None
+    assert job_id is not None
+    assert index_record_id is not None

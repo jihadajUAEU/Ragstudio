@@ -174,6 +174,55 @@ class FakeGraphMaterializationService:
         return self.result
 
 
+class UriRoutedGraphMaterializationService(FakeGraphMaterializationService):
+    def __init__(
+        self,
+        *,
+        failed_uris: set[str] | None = None,
+    ):
+        super().__init__()
+        self.failed_uris = failed_uris or set()
+
+    async def delete_document_graph(self, *, document_id, profile):
+        call = {
+            "document_id": document_id,
+            "profile_id": profile.id,
+            "neo4j_uri": getattr(profile, "neo4j_uri", None),
+            "graph_workspace_label": getattr(profile, "graph_workspace_label", None),
+        }
+        _add_auth_to_call(call, profile)
+        self.delete_calls.append(call)
+        if call["neo4j_uri"] in self.failed_uris:
+            return GraphMaterializationResult(
+                status="failed",
+                node_count=0,
+                edge_count=0,
+                reason=f"{call['neo4j_uri']} unavailable",
+            )
+        return GraphMaterializationResult(
+            status="succeeded",
+            node_count=2,
+            edge_count=1,
+        )
+
+
+class RunningStatusObservingGraphMaterializationService(FakeGraphMaterializationService):
+    def __init__(self, session_factory, record_id: str):
+        super().__init__()
+        self.session_factory = session_factory
+        self.record_id = record_id
+        self.observed_cleanup_status: str | None = None
+
+    async def delete_document_graph(self, *, document_id, profile):
+        async with self.session_factory() as session:
+            self.observed_cleanup_status = await session.scalar(
+                select(GraphProjectionRecord.cleanup_status).where(
+                    GraphProjectionRecord.id == self.record_id
+                )
+            )
+        return await super().delete_document_graph(document_id=document_id, profile=profile)
+
+
 def _add_auth_to_call(call: dict, profile) -> None:
     username = getattr(profile, "neo4j_username", None)
     password = getattr(profile, "neo4j_password", None)
@@ -1475,6 +1524,103 @@ async def test_graph_projection_runner_deletes_using_recorded_target_without_liv
 
 
 @pytest.mark.asyncio
+async def test_graph_projection_runner_marks_cleanup_succeeded(client):
+    app = client._transport.app
+
+    async with app.state.session_factory() as session:
+        session.add(
+            SettingsProfile(
+                id="default",
+                provider="openai-compatible",
+                llm_model="gpt-4o",
+                embedding_model="text-embedding-3-large",
+                storage_backend="postgres_pgvector_neo4j",
+                runtime_mode="runtime",
+                neo4j_uri="bolt://neo4j.test:7687",
+            )
+        )
+        document = Document(
+            filename="graph-cleanup-state.txt",
+            content_type="text/plain",
+            sha256="graph-cleanup-state",
+            artifact_path=str(app.state.settings.data_dir / "graph-cleanup-state.txt"),
+            status=StageStatus.SUCCEEDED.value,
+        )
+        session.add(document)
+        await session.flush()
+        projection_record = GraphProjectionRecord(
+            document_id=document.id,
+            runtime_profile_id="default",
+            status="succeeded",
+            graph_workspace_label="ragstudio_default",
+            graph_storage_uri="bolt://neo4j.test:7687",
+            node_count=2,
+            edge_count=1,
+        )
+        session.add(projection_record)
+        await session.flush()
+
+        result = await GraphProjectionRunner(
+            session,
+            app.state.settings,
+            materialization_service=FakeGraphMaterializationService(),
+        ).delete_document_graph(document.id)
+        refreshed = await session.get(GraphProjectionRecord, projection_record.id)
+
+    assert result["status"] == "succeeded"
+    assert refreshed is None
+
+
+@pytest.mark.asyncio
+async def test_graph_projection_runner_skips_already_cleaned_record(client):
+    app = client._transport.app
+
+    async with app.state.session_factory() as session:
+        document = Document(
+            filename="graph-cleaned-skip.txt",
+            content_type="text/plain",
+            sha256="graph-cleaned-skip",
+            artifact_path=str(app.state.settings.data_dir / "graph-cleaned-skip.txt"),
+            status=StageStatus.SUCCEEDED.value,
+        )
+        session.add(document)
+        await session.flush()
+        projection_record = GraphProjectionRecord(
+            document_id=document.id,
+            runtime_profile_id="removed-profile",
+            status="succeeded",
+            graph_workspace_label="ragstudio_removed_profile",
+            graph_storage_uri="bolt://old-neo4j.test:7687",
+            node_count=2,
+            edge_count=1,
+            cleanup_status="succeeded",
+        )
+        session.add(projection_record)
+        await session.flush()
+        document_id = document.id
+        projection_record_id = projection_record.id
+        await session.commit()
+
+    async with app.state.session_factory() as session:
+        fake = FakeGraphMaterializationService()
+        result = await GraphProjectionRunner(
+            session,
+            app.state.settings,
+            materialization_service=fake,
+        ).delete_document_graph(document_id)
+        deleted_record = await session.get(GraphProjectionRecord, projection_record_id)
+
+    assert fake.delete_calls == []
+    assert result == {
+        "status": "succeeded",
+        "node_count": 0,
+        "edge_count": 0,
+        "reason": None,
+    }
+    assert deleted_record is None
+
+
+@pytest.mark.asyncio
 async def test_graph_projection_runner_reports_default_profile_message_for_incomplete_target(
     client,
 ):
@@ -1507,7 +1653,7 @@ async def test_graph_projection_runner_reports_default_profile_message_for_incom
 
         with pytest.raises(
             GraphProjectionCleanupError,
-            match="Default runtime profile is not configured.",
+            match=r"Default runtime profile is not configured\.",
         ):
             await GraphProjectionRunner(
                 session,
@@ -1595,6 +1741,8 @@ async def test_graph_projection_runner_preserves_records_when_graph_delete_fails
         )
         session.add(projection_record)
         await session.flush()
+        projection_record_id = projection_record.id
+        await session.commit()
 
         with pytest.raises(GraphProjectionCleanupError, match="Graph projection cleanup failed"):
             await GraphProjectionRunner(
@@ -1610,10 +1758,643 @@ async def test_graph_projection_runner_preserves_records_when_graph_delete_fails
                 ),
             ).delete_document_graph(document.id)
         preserved_record_id = await session.scalar(
-            select(GraphProjectionRecord.id).where(GraphProjectionRecord.id == projection_record.id)
+            select(GraphProjectionRecord.id).where(GraphProjectionRecord.id == projection_record_id)
         )
 
     assert preserved_record_id == projection_record.id
+    async with app.state.session_factory() as session:
+        refreshed = await session.get(GraphProjectionRecord, projection_record_id)
+
+    assert refreshed is not None
+    assert refreshed.cleanup_status == "failed"
+    assert refreshed.cleanup_error == "Graph projection cleanup failed: neo4j unavailable"
+    assert refreshed.cleanup_attempted_at is not None
+
+
+@pytest.mark.asyncio
+async def test_graph_projection_runner_marks_cleanup_failed_when_delete_raises(client):
+    app = client._transport.app
+
+    async with app.state.session_factory() as session:
+        session.add(
+            SettingsProfile(
+                id="default",
+                provider="openai-compatible",
+                llm_model="gpt-4o",
+                llm_base_url="http://llm.test",
+                embedding_model="text-embedding-3-large",
+                embedding_base_url="http://embedding.test",
+                storage_backend="postgres_pgvector_neo4j",
+                runtime_mode="runtime",
+                neo4j_uri="bolt://neo4j.test:7687",
+            )
+        )
+        document = Document(
+            filename="graph-delete-raises.txt",
+            content_type="text/plain",
+            sha256="graph-delete-raises",
+            artifact_path=str(app.state.settings.data_dir / "graph-delete-raises.txt"),
+            status=StageStatus.SUCCEEDED.value,
+        )
+        session.add(document)
+        await session.flush()
+        projection_record = GraphProjectionRecord(
+            document_id=document.id,
+            runtime_profile_id="default",
+            status="succeeded",
+            graph_workspace_label="ragstudio_default",
+            graph_storage_uri="bolt://neo4j.test:7687",
+            node_count=2,
+            edge_count=1,
+        )
+        session.add(projection_record)
+        await session.flush()
+        projection_record_id = projection_record.id
+        await session.commit()
+
+        with pytest.raises(GraphProjectionCleanupError, match="neo4j connection reset"):
+            await GraphProjectionRunner(
+                session,
+                app.state.settings,
+                materialization_service=FakeGraphMaterializationService(
+                    error=RuntimeError("neo4j connection reset")
+                ),
+            ).delete_document_graph(document.id)
+
+    async with app.state.session_factory() as session:
+        refreshed = await session.get(GraphProjectionRecord, projection_record_id)
+
+    assert refreshed is not None
+    assert refreshed.cleanup_status == "failed"
+    assert refreshed.cleanup_error == "Graph projection cleanup failed: neo4j connection reset"
+    assert refreshed.cleanup_attempted_at is not None
+
+
+@pytest.mark.asyncio
+async def test_graph_projection_runner_persists_running_state_before_external_delete(client):
+    app = client._transport.app
+
+    async with app.state.session_factory() as session:
+        session.add(
+            SettingsProfile(
+                id="default",
+                provider="openai-compatible",
+                llm_model="gpt-4o",
+                llm_base_url="http://llm.test",
+                embedding_model="text-embedding-3-large",
+                embedding_base_url="http://embedding.test",
+                storage_backend="postgres_pgvector_neo4j",
+                runtime_mode="runtime",
+                neo4j_uri="bolt://neo4j.test:7687",
+            )
+        )
+        document = Document(
+            filename="graph-delete-running-visible.txt",
+            content_type="text/plain",
+            sha256="graph-delete-running-visible",
+            artifact_path=str(app.state.settings.data_dir / "graph-delete-running-visible.txt"),
+            status=StageStatus.SUCCEEDED.value,
+        )
+        session.add(document)
+        await session.flush()
+        projection_record = GraphProjectionRecord(
+            document_id=document.id,
+            runtime_profile_id="default",
+            status="succeeded",
+            graph_workspace_label="ragstudio_default",
+            graph_storage_uri="bolt://neo4j.test:7687",
+            node_count=2,
+            edge_count=1,
+        )
+        session.add(projection_record)
+        await session.flush()
+        projection_record_id = projection_record.id
+        await session.commit()
+
+        fake = RunningStatusObservingGraphMaterializationService(
+            app.state.session_factory,
+            projection_record_id,
+        )
+        result = await GraphProjectionRunner(
+            session,
+            app.state.settings,
+            materialization_service=fake,
+        ).delete_document_graph(document.id)
+
+    assert result["status"] == "succeeded"
+    assert fake.observed_cleanup_status == "running"
+
+
+@pytest.mark.asyncio
+async def test_graph_projection_cleanup_marker_does_not_commit_unrelated_session_changes(client):
+    app = client._transport.app
+
+    async with app.state.session_factory() as session:
+        session.add(
+            SettingsProfile(
+                id="default",
+                provider="openai-compatible",
+                llm_model="gpt-4o",
+                llm_base_url="http://llm.test",
+                embedding_model="text-embedding-3-large",
+                embedding_base_url="http://embedding.test",
+                storage_backend="postgres_pgvector_neo4j",
+                runtime_mode="runtime",
+                neo4j_uri="bolt://neo4j.test:7687",
+            )
+        )
+        unrelated_document = Document(
+            filename="unrelated-original.txt",
+            content_type="text/plain",
+            sha256="unrelated-original",
+            artifact_path=str(app.state.settings.data_dir / "unrelated-original.txt"),
+            status=StageStatus.SUCCEEDED.value,
+        )
+        cleanup_document = Document(
+            filename="graph-delete-isolated-marker.txt",
+            content_type="text/plain",
+            sha256="graph-delete-isolated-marker",
+            artifact_path=str(app.state.settings.data_dir / "graph-delete-isolated-marker.txt"),
+            status=StageStatus.SUCCEEDED.value,
+        )
+        session.add_all([unrelated_document, cleanup_document])
+        await session.flush()
+        projection_record = GraphProjectionRecord(
+            document_id=cleanup_document.id,
+            runtime_profile_id="default",
+            status="succeeded",
+            graph_workspace_label="ragstudio_default",
+            graph_storage_uri="bolt://neo4j.test:7687",
+            node_count=2,
+            edge_count=1,
+        )
+        session.add(projection_record)
+        await session.flush()
+        unrelated_document_id = unrelated_document.id
+        cleanup_document_id = cleanup_document.id
+        projection_record_id = projection_record.id
+        await session.commit()
+
+    async with app.state.session_factory() as session:
+        unrelated_document = await session.get(Document, unrelated_document_id)
+        assert unrelated_document is not None
+        unrelated_document.filename = "unrelated-dirty.txt"
+
+        with pytest.raises(GraphProjectionCleanupError, match="neo4j connection reset"):
+            await GraphProjectionRunner(
+                session,
+                app.state.settings,
+                materialization_service=FakeGraphMaterializationService(
+                    error=RuntimeError("neo4j connection reset")
+                ),
+            ).delete_document_graph(cleanup_document_id)
+        await session.rollback()
+
+    async with app.state.session_factory() as session:
+        unrelated_document = await session.get(Document, unrelated_document_id)
+        refreshed = await session.get(GraphProjectionRecord, projection_record_id)
+
+    assert unrelated_document is not None
+    assert unrelated_document.filename == "unrelated-original.txt"
+    assert refreshed is not None
+    assert refreshed.cleanup_status == "failed"
+    assert refreshed.cleanup_error == "Graph projection cleanup failed: neo4j connection reset"
+
+
+@pytest.mark.asyncio
+async def test_graph_projection_runner_marks_duplicate_target_records_cleaned_before_later_failure(
+    client,
+):
+    app = client._transport.app
+
+    async with app.state.session_factory() as session:
+        document = Document(
+            filename="graph-duplicate-target-retry.txt",
+            content_type="text/plain",
+            sha256="graph-duplicate-target-retry",
+            artifact_path=str(app.state.settings.data_dir / "graph-duplicate-target-retry.txt"),
+            status=StageStatus.SUCCEEDED.value,
+        )
+        session.add(document)
+        await session.flush()
+        duplicate_record = GraphProjectionRecord(
+            document_id=document.id,
+            runtime_profile_id="a-profile",
+            status="succeeded",
+            graph_workspace_label="ragstudio_a",
+            graph_storage_uri="bolt://target-a.test:7687",
+            node_count=2,
+            edge_count=1,
+        )
+        duplicate_retry_record = GraphProjectionRecord(
+            document_id=document.id,
+            runtime_profile_id="x-profile",
+            status="succeeded",
+            graph_workspace_label="ragstudio_a",
+            graph_storage_uri="bolt://target-a.test:7687",
+            node_count=3,
+            edge_count=2,
+        )
+        failing_record = GraphProjectionRecord(
+            document_id=document.id,
+            runtime_profile_id="b-profile",
+            status="succeeded",
+            graph_workspace_label="ragstudio_b",
+            graph_storage_uri="bolt://target-b.test:7687",
+            node_count=5,
+            edge_count=4,
+        )
+        session.add_all([duplicate_record, duplicate_retry_record, failing_record])
+        await session.flush()
+        document_id = document.id
+        duplicate_record_ids = [duplicate_record.id, duplicate_retry_record.id]
+        failing_record_id = failing_record.id
+        await session.commit()
+
+    first_delete = UriRoutedGraphMaterializationService(
+        failed_uris={"bolt://target-b.test:7687"}
+    )
+    async with app.state.session_factory() as session:
+        with pytest.raises(GraphProjectionCleanupError, match=r"target-b\.test:7687 unavailable"):
+            await GraphProjectionRunner(
+                session,
+                app.state.settings,
+                materialization_service=first_delete,
+            ).delete_document_graph(document_id)
+
+    assert [call["neo4j_uri"] for call in first_delete.delete_calls] == [
+        "bolt://target-a.test:7687",
+        "bolt://target-b.test:7687",
+    ]
+    async with app.state.session_factory() as session:
+        duplicate_statuses = (
+            (
+                await session.execute(
+                    select(GraphProjectionRecord.cleanup_status)
+                    .where(GraphProjectionRecord.id.in_(duplicate_record_ids))
+                    .order_by(GraphProjectionRecord.id.asc())
+                )
+            )
+            .scalars()
+            .all()
+        )
+        failing_status = await session.scalar(
+            select(GraphProjectionRecord.cleanup_status).where(
+                GraphProjectionRecord.id == failing_record_id
+            )
+        )
+
+    assert duplicate_statuses == ["succeeded", "succeeded"]
+    assert failing_status == "failed"
+
+    retry_delete = UriRoutedGraphMaterializationService()
+    async with app.state.session_factory() as session:
+        result = await GraphProjectionRunner(
+            session,
+            app.state.settings,
+            materialization_service=retry_delete,
+        ).delete_document_graph(document_id)
+
+    assert result["status"] == "succeeded"
+    assert [call["neo4j_uri"] for call in retry_delete.delete_calls] == [
+        "bolt://target-b.test:7687"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_graph_projection_runner_groups_stored_and_partial_records_after_target_fill(
+    client,
+):
+    app = client._transport.app
+
+    async with app.state.session_factory() as session:
+        session.add(
+            SettingsProfile(
+                id="default",
+                provider="openai-compatible",
+                llm_model="gpt-4o",
+                embedding_model="text-embedding-3-large",
+                storage_backend="postgres_pgvector_neo4j",
+                runtime_mode="runtime",
+                neo4j_uri="bolt://target-a.test:7687",
+            )
+        )
+        document = Document(
+            filename="graph-mixed-target-retry.txt",
+            content_type="text/plain",
+            sha256="graph-mixed-target-retry",
+            artifact_path=str(app.state.settings.data_dir / "graph-mixed-target-retry.txt"),
+            status=StageStatus.SUCCEEDED.value,
+        )
+        session.add(document)
+        await session.flush()
+        stored_target_record = GraphProjectionRecord(
+            document_id=document.id,
+            runtime_profile_id="default",
+            status="succeeded",
+            graph_workspace_label="ragstudio_default",
+            graph_storage_uri="bolt://target-a.test:7687",
+            node_count=2,
+            edge_count=1,
+        )
+        partial_legacy_record = GraphProjectionRecord(
+            document_id=document.id,
+            runtime_profile_id="default",
+            status="succeeded",
+            graph_workspace_label=None,
+            graph_storage_uri=None,
+            node_count=3,
+            edge_count=2,
+        )
+        failing_record = GraphProjectionRecord(
+            document_id=document.id,
+            runtime_profile_id="z-profile",
+            status="succeeded",
+            graph_workspace_label="ragstudio_z",
+            graph_storage_uri="bolt://target-z.test:7687",
+            node_count=5,
+            edge_count=4,
+        )
+        session.add_all([stored_target_record, partial_legacy_record, failing_record])
+        await session.flush()
+        document_id = document.id
+        duplicate_record_ids = [stored_target_record.id, partial_legacy_record.id]
+        await session.commit()
+
+    first_delete = UriRoutedGraphMaterializationService(
+        failed_uris={"bolt://target-z.test:7687"}
+    )
+    async with app.state.session_factory() as session:
+        with pytest.raises(GraphProjectionCleanupError, match=r"target-z\.test:7687 unavailable"):
+            await GraphProjectionRunner(
+                session,
+                app.state.settings,
+                materialization_service=first_delete,
+            ).delete_document_graph(document_id)
+
+    assert [call["neo4j_uri"] for call in first_delete.delete_calls] == [
+        "bolt://target-a.test:7687",
+        "bolt://target-z.test:7687",
+    ]
+    async with app.state.session_factory() as session:
+        duplicate_records = (
+            (
+                await session.execute(
+                    select(GraphProjectionRecord)
+                    .where(GraphProjectionRecord.id.in_(duplicate_record_ids))
+                    .order_by(GraphProjectionRecord.id.asc())
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+    assert [record.cleanup_status for record in duplicate_records] == [
+        "succeeded",
+        "succeeded",
+    ]
+    assert [record.graph_storage_uri for record in duplicate_records] == [
+        "bolt://target-a.test:7687",
+        "bolt://target-a.test:7687",
+    ]
+    assert [record.graph_workspace_label for record in duplicate_records] == [
+        "ragstudio_default",
+        "ragstudio_default",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_graph_projection_runner_prefers_live_profile_credentials_for_target_group(client):
+    app = client._transport.app
+
+    async with app.state.session_factory() as session:
+        session.add(
+            SettingsProfile(
+                id="default",
+                provider="openai-compatible",
+                llm_model="gpt-4o",
+                embedding_model="text-embedding-3-large",
+                storage_backend="postgres_pgvector_neo4j",
+                runtime_mode="runtime",
+                neo4j_uri="bolt://target-auth.test:7687",
+                neo4j_username="neo4j-user",
+                neo4j_password="live-password",
+            )
+        )
+        document = Document(
+            filename="graph-live-profile-credentials.txt",
+            content_type="text/plain",
+            sha256="graph-live-profile-credentials",
+            artifact_path=str(app.state.settings.data_dir / "graph-live-profile-credentials.txt"),
+            status=StageStatus.SUCCEEDED.value,
+        )
+        session.add(document)
+        await session.flush()
+        removed_profile_record = GraphProjectionRecord(
+            document_id=document.id,
+            runtime_profile_id="removed-profile",
+            status="succeeded",
+            graph_workspace_label="ragstudio_default",
+            graph_storage_uri="bolt://target-auth.test:7687",
+            graph_storage_username="neo4j-user",
+            graph_storage_password=None,
+            node_count=2,
+            edge_count=1,
+        )
+        live_profile_record = GraphProjectionRecord(
+            document_id=document.id,
+            runtime_profile_id="default",
+            status="succeeded",
+            graph_workspace_label=None,
+            graph_storage_uri=None,
+            graph_storage_username=None,
+            graph_storage_password=None,
+            node_count=3,
+            edge_count=2,
+        )
+        session.add_all([removed_profile_record, live_profile_record])
+        await session.flush()
+        document_id = document.id
+        await session.commit()
+
+    fake = FakeGraphMaterializationService()
+    async with app.state.session_factory() as session:
+        result = await GraphProjectionRunner(
+            session,
+            app.state.settings,
+            materialization_service=fake,
+        ).delete_document_graph(document_id)
+
+    assert result["status"] == "succeeded"
+    assert fake.delete_calls == [
+        {
+            "document_id": document_id,
+            "profile_id": "default",
+            "neo4j_uri": "bolt://target-auth.test:7687",
+            "neo4j_username": "neo4j-user",
+            "neo4j_password": "live-password",
+            "graph_workspace_label": "ragstudio_default",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_graph_projection_runner_groups_same_target_with_different_stored_passwords(client):
+    app = client._transport.app
+
+    async with app.state.session_factory() as session:
+        document = Document(
+            filename="graph-stored-password-group.txt",
+            content_type="text/plain",
+            sha256="graph-stored-password-group",
+            artifact_path=str(app.state.settings.data_dir / "graph-stored-password-group.txt"),
+            status=StageStatus.SUCCEEDED.value,
+        )
+        session.add(document)
+        await session.flush()
+        passwordless_record = GraphProjectionRecord(
+            document_id=document.id,
+            runtime_profile_id="removed-profile",
+            status="succeeded",
+            graph_workspace_label="ragstudio_removed_profile",
+            graph_storage_uri="bolt://stored-target.test:7687",
+            graph_storage_username="neo4j-user",
+            graph_storage_password=None,
+            node_count=2,
+            edge_count=1,
+        )
+        credential_record = GraphProjectionRecord(
+            document_id=document.id,
+            runtime_profile_id="removed-profile",
+            status="succeeded",
+            graph_workspace_label="ragstudio_removed_profile",
+            graph_storage_uri="bolt://stored-target.test:7687",
+            graph_storage_username="neo4j-user",
+            graph_storage_password="stored-password",
+            node_count=3,
+            edge_count=2,
+        )
+        session.add_all([passwordless_record, credential_record])
+        await session.flush()
+        document_id = document.id
+        await session.commit()
+
+    fake = FakeGraphMaterializationService()
+    async with app.state.session_factory() as session:
+        result = await GraphProjectionRunner(
+            session,
+            app.state.settings,
+            materialization_service=fake,
+        ).delete_document_graph(document_id)
+
+    assert result["status"] == "succeeded"
+    assert fake.delete_calls == [
+        {
+            "document_id": document_id,
+            "profile_id": "removed-profile",
+            "neo4j_uri": "bolt://stored-target.test:7687",
+            "neo4j_username": "neo4j-user",
+            "neo4j_password": "stored-password",
+            "graph_workspace_label": "ragstudio_removed_profile",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_graph_projection_runner_skips_retry_when_duplicate_target_already_cleaned(client):
+    app = client._transport.app
+
+    async with app.state.session_factory() as session:
+        session.add(
+            SettingsProfile(
+                id="default",
+                provider="openai-compatible",
+                llm_model="gpt-4o",
+                embedding_model="text-embedding-3-large",
+                storage_backend="postgres_pgvector_neo4j",
+                runtime_mode="runtime",
+                neo4j_uri="bolt://target-a.test:7687",
+            )
+        )
+        document = Document(
+            filename="graph-duplicate-target-already-cleaned.txt",
+            content_type="text/plain",
+            sha256="graph-duplicate-target-already-cleaned",
+            artifact_path=str(
+                app.state.settings.data_dir / "graph-duplicate-target-already-cleaned.txt"
+            ),
+            status=StageStatus.SUCCEEDED.value,
+        )
+        session.add(document)
+        await session.flush()
+        cleaned_record = GraphProjectionRecord(
+            document_id=document.id,
+            runtime_profile_id="default",
+            status="succeeded",
+            graph_workspace_label="ragstudio_default",
+            graph_storage_uri="bolt://target-a.test:7687",
+            node_count=2,
+            edge_count=1,
+            cleanup_status="succeeded",
+        )
+        partial_retry_record = GraphProjectionRecord(
+            document_id=document.id,
+            runtime_profile_id="default",
+            status="succeeded",
+            graph_workspace_label=None,
+            graph_storage_uri=None,
+            node_count=3,
+            edge_count=2,
+            cleanup_status="failed",
+            cleanup_error="previous interruption",
+        )
+        failing_record = GraphProjectionRecord(
+            document_id=document.id,
+            runtime_profile_id="z-profile",
+            status="succeeded",
+            graph_workspace_label="ragstudio_z",
+            graph_storage_uri="bolt://target-z.test:7687",
+            node_count=5,
+            edge_count=4,
+        )
+        session.add_all([cleaned_record, partial_retry_record, failing_record])
+        await session.flush()
+        document_id = document.id
+        duplicate_record_ids = [cleaned_record.id, partial_retry_record.id]
+        await session.commit()
+
+    fake = UriRoutedGraphMaterializationService(failed_uris={"bolt://target-z.test:7687"})
+    async with app.state.session_factory() as session:
+        with pytest.raises(GraphProjectionCleanupError, match=r"target-z\.test:7687 unavailable"):
+            await GraphProjectionRunner(
+                session,
+                app.state.settings,
+                materialization_service=fake,
+            ).delete_document_graph(document_id)
+
+    assert [call["neo4j_uri"] for call in fake.delete_calls] == ["bolt://target-z.test:7687"]
+    async with app.state.session_factory() as session:
+        duplicate_records = (
+            (
+                await session.execute(
+                    select(GraphProjectionRecord)
+                    .where(GraphProjectionRecord.id.in_(duplicate_record_ids))
+                    .order_by(GraphProjectionRecord.id.asc())
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+    assert [record.cleanup_status for record in duplicate_records] == [
+        "succeeded",
+        "succeeded",
+    ]
+    assert [record.cleanup_error for record in duplicate_records] == [None, None]
+    assert [record.graph_storage_uri for record in duplicate_records] == [
+        "bolt://target-a.test:7687",
+        "bolt://target-a.test:7687",
+    ]
 
 
 @pytest.mark.asyncio

@@ -135,12 +135,6 @@ class DocumentService:
             return "not_found"
 
         artifact_path = Path(document.artifact_path)
-        await self.session.execute(
-            delete(Job).where(Job.type == "index_document", Job.target_id == document.id)
-        )
-        await self.session.execute(
-            delete(IndexRecord).where(IndexRecord.document_id == document.id)
-        )
         try:
             if self.settings is not None:
                 await GraphProjectionRunner(
@@ -153,6 +147,12 @@ class DocumentService:
                         GraphProjectionRecord.document_id == document.id
                     )
                 )
+            await self.session.execute(
+                delete(Job).where(Job.type == "index_document", Job.target_id == document.id)
+            )
+            await self.session.execute(
+                delete(IndexRecord).where(IndexRecord.document_id == document.id)
+            )
             artifact_path.unlink(missing_ok=True)
             await self.session.delete(document)
             await self.session.commit()

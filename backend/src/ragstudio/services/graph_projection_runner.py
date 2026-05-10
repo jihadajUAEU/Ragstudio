@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
 
@@ -12,8 +13,8 @@ from ragstudio.services.runtime_profile_service import (
     RuntimeProfileNotConfiguredError,
     RuntimeProfileService,
 )
-from sqlalchemy import delete, select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import delete, select, update
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 
 class GraphProjectionCleanupError(RuntimeError):
@@ -115,16 +116,52 @@ class GraphProjectionRunner:
                 "reason": "no_projection_records",
             }
 
-        cleanup_profile_ids = sorted(
-            {
-                record.runtime_profile_id
-                for record in records
-                if _needs_graph_cleanup(record)
-            }
-        )
-        if not cleanup_profile_ids:
+        profile_service = RuntimeProfileService(self.session, self.settings)
+        live_profiles: dict[str, Any | None] = {}
+        missing_profile_errors: dict[str, str | None] = {}
+        for runtime_profile_id in sorted({record.runtime_profile_id for record in records}):
+            live_profile, missing_profile_error = await self._cleanup_live_profile(
+                profile_service,
+                runtime_profile_id,
+            )
+            live_profiles[runtime_profile_id] = live_profile
+            missing_profile_errors[runtime_profile_id] = missing_profile_error
+
+        targets: dict[
+            tuple[str | None, str | None, str | None],
+            list[GraphProjectionRecord],
+        ] = {}
+        for record in records:
+            targets.setdefault(
+                _effective_target_key(record, live_profiles[record.runtime_profile_id]),
+                [],
+            ).append(record)
+
+        cleaned_target_groups = [
+            (target_key, target_records)
+            for target_key, target_records in targets.items()
+            if any(record.cleanup_status == "succeeded" for record in target_records)
+        ]
+        for target_key, target_records in cleaned_target_groups:
+            if any(record.cleanup_status != "succeeded" for record in target_records):
+                await self._mark_cleanup_succeeded(target_records, target_key)
+
+        cleanup_target_groups = [
+            (target_key, target_records)
+            for target_key, target_records in targets.items()
+            if not any(record.cleanup_status == "succeeded" for record in target_records)
+            and any(_needs_graph_cleanup(record) for record in target_records)
+        ]
+        if not cleanup_target_groups:
             await self._delete_projection_records(document_id)
             await self.session.flush()
+            if cleaned_target_groups:
+                return {
+                    "status": "succeeded",
+                    "node_count": 0,
+                    "edge_count": 0,
+                    "reason": None,
+                }
             return {
                 "status": "skipped",
                 "node_count": 0,
@@ -134,39 +171,31 @@ class GraphProjectionRunner:
 
         node_count = 0
         edge_count = 0
-        profile_service = RuntimeProfileService(self.session, self.settings)
-        for runtime_profile_id in cleanup_profile_ids:
-            profile_records = [
-                record
-                for record in records
-                if record.runtime_profile_id == runtime_profile_id
-                and _needs_graph_cleanup(record)
-            ]
-            targets = {_target_key(record): record for record in profile_records}
-            live_profile, missing_profile_error = await self._cleanup_live_profile(
-                profile_service,
-                runtime_profile_id,
-            )
-            for target_record in targets.values():
-                if live_profile is None and not _has_stored_graph_target(target_record):
-                    raise GraphProjectionCleanupError(missing_profile_error)
-                if live_profile is not None:
-                    self._ensure_projection_target(
-                        target_record,
-                        live_profile,
-                        preserve_password=True,
-                    )
+        for target_key, target_records in cleanup_target_groups:
+            target_record = _cleanup_target_representative(target_records, live_profiles)
+            live_profile = live_profiles.get(target_record.runtime_profile_id)
+            if live_profile is None and not _target_key_has_stored_graph_target(target_key):
+                raise GraphProjectionCleanupError(
+                    missing_profile_errors.get(target_record.runtime_profile_id)
+                )
+            await self._mark_cleanup_running(target_records, target_key)
+            try:
                 result = await self.materialization_service.delete_document_graph(
                     document_id=document_id,
                     profile=self._profile_for_record(live_profile, target_record),
                 )
-                if result.status != "succeeded":
-                    detail = f": {result.reason}" if result.reason else ""
-                    raise GraphProjectionCleanupError(
-                        f"Graph projection cleanup {result.status}{detail}"
-                    )
-                node_count += result.node_count
-                edge_count += result.edge_count
+            except Exception as exc:
+                message = f"Graph projection cleanup failed: {exc}"
+                await self._mark_cleanup_failed(target_records, target_key, message)
+                raise GraphProjectionCleanupError(message) from exc
+            if result.status != "succeeded":
+                detail = f": {result.reason}" if result.reason else ""
+                message = f"Graph projection cleanup {result.status}{detail}"
+                await self._mark_cleanup_failed(target_records, target_key, message)
+                raise GraphProjectionCleanupError(message)
+            await self._mark_cleanup_succeeded(target_records, target_key)
+            node_count += result.node_count
+            edge_count += result.edge_count
 
         await self._delete_projection_records(document_id)
         await self.session.flush()
@@ -195,12 +224,93 @@ class GraphProjectionRunner:
             delete(GraphProjectionRecord).where(GraphProjectionRecord.document_id == document_id)
         )
 
+    async def _mark_cleanup_running(
+        self,
+        records: list[GraphProjectionRecord],
+        target_key: tuple[str | None, str | None, str | None],
+    ) -> None:
+        await self._persist_cleanup_marker(
+            records,
+            target_key=target_key,
+            cleanup_status="running",
+            cleanup_error=None,
+        )
+
+    async def _mark_cleanup_succeeded(
+        self,
+        records: list[GraphProjectionRecord],
+        target_key: tuple[str | None, str | None, str | None],
+    ) -> None:
+        await self._persist_cleanup_marker(
+            records,
+            target_key=target_key,
+            cleanup_status="succeeded",
+            cleanup_error=None,
+        )
+
+    async def _mark_cleanup_failed(
+        self,
+        records: list[GraphProjectionRecord],
+        target_key: tuple[str | None, str | None, str | None],
+        error: str,
+    ) -> None:
+        await self._persist_cleanup_marker(
+            records,
+            target_key=target_key,
+            cleanup_status="failed",
+            cleanup_error=error,
+        )
+
+    async def _persist_cleanup_marker(
+        self,
+        records: list[GraphProjectionRecord],
+        *,
+        target_key: tuple[str | None, str | None, str | None],
+        cleanup_status: str,
+        cleanup_error: str | None,
+    ) -> None:
+        attempted_at = datetime.now(UTC)
+        (
+            graph_workspace_label,
+            graph_storage_uri,
+            graph_storage_username,
+        ) = target_key
+        record_ids = [record.id for record in records]
+        for record in records:
+            record.graph_workspace_label = graph_workspace_label
+            record.graph_storage_uri = graph_storage_uri
+            record.graph_storage_username = graph_storage_username
+            record.cleanup_status = cleanup_status
+            record.cleanup_error = cleanup_error
+            record.cleanup_attempted_at = attempted_at
+        bind = self.session.bind
+        if bind is None:
+            bind = self.session.get_bind()
+        marker_session_factory = async_sessionmaker(bind, expire_on_commit=False)
+        async with marker_session_factory() as marker_session:
+            async with marker_session.begin():
+                await marker_session.execute(
+                    update(GraphProjectionRecord)
+                    .where(GraphProjectionRecord.id.in_(record_ids))
+                    .values(
+                        graph_workspace_label=graph_workspace_label,
+                        graph_storage_uri=graph_storage_uri,
+                        graph_storage_username=graph_storage_username,
+                        cleanup_status=cleanup_status,
+                        cleanup_error=cleanup_error,
+                        cleanup_attempted_at=attempted_at,
+                    )
+                )
+
     async def _projection_records(self, document_id: str) -> list[GraphProjectionRecord]:
         return list(
             (
                 await self.session.execute(
-                    select(GraphProjectionRecord).where(
-                        GraphProjectionRecord.document_id == document_id
+                    select(GraphProjectionRecord)
+                    .where(GraphProjectionRecord.document_id == document_id)
+                    .order_by(
+                        GraphProjectionRecord.created_at.asc(),
+                        GraphProjectionRecord.id.asc(),
                     )
                 )
             )
@@ -279,6 +389,8 @@ class GraphProjectionRunner:
 
 
 def _needs_graph_cleanup(record: GraphProjectionRecord) -> bool:
+    if record.cleanup_status == "succeeded":
+        return False
     if record.status == "succeeded":
         return True
     return record.node_count > 0 or record.edge_count > 0
@@ -288,13 +400,49 @@ def _has_stored_graph_target(record: GraphProjectionRecord) -> bool:
     return bool(record.graph_workspace_label and record.graph_storage_uri)
 
 
+def _has_stored_graph_auth(record: GraphProjectionRecord) -> bool:
+    return _has_stored_graph_target(record) and (
+        record.graph_storage_username is None or record.graph_storage_password is not None
+    )
+
+
+def _cleanup_target_representative(
+    records: list[GraphProjectionRecord],
+    live_profiles: dict[str, Any | None],
+) -> GraphProjectionRecord:
+    return min(
+        records,
+        key=lambda record: (
+            live_profiles.get(record.runtime_profile_id) is None,
+            not _has_stored_graph_auth(record),
+        ),
+    )
+
+
+def _target_key_has_stored_graph_target(
+    target_key: tuple[str | None, str | None, str | None],
+) -> bool:
+    return bool(target_key[0] and target_key[1])
+
+
+def _effective_target_key(
+    record: GraphProjectionRecord,
+    profile: Any | None,
+) -> tuple[str | None, str | None, str | None]:
+    if profile is None:
+        return _target_key(record)
+    return (
+        record.graph_workspace_label or workspace_label(profile),
+        record.graph_storage_uri or getattr(profile, "neo4j_uri", None),
+        record.graph_storage_username or getattr(profile, "neo4j_username", None),
+    )
+
+
 def _target_key(
     record: GraphProjectionRecord,
-) -> tuple[str, str | None, str | None, str | None, str | None]:
+) -> tuple[str | None, str | None, str | None]:
     return (
-        record.runtime_profile_id,
         record.graph_workspace_label,
         record.graph_storage_uri,
         record.graph_storage_username,
-        record.graph_storage_password,
     )
