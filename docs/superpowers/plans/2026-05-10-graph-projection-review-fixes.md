@@ -1205,11 +1205,11 @@ If no files changed after Step 4, do not create an empty commit.
 
 ## Self-Review
 
-**Spec coverage:**  
+**Spec coverage:**
 P1 fallback auth is covered by Task 2 and Task 3. P2 plaintext password duplication is covered by Task 1 and Task 3. P2 cleanup inconsistency is covered by Task 4, Task 5, and Task 6.
 
-**Placeholder scan:**  
+**Placeholder scan:**
 No deferred-work markers or vague edge-case instructions are present. Every code-changing step includes concrete code.
 
-**Type consistency:**  
+**Type consistency:**
 New ORM fields are consistently named `cleanup_status`, `cleanup_error`, and `cleanup_attempted_at`. Cleanup helper names are consistently `_mark_cleanup_running`, `_mark_cleanup_succeeded`, and `_mark_cleanup_failed`. Existing `graph_storage_password` remains nullable and legacy-only.
