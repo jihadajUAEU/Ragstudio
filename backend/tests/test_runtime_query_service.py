@@ -1,9 +1,11 @@
 import pytest
-from ragstudio.db.models import Document, IndexRecord, SettingsProfile, Variant
+from ragstudio.db.models import Chunk, Document, IndexRecord, SettingsProfile, Variant
 from ragstudio.schemas.common import StageStatus
 from ragstudio.schemas.query import QueryIn
 from ragstudio.schemas.runtime import RuntimeHealthCheck
 from ragstudio.services.query_service import QueryResourceNotFoundError, QueryService
+from ragstudio.services.retrieval_evidence import OrchestratedAnswer
+from ragstudio.services.retrieval_orchestrator import NativeScopedQueryUnsupported
 from ragstudio.services.runtime_profile_service import RuntimeProfileService
 from ragstudio.services.runtime_types import RuntimeQueryResult
 
@@ -59,6 +61,65 @@ class FakeHealthService:
         ]
 
 
+class FakeOrchestrator:
+    def __init__(
+        self,
+        *,
+        answer: str | None = None,
+        sources: list[dict] | None = None,
+        chunk_traces: list[dict] | None = None,
+        reranker_traces: list[dict] | None = None,
+        token_metadata: dict | None = None,
+        timings: dict | None = None,
+        error: str | None = None,
+        error_type: str | None = None,
+        raise_native_scope_unsupported: bool = False,
+        native_scope_timings: dict | None = None,
+    ):
+        self.answer = answer
+        self.sources = sources
+        self.chunk_traces = chunk_traces
+        self.reranker_traces = reranker_traces
+        self.token_metadata = token_metadata
+        self.timings = timings
+        self.error = error
+        self.error_type = error_type
+        self.raise_native_scope_unsupported = raise_native_scope_unsupported
+        self.native_scope_timings = native_scope_timings
+        self.calls = []
+
+    async def query(self, query, *, runtime, profile, document_ids, variant_id, query_config):
+        self.calls.append(
+            {
+                "query": query,
+                "document_ids": document_ids,
+                "variant_id": variant_id,
+                "query_config": query_config,
+            }
+        )
+        if self.raise_native_scope_unsupported:
+            raise NativeScopedQueryUnsupported(
+                "native scoped query unsupported",
+                timings=self.native_scope_timings,
+            )
+        return OrchestratedAnswer(
+            answer=self.answer if self.answer is not None else f"runtime answer: {query}",
+            sources=self.sources
+            if self.sources is not None
+            else ([{"document_id": document_ids[0], "text": "source"}] if document_ids else []),
+            chunk_traces=self.chunk_traces
+            if self.chunk_traces is not None
+            else [{"rank": 1, "inclusion_status": "prompt-included"}],
+            reranker_traces=self.reranker_traces
+            if self.reranker_traces is not None
+            else [{"rank": 1, "score": 0.9}],
+            timings=self.timings if self.timings is not None else {"orchestrated_query": True},
+            token_metadata=self.token_metadata
+            if self.token_metadata is not None
+            else {"prompt_tokens": 11},
+            error=self.error,
+            error_type=self.error_type,
+        )
 async def _create_runtime_records(
     session,
     app,
@@ -113,6 +174,7 @@ async def test_query_service_uses_runtime_without_chunk_search(client):
             settings=app.state.settings,
             runtime_factory=FakeFactory(),
             health_service=FakeHealthService(),
+            retrieval_orchestrator=FakeOrchestrator(),
         ).run_query(
             QueryIn(query="What happened?", document_ids=[document.id], variant_ids=[variant.id])
         )
@@ -143,6 +205,16 @@ async def test_query_service_records_native_scope_limitation_as_failed_run(clien
     )
     async with app.state.session_factory() as session:
         document, variant = await _create_runtime_records(session, app)
+        session.add(
+            Chunk(
+                document_id=document.id,
+                text="Sahih al-Bukhari 7277 Hadith Collection",
+                source_location={"page": 1},
+                metadata_json={"runtime_profile_id": "default"},
+                runtime_profile_id="default",
+            )
+        )
+        await session.commit()
 
         result = await QueryService(
             session,
@@ -150,12 +222,27 @@ async def test_query_service_records_native_scope_limitation_as_failed_run(clien
             settings=app.state.settings,
             runtime_factory=FakeFactory(runtime),
             health_service=FakeHealthService(),
-        ).run_query(QueryIn(query="scoped?", document_ids=[document.id], variant_ids=[variant.id]))
+            retrieval_orchestrator=FakeOrchestrator(
+                raise_native_scope_unsupported=True,
+                native_scope_timings={"runtime_query_ms": 7, "native_scoped_query": True},
+            ),
+        ).run_query(
+            QueryIn(
+                query="how many hadith in bukhari",
+                document_ids=[document.id],
+                variant_ids=[variant.id],
+            )
+        )
 
     run = result.runs[0]
-    assert run.status == StageStatus.FAILED
-    assert run.error_type == "native_document_scope_unsupported"
-    assert "cannot yet enforce selected document_ids" in (run.error or "")
+    assert run.status == StageStatus.SUCCEEDED
+    assert run.error_type is None
+    assert run.error is None
+    assert "7277 Hadith Collection" in run.answer
+    assert run.timings["scoped_runtime_fallback"] is True
+    assert run.timings["runtime_query_ms"] == 7
+    assert run.timings["native_scoped_query"] is True
+    assert run.sources[0]["document_id"] == document.id
 
 
 @pytest.mark.asyncio
@@ -170,6 +257,7 @@ async def test_query_service_allows_unscoped_runtime_query_when_no_documents_req
             settings=app.state.settings,
             runtime_factory=FakeFactory(),
             health_service=FakeHealthService(),
+            retrieval_orchestrator=FakeOrchestrator(),
         ).run_query(QueryIn(query="unscoped?", document_ids=[], variant_ids=[variant.id]))
 
     run = result.runs[0]
