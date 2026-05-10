@@ -346,6 +346,16 @@ async def test_init_db_does_not_rewrite_authless_graph_projection_targets(databa
                         'bolt://authed-neo4j.test:7687',
                         'neo4j',
                         'secret'
+                    ),
+                    (
+                        'missing-uri',
+                        'legacy',
+                        'legacy-llm',
+                        'legacy-embedding',
+                        'local',
+                        NULL,
+                        NULL,
+                        NULL
                     )
                 """
             )
@@ -426,6 +436,17 @@ async def test_init_db_does_not_rewrite_authless_graph_projection_targets(databa
                         NULL,
                         NOW(),
                         NOW()
+                    ),
+                    (
+                        'missing-uri-projection',
+                        'doc-3',
+                        'missing-uri',
+                        'ragstudio_missing_uri',
+                        NULL,
+                        NULL,
+                        NULL,
+                        NOW(),
+                        NOW()
                     )
                 """
             )
@@ -440,7 +461,8 @@ async def test_init_db_does_not_rewrite_authless_graph_projection_targets(databa
                 await connection.execute(
                     text(
                         """
-                        SELECT id, graph_storage_username, graph_storage_password,
+                        SELECT id, graph_storage_uri, graph_storage_username,
+                               graph_storage_password,
                                update_count
                         FROM graph_projection_records
                         ORDER BY id
@@ -455,8 +477,13 @@ async def test_init_db_does_not_rewrite_authless_graph_projection_targets(databa
     assert rows["authless-projection"]["graph_storage_username"] is None
     assert rows["authless-projection"]["graph_storage_password"] is None
     assert rows["authless-projection"]["update_count"] == 0
+    assert rows["authed-projection"]["graph_storage_uri"] == "bolt://authed-neo4j.test:7687"
     assert rows["authed-projection"]["graph_storage_username"] == "neo4j"
     assert rows["authed-projection"]["graph_storage_password"] == "secret"
     assert rows["authed-projection"]["update_count"] == 1
+    assert rows["missing-uri-projection"]["graph_storage_uri"] is None
+    assert rows["missing-uri-projection"]["graph_storage_username"] is None
+    assert rows["missing-uri-projection"]["graph_storage_password"] is None
+    assert rows["missing-uri-projection"]["update_count"] == 0
 
     await engine.dispose()

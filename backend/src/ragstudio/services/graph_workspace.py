@@ -30,4 +30,7 @@ def graph_relationship_type(value: str) -> str:
         for character in normalized
     )
     collapsed = "_".join(part for part in safe.split("_") if part)
-    return (collapsed or "RELATED").upper()
+    relationship_type = (collapsed or "RELATED").upper()
+    if not (relationship_type[0].isalpha() or relationship_type[0] == "_"):
+        return f"REL_{relationship_type}"
+    return relationship_type

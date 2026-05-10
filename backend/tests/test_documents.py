@@ -569,6 +569,117 @@ async def test_rematerialize_missing_document_graph_returns_404(client):
 
 
 @pytest.mark.asyncio
+async def test_rematerialize_document_graph_rejects_active_index_job(client, monkeypatch):
+    calls = []
+
+    async def fake_rematerialize_document(self, document_id):
+        calls.append(document_id)
+        return {
+            "status": "succeeded",
+            "node_count": 2,
+            "edge_count": 1,
+            "reason": None,
+        }
+
+    monkeypatch.setattr(
+        "ragstudio.api.routes.documents.GraphProjectionRunner.rematerialize_document",
+        fake_rematerialize_document,
+    )
+    app = client._transport.app
+    async with app.state.session_factory() as session:
+        document = Document(
+            filename="graph-rematerialize-active-job.txt",
+            content_type="text/plain",
+            sha256="graph-rematerialize-active-job",
+            artifact_path=str(app.state.settings.data_dir / "graph-rematerialize-active-job.txt"),
+            status=StageStatus.RUNNING.value,
+        )
+        session.add(document)
+        await session.flush()
+        session.add(
+            Job(
+                type="index_document",
+                target_id=document.id,
+                status=StageStatus.RUNNING.value,
+                progress=50,
+            )
+        )
+        await session.commit()
+        document_id = document.id
+
+    response = await client.post(f"/api/documents/{document_id}/graph/rematerialize")
+
+    assert response.status_code == 409
+    assert "active indexing job" in response.json()["detail"]
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_rematerialize_document_graph_serializes_with_reindex_job_creation(
+    client,
+    monkeypatch,
+):
+    entered_rematerialize = asyncio.Event()
+    release_rematerialize = asyncio.Event()
+
+    async def fake_rematerialize_document(self, document_id):
+        entered_rematerialize.set()
+        await release_rematerialize.wait()
+        return {
+            "status": "succeeded",
+            "node_count": 2,
+            "edge_count": 1,
+            "reason": None,
+        }
+
+    async def fake_run_index_job(settings, document_id, job_id, options):
+        return None
+
+    monkeypatch.setattr(
+        "ragstudio.api.routes.documents.GraphProjectionRunner.rematerialize_document",
+        fake_rematerialize_document,
+    )
+    monkeypatch.setattr("ragstudio.api.routes.documents._run_index_job", fake_run_index_job)
+    app = client._transport.app
+    async with app.state.session_factory() as session:
+        document = Document(
+            filename="graph-rematerialize-lock.txt",
+            content_type="text/plain",
+            sha256="graph-rematerialize-lock",
+            artifact_path=str(app.state.settings.data_dir / "graph-rematerialize-lock.txt"),
+            status=StageStatus.SUCCEEDED.value,
+        )
+        session.add(document)
+        await session.commit()
+        document_id = document.id
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as async_client:
+        rematerialize_task = asyncio.create_task(
+            async_client.post(f"/api/documents/{document_id}/graph/rematerialize")
+        )
+        await entered_rematerialize.wait()
+
+        reindex_task = asyncio.create_task(
+            async_client.post(
+                f"/api/documents/{document_id}/reindex",
+                json={"parser_mode": "local_fallback", "domain_metadata": {}},
+            )
+        )
+        await asyncio.sleep(0.05)
+        assert reindex_task.done() is False
+
+        release_rematerialize.set()
+        rematerialize_response, reindex_response = await asyncio.gather(
+            rematerialize_task,
+            reindex_task,
+        )
+
+    assert rematerialize_response.status_code == 200
+    assert reindex_response.status_code == 202
+
+
+@pytest.mark.asyncio
 async def test_reindex_document_validates_custom_json(client, tmp_path):
     session_factory = client._transport.app.state.session_factory
     artifact = tmp_path / "uploads" / "invalid-json-reindex-sha"

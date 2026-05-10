@@ -39,3 +39,4 @@ def test_graph_relationship_type_is_neo4j_safe():
     assert graph_relationship_type("next_hadith") == "NEXT_HADITH"
     assert graph_relationship_type("same-book") == "SAME_BOOK"
     assert graph_relationship_type(" references ") == "REFERENCES"
+    assert graph_relationship_type("1-hop") == "REL_1_HOP"
