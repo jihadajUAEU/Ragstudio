@@ -202,8 +202,8 @@ async def test_query_service_records_native_scope_limitation_as_failed_run(clien
             answer="",
             sources=[],
             error=(
-                "Native RAG-Anything query cannot yet enforce selected document_ids; "
-                "refusing to run an unscoped runtime query."
+                "LightRAG vector storage does not support storage-level "
+                "full_doc_id filtering."
             ),
             error_type="native_document_scope_unsupported",
             timings={"runtime_query_ms": 7, "native_scoped_query": True},
@@ -238,19 +238,16 @@ async def test_query_service_records_native_scope_limitation_as_failed_run(clien
         )
 
     run = result.runs[0]
-    assert run.status == StageStatus.SUCCEEDED
-    assert run.error_type is None
-    assert run.error is None
-    assert run.answer == "Sahih al-Bukhari contains 7277 hadith."
-    assert run.timings["scoped_runtime_fallback"] is True
+    assert run.status == StageStatus.FAILED
+    assert run.error_type == "native_document_scope_unsupported"
+    assert "full_doc_id filtering" in (run.error or "")
+    assert run.answer == ""
+    assert run.sources == []
     assert run.timings["runtime_query_ms"] == 7
     assert run.timings["native_scoped_query"] is True
-    assert run.timings["metadata_ms"] >= 0
-    assert run.timings["graph_ms"] >= 0
-    assert run.timings["answer_ms"] >= 0
-    retrieval_trace = next(trace for trace in run.chunk_traces if trace["stage"] == "retrieval")
-    assert retrieval_trace["native_status"] == "scoped_unsupported"
-    assert run.sources[0]["document_id"] == document.id
+    assert run.timings["native_stage_ms"] >= 0
+    assert "metadata_ms" not in run.timings
+    assert run.chunk_traces == []
 
 
 @pytest.mark.asyncio

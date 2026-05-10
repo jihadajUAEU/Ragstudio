@@ -116,7 +116,11 @@ def test_fusion_dedupes_by_text_and_keeps_best_candidate():
 
 
 class FakeChunkSearchService:
+    def __init__(self):
+        self.calls = 0
+
     async def search(self, search_in):
+        self.calls += 1
         return type(
             "SearchResult",
             (),
@@ -183,6 +187,15 @@ class ExplodingNativeRuntimeTool:
 class ExplodingChunkSearchService:
     async def search(self, search_in):
         raise RuntimeError("metadata search exploded")
+
+
+class MetadataSearchShouldNotRun:
+    def __init__(self):
+        self.calls = 0
+
+    async def search(self, search_in):
+        self.calls += 1
+        raise AssertionError("metadata search should not run")
 
 
 class FakeAnswerService:
@@ -290,10 +303,11 @@ async def test_orchestrator_preserves_runtime_query_errors():
 
 
 @pytest.mark.asyncio
-async def test_orchestrator_uses_metadata_fallback_for_scoped_native_limitation():
+async def test_orchestrator_fails_when_native_scoped_query_is_unsupported():
     answer_service = FakeAnswerService()
+    chunk_service = MetadataSearchShouldNotRun()
     orchestrator = RetrievalOrchestrator(
-        chunk_service=FakeChunkSearchService(),
+        chunk_service=chunk_service,
         answer_service=answer_service,
         reranker_service=FakeRerankerService(),
         graph_expansion_service=FakeGraphExpansionService(),
@@ -302,7 +316,10 @@ async def test_orchestrator_uses_metadata_fallback_for_scoped_native_limitation(
     result = await orchestrator.query(
         "how many hadith in bukhari",
         runtime=FakeRuntimeTool(
-            error="native scoped unsupported",
+            error=(
+                "LightRAG vector storage does not support storage-level "
+                "full_doc_id filtering."
+            ),
             error_type="native_document_scope_unsupported",
             timings={"runtime_query_ms": 7, "native_scoped_query": True},
         ),
@@ -312,15 +329,17 @@ async def test_orchestrator_uses_metadata_fallback_for_scoped_native_limitation(
         query_config={"limit": 8},
     )
 
-    assert result.error is None
-    assert result.answer == "Sahih al-Bukhari contains 7277 hadith."
-    assert result.timings["scoped_runtime_fallback"] is True
+    assert result.answer == ""
+    assert result.error_type == "native_document_scope_unsupported"
+    assert "full_doc_id filtering" in (result.error or "")
+    assert result.sources == []
     assert result.timings["runtime_query_ms"] == 7
-    assert result.timings["metadata_ms"] >= 0
-    assert result.timings["graph_ms"] >= 0
-    retrieval_trace = next(trace for trace in result.chunk_traces if trace["stage"] == "retrieval")
-    assert retrieval_trace["native_status"] == "scoped_unsupported"
-    assert retrieval_trace["metadata_candidates"] == 1
+    assert result.timings["native_scoped_query"] is True
+    assert result.timings["native_stage_ms"] >= 0
+    assert "metadata_ms" not in result.timings
+    assert result.chunk_traces == []
+    assert chunk_service.calls == 0
+    assert answer_service.called is False
 
 
 @pytest.mark.asyncio
@@ -384,10 +403,11 @@ async def test_orchestrator_preserves_native_context_when_both_retrieval_paths_f
 
 
 @pytest.mark.asyncio
-async def test_orchestrator_preserves_scoped_native_context_when_metadata_also_fails():
+async def test_orchestrator_short_circuits_scoped_native_unsupported_before_metadata():
     answer_service = FakeAnswerService()
+    chunk_service = MetadataSearchShouldNotRun()
     orchestrator = RetrievalOrchestrator(
-        chunk_service=ExplodingChunkSearchService(),
+        chunk_service=chunk_service,
         answer_service=answer_service,
         reranker_service=FakeRerankerService(),
         graph_expansion_service=FakeGraphExpansionService(),
@@ -407,12 +427,14 @@ async def test_orchestrator_preserves_scoped_native_context_when_metadata_also_f
     )
 
     assert result.answer == ""
-    assert result.error_type == "parallel_retrieval_failed"
-    assert "native=native scoped unsupported" in (result.error or "")
+    assert result.error_type == "native_document_scope_unsupported"
+    assert result.error == "native scoped unsupported"
     assert result.timings["runtime_query_ms"] == 7
     assert result.timings["native_scoped_query"] is True
-    assert result.timings["native_error_type"] == "NativeScopedQueryUnsupported"
-    assert result.timings["metadata_error_type"] == "RuntimeError"
+    assert result.timings["native_stage_ms"] >= 0
+    assert "metadata_ms" not in result.timings
+    assert "metadata_error_type" not in result.timings
+    assert chunk_service.calls == 0
     assert answer_service.called is False
 
 

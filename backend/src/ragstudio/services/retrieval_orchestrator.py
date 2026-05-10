@@ -17,13 +17,6 @@ from ragstudio.services.retrieval_evidence import (
 from ragstudio.services.runtime_answer_service import RuntimeAnswerService
 
 
-class NativeScopedQueryUnsupported(RuntimeError):
-    def __init__(self, error: str, timings: dict[str, Any] | None = None):
-        self.error = error
-        self.timings = timings or {}
-        super().__init__(error)
-
-
 class NativeRuntimeQueryFailed(RuntimeError):
     def __init__(self, error: str, error_type: str | None, timings: dict[str, Any]):
         self.error = error
@@ -173,6 +166,27 @@ class RetrievalOrchestrator:
     ) -> tuple[list[EvidenceCandidate], list[EvidenceCandidate], dict[str, Any]]:
         parallel_started = perf_counter()
         native_task = self._timed_native_candidates(query, runtime, document_ids, query_config)
+        if document_ids:
+            try:
+                native_result = await native_task
+            except Exception as exc:
+                native_result = exc
+            if _is_native_document_scope_unsupported(native_result):
+                native_timings = getattr(native_result, "timings", None)
+                if isinstance(native_timings, dict):
+                    timings.update(native_timings)
+                timings["parallel_retrieval_ms"] = _elapsed_ms(parallel_started)
+                raise native_result
+            return await self._metadata_after_native_result(
+                query,
+                document_ids,
+                variant_id,
+                plan,
+                timings,
+                parallel_started,
+                native_result,
+            )
+
         metadata_task = self._timed_metadata_candidates(
             query,
             document_ids,
@@ -184,6 +198,47 @@ class RetrievalOrchestrator:
             metadata_task,
             return_exceptions=True,
         )
+        return self._resolve_retrieval_results(
+            native_result=native_result,
+            metadata_result=metadata_result,
+            timings=timings,
+            parallel_started=parallel_started,
+        )
+
+    async def _metadata_after_native_result(
+        self,
+        query: str,
+        document_ids: list[str],
+        variant_id: str,
+        plan: Any,
+        timings: dict[str, Any],
+        parallel_started: float,
+        native_result: Any,
+    ) -> tuple[list[EvidenceCandidate], list[EvidenceCandidate], dict[str, Any]]:
+        try:
+            metadata_result = await self._timed_metadata_candidates(
+                query,
+                document_ids,
+                variant_id,
+                plan.candidate_limit,
+            )
+        except Exception as exc:
+            metadata_result = exc
+        return self._resolve_retrieval_results(
+            native_result=native_result,
+            metadata_result=metadata_result,
+            timings=timings,
+            parallel_started=parallel_started,
+        )
+
+    def _resolve_retrieval_results(
+        self,
+        *,
+        native_result: Any,
+        metadata_result: Any,
+        timings: dict[str, Any],
+        parallel_started: float,
+    ) -> tuple[list[EvidenceCandidate], list[EvidenceCandidate], dict[str, Any]]:
 
         if not isinstance(native_result, Exception):
             _, native_timings = native_result
@@ -213,12 +268,7 @@ class RetrievalOrchestrator:
                     native_result.error_type,
                     {**timings, **native_result.timings},
                 ) from native_result
-            if isinstance(native_result, NativeScopedQueryUnsupported):
-                timings.update(native_result.timings)
-                timings["scoped_runtime_fallback"] = True
-                native_status = "scoped_unsupported"
-            else:
-                raise native_result
+            raise native_result
         else:
             native_candidates, _native_timings = native_result
 
@@ -331,15 +381,12 @@ class RetrievalOrchestrator:
         result_timings = getattr(result, "timings", None)
         if isinstance(result_timings, dict):
             native_timings.update(result_timings)
-        if getattr(result, "error_type", None) == "native_document_scope_unsupported":
-            raise NativeScopedQueryUnsupported(
-                getattr(result, "error", None) or "",
-                timings=native_timings,
-            )
-        if getattr(result, "error", None):
+        error_type = getattr(result, "error_type", None)
+        error = getattr(result, "error", None)
+        if error or error_type == "native_document_scope_unsupported":
             raise NativeRuntimeQueryFailed(
-                str(result.error),
-                getattr(result, "error_type", None),
+                str(error or ""),
+                error_type,
                 native_timings,
             )
         candidates = []
@@ -442,6 +489,13 @@ def _str_or_none(value: Any) -> str | None:
 
 def _elapsed_ms(started_at: float) -> float:
     return round((perf_counter() - started_at) * 1000, 3)
+
+
+def _is_native_document_scope_unsupported(value: Any) -> bool:
+    return (
+        isinstance(value, NativeRuntimeQueryFailed)
+        and value.error_type == "native_document_scope_unsupported"
+    )
 
 
 def _graph_degraded(graph_traces: list[dict[str, Any]]) -> bool:
