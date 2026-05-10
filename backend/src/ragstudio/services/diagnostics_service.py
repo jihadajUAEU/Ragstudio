@@ -1,6 +1,7 @@
 from typing import Any
 
 from ragstudio.config import AppSettings
+from ragstudio.db.models import GraphProjectionRecord
 from ragstudio.schemas.diagnostics import DiagnosticsOut
 from ragstudio.schemas.runtime import RuntimeOverallStatus
 from ragstudio.services.adapter import RAGAnythingAdapter
@@ -9,6 +10,7 @@ from ragstudio.services.runtime_profile_service import (
     RuntimeProfileNotConfiguredError,
     RuntimeProfileService,
 )
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
@@ -59,6 +61,7 @@ class DiagnosticsService:
             if runtime_mode == "fallback"
             else self._runtime_dependency_report(checks, blocking)
         )
+        dependency_report.update(await self._graph_projection_report(session))
         raganything_available = bool(dependency_report.get("raganything_available"))
 
         if not raganything_available:
@@ -71,6 +74,14 @@ class DiagnosticsService:
                 "Runtime graph is inactive; Graph uses relationship metadata derived "
                 "during parsing when available."
             )
+        graph_projection = dependency_report.get("graph_projection")
+        if runtime_mode != "fallback" and graph_projection in {"pending", "failed", "skipped"}:
+            detail = dependency_report.get("graph_projection_detail")
+            suffix = f": {detail}" if detail else "."
+            if graph_projection in {"failed", "skipped"}:
+                warnings.append(f"Graph projection {graph_projection}{suffix}")
+            else:
+                warnings.append(f"Graph projection is {graph_projection}{suffix}")
 
         return DiagnosticsOut(
             capabilities={
@@ -120,6 +131,8 @@ class DiagnosticsService:
             "indexing": report.get("indexing"),
             "query": report.get("query"),
             "graph": report.get("graph"),
+            "graph_projection": report.get("graph_projection"),
+            "graph_projection_detail": report.get("graph_projection_detail"),
             "native_scoped_query": report.get("native_scoped_query"),
             "scoped_query": report.get("scoped_query"),
             "scoped_query_detail": report.get("scoped_query_detail"),
@@ -185,6 +198,24 @@ class DiagnosticsService:
             "native_scoped_query": native_scoped_query,
             "scoped_query": scoped_query,
             "scoped_query_detail": scoped_query_detail,
+        }
+
+    async def _graph_projection_report(self, session: AsyncSession) -> dict[str, Any]:
+        record = await session.scalar(
+            select(GraphProjectionRecord)
+            .order_by(GraphProjectionRecord.created_at.desc())
+            .limit(1)
+        )
+        if record is None:
+            return {}
+        detail = None
+        if record.error:
+            detail = record.error
+        elif record.status == "succeeded":
+            detail = f"{record.node_count} nodes, {record.edge_count} edges"
+        return {
+            "graph_projection": record.status,
+            "graph_projection_detail": detail,
         }
 
     def _overall_status(

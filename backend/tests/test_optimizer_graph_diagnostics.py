@@ -517,7 +517,7 @@ async def test_graph_fallback_scans_only_relationship_metadata_chunks(client):
     assert {node["id"] for node in graph.nodes} == {"a", "b"}
     assert {tuple(node["labels"]) for node in graph.nodes} == {("RelationshipMetadata",)}
     assert graph.edges[0]["id"] == "a-b-related"
-    assert graph.detail is None
+    assert graph.detail == "Relationship metadata fallback graph."
 
 
 @pytest.mark.asyncio
@@ -572,7 +572,7 @@ async def test_graph_fallback_limits_after_relationship_metadata_filter(client):
 
     assert {node["id"] for node in graph["nodes"]} == {"older-a", "older-b"}
     assert graph["edges"][0]["id"] == "older-a-older-b-related"
-    assert graph["detail"] is None
+    assert graph["detail"] == "Relationship metadata fallback graph."
 
 
 @pytest.mark.asyncio
@@ -627,6 +627,102 @@ async def test_graph_service_builds_fallback_graph_from_chunk_relationship_metad
             "properties": {"document_id": document.id, "page": 12},
         }
     ]
+    assert graph.detail == "Relationship metadata fallback graph."
+
+
+@pytest.mark.asyncio
+async def test_graph_explains_empty_runtime_graph_with_projection_status(
+    client,
+    monkeypatch,
+):
+    from ragstudio.db.models import Chunk, Document, GraphProjectionRecord
+    from ragstudio.schemas.common import StageStatus
+
+    class ReadyRuntimeHealthService:
+        def __init__(self, session, *, verify_storage):
+            self.session = session
+            self.verify_storage = verify_storage
+
+        async def check(self, profile):
+            return []
+
+        def blocking_failures(self, checks):
+            return []
+
+    class EmptyRuntime:
+        async def graph(self):
+            return {"nodes": [], "edges": []}
+
+    class EmptyRuntimeFactory:
+        def __init__(self, settings):
+            self.settings = settings
+
+        def build(self, profile):
+            return EmptyRuntime()
+
+    monkeypatch.setattr(
+        "ragstudio.services.graph_service.RAGAnythingRuntimeFactory",
+        EmptyRuntimeFactory,
+    )
+    monkeypatch.setattr(
+        "ragstudio.services.graph_service.RuntimeHealthService",
+        ReadyRuntimeHealthService,
+    )
+
+    settings = await client.put(
+        "/api/settings/default",
+        json={
+            "provider": "openai-compatible",
+            "runtime_mode": "runtime",
+            "llm_model": "gpt-4o",
+            "embedding_model": "text-embedding-3-large",
+            "storage_backend": "postgres_pgvector_neo4j",
+        },
+    )
+    assert settings.status_code == 200
+
+    app = client._transport.app
+    async with app.state.session_factory() as session:
+        document = Document(
+            filename="runtime-empty-graph.txt",
+            content_type="text/plain",
+            sha256="runtime-empty-graph",
+            artifact_path=str(app.state.settings.data_dir / "runtime-empty-graph.txt"),
+            status=StageStatus.SUCCEEDED.value,
+        )
+        session.add(document)
+        await session.flush()
+        session.add(
+            Chunk(
+                document_id=document.id,
+                text="Related evidence",
+                metadata_json={
+                    "relationship_metadata": {
+                        "graph_relationships": [
+                            {"source": "chunk:0", "target": "ref:one", "type": "references"}
+                        ]
+                    }
+                },
+            )
+        )
+        session.add(
+            GraphProjectionRecord(
+                document_id=document.id,
+                runtime_profile_id="default",
+                status="failed",
+                error="neo4j write failed",
+            )
+        )
+        await session.commit()
+
+    response = await client.get("/api/graph")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert {node["id"] for node in payload["nodes"]} == {"chunk:0", "ref:one"}
+    assert "Neo4j graph is empty" in payload["detail"]
+    assert "relationship metadata fallback graph" in payload["detail"]
+    assert "Latest graph projection failed: neo4j write failed" in payload["detail"]
 
 
 @pytest.mark.asyncio
@@ -906,6 +1002,75 @@ async def test_diagnostics_reports_native_dependency_status_for_runtime_mode(cli
         == "Selected-document native query requires LightRAG chunk storage with "
         "full_doc_id filtering support; the storage backend is verified when "
         "a scoped query initializes LightRAG."
+    )
+
+
+@pytest.mark.asyncio
+async def test_diagnostics_reports_latest_graph_projection_status(client):
+    from ragstudio.db.models import Document, GraphProjectionRecord
+
+    class ReadyRuntimeHealthService:
+        async def check(self, profile):
+            return [
+                RuntimeHealthCheck(
+                    name="raganything",
+                    status="ok",
+                    detail="RAG-Anything package is importable.",
+                ),
+                RuntimeHealthCheck(
+                    name="neo4j",
+                    status="ok",
+                    detail="Neo4j connectivity and authentication succeeded.",
+                ),
+            ]
+
+        def blocking_failures(self, checks):
+            return []
+
+    settings = await client.put(
+        "/api/settings/default",
+        json={
+            "provider": "openai-compatible",
+            "runtime_mode": "runtime",
+            "llm_model": "gpt-4o",
+            "embedding_model": "text-embedding-3-large",
+            "storage_backend": "postgres_pgvector_neo4j",
+        },
+    )
+    assert settings.status_code == 200
+
+    app = client._transport.app
+    async with app.state.session_factory() as session:
+        document = Document(
+            filename="projection-diagnostics.txt",
+            content_type="text/plain",
+            sha256="projection-diagnostics",
+            artifact_path=str(app.state.settings.data_dir / "projection-diagnostics.txt"),
+            status=StageStatus.SUCCEEDED.value,
+        )
+        session.add(document)
+        await session.flush()
+        session.add(
+            GraphProjectionRecord(
+                document_id=document.id,
+                runtime_profile_id="default",
+                status="failed",
+                error="neo4j write failed",
+            )
+        )
+        await session.commit()
+
+        payload = await DiagnosticsService(
+            session,
+            app.state.settings,
+            health_service=ReadyRuntimeHealthService(),
+        ).get_diagnostics()
+
+    assert payload.dependency_status["graph_projection"] == "failed"
+    assert payload.dependency_status["graph_projection_detail"] == "neo4j write failed"
+    assert any(
+        warning == "Graph projection failed: neo4j write failed"
+        for warning in payload.warnings
     )
 
 

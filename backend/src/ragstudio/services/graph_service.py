@@ -1,6 +1,6 @@
 from typing import Any
 
-from ragstudio.db.models import Chunk
+from ragstudio.db.models import Chunk, GraphProjectionRecord
 from ragstudio.schemas.graph import GraphOut
 from ragstudio.services.runtime_factory import RAGAnythingRuntimeFactory, RuntimeUnavailableError
 from ragstudio.services.runtime_health_service import RuntimeHealthService
@@ -58,7 +58,25 @@ class GraphService:
                 raise RuntimeGraphUnavailableError(
                     f"Runtime graph prerequisites are unavailable: {details}"
                 )
-            return await self.runtime_factory.build(profile).graph()
+            graph = await self.runtime_factory.build(profile).graph()
+            if graph.get("nodes") or graph.get("edges"):
+                return graph
+            fallback = await self._relationship_metadata_graph()
+            projection_detail = await self._latest_projection_detail()
+            if fallback.get("nodes") or fallback.get("edges"):
+                fallback["detail"] = self._runtime_empty_detail(
+                    projection_detail,
+                    fallback_available=True,
+                )
+                return fallback
+            return {
+                "nodes": [],
+                "edges": [],
+                "detail": self._runtime_empty_detail(
+                    projection_detail,
+                    fallback_available=False,
+                ),
+            }
         except RuntimeGraphUnavailableError:
             raise
         except RuntimeUnavailableError as exc:
@@ -150,4 +168,41 @@ class GraphService:
         detail = None
         if not nodes and not edges:
             detail = "No runtime graph or relationship metadata is available."
+        else:
+            detail = "Relationship metadata fallback graph."
         return {"nodes": list(nodes.values()), "edges": list(edges.values()), "detail": detail}
+
+    async def _latest_projection_detail(self) -> str | None:
+        if self.session is None:
+            return None
+        record = await self.session.scalar(
+            select(GraphProjectionRecord)
+            .order_by(GraphProjectionRecord.created_at.desc())
+            .limit(1)
+        )
+        if record is None:
+            return None
+        if record.status == "succeeded":
+            return (
+                "Latest graph projection succeeded with "
+                f"{record.node_count} nodes and {record.edge_count} edges."
+            )
+        reason = f": {record.error}" if record.error else "."
+        if record.status in {"failed", "skipped"}:
+            return f"Latest graph projection {record.status}{reason}"
+        return f"Latest graph projection is {record.status}{reason}"
+
+    def _runtime_empty_detail(
+        self,
+        projection_detail: str | None,
+        *,
+        fallback_available: bool,
+    ) -> str:
+        base = (
+            "Neo4j graph is empty; showing relationship metadata fallback graph."
+            if fallback_available
+            else "Neo4j graph is empty and no relationship metadata fallback graph is available."
+        )
+        if projection_detail:
+            return f"{base} {projection_detail}"
+        return base
