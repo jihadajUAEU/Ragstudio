@@ -118,6 +118,7 @@ def test_fusion_dedupes_by_text_and_keeps_best_candidate():
 class FakeChunkSearchService:
     def __init__(self):
         self.calls = 0
+        self.chunk_lookup_calls = []
 
     async def search(self, search_in):
         self.calls += 1
@@ -142,6 +143,20 @@ class FakeChunkSearchService:
                 "total": 1,
             },
         )()
+
+    async def chunks_by_id(self, chunk_ids):
+        self.chunk_lookup_calls.append(chunk_ids)
+        return [
+            ChunkOut(
+                id="graph-1",
+                document_id="doc-1",
+                text="Full hydrated graph chunk confirms 7277 hadith in Sahih al-Bukhari.",
+                source_location={"page": 9},
+                metadata={"reference_metadata": {"references": ["collection:bukhari"]}},
+            )
+            for chunk_id in chunk_ids
+            if chunk_id == "graph-1"
+        ]
 
 
 class FakeRuntimeTool:
@@ -219,11 +234,12 @@ class FakeGraphExpansionService:
         return [
             EvidenceCandidate(
                 candidate_id="graph:g1",
-                text="Sahih al-Bukhari collection overview confirms 7277 hadith",
+                text="Preview-only graph text",
                 document_id="doc-1",
                 chunk_id="graph-1",
                 source_location={"page": 2},
                 metadata={
+                    "text_preview": "Preview-only graph text",
                     "graph_relationship": {
                         "type": "RELATED",
                         "seed": {"chunk_id": seeds[0].chunk_id},
@@ -269,9 +285,19 @@ async def test_orchestrator_fuses_native_metadata_and_graph_before_answering():
     assert result.timings["orchestrated_query"] is True
     assert result.timings["planner_ms"] >= 0
     assert result.timings["native_stage_ms"] >= 0
+    assert result.timings["graph_hydration_ms"] >= 0
     assert any(trace["stage"] == "planner" for trace in result.chunk_traces)
     assert any(source["metadata"]["retrieval_tool"] == "graph" for source in result.sources)
     assert any(trace["stage"] == "graph_expansion" for trace in result.chunk_traces)
+    assert any(trace["stage"] == "graph_hydration" for trace in result.chunk_traces)
+    graph_evidence = next(
+        candidate for candidate in answer_service.evidence if candidate.tool == "graph"
+    )
+    assert graph_evidence.text == (
+        "Full hydrated graph chunk confirms 7277 hadith in Sahih al-Bukhari."
+    )
+    assert graph_evidence.source_location == {"page": 9}
+    assert graph_evidence.metadata["graph_hydration"]["status"] == "hydrated"
 
 
 @pytest.mark.asyncio

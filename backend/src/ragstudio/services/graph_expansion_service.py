@@ -4,6 +4,7 @@ import asyncio
 from importlib import import_module
 from typing import Any
 
+from ragstudio.services.graph_workspace import workspace_label
 from ragstudio.services.retrieval_evidence import EvidenceCandidate
 
 
@@ -31,12 +32,12 @@ class GraphExpansionService:
         if driver is None:
             return [], [_skipped_trace("driver_unavailable")]
 
-        workspace_label = _workspace_label(profile)
+        label = workspace_label(profile)
         try:
             rows = await asyncio.to_thread(
                 self._run_query,
                 driver,
-                workspace_label=workspace_label,
+                workspace_label=label,
                 seed_ids=seed_ids,
                 document_ids=document_ids,
                 limit=limit,
@@ -56,7 +57,7 @@ class GraphExpansionService:
                 "status": "ok",
                 "seed_count": len(seed_ids),
                 "expanded_candidates": len(candidates),
-                "workspace_label": workspace_label,
+                "workspace_label": label,
             }
         ]
 
@@ -78,29 +79,65 @@ class GraphExpansionService:
         document_ids: list[str],
         limit: int,
     ) -> list[Any]:
+        workspace_node = f"`{workspace_label}`"
+        chunk_node = f"{workspace_node}:RagstudioChunk"
+        reference_node = f"{workspace_node}:RagstudioReference"
         cypher = f"""
-        MATCH (seed:`{workspace_label}`)-[relationship]-(neighbor:`{workspace_label}`)
-        WHERE coalesce(
-            seed.chunk_id,
-            seed.runtime_source_id,
-            seed.id,
-            seed.source_id
-        ) IN $seed_ids
-        AND (
-            size($document_ids) = 0
-            OR coalesce(
-                neighbor.document_id,
-                neighbor.full_doc_id,
-                neighbor.doc_id
-            ) IN $document_ids
-        )
-        RETURN elementId(relationship) AS relationship_id,
-               type(relationship) AS relationship_type,
-               properties(relationship) AS relationship_properties,
-               properties(seed) AS seed_properties,
-               elementId(neighbor) AS neighbor_id,
-               labels(neighbor) AS neighbor_labels,
-               properties(neighbor) AS neighbor_properties
+        CALL {{
+            MATCH (seed:{workspace_node})-[relationship]-(neighbor:{chunk_node})
+            WHERE coalesce(
+                seed.chunk_id,
+                seed.runtime_source_id,
+                seed.id,
+                seed.source_id
+            ) IN $seed_ids
+            AND seed.id <> neighbor.id
+            AND (
+                size($document_ids) = 0
+                OR coalesce(
+                    neighbor.document_id,
+                    neighbor.full_doc_id,
+                    neighbor.doc_id
+                ) IN $document_ids
+            )
+            RETURN elementId(relationship) AS relationship_id,
+                   type(relationship) AS relationship_type,
+                   properties(relationship) AS relationship_properties,
+                   properties(seed) AS seed_properties,
+                   elementId(neighbor) AS neighbor_id,
+                   labels(neighbor) AS neighbor_labels,
+                   properties(neighbor) AS neighbor_properties,
+                   [] AS bridge_relationship_types,
+                   "direct_chunk" AS graph_path
+            UNION
+            MATCH (seed:{workspace_node})-[seed_relationship]-(reference:{reference_node})
+            MATCH (reference)-[bridge_relationship*0..1]-(candidate_reference:{reference_node})
+            MATCH (candidate_reference)-[relationship]-(neighbor:{chunk_node})
+            WHERE coalesce(
+                seed.chunk_id,
+                seed.runtime_source_id,
+                seed.id,
+                seed.source_id
+            ) IN $seed_ids
+            AND seed.id <> neighbor.id
+            AND (
+                size($document_ids) = 0
+                OR coalesce(
+                    neighbor.document_id,
+                    neighbor.full_doc_id,
+                    neighbor.doc_id
+                ) IN $document_ids
+            )
+            RETURN elementId(relationship) AS relationship_id,
+                   type(relationship) AS relationship_type,
+                   properties(relationship) AS relationship_properties,
+                   properties(seed) AS seed_properties,
+                   elementId(neighbor) AS neighbor_id,
+                   labels(neighbor) AS neighbor_labels,
+                   properties(neighbor) AS neighbor_properties,
+                   [rel IN bridge_relationship | type(rel)] AS bridge_relationship_types,
+                   "reference_hop" AS graph_path
+        }}
         LIMIT $limit
         """
         with driver.session() as session:
@@ -143,10 +180,15 @@ def _candidate_from_row(index: int, row: Any) -> EvidenceCandidate:
         "type": _row_get(row, "relationship_type"),
         "properties": dict(_row_get(row, "relationship_properties") or {}),
         "seed": dict(_row_get(row, "seed_properties") or {}),
+        "bridge_relationship_types": list(_row_get(row, "bridge_relationship_types") or []),
+        "path": _row_get(row, "graph_path"),
     }
     chunk_id = _first_str(properties, "chunk_id", "runtime_source_id", "id", "source_id")
     document_id = _first_str(properties, "document_id", "full_doc_id", "doc_id")
-    text = _first_str(properties, "text", "content", "description", "summary") or ""
+    text = (
+        _first_str(properties, "text", "content", "text_preview", "description", "summary")
+        or ""
+    )
     source_location = {
         key: properties[key]
         for key in ("page", "section", "bbox", "start_index", "end_index")
@@ -171,15 +213,6 @@ def _candidate_from_row(index: int, row: Any) -> EvidenceCandidate:
         final_score=max(1.0, 20.0 - index),
         reasons=["graph_neighbor"],
     )
-
-
-def _workspace_label(profile: Any) -> str:
-    raw = f"ragstudio_{getattr(profile, 'id', 'default')}"
-    safe = "".join(
-        character if character.isalnum() or character in {"_", "-"} else "_"
-        for character in raw
-    ).strip("_")
-    return (safe or "ragstudio_default").replace("`", "``")
 
 
 def _auth(profile: Any) -> tuple[str, str] | None:

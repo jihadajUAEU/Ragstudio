@@ -153,6 +153,19 @@ class ChunkService:
         ]
         return ChunkSearchOut(items=items, total=len(items))
 
+    async def chunks_by_id(self, chunk_ids: list[str]) -> list[ChunkOut]:
+        unique_ids = list(dict.fromkeys(chunk_id for chunk_id in chunk_ids if chunk_id))
+        if not unique_ids:
+            return []
+
+        result = await self.session.execute(select(Chunk).where(Chunk.id.in_(unique_ids)))
+        chunks_by_id = {chunk.id: chunk for chunk in result.scalars().all()}
+        return [
+            ChunkOut.model_validate(chunks_by_id[chunk_id])
+            for chunk_id in unique_ids
+            if chunk_id in chunks_by_id
+        ]
+
     def _chunk_out_with_score(
         self,
         chunk: Chunk,

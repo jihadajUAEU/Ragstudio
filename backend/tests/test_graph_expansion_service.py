@@ -77,7 +77,7 @@ async def test_graph_expansion_scopes_query_to_workspace_label():
         neighbor_properties={
             "chunk_id": "neighbor-1",
             "document_id": "doc-1",
-            "text": "Book 1 Hadith 2",
+            "text_preview": "Book 1 Hadith 2",
             "page": 2,
         },
     )
@@ -93,15 +93,18 @@ async def test_graph_expansion_scopes_query_to_workspace_label():
     )
 
     query, params = driver.session_instance.calls[0]
+    assert "CALL {" in query
     assert (
         "MATCH (seed:`ragstudio_tenant_one`)-[relationship]-"
-        "(neighbor:`ragstudio_tenant_one`)"
+        "(neighbor:`ragstudio_tenant_one`:RagstudioChunk)"
     ) in query
+    assert "RagstudioReference" in query
     assert params["seed_ids"] == ["seed-1", "seed-runtime"]
     assert params["document_ids"] == ["doc-1"]
     assert params["limit"] == 4
     assert candidates[0].tool == "graph"
     assert candidates[0].chunk_id == "neighbor-1"
+    assert candidates[0].text == "Book 1 Hadith 2"
     assert candidates[0].metadata["graph_relationship"]["type"] == "NEXT"
     assert candidates[0].metadata["graph_relationship"]["properties"] == {"weight": 0.8}
     assert traces[0]["stage"] == "graph_expansion"
@@ -120,6 +123,8 @@ async def test_graph_expansion_converts_neighbor_rows_to_candidates():
                 seed_properties={"runtime_source_id": "seed-runtime"},
                 neighbor_id="node-3",
                 neighbor_labels=["Entity"],
+                bridge_relationship_types=["NEXT_HADITH"],
+                graph_path="reference_hop",
                 neighbor_properties={
                     "runtime_source_id": "runtime-neighbor",
                     "full_doc_id": "doc-2",
@@ -156,6 +161,8 @@ async def test_graph_expansion_converts_neighbor_rows_to_candidates():
                     "type": "MENTIONS",
                     "properties": {"confidence": 0.7},
                     "seed": {"runtime_source_id": "seed-runtime"},
+                    "bridge_relationship_types": ["NEXT_HADITH"],
+                    "path": "reference_hop",
                 },
                 "graph_labels": ["Entity"],
             },

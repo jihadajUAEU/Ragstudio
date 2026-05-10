@@ -118,6 +118,11 @@ class RetrievalOrchestrator:
                 timings=timings,
             )
             traces.extend(graph_traces)
+            graph_candidates, graph_hydration_traces = await self._hydrate_graph_candidates(
+                graph_candidates,
+                timings=timings,
+            )
+            traces.extend(graph_hydration_traces)
 
             refusion_started = perf_counter()
             fused = fuse_candidates(
@@ -452,6 +457,90 @@ class RetrievalOrchestrator:
             base_score=base_score,
         )
 
+    async def _hydrate_graph_candidates(
+        self,
+        candidates: list[EvidenceCandidate],
+        *,
+        timings: dict[str, Any],
+    ) -> tuple[list[EvidenceCandidate], list[dict[str, Any]]]:
+        hydration_started = perf_counter()
+        chunk_lookup = getattr(self.chunk_service, "chunks_by_id", None)
+        if chunk_lookup is None:
+            timings["graph_hydration_ms"] = _elapsed_ms(hydration_started)
+            return candidates, [
+                {
+                    "stage": "graph_hydration",
+                    "status": "skipped",
+                    "reason": "chunk_lookup_unavailable",
+                    "input_candidates": len(candidates),
+                }
+            ]
+
+        chunk_ids = [
+            chunk_id
+            for candidate in candidates
+            if (chunk_id := _graph_candidate_chunk_id(candidate)) is not None
+        ]
+        if not chunk_ids:
+            timings["graph_hydration_ms"] = _elapsed_ms(hydration_started)
+            return candidates, [
+                {
+                    "stage": "graph_hydration",
+                    "status": "skipped",
+                    "reason": "no_chunk_ids",
+                    "input_candidates": len(candidates),
+                }
+            ]
+
+        try:
+            hydrated_chunks = await chunk_lookup(chunk_ids)
+        except Exception as exc:
+            timings["graph_hydration_ms"] = _elapsed_ms(hydration_started)
+            timings["graph_hydration_degraded"] = True
+            timings["graph_hydration_error_type"] = exc.__class__.__name__
+            return candidates, [
+                {
+                    "stage": "graph_hydration",
+                    "status": "failed",
+                    "reason": exc.__class__.__name__,
+                    "detail": str(exc),
+                    "input_candidates": len(candidates),
+                }
+            ]
+
+        chunks_by_id = {chunk.id: chunk for chunk in hydrated_chunks}
+        hydrated: list[EvidenceCandidate] = []
+        missing_count = 0
+        dropped_preview_count = 0
+        for candidate in candidates:
+            chunk_id = _graph_candidate_chunk_id(candidate)
+            chunk = chunks_by_id.get(chunk_id or "")
+            if chunk is None:
+                missing_count += 1 if chunk_id else 0
+                if chunk_id and _candidate_uses_preview_text(candidate):
+                    dropped_preview_count += 1
+                    continue
+                hydrated.append(
+                    _graph_candidate_with_hydration_status(
+                        candidate,
+                        status="missing_chunk",
+                    )
+                )
+                continue
+            hydrated.append(_hydrated_graph_candidate(candidate, chunk))
+
+        timings["graph_hydration_ms"] = _elapsed_ms(hydration_started)
+        return hydrated, [
+            {
+                "stage": "graph_hydration",
+                "status": "ok",
+                "input_candidates": len(candidates),
+                "hydrated_candidates": len(chunks_by_id),
+                "missing_candidates": missing_count,
+                "dropped_preview_candidates": dropped_preview_count,
+            }
+        ]
+
     async def _rerank(
         self,
         query: str,
@@ -488,6 +577,80 @@ def _dict_or_empty(value: Any) -> dict[str, Any]:
 
 def _str_or_none(value: Any) -> str | None:
     return value if isinstance(value, str) and value else None
+
+
+def _graph_candidate_chunk_id(candidate: EvidenceCandidate) -> str | None:
+    chunk_id = candidate.chunk_id
+    if not isinstance(chunk_id, str) or not chunk_id:
+        return None
+    if chunk_id.startswith("ref:"):
+        return None
+    if chunk_id.startswith("chunk:"):
+        parts = chunk_id.split(":")
+        if len(parts) >= 3 and parts[-1]:
+            return parts[-1]
+        return None
+    return chunk_id
+
+
+def _candidate_uses_preview_text(candidate: EvidenceCandidate) -> bool:
+    preview = candidate.metadata.get("text_preview")
+    if not isinstance(preview, str) or not preview:
+        return False
+    if any(isinstance(candidate.metadata.get(key), str) for key in ("text", "content")):
+        return False
+    return candidate.text == preview
+
+
+def _hydrated_graph_candidate(
+    candidate: EvidenceCandidate,
+    chunk: ChunkOut,
+) -> EvidenceCandidate:
+    return EvidenceCandidate(
+        candidate_id=f"graph:{chunk.id}",
+        text=chunk.text,
+        document_id=chunk.document_id,
+        chunk_id=chunk.id,
+        source_location=chunk.source_location,
+        metadata={
+            **chunk.metadata,
+            **candidate.metadata,
+            "graph_hydration": {
+                "status": "hydrated",
+                "original_candidate_id": candidate.candidate_id,
+            },
+        },
+        tool="graph",
+        tool_rank=candidate.tool_rank,
+        base_score=candidate.base_score,
+        boost_score=candidate.boost_score + 1.0,
+        final_score=candidate.final_score,
+        reasons=[*candidate.reasons, "graph_hydrated_chunk"],
+    )
+
+
+def _graph_candidate_with_hydration_status(
+    candidate: EvidenceCandidate,
+    *,
+    status: str,
+) -> EvidenceCandidate:
+    return EvidenceCandidate(
+        candidate_id=candidate.candidate_id,
+        text=candidate.text,
+        document_id=candidate.document_id,
+        chunk_id=candidate.chunk_id,
+        source_location=candidate.source_location,
+        metadata={
+            **candidate.metadata,
+            "graph_hydration": {"status": status},
+        },
+        tool=candidate.tool,
+        tool_rank=candidate.tool_rank,
+        base_score=candidate.base_score,
+        boost_score=candidate.boost_score,
+        final_score=candidate.final_score,
+        reasons=candidate.reasons,
+    )
 
 
 def _elapsed_ms(started_at: float) -> float:
