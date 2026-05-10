@@ -5,6 +5,8 @@ from ragstudio.db.models import Run, Score
 from ragstudio.schemas.evaluation import EvaluationCaseIn
 from sqlalchemy.ext.asyncio import AsyncSession
 
+UNSCOREABLE_REASON = "No expected_answer, must_include, or must_avoid signals were provided."
+
 
 class ScoringService:
     def __init__(self, session: AsyncSession | None = None):
@@ -44,9 +46,22 @@ class ScoringService:
             total += ((len(avoid_terms) - len(avoid_hits)) / len(avoid_terms)) * 15.0
             weights += 15.0
 
-        normalized_total = round((total / weights) * 100) if weights else 100
+        if weights == 0:
+            return {
+                "total": 0,
+                "scoreable": False,
+                "reason": UNSCOREABLE_REASON,
+                "expected_terms": sorted(expected_terms),
+                "expected_hits": sorted(expected_hits),
+                "must_include_hits": include_hits,
+                "must_include_missing": include_misses,
+                "must_avoid_hits": avoid_hits,
+            }
+
+        normalized_total = round((total / weights) * 100)
         return {
             "total": int(max(0, min(100, normalized_total))),
+            "scoreable": True,
             "expected_terms": sorted(expected_terms),
             "expected_hits": sorted(expected_hits),
             "must_include_hits": include_hits,

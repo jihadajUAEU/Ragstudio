@@ -118,6 +118,7 @@ class DiagnosticsService:
             "indexing": report.get("indexing"),
             "query": report.get("query"),
             "graph": report.get("graph"),
+            "native_scoped_query": report.get("native_scoped_query"),
             "scoped_query": report.get("scoped_query"),
             "scoped_query_detail": report.get("scoped_query_detail"),
         }
@@ -138,16 +139,29 @@ class DiagnosticsService:
             by_name.get("raganything") is not None
             and by_name["raganything"].status == "ok"
         )
+        scoped_query: bool | str = "raganything_full_doc_id_vector"
+        native_scoped_query = True
+        scoped_query_detail = (
+            "Selected-document native query uses LightRAG chunk full_doc_id "
+            "filtering with vector/naive retrieval; graph modes are not used "
+            "under document scope."
+        )
+        if not runtime_available:
+            scoped_query = "unavailable"
+            native_scoped_query = False
+            scoped_query_detail = (
+                "Selected-document native query is unavailable until runtime dependencies "
+                "are healthy."
+            )
         return {
             "raganything_available": raganything_available,
             "active_backend": "runtime",
             "indexing": "raganything" if runtime_available else "unavailable",
             "query": "raganything" if runtime_available else "unavailable",
             "graph": "neo4j" if graph_available else "unavailable",
-            "scoped_query": False,
-            "scoped_query_detail": (
-                "Native RAG-Anything query cannot yet enforce selected document_ids."
-            ),
+            "native_scoped_query": native_scoped_query,
+            "scoped_query": scoped_query,
+            "scoped_query_detail": scoped_query_detail,
         }
 
     def _overall_status(

@@ -7,6 +7,7 @@ import type {
   EvaluationSetOut,
   ExperimentIn,
   ExperimentOut,
+  ExperimentPage,
   GraphOut,
   HealthOut,
   JobOut,
@@ -28,6 +29,7 @@ import type {
   SettingsProfileOut,
   VariantIn,
   VariantOut,
+  VariantUpdate,
 } from "./generated";
 
 export class ApiError extends Error {
@@ -127,6 +129,16 @@ export const apiClient = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     }),
+  updateVariant: (variantId: string, payload: VariantUpdate) =>
+    request<VariantOut>(`/api/variants/${encodeURIComponent(variantId)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }),
+  deleteVariant: (variantId: string) =>
+    request<void>(`/api/variants/${encodeURIComponent(variantId)}`, {
+      method: "DELETE",
+    }),
   defaultSettings: () => request<SettingsProfileOut>("/api/settings/default"),
   updateDefaultSettings: (payload: SettingsProfileIn) =>
     request<SettingsProfileOut>("/api/settings/default", {
@@ -222,6 +234,9 @@ export const apiClient = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     }),
+  experiments: () => request<ExperimentPage>("/api/experiments"),
+  getExperiment: (experimentId: string) =>
+    request<ExperimentOut>(`/api/experiments/${encodeURIComponent(experimentId)}`),
   optimize: (payload: OptimizerIn) =>
     request<OptimizerOut>("/api/optimizer", {
       method: "POST",

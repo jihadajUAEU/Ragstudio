@@ -1,18 +1,30 @@
+from __future__ import annotations
+
 from pathlib import Path
 
 from ragstudio.config import AppSettings
-from ragstudio.db.models import Document, EvaluationSet, Experiment, Run, Variant
+from ragstudio.db.models import Document, EvaluationSet, Experiment, Run, Score, Variant
 from ragstudio.schemas.evaluation import EvaluationCaseIn
-from ragstudio.schemas.experiments import ExperimentIn, ExperimentOut, ExperimentScoreOut
+from ragstudio.schemas.experiments import (
+    ExperimentIn,
+    ExperimentOut,
+    ExperimentPage,
+    ExperimentScoreOut,
+    ExperimentSummaryOut,
+)
 from ragstudio.schemas.query import QueryIn
 from ragstudio.schemas.runs import RunOut
 from ragstudio.services.query_service import QueryResourceNotFoundError, QueryService
 from ragstudio.services.scoring_service import ScoringService
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class EvaluationSetNotFoundError(LookupError):
+    pass
+
+
+class ExperimentNotFoundError(LookupError):
     pass
 
 
@@ -50,8 +62,6 @@ class ExperimentService:
         await self.session.commit()
         await self.session.refresh(experiment)
 
-        runs: list[RunOut] = []
-        scores: list[ExperimentScoreOut] = []
         scoring_service = ScoringService(self.session)
 
         for case in cases:
@@ -67,11 +77,80 @@ class ExperimentService:
                 if run is None:
                     continue
                 run.experiment_id = experiment.id
-                score = await scoring_service.create_score(run, case)
+                await scoring_service.create_score(run, case)
                 await self.session.flush()
-                runs.append(RunOut.model_validate(run))
-                scores.append(ExperimentScoreOut.model_validate(score))
             await self.session.commit()
+
+        return await self._build_experiment_out(experiment)
+
+    async def list(self) -> ExperimentPage:
+        run_counts = (
+            select(
+                Run.experiment_id.label("experiment_id"),
+                func.count(Run.id).label("run_count"),
+            )
+            .where(Run.experiment_id.is_not(None))
+            .group_by(Run.experiment_id)
+            .subquery()
+        )
+        score_counts = (
+            select(
+                Run.experiment_id.label("experiment_id"),
+                func.count(Score.id).label("score_count"),
+            )
+            .join(Score, Score.run_id == Run.id)
+            .where(Run.experiment_id.is_not(None))
+            .group_by(Run.experiment_id)
+            .subquery()
+        )
+        result = await self.session.execute(
+            select(
+                Experiment,
+                func.coalesce(run_counts.c.run_count, 0),
+                func.coalesce(score_counts.c.score_count, 0),
+            )
+            .outerjoin(run_counts, run_counts.c.experiment_id == Experiment.id)
+            .outerjoin(score_counts, score_counts.c.experiment_id == Experiment.id)
+            .order_by(Experiment.created_at.desc())
+        )
+        items = [
+            ExperimentSummaryOut(
+                id=experiment.id,
+                name=experiment.name,
+                document_ids=experiment.document_ids,
+                evaluation_set_id=experiment.evaluation_set_id,
+                variant_ids=experiment.variant_ids,
+                objective=experiment.objective,
+                run_count=run_count,
+                score_count=score_count,
+            )
+            for experiment, run_count, score_count in result.all()
+        ]
+        return ExperimentPage(items=items, total=len(items))
+
+    async def get_required(self, experiment_id: str) -> ExperimentOut:
+        experiment = await self.session.get(Experiment, experiment_id)
+        if experiment is None:
+            raise ExperimentNotFoundError(experiment_id)
+        return await self._build_experiment_out(experiment)
+
+    async def _build_experiment_out(self, experiment: Experiment) -> ExperimentOut:
+        runs_result = await self.session.execute(
+            select(Run)
+            .where(Run.experiment_id == experiment.id)
+            .order_by(Run.created_at.asc())
+        )
+        runs = runs_result.scalars().all()
+        run_ids = [run.id for run in runs]
+
+        scores: list[Score] = []
+        if run_ids:
+            scores_result = await self.session.execute(
+                select(Score)
+                .where(Score.run_id.in_(run_ids))
+                .order_by(Score.created_at.asc())
+            )
+            scores = list(scores_result.scalars().all())
 
         return ExperimentOut(
             id=experiment.id,
@@ -80,8 +159,8 @@ class ExperimentService:
             evaluation_set_id=experiment.evaluation_set_id,
             variant_ids=experiment.variant_ids,
             objective=experiment.objective,
-            runs=runs,
-            scores=scores,
+            runs=[RunOut.model_validate(run) for run in runs],
+            scores=[ExperimentScoreOut.model_validate(score) for score in scores],
         )
 
     async def _validate_inputs(self, payload: ExperimentIn, cases: list[EvaluationCaseIn]) -> None:

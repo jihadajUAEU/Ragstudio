@@ -18,6 +18,7 @@ def test_scoring_service_scores_expected_include_and_avoid_terms():
     score = ScoringService().score(run, case)
 
     assert score.total == 100
+    assert score.details["scoreable"] is True
     assert score.details["expected_hits"] == ["alpha", "beta"]
     assert score.details["must_include_missing"] == []
     assert score.details["must_avoid_hits"] == []
@@ -36,8 +37,26 @@ def test_scoring_service_penalizes_missing_and_avoided_terms():
     score = ScoringService().score(run, case)
 
     assert score.total < 50
+    assert score.details["scoreable"] is True
     assert score.details["must_include_missing"] == ["gamma"]
     assert score.details["must_avoid_hits"] == ["forbidden"]
+
+
+def test_scoring_service_marks_rubric_only_case_unscoreable():
+    case = EvaluationCaseIn(
+        id="case-1",
+        query="Explain the answer.",
+        expected_structure={"sections": ["summary", "evidence"]},
+        rubric={"grounding": "Answer should cite evidence."},
+    )
+
+    score = ScoringService().score_answer("A structured answer with evidence.", case)
+
+    assert score["total"] == 0
+    assert score["scoreable"] is False
+    assert score["reason"] == (
+        "No expected_answer, must_include, or must_avoid signals were provided."
+    )
 
 
 @pytest.mark.asyncio
@@ -87,6 +106,23 @@ async def test_create_experiment_runs_cases_and_persists_runs(client):
 
     runs = await client.get("/api/runs")
     assert runs.json()["total"] == 1
+
+    experiments = await client.get("/api/experiments")
+    assert experiments.status_code == 200
+    experiments_payload = experiments.json()
+    assert experiments_payload["total"] == 1
+    latest_experiment = experiments_payload["items"][0]
+    assert latest_experiment["id"] == payload["id"]
+    assert latest_experiment["name"] == "Smoke experiment"
+    assert latest_experiment["objective"] == {"metric": "total"}
+    assert latest_experiment["run_count"] == 1
+    assert latest_experiment["score_count"] == 1
+    assert "runs" not in latest_experiment
+    assert "scores" not in latest_experiment
+
+    experiment_detail = await client.get(f"/api/experiments/{payload['id']}")
+    assert experiment_detail.status_code == 200
+    assert experiment_detail.json() == payload
 
 
 @pytest.mark.asyncio

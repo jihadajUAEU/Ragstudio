@@ -103,4 +103,58 @@ describe("GraphPage", () => {
     expect(map).toHaveTextContent("Reference");
     expect(map).toHaveTextContent("document doc-1");
   });
+
+  it("shows graph detail returned by the backend", async () => {
+    vi.mocked(apiClient.diagnostics).mockResolvedValue({
+      capabilities: { graph: true },
+      dependency_status: {},
+      warnings: [],
+      runtime_mode: "fallback",
+      overall_status: "fallback",
+      checks: [],
+    });
+    vi.mocked(apiClient.graph).mockResolvedValue({
+      nodes: [],
+      edges: [],
+      detail: "No runtime graph or relationship metadata is available.",
+    });
+
+    renderGraphPage();
+
+    expect(
+      await screen.findByText("No runtime graph or relationship metadata is available."),
+    ).toBeInTheDocument();
+  });
+
+  it("shows a prominent visual preview truncation warning", async () => {
+    vi.mocked(apiClient.diagnostics).mockResolvedValue({
+      capabilities: { graph: true },
+      dependency_status: {},
+      warnings: [],
+      runtime_mode: "runtime",
+      overall_status: "ready",
+      checks: [],
+    });
+    const nodes = Array.from({ length: 51 }, (_, index) => ({
+      id: `node-${index + 1}`,
+      label: `Node ${index + 1}`,
+    }));
+    const edges = [
+      ...Array.from({ length: 49 }, (_, index) => ({
+        source: `node-${index + 1}`,
+        target: `node-${index + 2}`,
+        type: "related",
+      })),
+      { source: "node-1", target: "node-51", type: "outside-preview" },
+    ];
+    vi.mocked(apiClient.graph).mockResolvedValue({ nodes, edges });
+
+    renderGraphPage();
+
+    expect(
+      await screen.findByText(
+        "Showing 50 of 51 nodes and 49 of 50 edges in the visual preview.",
+      ),
+    ).toBeInTheDocument();
+  });
 });

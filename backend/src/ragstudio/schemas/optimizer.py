@@ -13,10 +13,14 @@ class OptimizerIn(StudioModel):
 class OptimizerCandidateSummary(StudioModel):
     variant_id: str
     run_count: int
-    average_score: float
-    total_score: float
+    average_score: float | None
+    total_score: float | None
     best_run_id: str | None
     best_run_score: float | None
+    score_status: str = "unscored"
+    scoreable_run_count: int = 0
+    unscored_run_count: int = 0
+    failed_run_count: int = 0
 
 
 class OptimizerOut(StudioModel):

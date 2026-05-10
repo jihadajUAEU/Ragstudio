@@ -1,17 +1,19 @@
-import { useMemo, useState, type FormEvent } from "react";
+import { useCallback, useMemo, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
 import {
   AlertCircle,
   GitCompare,
   Loader2,
+  Pencil,
   Plus,
   RefreshCcw,
   SlidersHorizontal,
+  Trash2,
 } from "lucide-react";
 
 import { apiClient } from "../../api/client";
-import type { VariantIn, VariantOut } from "../../api/generated";
+import type { VariantIn, VariantOut, VariantPreset, VariantUpdate } from "../../api/generated";
 import { DataTable } from "../../components/data-table";
 import { EmptyState } from "../../components/empty-state";
 import { Button } from "../../components/ui/button";
@@ -21,26 +23,92 @@ const queryKeys = {
   variants: ["variants"],
 } as const;
 
-const defaultParameters = "{\n  \"top_k\": 5,\n  \"temperature\": 0.2\n}";
+const presetDefaults: Record<VariantPreset, Record<string, unknown>> = {
+  balanced: { top_k: 5, temperature: 0.2, enable_rerank: true },
+  precise: { top_k: 3, temperature: 0.1, enable_rerank: true },
+  broad: { top_k: 12, temperature: 0.3, enable_rerank: true },
+  fast: { top_k: 4, temperature: 0.0, enable_rerank: false },
+};
+
+const defaultPreset: VariantPreset = "balanced";
+
+function presetParametersText(preset: VariantPreset) {
+  return JSON.stringify(presetDefaults[preset], null, 2);
+}
 
 export function VariantsPage() {
   const queryClient = useQueryClient();
   const variantsQuery = useQuery({ queryKey: queryKeys.variants, queryFn: apiClient.variants });
   const [name, setName] = useState("");
-  const [preset, setPreset] = useState("balanced");
-  const [parametersText, setParametersText] = useState(defaultParameters);
+  const [preset, setPreset] = useState<VariantPreset>(defaultPreset);
+  const [parametersText, setParametersText] = useState(presetParametersText(defaultPreset));
   const [formError, setFormError] = useState("");
+  const [editingVariant, setEditingVariant] = useState<VariantOut | null>(null);
+
+  const resetForm = () => {
+    setName("");
+    setPreset(defaultPreset);
+    setParametersText(presetParametersText(defaultPreset));
+    setFormError("");
+    setEditingVariant(null);
+  };
 
   const createVariant = useMutation({
     mutationFn: apiClient.createVariant,
     onSuccess: () => {
-      setName("");
-      setPreset("balanced");
-      setParametersText(defaultParameters);
-      setFormError("");
+      resetForm();
       void queryClient.invalidateQueries({ queryKey: queryKeys.variants });
     },
   });
+
+  const updateVariant = useMutation({
+    mutationFn: ({ id, payload }: { id: string; payload: VariantUpdate }) =>
+      apiClient.updateVariant(id, payload),
+    onSuccess: () => {
+      resetForm();
+      void queryClient.invalidateQueries({ queryKey: queryKeys.variants });
+    },
+  });
+
+  const deleteVariant = useMutation({
+    mutationFn: (variant: VariantOut) => apiClient.deleteVariant(variant.id),
+    onSuccess: (_data, variant) => {
+      if (editingVariant?.id === variant.id) {
+        resetForm();
+      }
+      void queryClient.invalidateQueries({ queryKey: queryKeys.variants });
+    },
+  });
+
+  const isSaving = createVariant.isPending || updateVariant.isPending;
+
+  const startEditing = useCallback((variant: VariantOut) => {
+    setEditingVariant(variant);
+    setName(variant.name);
+    setPreset(variant.preset);
+    setParametersText(JSON.stringify(variant.parameters, null, 2));
+    setFormError("");
+    createVariant.reset();
+    updateVariant.reset();
+  }, [createVariant, updateVariant]);
+
+  const handlePresetChange = (nextPreset: VariantPreset) => {
+    setPreset(nextPreset);
+    setParametersText(presetParametersText(nextPreset));
+    setFormError("");
+    createVariant.reset();
+    updateVariant.reset();
+  };
+
+  const requestDelete = useCallback((variant: VariantOut) => {
+    const confirmed = window.confirm(
+      `Delete variant ${variant.name}? This cannot be undone.`,
+    );
+    if (!confirmed) {
+      return;
+    }
+    deleteVariant.mutate(variant);
+  }, [deleteVariant]);
 
   const variantColumns = useMemo<ColumnDef<VariantOut>[]>(
     () => [
@@ -64,8 +132,40 @@ export function VariantsPage() {
         header: "Parameters",
         cell: ({ row }) => <ParameterList parameters={row.original.parameters} />,
       },
+      {
+        id: "actions",
+        header: "Actions",
+        cell: ({ row }) => (
+          <div className="flex items-center justify-end gap-2">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              aria-label={`Edit variant ${row.original.name}`}
+              onClick={() => startEditing(row.original)}
+              disabled={isSaving || deleteVariant.isPending}
+            >
+              <Pencil className="h-4 w-4" aria-hidden="true" />
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              aria-label={`Delete variant ${row.original.name}`}
+              onClick={() => requestDelete(row.original)}
+              disabled={isSaving || deleteVariant.isPending}
+            >
+              {deleteVariant.isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+              ) : (
+                <Trash2 className="h-4 w-4" aria-hidden="true" />
+              )}
+            </Button>
+          </div>
+        ),
+      },
     ],
-    [],
+    [deleteVariant, isSaving, requestDelete, startEditing],
   );
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
@@ -85,8 +185,22 @@ export function VariantsPage() {
     }
 
     setFormError("");
+    if (editingVariant) {
+      updateVariant.mutate({ id: editingVariant.id, payload: { name, preset, parameters } });
+      return;
+    }
     createVariant.mutate({ name, preset, parameters });
   };
+
+  const formTitle = editingVariant ? "Edit variant" : "Create variant";
+  const mutationError = editingVariant ? updateVariant.error?.message : createVariant.error?.message;
+  const saveSuccess = editingVariant
+    ? updateVariant.isSuccess
+      ? "Updated"
+      : ""
+    : createVariant.isSuccess
+      ? "Created"
+      : "";
 
   return (
     <div className="mx-auto flex max-w-7xl flex-col gap-6">
@@ -118,7 +232,7 @@ export function VariantsPage() {
         >
           <div className="mb-5 flex items-center gap-2">
             <SlidersHorizontal className="h-4 w-4 text-[#176b87]" aria-hidden="true" />
-            <h3 className="truncate text-base font-semibold text-[#1f2933]">Create variant</h3>
+            <h3 className="truncate text-base font-semibold text-[#1f2933]">{formTitle}</h3>
           </div>
 
           <div className="grid gap-4">
@@ -128,7 +242,7 @@ export function VariantsPage() {
                 className="h-10 w-full rounded-md border border-[#cfd8dd] bg-white px-3 text-sm text-[#1f2933] outline-none focus:border-[#176b87] focus:ring-2 focus:ring-[#176b87]/20 disabled:bg-[#f4f7f8]"
                 value={name}
                 onChange={(event) => setName(event.target.value)}
-                disabled={createVariant.isPending}
+                disabled={isSaving}
                 required
               />
             </label>
@@ -138,8 +252,8 @@ export function VariantsPage() {
               <select
                 className="h-10 w-full rounded-md border border-[#cfd8dd] bg-white px-3 text-sm text-[#1f2933] outline-none focus:border-[#176b87] focus:ring-2 focus:ring-[#176b87]/20 disabled:bg-[#f4f7f8]"
                 value={preset}
-                onChange={(event) => setPreset(event.target.value)}
-                disabled={createVariant.isPending}
+                onChange={(event) => handlePresetChange(event.target.value as VariantPreset)}
+                disabled={isSaving}
               >
                 <option value="balanced">Balanced</option>
                 <option value="precise">Precise</option>
@@ -154,7 +268,7 @@ export function VariantsPage() {
                 className="min-h-40 w-full resize-y rounded-md border border-[#cfd8dd] bg-white px-3 py-2 font-mono text-sm text-[#1f2933] outline-none focus:border-[#176b87] focus:ring-2 focus:ring-[#176b87]/20 disabled:bg-[#f4f7f8]"
                 value={parametersText}
                 onChange={(event) => setParametersText(event.target.value)}
-                disabled={createVariant.isPending}
+                disabled={isSaving}
                 spellCheck={false}
               />
             </label>
@@ -162,16 +276,25 @@ export function VariantsPage() {
 
           <div className="mt-5 flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between">
             <p className="min-h-5 text-sm text-[#62717a]" role="status">
-              {formError || createVariant.error?.message || (createVariant.isSuccess ? "Created" : "")}
+              {formError || mutationError || saveSuccess || deleteVariant.error?.message || ""}
             </p>
-            <Button type="submit" disabled={createVariant.isPending}>
-              {createVariant.isPending ? (
-                <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-              ) : (
-                <Plus className="h-4 w-4" aria-hidden="true" />
-              )}
-              Create
-            </Button>
+            <div className="flex items-center justify-end gap-2">
+              {editingVariant ? (
+                <Button type="button" variant="secondary" onClick={resetForm} disabled={isSaving}>
+                  Cancel
+                </Button>
+              ) : null}
+              <Button type="submit" disabled={isSaving}>
+                {isSaving ? (
+                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                ) : editingVariant ? (
+                  <Pencil className="h-4 w-4" aria-hidden="true" />
+                ) : (
+                  <Plus className="h-4 w-4" aria-hidden="true" />
+                )}
+                {editingVariant ? "Update" : "Create"}
+              </Button>
+            </div>
           </div>
         </form>
 

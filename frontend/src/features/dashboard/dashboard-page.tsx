@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import type { ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
@@ -33,9 +33,19 @@ const queryKeys = {
 } as const;
 
 export function DashboardPage() {
+  const hadActiveJobsRef = useRef(false);
   const healthQuery = useQuery({ queryKey: queryKeys.health, queryFn: apiClient.health });
-  const documentsQuery = useQuery({ queryKey: queryKeys.documents, queryFn: apiClient.documents });
-  const jobsQuery = useQuery({ queryKey: queryKeys.jobs, queryFn: apiClient.jobs });
+  const jobsQuery = useQuery({
+    queryKey: queryKeys.jobs,
+    queryFn: apiClient.jobs,
+    refetchInterval: (query) => (hasActiveJobs(query.state.data?.items ?? []) ? 2000 : false),
+  });
+  const activeJobs = hasActiveJobs(jobsQuery.data?.items ?? []);
+  const documentsQuery = useQuery({
+    queryKey: queryKeys.documents,
+    queryFn: apiClient.documents,
+    refetchInterval: activeJobs ? 2000 : false,
+  });
   const variantsQuery = useQuery({ queryKey: queryKeys.variants, queryFn: apiClient.variants });
   const runsQuery = useQuery({ queryKey: queryKeys.runs, queryFn: apiClient.runs });
   const diagnosticsQuery = useQuery({
@@ -43,6 +53,16 @@ export function DashboardPage() {
     queryFn: apiClient.diagnostics,
   });
   const graphQuery = useQuery({ queryKey: queryKeys.graph, queryFn: apiClient.graph });
+
+  const refetchDocuments = documentsQuery.refetch;
+
+  useEffect(() => {
+    const hadActiveJobs = hadActiveJobsRef.current;
+    hadActiveJobsRef.current = activeJobs;
+    if (hadActiveJobs && !activeJobs) {
+      void refetchDocuments();
+    }
+  }, [activeJobs, jobsQuery.dataUpdatedAt, refetchDocuments]);
 
   const isRefreshing =
     healthQuery.isFetching ||
@@ -292,6 +312,10 @@ export function DashboardPage() {
       ) : null}
     </div>
   );
+}
+
+function hasActiveJobs(jobs: JobOut[]): boolean {
+  return jobs.some((job) => job.status === "ready" || job.status === "running");
 }
 
 function MetricCard({

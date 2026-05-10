@@ -34,7 +34,11 @@ class GraphService:
 
     async def get_graph(self) -> GraphOut:
         graph = await self._graph()
-        return GraphOut(nodes=list(graph.get("nodes") or []), edges=list(graph.get("edges") or []))
+        return GraphOut(
+            nodes=list(graph.get("nodes") or []),
+            edges=list(graph.get("edges") or []),
+            detail=graph.get("detail"),
+        )
 
     async def _graph(self) -> dict:
         if self.session is None or self.settings is None:
@@ -45,12 +49,12 @@ class GraphService:
             fallback_graph = await self._relationship_metadata_graph()
             if fallback_graph["nodes"] or fallback_graph["edges"]:
                 return fallback_graph
-            return await self.adapter.graph()
+            return fallback_graph
         if profile.runtime_mode == "fallback":
             fallback_graph = await self._relationship_metadata_graph()
             if fallback_graph["nodes"] or fallback_graph["edges"]:
                 return fallback_graph
-            return await self.adapter.graph()
+            return fallback_graph
         try:
             health_service = self.health_service or RuntimeHealthService(
                 self.session,
@@ -73,10 +77,21 @@ class GraphService:
                 f"Runtime graph is unavailable: {exc}"
             ) from exc
 
-    async def _relationship_metadata_graph(self) -> dict[str, list[dict[str, Any]]]:
+    async def _relationship_metadata_graph(
+        self, *, limit: int = 2_000
+    ) -> dict[str, list[dict[str, Any]] | str | None]:
         if self.session is None:
-            return {"nodes": [], "edges": []}
-        result = await self.session.execute(select(Chunk))
+            return {
+                "nodes": [],
+                "edges": [],
+                "detail": "No database session is available for fallback graph metadata.",
+            }
+        result = await self.session.execute(
+            select(Chunk)
+            .where(Chunk.metadata_json["relationship_metadata"].as_string().is_not(None))
+            .order_by(Chunk.created_at.desc())
+            .limit(limit)
+        )
         nodes: dict[str, dict[str, Any]] = {}
         edges: dict[str, dict[str, Any]] = {}
         for chunk in result.scalars().all():
@@ -138,4 +153,7 @@ class GraphService:
                         },
                     },
                 )
-        return {"nodes": list(nodes.values()), "edges": list(edges.values())}
+        detail = None
+        if not nodes and not edges:
+            detail = "No runtime graph or relationship metadata is available."
+        return {"nodes": list(nodes.values()), "edges": list(edges.values()), "detail": detail}

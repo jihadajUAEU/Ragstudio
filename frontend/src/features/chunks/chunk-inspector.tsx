@@ -19,7 +19,7 @@ import type {
 } from "../../api/generated";
 import { EmptyState } from "../../components/empty-state";
 import { Button } from "../../components/ui/button";
-import { titleCase } from "../../lib/utils";
+import { titleCase, toggleId } from "../../lib/utils";
 import { DomainMetadataPanel } from "../domain-metadata/domain-metadata-panel";
 
 const queryKeys = {
@@ -418,11 +418,4 @@ function filtersEqual(left: ChunkSearchIn, right: ChunkSearchIn) {
 
 function stringifySearchFilters(filters: ChunkSearchIn) {
   return JSON.stringify(normalizeSearchFilters(filters));
-}
-
-function toggleId(ids: string[], id: string, checked: boolean) {
-  if (checked) {
-    return ids.includes(id) ? ids : [...ids, id];
-  }
-  return ids.filter((existingId) => existingId !== id);
 }

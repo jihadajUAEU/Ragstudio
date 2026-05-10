@@ -1,10 +1,15 @@
+import asyncio
+import os
 from types import SimpleNamespace
 
 import pytest
 from ragstudio.config import AppSettings
 from ragstudio.schemas.runtime import RuntimeProfile
 from ragstudio.services.adapter import AdapterChunk
-from ragstudio.services.native_raganything_adapter import NativeRAGAnythingAdapter
+from ragstudio.services.native_raganything_adapter import (
+    NativeRAGAnythingAdapter,
+    ScopedVectorStorageProxy,
+)
 
 
 def profile(**overrides):
@@ -76,8 +81,11 @@ class FakeRAGAnything:
         self.inserted_content_list = None
         self.parse_called = False
         self.initialized = False
-        self.lightrag = SimpleNamespace(adelete_by_doc_id=self._delete)
-        self.deleted = []
+        self.aquery_error = None
+        self.aquery_calls = []
+        self.query_cache_enabled = []
+        self.lightrag = FakeLightRAG()
+        self.deleted = self.lightrag.deleted
         FakeRAGAnything.instances.append(self)
 
     async def parse_document(self, file_path, output_dir, parse_method, display_stats):
@@ -97,14 +105,25 @@ class FakeRAGAnything:
     async def aquery(self, query, mode="mix", **kwargs):
         if not self.initialized:
             raise AssertionError("aquery called before LightRAG initialization")
+        if self.aquery_error is not None:
+            raise self.aquery_error
+        self.query_cache_enabled.append(
+            self.lightrag.llm_response_cache.global_config.get("enable_llm_cache")
+        )
+        self.aquery_calls.append({"query": query, "mode": mode, "kwargs": dict(kwargs)})
+        if "chunk_top_k" in kwargs:
+            rows = await self.lightrag.chunks_vdb.query(
+                query,
+                top_k=kwargs.get("chunk_top_k") or kwargs["top_k"],
+            )
+            if [row["full_doc_id"] for row in rows] != ["doc-1"]:
+                raise AssertionError(f"unscoped rows reached native query: {rows}")
+            return f"native scoped answer: {query}:{mode}:{kwargs['top_k']}"
         return f"native answer: {query}:{mode}:{kwargs['top_k']}"
 
     async def _ensure_lightrag_initialized(self):
         self.initialized = True
         return {"success": True}
-
-    async def _delete(self, doc_id):
-        self.deleted.append(doc_id)
 
 
 class FakeEmbeddingFunc:
@@ -115,6 +134,100 @@ class FakeEmbeddingFunc:
 class FakeConfig:
     def __init__(self, **kwargs):
         self.kwargs = kwargs
+
+
+class FakeChunkVectorStorage:
+    def __init__(self, rows, hydrated_rows=None):
+        self.rows = rows
+        self.hydrated_rows = hydrated_rows or rows
+        self.calls = []
+        self.get_by_ids_calls = []
+        self.cosine_better_than_threshold = 0.2
+
+    async def query(self, query, top_k, query_embedding=None):
+        self.calls.append(
+            {"query": query, "top_k": top_k, "query_embedding": query_embedding}
+        )
+        return self.rows[:top_k]
+
+    async def get_by_ids(self, ids):
+        self.get_by_ids_calls.append(ids)
+        by_id = {str(row.get("id")): row for row in self.hydrated_rows}
+        return [by_id.get(str(row_id)) for row_id in ids]
+
+
+class FakeFilterableChunkVectorStorage(FakeChunkVectorStorage):
+    def __init__(self, rows, hydrated_rows=None):
+        super().__init__(rows, hydrated_rows)
+        self.query_by_full_doc_ids_calls = []
+
+    async def query_by_full_doc_ids(
+        self,
+        query,
+        top_k,
+        document_ids,
+        query_embedding=None,
+    ):
+        self.query_by_full_doc_ids_calls.append(
+            {
+                "query": query,
+                "top_k": top_k,
+                "document_ids": document_ids,
+                "query_embedding": query_embedding,
+            }
+        )
+        allowed = {str(document_id) for document_id in document_ids}
+        return [
+            row
+            for row in self.rows
+            if str(row.get("full_doc_id") or "") in allowed
+        ][:top_k]
+
+
+class FailingFilterableChunkVectorStorage(FakeFilterableChunkVectorStorage):
+    async def query_by_full_doc_ids(
+        self,
+        query,
+        top_k,
+        document_ids,
+        query_embedding=None,
+    ):
+        self.query_by_full_doc_ids_calls.append(
+            {
+                "query": query,
+                "top_k": top_k,
+                "document_ids": document_ids,
+                "query_embedding": query_embedding,
+            }
+        )
+        raise RuntimeError("storage filter failed")
+
+
+class FakeLightRAG:
+    def __init__(self):
+        self.deleted = []
+        self.aquery_data_calls = 0
+        self.llm_response_cache = SimpleNamespace(
+            global_config={"enable_llm_cache": True}
+        )
+        self.chunks_vdb = FakeFilterableChunkVectorStorage(
+            [
+                {
+                    "id": "chunk-1",
+                    "full_doc_id": "doc-1",
+                    "content": "Sahih al-Bukhari 7277 Hadith Collection",
+                    "file_path": "bukhari.pdf",
+                    "score": 0.91,
+                },
+            ]
+        )
+
+    async def adelete_by_doc_id(self, doc_id):
+        self.deleted.append(doc_id)
+
+    async def aquery_data(self, query, param):
+        self.aquery_data_calls += 1
+        raise AssertionError("scoped query should collect sources from rag.aquery")
 
 
 @pytest.fixture(autouse=True)
@@ -139,6 +252,139 @@ def fake_upstream(monkeypatch):
         raise AssertionError(f"unexpected import {name}")
 
     monkeypatch.setattr("ragstudio.services.native_raganything_adapter.import_module", fake_import)
+
+
+@pytest.mark.asyncio
+async def test_scoped_vector_proxy_filters_by_full_doc_id():
+    base = FakeChunkVectorStorage(
+        [
+            {"id": "chunk-1", "full_doc_id": "doc-1", "content": "inside one"},
+            {"id": "chunk-2", "full_doc_id": "doc-2", "content": "outside"},
+            {"id": "chunk-3", "full_doc_id": "doc-1", "content": "inside two"},
+        ]
+    )
+    proxy = ScopedVectorStorageProxy(base, ["doc-1"])
+
+    rows = await proxy.query("question", top_k=2, query_embedding=[0.1, 0.2])
+
+    assert [row["id"] for row in rows] == ["chunk-1", "chunk-3"]
+    assert base.calls == [
+        {"query": "question", "top_k": 16, "query_embedding": [0.1, 0.2]}
+    ]
+    assert [row["id"] for row in proxy.raw_results] == [
+        "chunk-1",
+        "chunk-2",
+        "chunk-3",
+    ]
+    assert [row["id"] for row in proxy.collected_results] == ["chunk-1", "chunk-3"]
+
+
+@pytest.mark.asyncio
+async def test_scoped_vector_proxy_preserves_base_attributes():
+    base = FakeChunkVectorStorage([])
+    proxy = ScopedVectorStorageProxy(base, ["doc-1"])
+
+    assert proxy.cosine_better_than_threshold == 0.2
+
+
+@pytest.mark.asyncio
+async def test_scoped_vector_proxy_hydrates_full_doc_id_before_filtering():
+    base = FakeChunkVectorStorage(
+        [
+            {"id": "chunk-1", "content": "inside one"},
+            {"id": "chunk-2", "content": "outside"},
+        ],
+        hydrated_rows=[
+            {"id": "chunk-1", "full_doc_id": "doc-1", "content": "inside one"},
+            {"id": "chunk-2", "full_doc_id": "doc-2", "content": "outside"},
+        ],
+    )
+    proxy = ScopedVectorStorageProxy(base, ["doc-1"])
+
+    rows = await proxy.query("question", top_k=2)
+
+    assert [row["id"] for row in rows] == ["chunk-1"]
+    assert base.get_by_ids_calls == [["chunk-1", "chunk-2"]]
+    assert proxy.raw_results[0]["full_doc_id"] == "doc-1"
+    assert proxy.collected_results[0]["full_doc_id"] == "doc-1"
+
+
+@pytest.mark.asyncio
+async def test_scoped_vector_proxy_uses_storage_level_full_doc_id_filter():
+    base = FakeFilterableChunkVectorStorage(
+        [
+            {"id": "outside-1", "full_doc_id": "doc-2", "content": "outside one"},
+            {"id": "outside-2", "full_doc_id": "doc-3", "content": "outside two"},
+            {"id": "inside-1", "full_doc_id": "doc-1", "content": "inside one"},
+            {"id": "inside-2", "full_doc_id": "doc-1", "content": "inside two"},
+        ]
+    )
+    proxy = ScopedVectorStorageProxy(base, ["doc-1"], require_storage_filter=True)
+
+    rows = await proxy.query("question", top_k=2, query_embedding=[0.1, 0.2])
+
+    assert [row["id"] for row in rows] == ["inside-1", "inside-2"]
+    assert base.calls == []
+    assert base.query_by_full_doc_ids_calls == [
+        {
+            "query": "question",
+            "top_k": 2,
+            "document_ids": ["doc-1"],
+            "query_embedding": [0.1, 0.2],
+        }
+    ]
+    assert [row["id"] for row in proxy.raw_results] == ["inside-1", "inside-2"]
+    assert [row["id"] for row in proxy.collected_results] == ["inside-1", "inside-2"]
+
+
+@pytest.mark.asyncio
+async def test_scoped_vector_proxy_filters_pgvector_storage_by_full_doc_id():
+    class FakeDB:
+        vector_index_type = "HNSW_HALFVEC"
+
+        def __init__(self):
+            self.calls = []
+
+        async def query(self, sql, params, multirows):
+            self.calls.append({"sql": sql, "params": params, "multirows": multirows})
+            return [
+                {
+                    "id": "chunk-1",
+                    "full_doc_id": "doc-1",
+                    "content": "inside",
+                    "file_path": "inside.pdf",
+                    "score": 0.91,
+                }
+            ]
+
+    async def embedding_func(texts, **kwargs):
+        assert texts == ["question"]
+        assert kwargs == {"context": "query", "_priority": 5}
+        return [[0.1, 0.2]]
+
+    db = FakeDB()
+    base = SimpleNamespace(
+        db=db,
+        table_name="LIGHTRAG_DOC_CHUNKS_model",
+        workspace="ragstudio_default",
+        embedding_func=embedding_func,
+        cosine_better_than_threshold=0.2,
+    )
+    proxy = ScopedVectorStorageProxy(base, ["doc-1"], require_storage_filter=True)
+
+    rows = await proxy.query("question", top_k=3)
+
+    assert [row["id"] for row in rows] == ["chunk-1"]
+    assert "full_doc_id = ANY($5)" in db.calls[0]["sql"]
+    assert "$4::halfvec" in db.calls[0]["sql"]
+    assert db.calls[0]["params"] == [
+        "ragstudio_default",
+        0.8,
+        3,
+        [0.1, 0.2],
+        ["doc-1"],
+    ]
+    assert db.calls[0]["multirows"] is True
 
 
 @pytest.mark.asyncio
@@ -263,6 +509,27 @@ async def test_native_adapter_queries_raganything(tmp_path):
 
     assert result.answer == "native answer: question:hybrid:12"
     assert result.sources == []
+    assert result.timings["native_scoped_query"] is False
+
+
+@pytest.mark.asyncio
+async def test_storage_env_is_visible_to_threads_and_restored(tmp_path, monkeypatch):
+    monkeypatch.delenv("POSTGRES_WORKSPACE", raising=False)
+    monkeypatch.delenv("NEO4J_WORKSPACE", raising=False)
+    runtime_profile = profile(id="tenant", runtime_working_dir=str(tmp_path / "runtime"))
+    adapter = NativeRAGAnythingAdapter(
+        runtime_profile,
+        AppSettings(database_url="postgresql+asyncpg://user:pass@localhost:5432/ragstudio"),
+    )
+    workspace = f"ragstudio_{runtime_profile.id}"
+
+    async with adapter._storage_env():
+        assert NativeRAGAnythingAdapter._env_lock.locked() is True
+        assert os.environ["POSTGRES_WORKSPACE"] == workspace
+        assert await asyncio.to_thread(os.environ.get, "NEO4J_WORKSPACE") == workspace
+
+    assert "POSTGRES_WORKSPACE" not in os.environ
+    assert "NEO4J_WORKSPACE" not in os.environ
 
 
 def test_native_adapter_reports_scoped_query_capability(tmp_path):
@@ -273,29 +540,263 @@ def test_native_adapter_reports_scoped_query_capability(tmp_path):
 
     report = adapter.capability_report()
 
-    assert report["scoped_query"] is False
+    assert report["native_scoped_query"] is True
+    assert report["scoped_query"] == "raganything_full_doc_id_vector"
     assert (
         report["scoped_query_detail"]
-        == "Native RAG-Anything query cannot yet enforce selected document_ids."
+        == "Selected-document native query uses LightRAG chunk full_doc_id "
+        "filtering with vector/naive retrieval; graph modes are not used "
+        "under document scope."
     )
 
 
 @pytest.mark.asyncio
-async def test_native_adapter_refuses_unscoped_document_queries(tmp_path):
+async def test_native_adapter_queries_selected_documents_with_scoped_lightrag(tmp_path):
     adapter = NativeRAGAnythingAdapter(
         profile(runtime_working_dir=str(tmp_path / "runtime")),
         AppSettings(database_url="postgresql+asyncpg://user:pass@localhost:5432/ragstudio"),
     )
 
     result = await adapter.query(
-        "question",
+        "how many hadith in bukhari",
         document_ids=["doc-1"],
-        query_config={"mode": "hybrid", "top_k": 12},
+        query_config={"mode": "hybrid", "top_k": 12, "chunk_top_k": 4},
     )
 
-    assert result.error_type == "native_document_scope_unsupported"
-    assert "document_ids" in (result.error or "")
-    assert FakeRAGAnything.instances == []
+    assert result.error is None
+    assert result.error_type is None
+    assert result.answer == "native scoped answer: how many hadith in bukhari:naive:12"
+    assert result.sources == [
+        {
+            "chunk_id": "chunk-1",
+            "document_id": "doc-1",
+            "text": "Sahih al-Bukhari 7277 Hadith Collection",
+            "source_location": {"file_path": "bukhari.pdf"},
+            "metadata": {
+                "full_doc_id": "doc-1",
+                "score": 0.91,
+                "native_scope": True,
+                "source_role": "retrieved_candidate",
+                "retrieval_scope": "document_ids",
+                "retrieval_mode": "native_vector_naive",
+            },
+        }
+    ]
+    assert result.timings["native_scoped_query"] is True
+    assert result.timings["requested_query_mode"] == "hybrid"
+    assert result.timings["effective_query_mode"] == "naive"
+    assert result.timings["runtime_query_ms"] >= 0
+    rag = FakeRAGAnything.instances[0]
+    assert rag.aquery_calls == [
+        {
+            "query": "how many hadith in bukhari",
+            "mode": "naive",
+            "kwargs": {"top_k": 12, "chunk_top_k": 4, "vlm_enhanced": False},
+        }
+    ]
+    assert rag.lightrag.aquery_data_calls == 0
+    assert rag.lightrag.chunks_vdb.calls == []
+    assert rag.lightrag.chunks_vdb.query_by_full_doc_ids_calls == [
+        {
+            "query": "how many hadith in bukhari",
+            "top_k": 4,
+            "document_ids": ["doc-1"],
+            "query_embedding": None,
+        }
+    ]
+    assert rag.query_cache_enabled == [False]
+    assert rag.lightrag.llm_response_cache.global_config["enable_llm_cache"] is True
+
+
+@pytest.mark.asyncio
+async def test_native_adapter_disables_llm_cache_for_scoped_queries(tmp_path):
+    adapter = NativeRAGAnythingAdapter(
+        profile(runtime_working_dir=str(tmp_path / "runtime"), enable_llm_cache=True),
+        AppSettings(database_url="postgresql+asyncpg://user:pass@localhost:5432/ragstudio"),
+    )
+
+    await adapter.query(
+        "same scoped question",
+        document_ids=["doc-1"],
+        query_config={"mode": "hybrid", "top_k": 12, "chunk_top_k": 4},
+    )
+
+    rag = FakeRAGAnything.instances[0]
+    assert rag.query_cache_enabled == [False]
+    assert rag.lightrag.llm_response_cache.global_config["enable_llm_cache"] is True
+
+
+@pytest.mark.asyncio
+async def test_native_adapter_filters_raw_overfetch_without_scope_leak(tmp_path):
+    rag = FakeRAGAnything()
+    rag.lightrag.chunks_vdb = FakeFilterableChunkVectorStorage(
+        [
+            {
+                "id": "chunk-1",
+                "full_doc_id": "doc-1",
+                "content": "Inside document",
+                "file_path": "inside.pdf",
+                "score": 0.91,
+            },
+            {
+                "id": "chunk-2",
+                "full_doc_id": "doc-2",
+                "content": "Outside document",
+                "file_path": "outside.pdf",
+                "score": 0.88,
+            },
+        ]
+    )
+    adapter = NativeRAGAnythingAdapter(
+        profile(runtime_working_dir=str(tmp_path / "runtime")),
+        AppSettings(database_url="postgresql+asyncpg://user:pass@localhost:5432/ragstudio"),
+    )
+    adapter._rag = rag
+
+    result = await adapter.query(
+        "how many hadith in bukhari",
+        document_ids=["doc-1"],
+        query_config={"mode": "hybrid", "top_k": 12, "chunk_top_k": 4},
+    )
+
+    assert result.error is None
+    assert result.error_type is None
+    assert result.answer == "native scoped answer: how many hadith in bukhari:naive:12"
+    assert [source["chunk_id"] for source in result.sources] == ["chunk-1"]
+    assert rag.aquery_calls == [
+        {
+            "query": "how many hadith in bukhari",
+            "mode": "naive",
+            "kwargs": {"top_k": 12, "chunk_top_k": 4, "vlm_enhanced": False},
+        }
+    ]
+    assert rag.lightrag.aquery_data_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_native_adapter_scoped_query_fails_closed_for_unfiltered_storage(tmp_path):
+    rag = FakeRAGAnything()
+    original_chunks_vdb = FakeChunkVectorStorage(
+        [
+            {
+                "id": "chunk-1",
+                "full_doc_id": "doc-1",
+                "content": "Inside document",
+                "file_path": "inside.pdf",
+                "score": 0.91,
+            },
+        ]
+    )
+    rag.lightrag.chunks_vdb = original_chunks_vdb
+    adapter = NativeRAGAnythingAdapter(
+        profile(runtime_working_dir=str(tmp_path / "runtime")),
+        AppSettings(database_url="postgresql+asyncpg://user:pass@localhost:5432/ragstudio"),
+    )
+    adapter._rag = rag
+
+    with pytest.raises(RuntimeError, match="storage-level full_doc_id filtering"):
+        await adapter.query(
+            "how many hadith in bukhari",
+            document_ids=["doc-1"],
+            query_config={"mode": "hybrid", "top_k": 12, "chunk_top_k": 4},
+        )
+
+    assert rag.lightrag.chunks_vdb is original_chunks_vdb
+    assert rag.lightrag.llm_response_cache.global_config["enable_llm_cache"] is True
+
+
+@pytest.mark.asyncio
+async def test_native_adapter_reports_swallowed_scoped_storage_filter_errors(tmp_path):
+    rag = FakeRAGAnything()
+    original_chunks_vdb = FailingFilterableChunkVectorStorage(
+        [
+            {
+                "id": "chunk-1",
+                "full_doc_id": "doc-1",
+                "content": "Inside document",
+                "file_path": "inside.pdf",
+                "score": 0.91,
+            },
+        ]
+    )
+    rag.lightrag.chunks_vdb = original_chunks_vdb
+
+    async def swallowing_aquery(query, mode="mix", **kwargs):
+        rag.query_cache_enabled.append(
+            rag.lightrag.llm_response_cache.global_config.get("enable_llm_cache")
+        )
+        rag.aquery_calls.append({"query": query, "mode": mode, "kwargs": dict(kwargs)})
+        try:
+            await rag.lightrag.chunks_vdb.query(
+                query,
+                top_k=kwargs.get("chunk_top_k") or kwargs["top_k"],
+            )
+        except RuntimeError:
+            return "LightRAG fail response"
+        raise AssertionError("expected storage filter failure")
+
+    rag.aquery = swallowing_aquery
+    adapter = NativeRAGAnythingAdapter(
+        profile(runtime_working_dir=str(tmp_path / "runtime")),
+        AppSettings(database_url="postgresql+asyncpg://user:pass@localhost:5432/ragstudio"),
+    )
+    adapter._rag = rag
+
+    result = await adapter.query(
+        "how many hadith in bukhari",
+        document_ids=["doc-1"],
+        query_config={"mode": "hybrid", "top_k": 12, "chunk_top_k": 4},
+    )
+
+    assert result.answer == ""
+    assert result.sources == []
+    assert result.error_type == "native_document_scope_filter_failed"
+    assert "storage filter failed" in (result.error or "")
+    assert result.timings["native_scoped_query"] is True
+    assert result.timings["requested_query_mode"] == "hybrid"
+    assert result.timings["effective_query_mode"] == "naive"
+    assert rag.lightrag.chunks_vdb is original_chunks_vdb
+    assert rag.lightrag.llm_response_cache.global_config["enable_llm_cache"] is True
+
+
+def test_scope_leak_error_detects_polluted_collected_results(tmp_path):
+    adapter = NativeRAGAnythingAdapter(
+        profile(runtime_working_dir=str(tmp_path / "runtime")),
+        AppSettings(database_url="postgresql+asyncpg://user:pass@localhost:5432/ragstudio"),
+    )
+    proxy = SimpleNamespace(
+        collected_results=[
+            {"id": "chunk-1", "full_doc_id": "doc-1"},
+            {"id": "chunk-2", "full_doc_id": "doc-2"},
+        ]
+    )
+
+    result = adapter._scope_leak_error(proxy, ["doc-1"])
+
+    assert result is not None
+    assert result.error_type == "native_document_scope_leak"
+    assert "doc-2" in (result.error or "")
+
+
+@pytest.mark.asyncio
+async def test_scoped_chunks_vdb_restores_original_storage_when_query_raises(tmp_path):
+    rag = FakeRAGAnything()
+    original_chunks_vdb = rag.lightrag.chunks_vdb
+    rag.aquery_error = RuntimeError("native query failed")
+    adapter = NativeRAGAnythingAdapter(
+        profile(runtime_working_dir=str(tmp_path / "runtime")),
+        AppSettings(database_url="postgresql+asyncpg://user:pass@localhost:5432/ragstudio"),
+    )
+    adapter._rag = rag
+
+    with pytest.raises(RuntimeError, match="native query failed"):
+        await adapter.query(
+            "how many hadith in bukhari",
+            document_ids=["doc-1"],
+            query_config={"mode": "hybrid", "top_k": 12, "chunk_top_k": 4},
+        )
+
+    assert rag.lightrag.chunks_vdb is original_chunks_vdb
 
 
 @pytest.mark.asyncio

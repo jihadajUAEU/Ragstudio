@@ -82,6 +82,19 @@ export function GraphPage() {
         <Metric icon={GitBranch} label="Edges" value={formatCount(edges.length)} />
       </section>
 
+      {graphQuery.data?.detail ? (
+        <div className="rounded-md border border-[#f4c95d] bg-[#fff8e1] px-3 py-2 text-sm text-[#6d5700]">
+          {graphQuery.data.detail}
+        </div>
+      ) : null}
+
+      {nodes.length > previewNodes.length || edges.length > previewEdges.length ? (
+        <div className="rounded-md border border-[#d6dde1] bg-[#f7fafb] px-3 py-2 text-sm text-[#3a4a53]">
+          Showing {visualGraph.nodes.length} of {nodes.length} nodes and {visualGraph.edges.length} of{" "}
+          {edges.length} edges in the visual preview.
+        </div>
+      ) : null}
+
       {graphQuery.isLoading || diagnosticsQuery.isLoading ? (
         <EmptyState icon={Loader2} title="Loading graph" description="Fetching graph data." />
       ) : graphQuery.isError ? (

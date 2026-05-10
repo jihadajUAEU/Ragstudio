@@ -16,7 +16,7 @@ import type { RunOut, VariantOut } from "../../api/generated";
 import { EmptyState } from "../../components/empty-state";
 import { StatusBadge } from "../../components/status-badge";
 import { Button } from "../../components/ui/button";
-import { titleCase } from "../../lib/utils";
+import { titleCase, toggleId } from "../../lib/utils";
 
 const queryKeys = {
   documents: ["documents"],
@@ -340,11 +340,4 @@ function SmallState({ icon: Icon, text }: { icon: typeof AlertCircle; text: stri
       <span className="min-w-0 truncate">{text}</span>
     </div>
   );
-}
-
-function toggleId(ids: string[], id: string, checked: boolean) {
-  if (checked) {
-    return ids.includes(id) ? ids : [...ids, id];
-  }
-  return ids.filter((existingId) => existingId !== id);
 }

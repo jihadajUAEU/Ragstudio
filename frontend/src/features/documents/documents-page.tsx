@@ -29,11 +29,17 @@ export function DocumentsPage() {
     domain_metadata: { domain: "generic", document_type: "document", tags: [] },
   });
   const [metadataValid, setMetadataValid] = useState(true);
-  const documentsQuery = useQuery({ queryKey: queryKeys.documents, queryFn: apiClient.documents });
   const jobsQuery = useQuery({
     queryKey: queryKeys.jobs,
     queryFn: apiClient.jobs,
     refetchInterval: (query) => (hasActiveJobs(query.state.data?.items ?? []) ? 2000 : false),
+  });
+  const jobs = jobsQuery.data?.items ?? [];
+  const activeJobs = hasActiveJobs(jobs);
+  const documentsQuery = useQuery({
+    queryKey: queryKeys.documents,
+    queryFn: apiClient.documents,
+    refetchInterval: activeJobs ? 2000 : false,
   });
   const profilesQuery = useQuery({
     queryKey: ["domain-profiles"],
@@ -101,8 +107,6 @@ export function DocumentsPage() {
     void documentsQuery.refetch();
     void jobsQuery.refetch();
   };
-  const jobs = jobsQuery.data?.items ?? [];
-  const activeJobs = hasActiveJobs(jobs);
   const documentsById = useMemo(
     () => new Map((documentsQuery.data?.items ?? []).map((document) => [document.id, document])),
     [documentsQuery.data?.items],
@@ -111,12 +115,11 @@ export function DocumentsPage() {
   const refetchDocuments = documentsQuery.refetch;
 
   useEffect(() => {
-    const shouldSyncDocuments = activeJobs || hadActiveJobsRef.current;
+    const hadActiveJobs = hadActiveJobsRef.current;
     hadActiveJobsRef.current = activeJobs;
-    if (!shouldSyncDocuments) {
-      return;
+    if (hadActiveJobs && !activeJobs) {
+      void refetchDocuments();
     }
-    void refetchDocuments();
   }, [activeJobs, jobsQuery.dataUpdatedAt, refetchDocuments]);
 
   const documentColumns = useMemo<ColumnDef<DocumentOut>[]>(
@@ -251,7 +254,7 @@ export function DocumentsPage() {
         accessorKey: "logs",
         header: "Latest log",
         cell: ({ row }) => {
-          const mineruStatus = formatMinerUResult(row.original.result);
+          const mineruStatus = formatMinerUResult(row.original);
 
           return (
             <div className="min-w-0 space-y-1 text-xs text-[#62717a]">
@@ -436,17 +439,28 @@ function formatJobType(type: string): string {
 function getJobProgress(job: JobOut): number {
   const mineru = getMinerUStatus(job.result);
   const progress = mineru?.progress ?? job.progress;
+  const rounded = Math.max(0, Math.min(Math.round(progress), 100));
 
-  return Math.max(0, Math.min(Math.round(progress), 100));
+  if (job.status === "running") {
+    return Math.min(rounded, 99);
+  }
+  return rounded;
 }
 
-function formatMinerUResult(result: Record<string, unknown>): string | null {
-  const mineru = getMinerUStatus(result);
+function formatMinerUResult(job: JobOut): string | null {
+  const mineru = getMinerUStatus(job.result);
   if (!mineru) {
     return null;
   }
 
-  const progress = typeof mineru.progress === "number" ? `${Math.round(mineru.progress)}%` : null;
+  if (job.status === "running" && mineru.status === "Ready") {
+    return "Ready · Finalizing index";
+  }
+
+  const progress =
+    typeof mineru.progress === "number"
+      ? `${Math.min(Math.round(mineru.progress), job.status === "running" ? 99 : 100)}%`
+      : null;
 
   return [mineru.status, progress, mineru.detail].filter(Boolean).join(" · ") || null;
 }

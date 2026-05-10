@@ -14,17 +14,18 @@ import {
 } from "lucide-react";
 
 import { apiClient } from "../../api/client";
-import type { ExperimentScoreOut, RunOut } from "../../api/generated";
+import type { ExperimentScoreOut, ExperimentSummaryOut, RunOut } from "../../api/generated";
 import { DataTable } from "../../components/data-table";
 import { EmptyState } from "../../components/empty-state";
 import { StatusBadge } from "../../components/status-badge";
 import { Button } from "../../components/ui/button";
-import { formatCount, titleCase } from "../../lib/utils";
+import { formatCount, parseJsonObject, titleCase, toggleId } from "../../lib/utils";
 
 const queryKeys = {
   documents: ["documents"],
   variants: ["variants"],
   evaluationSets: ["evaluation-sets"],
+  experiments: ["experiments"],
   runs: ["runs"],
 } as const;
 
@@ -36,6 +37,16 @@ export function ExperimentsPage() {
     queryKey: queryKeys.evaluationSets,
     queryFn: apiClient.evaluationSets,
   });
+  const experimentsQuery = useQuery({
+    queryKey: queryKeys.experiments,
+    queryFn: apiClient.experiments,
+  });
+  const [selectedExperimentId, setSelectedExperimentId] = useState("");
+  const selectedExperimentQuery = useQuery({
+    queryKey: [...queryKeys.experiments, selectedExperimentId],
+    queryFn: () => apiClient.getExperiment(selectedExperimentId),
+    enabled: Boolean(selectedExperimentId),
+  });
   const [name, setName] = useState("Experiment");
   const [selectedDocumentIds, setSelectedDocumentIds] = useState<string[]>([]);
   const [selectedVariantIds, setSelectedVariantIds] = useState<string[]>([]);
@@ -45,15 +56,17 @@ export function ExperimentsPage() {
 
   const createExperiment = useMutation({
     mutationFn: apiClient.createExperiment,
-    onSuccess: () => {
+    onSuccess: (experiment) => {
       setFormError("");
+      setSelectedExperimentId(experiment.id);
+      void queryClient.invalidateQueries({ queryKey: queryKeys.experiments });
       void queryClient.invalidateQueries({ queryKey: queryKeys.runs });
     },
   });
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const objective = parseObject(objectiveText);
+    const objective = parseJsonObject(objectiveText);
     if (!objective.ok) {
       setFormError(objective.message);
       return;
@@ -79,9 +92,13 @@ export function ExperimentsPage() {
     });
   };
 
+  const displayedExperiment =
+    selectedExperimentQuery.data ??
+    (selectedExperimentId === createExperiment.data?.id ? createExperiment.data : undefined);
+
   const scoreByRunId = useMemo(
-    () => new Map((createExperiment.data?.scores ?? []).map((score) => [score.run_id, score])),
-    [createExperiment.data?.scores],
+    () => new Map((displayedExperiment?.scores ?? []).map((score) => [score.run_id, score])),
+    [displayedExperiment?.scores],
   );
 
   const runColumns = useMemo<ColumnDef<RunOut>[]>(
@@ -138,6 +155,50 @@ export function ExperimentsPage() {
     [],
   );
 
+  const historyColumns = useMemo<ColumnDef<ExperimentSummaryOut>[]>(
+    () => [
+      {
+        accessorKey: "name",
+        header: "Name",
+        cell: ({ row }) => <span className="block truncate font-medium">{row.original.name}</span>,
+      },
+      {
+        id: "run_count",
+        header: "Runs",
+        cell: ({ row }) => <span>{formatCount(row.original.run_count)}</span>,
+      },
+      {
+        id: "score_count",
+        header: "Scores",
+        cell: ({ row }) => <span>{formatCount(row.original.score_count)}</span>,
+      },
+      {
+        id: "objective_keys",
+        header: "Objective",
+        cell: ({ row }) => (
+          <code className="block truncate text-xs text-[#62717a]">
+            {objectiveKeys(row.original.objective)}
+          </code>
+        ),
+      },
+      {
+        id: "actions",
+        header: "Details",
+        cell: ({ row }) => (
+          <Button
+            type="button"
+            size="sm"
+            variant={selectedExperimentId === row.original.id ? "default" : "secondary"}
+            onClick={() => setSelectedExperimentId(row.original.id)}
+          >
+            View
+          </Button>
+        ),
+      },
+    ],
+    [selectedExperimentId],
+  );
+
   const isLoadingChoices =
     documentsQuery.isLoading || variantsQuery.isLoading || evaluationSetsQuery.isLoading;
   const choiceError =
@@ -148,6 +209,7 @@ export function ExperimentsPage() {
     selectedDocumentIds.length > 0 &&
     selectedVariantIds.length > 0 &&
     Boolean(evaluationSetId);
+  const detailError = selectedExperimentQuery.error?.message;
 
   return (
     <div className="mx-auto grid max-w-7xl gap-6 xl:grid-cols-[minmax(340px,0.42fr)_minmax(0,0.58fr)]">
@@ -257,55 +319,100 @@ export function ExperimentsPage() {
         </div>
       </form>
 
-      <section className="min-w-0">
-        <div className="mb-3 flex items-center gap-2">
-          <Trophy className="h-4 w-4 text-[#176b87]" aria-hidden="true" />
-          <h2 className="truncate text-base font-semibold text-[#1f2933]">Runs and scores</h2>
-        </div>
-        {isLoadingChoices ? (
-          <EmptyState icon={Loader2} title="Loading experiment inputs" description="Fetching documents, variants, and evaluation sets." />
-        ) : createExperiment.isPending ? (
-          <EmptyState icon={Loader2} title="Running experiment" description="Executing cases across selected variants." />
-        ) : createExperiment.isError ? (
-          <EmptyState
-            icon={AlertCircle}
-            title="Experiment failed"
-            description={createExperiment.error.message}
-            action={
-              <Button variant="secondary" onClick={() => createExperiment.reset()}>
-                <RefreshCcw className="h-4 w-4" aria-hidden="true" />
-                Clear
-              </Button>
-            }
-          />
-        ) : createExperiment.data ? (
-          <div className="space-y-4">
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              <Metric label="Experiment" value={createExperiment.data.name} />
-              <Metric label="Experiment ID" value={createExperiment.data.id} />
-              <Metric label="Runs" value={formatCount(createExperiment.data.runs.length)} />
-              <Metric label="Scores" value={formatCount(createExperiment.data.scores.length)} />
-            </div>
-            <DataTable
-              columns={runColumns}
-              data={createExperiment.data.runs}
-              emptyTitle="No experiment runs"
-              emptyDescription="Returned runs will appear here."
-            />
-            <DataTable
-              columns={scoreColumns}
-              data={createExperiment.data.scores}
-              emptyTitle="No scores"
-              emptyDescription="Score rows will appear after evaluation."
-            />
+      <section className="min-w-0 space-y-6">
+        <div>
+          <div className="mb-3 flex items-center gap-2">
+            <ClipboardCheck className="h-4 w-4 text-[#176b87]" aria-hidden="true" />
+            <h2 className="truncate text-base font-semibold text-[#1f2933]">Experiment history</h2>
           </div>
-        ) : (
-          <EmptyState
-            icon={ClipboardCheck}
-            title="No experiment run yet"
-            description="Choose inputs and run an experiment to compare scored outputs."
-          />
-        )}
+          {experimentsQuery.isLoading ? (
+            <EmptyState icon={Loader2} title="Loading experiments" description="Fetching prior experiment runs." />
+          ) : experimentsQuery.isError ? (
+            <EmptyState
+              icon={AlertCircle}
+              title="Experiment history unavailable"
+              description={experimentsQuery.error.message}
+              action={
+                <Button variant="secondary" onClick={() => void experimentsQuery.refetch()}>
+                  <RefreshCcw className="h-4 w-4" aria-hidden="true" />
+                  Retry
+                </Button>
+              }
+            />
+          ) : (
+            <DataTable
+              columns={historyColumns}
+              data={experimentsQuery.data?.items ?? []}
+              emptyTitle="No experiment history"
+              emptyDescription="Created experiments will appear here with their run and score counts."
+            />
+          )}
+        </div>
+
+        <div>
+          <div className="mb-3 flex items-center gap-2">
+            <Trophy className="h-4 w-4 text-[#176b87]" aria-hidden="true" />
+            <h2 className="truncate text-base font-semibold text-[#1f2933]">Runs and scores</h2>
+          </div>
+          {isLoadingChoices ? (
+            <EmptyState icon={Loader2} title="Loading experiment inputs" description="Fetching documents, variants, and evaluation sets." />
+          ) : createExperiment.isPending ? (
+            <EmptyState icon={Loader2} title="Running experiment" description="Executing cases across selected variants." />
+          ) : selectedExperimentQuery.isLoading ? (
+            <EmptyState icon={Loader2} title="Loading experiment detail" description="Fetching saved runs and scores." />
+          ) : createExperiment.isError ? (
+            <EmptyState
+              icon={AlertCircle}
+              title="Experiment failed"
+              description={createExperiment.error.message}
+              action={
+                <Button variant="secondary" onClick={() => createExperiment.reset()}>
+                  <RefreshCcw className="h-4 w-4" aria-hidden="true" />
+                  Clear
+                </Button>
+              }
+            />
+          ) : selectedExperimentQuery.isError ? (
+            <EmptyState
+              icon={AlertCircle}
+              title="Experiment detail unavailable"
+              description={detailError ?? "Unable to fetch saved experiment detail."}
+              action={
+                <Button variant="secondary" onClick={() => void selectedExperimentQuery.refetch()}>
+                  <RefreshCcw className="h-4 w-4" aria-hidden="true" />
+                  Retry
+                </Button>
+              }
+            />
+          ) : displayedExperiment ? (
+            <div className="space-y-4">
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                <Metric label="Experiment" value={displayedExperiment.name} />
+                <Metric label="Experiment ID" value={displayedExperiment.id} />
+                <Metric label="Runs" value={formatCount(displayedExperiment.runs.length)} />
+                <Metric label="Scores" value={formatCount(displayedExperiment.scores.length)} />
+              </div>
+              <DataTable
+                columns={runColumns}
+                data={displayedExperiment.runs}
+                emptyTitle="No experiment runs"
+                emptyDescription="Returned runs will appear here."
+              />
+              <DataTable
+                columns={scoreColumns}
+                data={displayedExperiment.scores}
+                emptyTitle="No scores"
+                emptyDescription="Score rows will appear after evaluation."
+              />
+            </div>
+          ) : (
+            <EmptyState
+              icon={ClipboardCheck}
+              title="No experiment run yet"
+              description="Choose inputs and run an experiment to compare scored outputs."
+            />
+          )}
+        </div>
       </section>
     </div>
   );
@@ -396,21 +503,6 @@ function SmallState({ icon: Icon, text }: { icon: typeof AlertCircle; text: stri
   );
 }
 
-function toggleId(ids: string[], id: string, checked: boolean) {
-  if (checked) {
-    return ids.includes(id) ? ids : [...ids, id];
-  }
-  return ids.filter((existingId) => existingId !== id);
-}
-
-function parseObject(text: string): { ok: true; value: Record<string, unknown> } | { ok: false; message: string } {
-  try {
-    const parsed: unknown = JSON.parse(text || "{}");
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      return { ok: false, message: "Objective must be a JSON object." };
-    }
-    return { ok: true, value: parsed as Record<string, unknown> };
-  } catch {
-    return { ok: false, message: "Objective JSON is malformed." };
-  }
+function objectiveKeys(objective: Record<string, unknown>) {
+  return Object.keys(objective).join(", ") || "none";
 }

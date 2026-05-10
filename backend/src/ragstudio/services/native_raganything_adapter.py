@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import threading
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from functools import partial
@@ -18,10 +19,205 @@ from ragstudio.services.runtime_types import RuntimeChunk, RuntimeQueryResult
 from sqlalchemy.engine import make_url
 
 
+class _AsyncThreadLock:
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+
+    async def __aenter__(self) -> _AsyncThreadLock:
+        while not self._lock.acquire(blocking=False):
+            await asyncio.sleep(0)
+        return self
+
+    async def __aexit__(self, *exc_info: object) -> None:
+        self._lock.release()
+
+    def locked(self) -> bool:
+        return self._lock.locked()
+
+
+class ScopedVectorStorageProxy:
+    """Filters LightRAG chunk vector results to selected RAG-Anything doc IDs."""
+
+    def __init__(
+        self,
+        base: Any,
+        document_ids: list[str],
+        *,
+        overfetch_multiplier: int = 8,
+        max_fetch: int = 200,
+        require_storage_filter: bool = False,
+    ) -> None:
+        self.base = base
+        self.document_ids = {str(document_id) for document_id in document_ids}
+        self.overfetch_multiplier = max(1, overfetch_multiplier)
+        self.max_fetch = max(1, max_fetch)
+        self.require_storage_filter = require_storage_filter
+        self.raw_results: list[dict[str, Any]] = []
+        self.collected_results: list[dict[str, Any]] = []
+        self.query_error: Exception | None = None
+
+    async def query(
+        self,
+        query: str,
+        top_k: int,
+        query_embedding: list[float] | None = None,
+    ) -> list[dict[str, Any]]:
+        try:
+            if self._supports_direct_full_doc_filter():
+                rows = await self.base.query_by_full_doc_ids(
+                    query,
+                    top_k,
+                    list(self.document_ids),
+                    query_embedding=query_embedding,
+                )
+                return self._record_scoped_rows(rows, top_k)
+
+            if self._supports_pgvector_full_doc_filter():
+                rows = await self._query_pgvector_by_full_doc_ids(
+                    query,
+                    top_k,
+                    query_embedding=query_embedding,
+                )
+                return self._record_scoped_rows(rows, top_k)
+
+            if self.require_storage_filter:
+                raise RuntimeError(
+                    "LightRAG vector storage does not support storage-level full_doc_id filtering."
+                )
+
+            requested_top_k = min(
+                max(top_k * self.overfetch_multiplier, top_k),
+                self.max_fetch,
+            )
+            rows = await self.base.query(
+                query,
+                top_k=requested_top_k,
+                query_embedding=query_embedding,
+            )
+            rows = await self._with_full_doc_ids(rows)
+            self.raw_results.extend(rows)
+            scoped_rows = [
+                row
+                for row in rows
+                if str(row.get("full_doc_id") or "") in self.document_ids
+            ][:top_k]
+            self.collected_results.extend(scoped_rows)
+            return scoped_rows
+        except Exception as exc:
+            self.query_error = exc
+            raise
+
+    def supports_storage_filter(self) -> bool:
+        return (
+            self._supports_direct_full_doc_filter()
+            or self._supports_pgvector_full_doc_filter()
+        )
+
+    def _supports_direct_full_doc_filter(self) -> bool:
+        return callable(getattr(self.base, "query_by_full_doc_ids", None))
+
+    def _supports_pgvector_full_doc_filter(self) -> bool:
+        return all(
+            hasattr(self.base, name)
+            for name in (
+                "db",
+                "table_name",
+                "workspace",
+                "embedding_func",
+                "cosine_better_than_threshold",
+            )
+        )
+
+    async def _query_pgvector_by_full_doc_ids(
+        self,
+        query: str,
+        top_k: int,
+        query_embedding: list[float] | None = None,
+    ) -> list[dict[str, Any]]:
+        if query_embedding is not None:
+            embedding = query_embedding
+        else:
+            embeddings = await self.base.embedding_func(
+                [query],
+                context="query",
+                _priority=5,
+            )
+            embedding = embeddings[0]
+
+        vector_cast = (
+            "halfvec"
+            if getattr(self.base.db, "vector_index_type", None) == "HNSW_HALFVEC"
+            else "vector"
+        )
+        sql = f"""
+            SELECT id,
+                   content,
+                   file_path,
+                   full_doc_id,
+                   EXTRACT(EPOCH FROM create_time)::BIGINT AS created_at,
+                   1 - (content_vector <=> $4::{vector_cast}) AS score
+            FROM {self.base.table_name}
+            WHERE workspace = $1
+              AND content_vector <=> $4::{vector_cast} < $2
+              AND full_doc_id = ANY($5)
+            ORDER BY content_vector <=> $4::{vector_cast}
+            LIMIT $3;
+        """
+        params = [
+            self.base.workspace,
+            1 - self.base.cosine_better_than_threshold,
+            top_k,
+            embedding,
+            list(self.document_ids),
+        ]
+        rows = await self.base.db.query(sql, params=params, multirows=True)
+        return [dict(row) for row in rows if row is not None]
+
+    def _record_scoped_rows(
+        self,
+        rows: list[dict[str, Any]],
+        top_k: int,
+    ) -> list[dict[str, Any]]:
+        rows = [dict(row) for row in rows if row is not None]
+        self.raw_results.extend(rows)
+        scoped_rows = [
+            row
+            for row in rows
+            if str(row.get("full_doc_id") or "") in self.document_ids
+        ][:top_k]
+        self.collected_results.extend(scoped_rows)
+        return scoped_rows
+
+    async def _with_full_doc_ids(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        missing_ids = [
+            str(row.get("id"))
+            for row in rows
+            if row.get("id") is not None and not row.get("full_doc_id")
+        ]
+        if not missing_ids or not hasattr(self.base, "get_by_ids"):
+            return rows
+
+        hydrated_rows = await self.base.get_by_ids(missing_ids)
+        hydrated_by_id = {
+            str(row.get("id")): dict(row)
+            for row in hydrated_rows
+            if isinstance(row, dict) and row.get("id") is not None
+        }
+        return [
+            {**hydrated_by_id.get(str(row.get("id")), {}), **row}
+            if row.get("full_doc_id")
+            else {**row, **hydrated_by_id.get(str(row.get("id")), {})}
+            for row in rows
+        ]
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.base, name)
+
+
 class NativeRAGAnythingAdapter:
     """Runtime adapter for the real RAG-Anything and LightRAG stack."""
 
-    _env_lock = asyncio.Lock()
+    _env_lock = _AsyncThreadLock()
 
     def __init__(self, profile: RuntimeProfile, settings: AppSettings | None = None):
         self.profile = profile
@@ -35,9 +231,12 @@ class NativeRAGAnythingAdapter:
             "indexing": "raganything",
             "query": "raganything",
             "graph": "neo4j",
-            "scoped_query": False,
+            "native_scoped_query": True,
+            "scoped_query": "raganything_full_doc_id_vector",
             "scoped_query_detail": (
-                "Native RAG-Anything query cannot yet enforce selected document_ids."
+                "Selected-document native query uses LightRAG chunk full_doc_id "
+                "filtering with vector/naive retrieval; graph modes are not used "
+                "under document scope."
             ),
         }
 
@@ -92,32 +291,52 @@ class NativeRAGAnythingAdapter:
         document_ids: list[str],
         query_config: dict[str, Any],
     ) -> RuntimeQueryResult:
-        if document_ids:
-            return RuntimeQueryResult(
-                answer="",
-                sources=[],
-                timings={},
-                error=(
-                    "Native RAG-Anything query cannot yet enforce selected document_ids; "
-                    "refusing to run an unscoped runtime query."
-                ),
-                error_type="native_document_scope_unsupported",
-            )
         rag = self._raganything()
         mode = str(query_config.get("mode") or self.profile.query_mode)
         kwargs = self._query_kwargs(query_config)
         started = asyncio.get_running_loop().time()
         async with self._storage_env():
+            if document_ids:
+                effective_mode = "naive"
+                kwargs["vlm_enhanced"] = False
+                async with self._scoped_chunks_vdb(rag, document_ids) as scoped_proxy:
+                    answer = await rag.aquery(query, mode=effective_mode, **kwargs)
+                    timings = self._scoped_query_timings(started, mode, effective_mode)
+                    if scoped_proxy.query_error is not None:
+                        return RuntimeQueryResult(
+                            answer="",
+                            sources=[],
+                            timings=timings,
+                            error=(
+                                "Native RAG-Anything scoped query failed while applying "
+                                "full_doc_id storage filter: "
+                                f"{scoped_proxy.query_error}"
+                            ),
+                            error_type="native_document_scope_filter_failed",
+                        )
+                    leak = self._scope_leak_error(scoped_proxy, document_ids)
+                    if leak is not None:
+                        return leak
+                    return RuntimeQueryResult(
+                        answer=str(answer or ""),
+                        sources=self._native_sources_from_proxy(
+                            scoped_proxy,
+                            document_ids,
+                        ),
+                        timings=timings,
+                    )
+
             await self._ensure_lightrag(rag)
             answer = await rag.aquery(query, mode=mode, **kwargs)
         return RuntimeQueryResult(
             answer=str(answer or ""),
-            sources=[{"document_id": document_id} for document_id in document_ids],
+            sources=[],
             timings={
                 "runtime_query_ms": round(
                     (asyncio.get_running_loop().time() - started) * 1000,
                     3,
-                )
+                ),
+                "native_scoped_query": False,
             },
         )
 
@@ -254,6 +473,124 @@ class NativeRAGAnythingAdapter:
             result = await ensure()
             if isinstance(result, dict) and not result.get("success", True):
                 raise RuntimeError(result.get("error") or "LightRAG initialization failed.")
+
+    def _scoped_query_timings(
+        self,
+        started: float,
+        requested_mode: str,
+        effective_mode: str,
+    ) -> dict[str, Any]:
+        return {
+            "runtime_query_ms": round(
+                (asyncio.get_running_loop().time() - started) * 1000,
+                3,
+            ),
+            "native_scoped_query": True,
+            "requested_query_mode": requested_mode,
+            "effective_query_mode": effective_mode,
+        }
+
+    @asynccontextmanager
+    async def _scoped_chunks_vdb(
+        self,
+        rag: Any,
+        document_ids: list[str],
+    ) -> AsyncIterator[ScopedVectorStorageProxy]:
+        await self._ensure_lightrag(rag)
+        lightrag = getattr(rag, "lightrag", None)
+        if lightrag is None or not hasattr(lightrag, "chunks_vdb"):
+            raise RuntimeError("LightRAG chunks vector storage is not initialized.")
+
+        original_chunks_vdb = lightrag.chunks_vdb
+        cache_config = self._llm_cache_config(lightrag)
+        cache_had_enabled_key = (
+            "enable_llm_cache" in cache_config if cache_config is not None else False
+        )
+        original_cache_enabled = (
+            cache_config.get("enable_llm_cache") if cache_config is not None else None
+        )
+        proxy = ScopedVectorStorageProxy(
+            original_chunks_vdb,
+            document_ids,
+            require_storage_filter=True,
+        )
+        if not proxy.supports_storage_filter():
+            raise RuntimeError(
+                "LightRAG vector storage does not support storage-level full_doc_id filtering."
+            )
+        lightrag.chunks_vdb = proxy
+        if cache_config is not None:
+            cache_config["enable_llm_cache"] = False
+        try:
+            yield proxy
+        finally:
+            lightrag.chunks_vdb = original_chunks_vdb
+            if cache_config is not None:
+                if cache_had_enabled_key:
+                    cache_config["enable_llm_cache"] = original_cache_enabled
+                else:
+                    cache_config.pop("enable_llm_cache", None)
+
+    def _llm_cache_config(self, lightrag: Any) -> dict[str, Any] | None:
+        cache = getattr(lightrag, "llm_response_cache", None)
+        global_config = getattr(cache, "global_config", None)
+        return global_config if isinstance(global_config, dict) else None
+
+    def _native_sources_from_proxy(
+        self,
+        proxy: ScopedVectorStorageProxy,
+        document_ids: list[str],
+    ) -> list[dict[str, Any]]:
+        allowed = set(document_ids)
+        deduped: dict[str, dict[str, Any]] = {}
+        for row in proxy.collected_results:
+            document_id = str(row.get("full_doc_id") or "")
+            if document_id not in allowed:
+                continue
+            chunk_id = str(row.get("id") or "")
+            if not chunk_id or chunk_id in deduped:
+                continue
+            deduped[chunk_id] = {
+                "chunk_id": chunk_id,
+                "document_id": document_id,
+                "text": str(row.get("content") or ""),
+                "source_location": {"file_path": row.get("file_path")},
+                "metadata": {
+                    "full_doc_id": document_id,
+                    "score": row.get("score"),
+                    "native_scope": True,
+                    "source_role": "retrieved_candidate",
+                    "retrieval_scope": "document_ids",
+                    "retrieval_mode": "native_vector_naive",
+                },
+            }
+        return list(deduped.values())
+
+    def _scope_leak_error(
+        self,
+        proxy: ScopedVectorStorageProxy,
+        document_ids: list[str],
+    ) -> RuntimeQueryResult | None:
+        allowed = set(document_ids)
+        leaked_ids = sorted(
+            {
+                str(row.get("full_doc_id") or "")
+                for row in proxy.collected_results
+                if str(row.get("full_doc_id") or "") not in allowed
+            }
+        )
+        if not leaked_ids:
+            return None
+        return RuntimeQueryResult(
+            answer="",
+            sources=[],
+            timings={},
+            error=(
+                "Native RAG-Anything scoped query returned chunks outside selected "
+                f"document_ids: {', '.join(leaked_ids)}"
+            ),
+            error_type="native_document_scope_leak",
+        )
 
     @asynccontextmanager
     async def _storage_env(self) -> AsyncIterator[None]:

@@ -256,17 +256,25 @@ export interface JobOut {
   result: Record<string, unknown>;
 }
 
+export type VariantPreset = "balanced" | "precise" | "broad" | "fast";
+
 export interface VariantOut {
   id: string;
   name: string;
-  preset: string;
+  preset: VariantPreset;
   parameters: Record<string, unknown>;
 }
 
 export interface VariantIn {
   name: string;
-  preset: string;
+  preset: VariantPreset;
   parameters: Record<string, unknown>;
+}
+
+export interface VariantUpdate {
+  name: string;
+  preset: VariantPreset;
+  parameters?: Record<string, unknown>;
 }
 
 export interface ChunkOut {
@@ -351,6 +359,17 @@ export interface ExperimentOut extends ExperimentIn {
   scores: ExperimentScoreOut[];
 }
 
+export interface ExperimentSummaryOut extends ExperimentIn {
+  id: string;
+  run_count: number;
+  score_count: number;
+}
+
+export interface ExperimentPage {
+  items: ExperimentSummaryOut[];
+  total: number;
+}
+
 export interface OptimizerIn {
   experiment_id: string;
   objective: Record<string, unknown>;
@@ -359,10 +378,14 @@ export interface OptimizerIn {
 export interface OptimizerCandidateSummary {
   variant_id: string;
   run_count: number;
-  average_score: number;
-  total_score: number;
+  average_score: number | null;
+  total_score: number | null;
   best_run_id: string | null;
   best_run_score: number | null;
+  score_status?: string;
+  scoreable_run_count?: number;
+  unscored_run_count?: number;
+  failed_run_count?: number;
 }
 
 export interface OptimizerOut {
@@ -407,4 +430,5 @@ export interface DiagnosticsOut {
 export interface GraphOut {
   nodes: Record<string, unknown>[];
   edges: Record<string, unknown>[];
+  detail?: string | null;
 }

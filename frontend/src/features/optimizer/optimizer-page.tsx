@@ -9,7 +9,7 @@ import { DataTable } from "../../components/data-table";
 import { EmptyState } from "../../components/empty-state";
 import { StatusBadge } from "../../components/status-badge";
 import { Button } from "../../components/ui/button";
-import { formatCount } from "../../lib/utils";
+import { formatCount, parseJsonObject } from "../../lib/utils";
 
 const queryKeys = {
   runs: ["runs"],
@@ -41,7 +41,7 @@ export function OptimizerPage() {
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const objective = parseObject(objectiveText);
+    const objective = parseJsonObject(objectiveText);
     if (!objective.ok) {
       setFormError(objective.message);
       return;
@@ -105,12 +105,17 @@ export function OptimizerPage() {
       {
         accessorKey: "average_score",
         header: "Average",
-        cell: ({ row }) => <span className="font-medium">{row.original.average_score}</span>,
+        cell: ({ row }) => <span className="font-medium">{formatScore(row.original.average_score)}</span>,
       },
       {
         accessorKey: "best_run_score",
         header: "Best",
-        cell: ({ row }) => <span>{row.original.best_run_score ?? "n/a"}</span>,
+        cell: ({ row }) => <span>{formatScore(row.original.best_run_score)}</span>,
+      },
+      {
+        accessorKey: "score_status",
+        header: "Status",
+        cell: ({ row }) => <span>{formatScoreStatus(row.original)}</span>,
       },
     ],
     [variantById],
@@ -289,14 +294,20 @@ function selectedVariantName(id: string | null, variants: Map<string, VariantOut
   return variants.get(id)?.name ?? id;
 }
 
-function parseObject(text: string): { ok: true; value: Record<string, unknown> } | { ok: false; message: string } {
-  try {
-    const parsed: unknown = JSON.parse(text || "{}");
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      return { ok: false, message: "Objective must be a JSON object." };
-    }
-    return { ok: true, value: parsed as Record<string, unknown> };
-  } catch {
-    return { ok: false, message: "Objective JSON is malformed." };
+function formatScore(score: number | null | undefined) {
+  return typeof score === "number" ? score : "n/a";
+}
+
+function formatScoreStatus(summary: OptimizerCandidateSummary) {
+  const status = summary.score_status ?? "unscored";
+  if (status === "partial") {
+    return `${summary.scoreable_run_count ?? 0} scored`;
   }
+  if (status === "scoreable") {
+    return "Scored";
+  }
+  if (status === "failed") {
+    return "Failed";
+  }
+  return "Unscored";
 }

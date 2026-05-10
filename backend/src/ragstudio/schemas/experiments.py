@@ -23,3 +23,14 @@ class ExperimentOut(ExperimentIn):
     id: str
     runs: list[RunOut] = []
     scores: list[ExperimentScoreOut] = []
+
+
+class ExperimentSummaryOut(ExperimentIn):
+    id: str
+    run_count: int = 0
+    score_count: int = 0
+
+
+class ExperimentPage(StudioModel):
+    items: list[ExperimentSummaryOut]
+    total: int

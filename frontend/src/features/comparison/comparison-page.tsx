@@ -9,6 +9,7 @@ import { DataTable } from "../../components/data-table";
 import { EmptyState } from "../../components/empty-state";
 import { StatusBadge } from "../../components/status-badge";
 import { Button } from "../../components/ui/button";
+import { toggleId } from "../../lib/utils";
 
 const queryKeys = {
   runs: ["runs"],
@@ -207,11 +208,4 @@ function JsonPanel({ title, items }: { title: string; items: Record<string, unkn
       )}
     </details>
   );
-}
-
-function toggleId(ids: string[], id: string, checked: boolean) {
-  if (checked) {
-    return ids.includes(id) ? ids : [...ids, id];
-  }
-  return ids.filter((existingId) => existingId !== id);
 }

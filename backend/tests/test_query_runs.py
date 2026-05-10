@@ -9,7 +9,15 @@ class FakeRuntime:
     async def query(self, query, *, document_ids, query_config):
         return RuntimeQueryResult(
             answer=f"runtime route: {query}",
-            sources=[{"document_id": document_ids[0]}],
+            sources=[
+                {
+                    "chunk_id": "runtime-chunk-1",
+                    "document_id": document_ids[0],
+                    "text": f"runtime route: {query}",
+                    "source_location": {},
+                    "metadata": {"native_scope": True},
+                }
+            ],
             chunk_traces=[{"rank": 1, "inclusion_status": "prompt-included"}],
             reranker_traces=[{"rank": 1, "score": 0.75}],
             timings={"runtime_query_ms": 3},
@@ -32,6 +40,11 @@ class FakeRuntimeFactory:
 
     def build(self, profile):
         return self.runtime
+
+
+class FakeRuntimeAnswerService:
+    async def answer(self, query, evidence, profile):
+        return f"runtime route: {query}", {"prompt_tokens": 9}
 
 
 class PassingHealthService:
@@ -392,6 +405,10 @@ async def test_query_route_uses_runtime_profile_when_configured(client, monkeypa
         "ragstudio.services.query_service.RuntimeHealthService",
         PassingHealthService,
     )
+    monkeypatch.setattr(
+        "ragstudio.services.retrieval_orchestrator.RuntimeAnswerService",
+        FakeRuntimeAnswerService,
+    )
     app = client._transport.app
     async with app.state.session_factory() as session:
         session.add(
@@ -446,7 +463,7 @@ async def test_query_route_uses_runtime_profile_when_configured(client, monkeypa
     assert run["runtime_profile_id"] == "default"
     assert run["query_config"]["top_k"] == 7
     assert run["query_config"]["parser"] == "mineru"
-    assert run["reranker_traces"][0]["score"] == 0.75
+    assert run["timings"]["runtime_query_ms"] == 3
     assert run["token_metadata"]["prompt_tokens"] == 9
 
 

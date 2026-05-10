@@ -1,6 +1,6 @@
 import "@testing-library/jest-dom/vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { DocumentsPage } from "../src/features/documents/documents-page";
@@ -360,27 +360,59 @@ describe("DocumentsPage", () => {
     expect(screen.queryByText("doc-1")).not.toBeInTheDocument();
   });
 
-  it("refreshes documents from live job polling while work is active", async () => {
-    vi.mocked(apiClient.jobs).mockResolvedValue({
-      items: [
-        {
-          id: "job-1",
-          type: "index_document",
-          status: "running",
-          target_id: "doc-1",
-          progress: 25,
-          logs: [],
-          result: {},
-        },
-      ],
-      total: 1,
-    });
+  it("polls jobs and documents while work is active", async () => {
+    vi.useFakeTimers();
+    vi.mocked(apiClient.jobs)
+      .mockResolvedValueOnce({
+        items: [
+          {
+            id: "job-1",
+            type: "index_document",
+            status: "running",
+            target_id: "doc-1",
+            progress: 25,
+            logs: [],
+            result: {},
+          },
+        ],
+        total: 1,
+      })
+      .mockResolvedValue({
+        items: [
+          {
+            id: "job-1",
+            type: "index_document",
+            status: "succeeded",
+            target_id: "doc-1",
+            progress: 100,
+            logs: [],
+            result: {},
+          },
+        ],
+        total: 1,
+      });
 
-    renderDocumentsPage();
+    try {
+      renderDocumentsPage();
 
-    await waitFor(() => {
-      expect(apiClient.documents).toHaveBeenCalledTimes(2);
-    });
+      await vi.waitFor(() => {
+        expect(apiClient.jobs).toHaveBeenCalledTimes(1);
+        expect(apiClient.documents).toHaveBeenCalledTimes(1);
+      });
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000);
+      });
+
+      await vi.waitFor(() => {
+        expect(apiClient.jobs).toHaveBeenCalledTimes(2);
+      });
+      await vi.waitFor(() => {
+        expect(apiClient.documents).toHaveBeenCalledTimes(3);
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("does not delete when confirmation is cancelled", async () => {
