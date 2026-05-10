@@ -4,8 +4,7 @@ from ragstudio.schemas.common import StageStatus
 from ragstudio.schemas.query import QueryIn
 from ragstudio.schemas.runtime import RuntimeHealthCheck
 from ragstudio.services.query_service import QueryResourceNotFoundError, QueryService
-from ragstudio.services.retrieval_evidence import OrchestratedAnswer
-from ragstudio.services.retrieval_orchestrator import NativeScopedQueryUnsupported
+from ragstudio.services.retrieval_orchestrator import RetrievalOrchestrator
 from ragstudio.services.runtime_profile_service import RuntimeProfileService
 from ragstudio.services.runtime_types import RuntimeQueryResult
 
@@ -61,65 +60,54 @@ class FakeHealthService:
         ]
 
 
-class FakeOrchestrator:
-    def __init__(
-        self,
-        *,
-        answer: str | None = None,
-        sources: list[dict] | None = None,
-        chunk_traces: list[dict] | None = None,
-        reranker_traces: list[dict] | None = None,
-        token_metadata: dict | None = None,
-        timings: dict | None = None,
-        error: str | None = None,
-        error_type: str | None = None,
-        raise_native_scope_unsupported: bool = False,
-        native_scope_timings: dict | None = None,
-    ):
-        self.answer = answer
-        self.sources = sources
-        self.chunk_traces = chunk_traces
-        self.reranker_traces = reranker_traces
-        self.token_metadata = token_metadata
-        self.timings = timings
-        self.error = error
-        self.error_type = error_type
-        self.raise_native_scope_unsupported = raise_native_scope_unsupported
-        self.native_scope_timings = native_scope_timings
-        self.calls = []
-
-    async def query(self, query, *, runtime, profile, document_ids, variant_id, query_config):
-        self.calls.append(
+class FakeChunkSearchService:
+    async def search(self, search_in):
+        return type(
+            "SearchResult",
+            (),
             {
-                "query": query,
-                "document_ids": document_ids,
-                "variant_id": variant_id,
-                "query_config": query_config,
-            }
-        )
-        if self.raise_native_scope_unsupported:
-            raise NativeScopedQueryUnsupported(
-                "native scoped query unsupported",
-                timings=self.native_scope_timings,
-            )
-        return OrchestratedAnswer(
-            answer=self.answer if self.answer is not None else f"runtime answer: {query}",
-            sources=self.sources
-            if self.sources is not None
-            else ([{"document_id": document_ids[0], "text": "source"}] if document_ids else []),
-            chunk_traces=self.chunk_traces
-            if self.chunk_traces is not None
-            else [{"rank": 1, "inclusion_status": "prompt-included"}],
-            reranker_traces=self.reranker_traces
-            if self.reranker_traces is not None
-            else [{"rank": 1, "score": 0.9}],
-            timings=self.timings if self.timings is not None else {"orchestrated_query": True},
-            token_metadata=self.token_metadata
-            if self.token_metadata is not None
-            else {"prompt_tokens": 11},
-            error=self.error,
-            error_type=self.error_type,
-        )
+                "items": [
+                    type(
+                        "ChunkLike",
+                        (),
+                        {
+                        "id": "metadata-1",
+                            "document_id": (
+                                search_in.document_ids[0]
+                                if search_in.document_ids
+                                else "doc-1"
+                            ),
+                            "text": "Sahih al-Bukhari\n\n7277 Hadith Collection",
+                            "source_location": {"page": 1},
+                            "metadata": {"score": 10.0},
+                        },
+                    )()
+                ],
+                "total": 1,
+            },
+        )()
+
+
+class FakeAnswerService:
+    async def answer(self, query, evidence, profile):
+        return "Sahih al-Bukhari contains 7277 hadith.", {"prompt_tokens": 12}
+
+
+class FakeGraphExpansionService:
+    async def expand(self, query, *, seeds, profile, document_ids, limit):
+        return [], [{"stage": "graph_expansion", "status": "skipped", "reason": "test"}]
+
+
+class FailingGraphExpansionService:
+    async def expand(self, query, *, seeds, profile, document_ids, limit):
+        raise RuntimeError("neo4j unavailable")
+
+
+class FakeRerankerService:
+    async def rerank(self, query, chunks, profile):
+        return chunks, [{"provider": "disabled", "status": "disabled"}]
+
+
 async def _create_runtime_records(
     session,
     app,
@@ -162,8 +150,26 @@ async def _create_runtime_records(
     return document, variant
 
 
+def _real_retrieval_orchestrator() -> RetrievalOrchestrator:
+    return RetrievalOrchestrator(
+        chunk_service=FakeChunkSearchService(),
+        answer_service=FakeAnswerService(),
+        reranker_service=FakeRerankerService(),
+        graph_expansion_service=FakeGraphExpansionService(),
+    )
+
+
+def _graph_failing_retrieval_orchestrator() -> RetrievalOrchestrator:
+    return RetrievalOrchestrator(
+        chunk_service=FakeChunkSearchService(),
+        answer_service=FakeAnswerService(),
+        reranker_service=FakeRerankerService(),
+        graph_expansion_service=FailingGraphExpansionService(),
+    )
+
+
 @pytest.mark.asyncio
-async def test_query_service_uses_runtime_without_chunk_search(client):
+async def test_query_service_uses_runtime_orchestrator_path(client):
     app = client._transport.app
     async with app.state.session_factory() as session:
         document, variant = await _create_runtime_records(session, app)
@@ -174,19 +180,22 @@ async def test_query_service_uses_runtime_without_chunk_search(client):
             settings=app.state.settings,
             runtime_factory=FakeFactory(),
             health_service=FakeHealthService(),
-            retrieval_orchestrator=FakeOrchestrator(),
+            retrieval_orchestrator=_real_retrieval_orchestrator(),
         ).run_query(
             QueryIn(query="What happened?", document_ids=[document.id], variant_ids=[variant.id])
         )
 
     run = result.runs[0]
     assert run.status == StageStatus.SUCCEEDED
-    assert run.answer == "runtime answer: What happened?"
+    assert run.answer == "Sahih al-Bukhari contains 7277 hadith."
     assert run.runtime_profile_id == "default"
     assert run.document_ids == [document.id]
     assert run.query_config["top_k"] == 12
-    assert run.reranker_traces[0]["score"] == 0.9
-    assert run.token_metadata["prompt_tokens"] == 11
+    assert run.timings["planner_ms"] >= 0
+    assert run.timings["metadata_ms"] >= 0
+    assert run.timings["answer_ms"] >= 0
+    assert run.reranker_traces[0]["status"] == "disabled"
+    assert run.token_metadata["prompt_tokens"] == 12
 
 
 @pytest.mark.asyncio
@@ -201,6 +210,7 @@ async def test_query_service_records_native_scope_limitation_as_failed_run(clien
                 "refusing to run an unscoped runtime query."
             ),
             error_type="native_document_scope_unsupported",
+            timings={"runtime_query_ms": 7, "native_scoped_query": True},
         )
     )
     async with app.state.session_factory() as session:
@@ -222,10 +232,7 @@ async def test_query_service_records_native_scope_limitation_as_failed_run(clien
             settings=app.state.settings,
             runtime_factory=FakeFactory(runtime),
             health_service=FakeHealthService(),
-            retrieval_orchestrator=FakeOrchestrator(
-                raise_native_scope_unsupported=True,
-                native_scope_timings={"runtime_query_ms": 7, "native_scoped_query": True},
-            ),
+            retrieval_orchestrator=_real_retrieval_orchestrator(),
         ).run_query(
             QueryIn(
                 query="how many hadith in bukhari",
@@ -238,10 +245,15 @@ async def test_query_service_records_native_scope_limitation_as_failed_run(clien
     assert run.status == StageStatus.SUCCEEDED
     assert run.error_type is None
     assert run.error is None
-    assert "7277 Hadith Collection" in run.answer
+    assert run.answer == "Sahih al-Bukhari contains 7277 hadith."
     assert run.timings["scoped_runtime_fallback"] is True
     assert run.timings["runtime_query_ms"] == 7
     assert run.timings["native_scoped_query"] is True
+    assert run.timings["metadata_ms"] >= 0
+    assert run.timings["graph_ms"] >= 0
+    assert run.timings["answer_ms"] >= 0
+    retrieval_trace = next(trace for trace in run.chunk_traces if trace["stage"] == "retrieval")
+    assert retrieval_trace["native_status"] == "scoped_unsupported"
     assert run.sources[0]["document_id"] == document.id
 
 
@@ -257,12 +269,40 @@ async def test_query_service_allows_unscoped_runtime_query_when_no_documents_req
             settings=app.state.settings,
             runtime_factory=FakeFactory(),
             health_service=FakeHealthService(),
-            retrieval_orchestrator=FakeOrchestrator(),
+            retrieval_orchestrator=_real_retrieval_orchestrator(),
         ).run_query(QueryIn(query="unscoped?", document_ids=[], variant_ids=[variant.id]))
 
     run = result.runs[0]
     assert run.status == StageStatus.SUCCEEDED
-    assert run.answer == "runtime answer: unscoped?"
+    assert run.answer == "Sahih al-Bukhari contains 7277 hadith."
+
+
+@pytest.mark.asyncio
+async def test_query_service_surfaces_graph_degradation_while_succeeding(client):
+    app = client._transport.app
+    async with app.state.session_factory() as session:
+        document, variant = await _create_runtime_records(session, app)
+
+        result = await QueryService(
+            session,
+            app.state.settings.data_dir,
+            settings=app.state.settings,
+            runtime_factory=FakeFactory(),
+            health_service=FakeHealthService(),
+            retrieval_orchestrator=_graph_failing_retrieval_orchestrator(),
+        ).run_query(
+            QueryIn(query="What happened?", document_ids=[document.id], variant_ids=[variant.id])
+        )
+
+    run = result.runs[0]
+    assert run.status == StageStatus.SUCCEEDED
+    assert run.error is None
+    assert run.error_type is None
+    assert run.timings["graph_degraded"] is True
+    assert run.timings["graph_error_type"] == "RuntimeError"
+    graph_trace = next(trace for trace in run.chunk_traces if trace["stage"] == "graph_expansion")
+    assert graph_trace["status"] == "failed"
+    assert graph_trace["reason"] == "RuntimeError"
 
 
 @pytest.mark.asyncio

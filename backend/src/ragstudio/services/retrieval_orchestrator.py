@@ -32,6 +32,28 @@ class NativeRuntimeQueryFailed(RuntimeError):
         super().__init__(error)
 
 
+class MetadataRetrievalFailed(RuntimeError):
+    def __init__(self, error: str, timings: dict[str, Any]):
+        self.error = error
+        self.error_type = "metadata_retrieval_error"
+        self.timings = timings
+        super().__init__(error)
+
+
+class ParallelRetrievalFailed(RuntimeError):
+    def __init__(
+        self,
+        *,
+        error: str,
+        error_type: str,
+        timings: dict[str, Any],
+    ):
+        self.error = error
+        self.error_type = error_type
+        self.timings = timings
+        super().__init__(error)
+
+
 class RetrievalOrchestrator:
     def __init__(
         self,
@@ -71,7 +93,8 @@ class RetrievalOrchestrator:
         timings["planner_ms"] = _elapsed_ms(started)
 
         try:
-            native_candidates, metadata_candidates = await self._parallel_retrieval(
+            native_candidates, metadata_candidates, retrieval_trace = await (
+                self._parallel_retrieval(
                 query,
                 runtime,
                 document_ids,
@@ -79,39 +102,28 @@ class RetrievalOrchestrator:
                 query_config,
                 plan,
                 timings,
+                )
             )
-        except NativeScopedQueryUnsupported as exc:
-            raise NativeScopedQueryUnsupported(
-                str(exc),
-                timings={**timings, **exc.timings},
-            ) from exc
-        except NativeRuntimeQueryFailed as exc:
+        except (NativeRuntimeQueryFailed, MetadataRetrievalFailed, ParallelRetrievalFailed) as exc:
             return self._failed_orchestrated_answer(exc, started, {**timings, **exc.timings})
         except Exception as exc:
             return self._failed_orchestrated_answer(exc, started, timings)
 
-        traces.append(
-            {
-                "stage": "retrieval",
-                "native_candidates": len(native_candidates),
-                "metadata_candidates": len(metadata_candidates),
-            }
-        )
+        traces.append(retrieval_trace)
 
         try:
             fuse_started = perf_counter()
             seed_candidates = fuse_candidates(plan, [*native_candidates, *metadata_candidates])
             timings["initial_fusion_ms"] = _elapsed_ms(fuse_started)
 
-            graph_started = perf_counter()
-            graph_candidates, graph_traces = await self.graph_expansion_service.expand(
+            graph_candidates, graph_traces = await self._safe_graph_expansion(
                 query,
                 seeds=seed_candidates[:limit],
                 profile=profile,
                 document_ids=document_ids,
                 limit=limit,
+                timings=timings,
             )
-            timings["graph_ms"] = _elapsed_ms(graph_started)
             traces.extend(graph_traces)
 
             refusion_started = perf_counter()
@@ -158,7 +170,7 @@ class RetrievalOrchestrator:
         query_config: dict[str, Any],
         plan: Any,
         timings: dict[str, Any],
-    ) -> tuple[list[EvidenceCandidate], list[EvidenceCandidate]]:
+    ) -> tuple[list[EvidenceCandidate], list[EvidenceCandidate], dict[str, Any]]:
         parallel_started = perf_counter()
         native_task = self._timed_native_candidates(query, runtime, document_ids, query_config)
         metadata_task = self._timed_metadata_candidates(
@@ -181,11 +193,19 @@ class RetrievalOrchestrator:
         if isinstance(metadata_result, Exception):
             if not isinstance(metadata_result, asyncio.CancelledError):
                 timings["parallel_retrieval_ms"] = _elapsed_ms(parallel_started)
-            raise metadata_result
+            if isinstance(native_result, Exception):
+                raise self._parallel_retrieval_failed(
+                    native_result=native_result,
+                    metadata_result=metadata_result,
+                    timings=timings,
+                ) from metadata_result
+            raise MetadataRetrievalFailed(str(metadata_result), dict(timings)) from metadata_result
         metadata_candidates, metadata_ms = metadata_result
         timings["metadata_ms"] = metadata_ms
         timings["parallel_retrieval_ms"] = _elapsed_ms(parallel_started)
 
+        native_candidates: list[EvidenceCandidate] = []
+        native_status = "ok"
         if isinstance(native_result, Exception):
             if isinstance(native_result, NativeRuntimeQueryFailed):
                 raise NativeRuntimeQueryFailed(
@@ -194,15 +214,90 @@ class RetrievalOrchestrator:
                     {**timings, **native_result.timings},
                 ) from native_result
             if isinstance(native_result, NativeScopedQueryUnsupported):
-                raise NativeScopedQueryUnsupported(
-                    native_result.error,
-                    timings={**timings, **native_result.timings},
-                ) from native_result
-            raise native_result
+                timings.update(native_result.timings)
+                timings["scoped_runtime_fallback"] = True
+                native_status = "scoped_unsupported"
+            else:
+                raise native_result
+        else:
+            native_candidates, _native_timings = native_result
 
-        native_candidates, _native_timings = native_result
+        return (
+            native_candidates,
+            metadata_candidates,
+            {
+                "stage": "retrieval",
+                "native_status": native_status,
+                "native_candidates": len(native_candidates),
+                "metadata_candidates": len(metadata_candidates),
+            },
+        )
 
-        return native_candidates, metadata_candidates
+    async def _safe_graph_expansion(
+        self,
+        query: str,
+        *,
+        seeds: list[EvidenceCandidate],
+        profile: Any,
+        document_ids: list[str],
+        limit: int,
+        timings: dict[str, Any],
+    ) -> tuple[list[EvidenceCandidate], list[dict[str, Any]]]:
+        graph_started = perf_counter()
+        try:
+            graph_candidates, graph_traces = await self.graph_expansion_service.expand(
+                query,
+                seeds=seeds,
+                profile=profile,
+                document_ids=document_ids,
+                limit=limit,
+            )
+            timings["graph_ms"] = _elapsed_ms(graph_started)
+            if _graph_degraded(graph_traces):
+                timings["graph_degraded"] = True
+                timings["graph_error_type"] = _graph_degradation_reason(graph_traces)
+            return graph_candidates, graph_traces
+        except Exception as exc:
+            timings["graph_ms"] = _elapsed_ms(graph_started)
+            timings["graph_degraded"] = True
+            timings["graph_error_type"] = exc.__class__.__name__
+            return [], [
+                {
+                    "stage": "graph_expansion",
+                    "status": "failed",
+                    "reason": exc.__class__.__name__,
+                    "detail": str(exc),
+                }
+            ]
+
+    def _parallel_retrieval_failed(
+        self,
+        *,
+        native_result: Exception,
+        metadata_result: Exception,
+        timings: dict[str, Any],
+    ) -> ParallelRetrievalFailed:
+        native_timings = getattr(native_result, "timings", None)
+        timing_details = native_timings if isinstance(native_timings, dict) else {}
+        combined_timings = {**timings, **timing_details}
+        native_error = getattr(native_result, "error", None)
+        native_error_type = (
+            getattr(native_result, "error_type", None)
+            or native_result.__class__.__name__
+        )
+        return ParallelRetrievalFailed(
+            error=(
+                "Parallel retrieval failed: "
+                f"native={native_error or str(native_result)}; "
+                f"metadata={metadata_result}"
+            ),
+            error_type="parallel_retrieval_failed",
+            timings={
+                **combined_timings,
+                "native_error_type": native_error_type,
+                "metadata_error_type": metadata_result.__class__.__name__,
+            },
+        )
 
     def _failed_orchestrated_answer(
         self,
@@ -347,3 +442,28 @@ def _str_or_none(value: Any) -> str | None:
 
 def _elapsed_ms(started_at: float) -> float:
     return round((perf_counter() - started_at) * 1000, 3)
+
+
+def _graph_degraded(graph_traces: list[dict[str, Any]]) -> bool:
+    return any(
+        trace.get("stage") == "graph_expansion"
+        and trace.get("status") in {"failed", "skipped"}
+        and trace.get("reason") not in {None, "", "no_seed_ids"}
+        for trace in graph_traces
+        if isinstance(trace, dict)
+    )
+
+
+def _graph_degradation_reason(graph_traces: list[dict[str, Any]]) -> str:
+    for trace in graph_traces:
+        if not isinstance(trace, dict):
+            continue
+        if (
+            trace.get("stage") == "graph_expansion"
+            and trace.get("status") in {"failed", "skipped"}
+            and trace.get("reason") not in {None, "", "no_seed_ids"}
+        ):
+            reason = trace.get("reason")
+            if isinstance(reason, str) and reason:
+                return reason
+    return "graph_degraded"

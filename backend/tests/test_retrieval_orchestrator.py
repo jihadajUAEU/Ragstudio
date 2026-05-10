@@ -141,6 +141,11 @@ class FakeChunkSearchService:
 
 
 class FakeRuntimeTool:
+    def __init__(self, *, error_type=None, error=None, timings=None):
+        self.error_type = error_type
+        self.error = error
+        self.timings = timings or {"runtime_query_ms": 5, "native_scoped_query": True}
+
     async def query(self, query, *, document_ids, query_config):
         return RuntimeQueryResult(
             answer="native answer ignored",
@@ -153,7 +158,9 @@ class FakeRuntimeTool:
                     "metadata": {"native_scope": True},
                 }
             ],
-            timings={"runtime_query_ms": 5, "native_scoped_query": True},
+            error=self.error,
+            error_type=self.error_type,
+            timings=self.timings,
         )
 
 
@@ -166,6 +173,16 @@ class FailingRuntimeTool:
             error_type="runtime_query_error",
             timings={"runtime_query_ms": 4},
         )
+
+
+class ExplodingNativeRuntimeTool:
+    async def query(self, query, *, document_ids, query_config):
+        raise RuntimeError("native query crashed")
+
+
+class ExplodingChunkSearchService:
+    async def search(self, search_in):
+        raise RuntimeError("metadata search exploded")
 
 
 class FakeAnswerService:
@@ -209,6 +226,11 @@ class FakeGraphExpansionService:
         ], [{"stage": "graph_expansion", "status": "ok", "expanded_candidates": 1}]
 
 
+class FailingGraphExpansionService:
+    async def expand(self, query, *, seeds, profile, document_ids, limit):
+        raise RuntimeError("neo4j unavailable")
+
+
 @pytest.mark.asyncio
 async def test_orchestrator_fuses_native_metadata_and_graph_before_answering():
     answer_service = FakeAnswerService()
@@ -232,6 +254,8 @@ async def test_orchestrator_fuses_native_metadata_and_graph_before_answering():
     assert result.sources[0]["chunk_id"] == "metadata-1"
     assert answer_service.evidence[0].chunk_id == "metadata-1"
     assert result.timings["orchestrated_query"] is True
+    assert result.timings["planner_ms"] >= 0
+    assert result.timings["native_stage_ms"] >= 0
     assert any(trace["stage"] == "planner" for trace in result.chunk_traces)
     assert any(source["metadata"]["retrieval_tool"] == "graph" for source in result.sources)
     assert any(trace["stage"] == "graph_expansion" for trace in result.chunk_traces)
@@ -261,4 +285,194 @@ async def test_orchestrator_preserves_runtime_query_errors():
     assert result.error_type == "runtime_query_error"
     assert result.sources == []
     assert result.timings["runtime_query_ms"] == 4
+    assert result.timings["metadata_ms"] >= 0
     assert answer_service.called is False
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_uses_metadata_fallback_for_scoped_native_limitation():
+    answer_service = FakeAnswerService()
+    orchestrator = RetrievalOrchestrator(
+        chunk_service=FakeChunkSearchService(),
+        answer_service=answer_service,
+        reranker_service=FakeRerankerService(),
+        graph_expansion_service=FakeGraphExpansionService(),
+    )
+
+    result = await orchestrator.query(
+        "how many hadith in bukhari",
+        runtime=FakeRuntimeTool(
+            error="native scoped unsupported",
+            error_type="native_document_scope_unsupported",
+            timings={"runtime_query_ms": 7, "native_scoped_query": True},
+        ),
+        profile=type("Profile", (), {"enable_rerank": False, "reranker_provider": "disabled"})(),
+        document_ids=["doc-1"],
+        variant_id="variant-1",
+        query_config={"limit": 8},
+    )
+
+    assert result.error is None
+    assert result.answer == "Sahih al-Bukhari contains 7277 hadith."
+    assert result.timings["scoped_runtime_fallback"] is True
+    assert result.timings["runtime_query_ms"] == 7
+    assert result.timings["metadata_ms"] >= 0
+    assert result.timings["graph_ms"] >= 0
+    retrieval_trace = next(trace for trace in result.chunk_traces if trace["stage"] == "retrieval")
+    assert retrieval_trace["native_status"] == "scoped_unsupported"
+    assert retrieval_trace["metadata_candidates"] == 1
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_graph_failure_degrades_gracefully():
+    answer_service = FakeAnswerService()
+    orchestrator = RetrievalOrchestrator(
+        chunk_service=FakeChunkSearchService(),
+        answer_service=answer_service,
+        reranker_service=FakeRerankerService(),
+        graph_expansion_service=FailingGraphExpansionService(),
+    )
+
+    result = await orchestrator.query(
+        "how many hadith in bukhari",
+        runtime=FakeRuntimeTool(),
+        profile=type("Profile", (), {"enable_rerank": False, "reranker_provider": "disabled"})(),
+        document_ids=["doc-1"],
+        variant_id="variant-1",
+        query_config={"limit": 8},
+    )
+
+    assert result.error is None
+    assert result.answer == "Sahih al-Bukhari contains 7277 hadith."
+    graph_trace = next(
+        trace for trace in result.chunk_traces if trace["stage"] == "graph_expansion"
+    )
+    assert graph_trace["status"] == "failed"
+    assert graph_trace["reason"] == "RuntimeError"
+    assert result.timings["graph_ms"] >= 0
+    assert result.timings["graph_degraded"] is True
+    assert result.timings["graph_error_type"] == "RuntimeError"
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_preserves_native_context_when_both_retrieval_paths_fail():
+    answer_service = FakeAnswerService()
+    orchestrator = RetrievalOrchestrator(
+        chunk_service=ExplodingChunkSearchService(),
+        answer_service=answer_service,
+        reranker_service=FakeRerankerService(),
+        graph_expansion_service=FakeGraphExpansionService(),
+    )
+
+    result = await orchestrator.query(
+        "boom",
+        runtime=FailingRuntimeTool(),
+        profile=type("Profile", (), {"enable_rerank": False, "reranker_provider": "disabled"})(),
+        document_ids=["doc-1"],
+        variant_id="variant-1",
+        query_config={"limit": 8},
+    )
+
+    assert result.answer == ""
+    assert result.error_type == "parallel_retrieval_failed"
+    assert "native=runtime exploded" in (result.error or "")
+    assert "metadata=metadata search exploded" in (result.error or "")
+    assert result.timings["runtime_query_ms"] == 4
+    assert result.timings["native_stage_ms"] >= 0
+    assert result.timings["parallel_retrieval_ms"] >= 0
+    assert answer_service.called is False
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_preserves_scoped_native_context_when_metadata_also_fails():
+    answer_service = FakeAnswerService()
+    orchestrator = RetrievalOrchestrator(
+        chunk_service=ExplodingChunkSearchService(),
+        answer_service=answer_service,
+        reranker_service=FakeRerankerService(),
+        graph_expansion_service=FakeGraphExpansionService(),
+    )
+
+    result = await orchestrator.query(
+        "boom",
+        runtime=FakeRuntimeTool(
+            error="native scoped unsupported",
+            error_type="native_document_scope_unsupported",
+            timings={"runtime_query_ms": 7, "native_scoped_query": True},
+        ),
+        profile=type("Profile", (), {"enable_rerank": False, "reranker_provider": "disabled"})(),
+        document_ids=["doc-1"],
+        variant_id="variant-1",
+        query_config={"limit": 8},
+    )
+
+    assert result.answer == ""
+    assert result.error_type == "parallel_retrieval_failed"
+    assert "native=native scoped unsupported" in (result.error or "")
+    assert result.timings["runtime_query_ms"] == 7
+    assert result.timings["native_scoped_query"] is True
+    assert result.timings["native_error_type"] == "NativeScopedQueryUnsupported"
+    assert result.timings["metadata_error_type"] == "RuntimeError"
+    assert answer_service.called is False
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_preserves_thrown_native_exception_when_metadata_also_fails():
+    answer_service = FakeAnswerService()
+    orchestrator = RetrievalOrchestrator(
+        chunk_service=ExplodingChunkSearchService(),
+        answer_service=answer_service,
+        reranker_service=FakeRerankerService(),
+        graph_expansion_service=FakeGraphExpansionService(),
+    )
+
+    result = await orchestrator.query(
+        "boom",
+        runtime=ExplodingNativeRuntimeTool(),
+        profile=type("Profile", (), {"enable_rerank": False, "reranker_provider": "disabled"})(),
+        document_ids=["doc-1"],
+        variant_id="variant-1",
+        query_config={"limit": 8},
+    )
+
+    assert result.answer == ""
+    assert result.error_type == "parallel_retrieval_failed"
+    assert "native=native query crashed" in (result.error or "")
+    assert result.timings["native_error_type"] == "RuntimeError"
+    assert result.timings["metadata_error_type"] == "RuntimeError"
+    assert answer_service.called is False
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_marks_skipped_graph_infrastructure_as_degraded():
+    answer_service = FakeAnswerService()
+
+    class DriverUnavailableGraphExpansionService:
+        async def expand(self, query, *, seeds, profile, document_ids, limit):
+            return [], [
+                {
+                    "stage": "graph_expansion",
+                    "status": "skipped",
+                    "reason": "driver_unavailable",
+                }
+            ]
+
+    orchestrator = RetrievalOrchestrator(
+        chunk_service=FakeChunkSearchService(),
+        answer_service=answer_service,
+        reranker_service=FakeRerankerService(),
+        graph_expansion_service=DriverUnavailableGraphExpansionService(),
+    )
+
+    result = await orchestrator.query(
+        "how many hadith in bukhari",
+        runtime=FakeRuntimeTool(),
+        profile=type("Profile", (), {"enable_rerank": False, "reranker_provider": "disabled"})(),
+        document_ids=["doc-1"],
+        variant_id="variant-1",
+        query_config={"limit": 8},
+    )
+
+    assert result.error is None
+    assert result.timings["graph_degraded"] is True
+    assert result.timings["graph_error_type"] == "driver_unavailable"

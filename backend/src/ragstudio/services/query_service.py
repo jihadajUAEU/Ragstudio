@@ -12,10 +12,7 @@ from ragstudio.schemas.runtime import RuntimeHealthCheck
 from ragstudio.services.adapter import AdapterChunk, RAGAnythingAdapter
 from ragstudio.services.chunk_service import ChunkService
 from ragstudio.services.reranker_service import RerankerService
-from ragstudio.services.retrieval_orchestrator import (
-    NativeScopedQueryUnsupported,
-    RetrievalOrchestrator,
-)
+from ragstudio.services.retrieval_orchestrator import RetrievalOrchestrator
 from ragstudio.services.runtime_factory import RAGAnythingRuntimeFactory
 from ragstudio.services.runtime_health_service import RuntimeHealthService
 from ragstudio.services.runtime_profile_service import (
@@ -201,26 +198,14 @@ class QueryService:
             self.session.add(run)
             try:
                 runtime = self.runtime_factory.build(profile)
-                try:
-                    orchestrated = await self._retrieval_orchestrator().query(
-                        payload.query,
-                        runtime=runtime,
-                        profile=profile,
-                        document_ids=payload.document_ids,
-                        variant_id=variant_id,
-                        query_config=query_config,
-                    )
-                except NativeScopedQueryUnsupported as exc:
-                    await self._run_scoped_mirrored_runtime_query(
-                        run,
-                        payload,
-                        profile,
-                        variant_id,
-                        started_at,
-                        native_timings=exc.timings,
-                    )
-                    runs.append(run)
-                    continue
+                orchestrated = await self._retrieval_orchestrator().query(
+                    payload.query,
+                    runtime=runtime,
+                    profile=profile,
+                    document_ids=payload.document_ids,
+                    variant_id=variant_id,
+                    query_config=query_config,
+                )
                 run.status = (
                     StageStatus.FAILED.value
                     if orchestrated.error
@@ -254,55 +239,6 @@ class QueryService:
             reranker_service=self.reranker_service,
         )
 
-    async def _run_scoped_mirrored_runtime_query(
-        self,
-        run: Run,
-        payload: QueryIn,
-        profile: Any,
-        variant_id: str,
-        started_at: float,
-        native_timings: dict[str, Any] | None = None,
-    ) -> None:
-        search_started_at = perf_counter()
-        search = await ChunkService(self.session, self.data_dir, self.adapter).search(
-            ChunkSearchIn(
-                query=payload.query,
-                document_ids=payload.document_ids,
-                variant_id=variant_id,
-                limit=payload.limit,
-            )
-        )
-        search_ms = self._elapsed_ms(search_started_at)
-        reranked_items, reranker_traces = await self._rerank_chunks(
-            payload.query,
-            search.items,
-            profile,
-        )
-        adapter_chunks = [self._adapter_chunk(chunk) for chunk in reranked_items]
-        query_started_at = perf_counter()
-        result = await self.adapter.query(payload.query, adapter_chunks, limit=payload.limit)
-        query_ms = self._elapsed_ms(query_started_at)
-
-        result_timings = result.get("timings", {})
-        if not isinstance(result_timings, dict):
-            result_timings = {}
-        run.status = StageStatus.SUCCEEDED.value
-        run.answer = str(result.get("answer", ""))
-        run.sources = self._result_list(result.get("sources")) or [
-            self._source(chunk) for chunk in reranked_items
-        ]
-        run.chunk_traces = self._result_list(result.get("chunk_traces"))
-        run.reranker_traces = reranker_traces
-        run.error = None
-        run.error_type = None
-        run.timings = {
-            **(native_timings or {}),
-            **result_timings,
-            "search_ms": search_ms,
-            "query_ms": query_ms,
-            "total_ms": self._elapsed_ms(started_at),
-            "scoped_runtime_fallback": True,
-        }
     async def _validate_query_inputs(self, payload: QueryIn) -> None:
         missing_variants = await self._missing_ids(Variant, payload.variant_ids)
         if missing_variants:
