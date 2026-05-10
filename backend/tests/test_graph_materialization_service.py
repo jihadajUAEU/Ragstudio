@@ -1,8 +1,11 @@
 from types import SimpleNamespace
 
 import pytest
-from ragstudio.db.models import Chunk
+from ragstudio.db.engine import init_db, make_engine, make_session_factory
+from ragstudio.db.models import Chunk, Document, GraphProjectionRecord, IndexRecord
+from ragstudio.schemas.common import StageStatus
 from ragstudio.services.graph_materialization_service import GraphMaterializationService
+from ragstudio.services.query_service import QueryService
 
 
 class FakeSession:
@@ -163,3 +166,55 @@ async def test_replace_document_graph_creates_projection_indexes_without_apoc():
     assert "CREATE INDEX ragstudio_chunk_projection IF NOT EXISTS" in queries
     assert "CREATE INDEX ragstudio_reference_projection IF NOT EXISTS" in queries
     assert "apoc." not in queries
+
+
+@pytest.mark.asyncio
+async def test_graph_projection_record_is_separate_from_index_readiness(
+    tmp_path,
+    database_url,
+):
+    engine = make_engine(database_url)
+    session_factory = make_session_factory(engine)
+    await init_db(engine)
+
+    async with session_factory() as session:
+        document = Document(
+            filename="doc.pdf",
+            content_type="application/pdf",
+            sha256="graph-projection-record-sha",
+            artifact_path=str(tmp_path / "doc.pdf"),
+            status=StageStatus.SUCCEEDED.value,
+        )
+        session.add(document)
+        await session.flush()
+        index_shape = {
+            "embedding_model": "text-embedding-3-large",
+            "graph_storage": "neo4j",
+        }
+        session.add(
+            IndexRecord(
+                document_id=document.id,
+                runtime_profile_id="default",
+                status=StageStatus.SUCCEEDED.value,
+                index_shape=index_shape,
+                chunk_count=1,
+            )
+        )
+        session.add(
+            GraphProjectionRecord(
+                document_id=document.id,
+                runtime_profile_id="default",
+                status="pending",
+                node_count=0,
+                edge_count=0,
+            )
+        )
+        await session.commit()
+
+        await QueryService(session, tmp_path)._validate_index_readiness(
+            [document.id],
+            "default",
+            index_shape,
+        )
+
+    await engine.dispose()

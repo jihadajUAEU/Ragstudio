@@ -138,6 +138,26 @@ class IndexRecord(Base, TimestampMixin):
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
+class GraphProjectionRecord(Base, TimestampMixin):
+    __tablename__ = "graph_projection_records"
+    __table_args__ = (
+        Index(
+            "ix_graph_projection_document_profile",
+            "document_id",
+            "runtime_profile_id",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
+    document_id: Mapped[str] = mapped_column(ForeignKey("documents.id"))
+    runtime_profile_id: Mapped[str] = mapped_column(String)
+    status: Mapped[str] = mapped_column(String, default="pending")
+    projection_run_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    node_count: Mapped[int] = mapped_column(Integer, default=0)
+    edge_count: Mapped[int] = mapped_column(Integer, default=0)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
 class Job(Base, TimestampMixin):
     __tablename__ = "jobs"
     __table_args__ = (
