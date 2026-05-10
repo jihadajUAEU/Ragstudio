@@ -55,7 +55,7 @@ class DiagnosticsService:
         runtime_mode = profile.runtime_mode if profile else "fallback"
         overall_status = self._overall_status(runtime_mode, checks, blocking)
         dependency_report = (
-            report
+            self._fallback_dependency_report(report, graph="relationship_metadata")
             if runtime_mode == "fallback"
             else self._runtime_dependency_report(checks, blocking)
         )
@@ -68,18 +68,17 @@ class DiagnosticsService:
             )
         if runtime_mode == "fallback":
             warnings.append(
-                "Graph is unavailable because fallback mode uses the local placeholder "
-                "adapter. Native graph support requires runtime mode with healthy "
-                "RAG-Anything and Neo4j dependencies."
+                "Runtime graph is inactive; Graph uses relationship metadata derived "
+                "during parsing when available."
             )
 
         return DiagnosticsOut(
             capabilities={
                 "raganything_available": raganything_available,
                 "fallback_active": runtime_mode == "fallback",
-                "indexing": not blocking,
-                "query": not blocking,
-                "graph": dependency_report.get("graph") == "neo4j",
+                "indexing": self._capability_available(dependency_report.get("indexing")),
+                "query": self._capability_available(dependency_report.get("query")),
+                "graph": dependency_report.get("graph") in {"neo4j", "relationship_metadata"},
             },
             dependency_status=self._dependency_status(dependency_report),
             warnings=warnings,
@@ -89,7 +88,10 @@ class DiagnosticsService:
         )
 
     def _legacy_diagnostics(self) -> DiagnosticsOut:
-        report = self.adapter.capability_report()
+        report = self._fallback_dependency_report(
+            self.adapter.capability_report(),
+            graph="unavailable",
+        )
         raganything_available = bool(report.get("raganything_available"))
         warnings = []
         if not raganything_available:
@@ -102,10 +104,10 @@ class DiagnosticsService:
         return DiagnosticsOut(
             capabilities={
                 "raganything_available": raganything_available,
-                "fallback_active": report.get("active_backend") == "fallback",
-                "indexing": bool(report.get("indexing")),
-                "query": bool(report.get("query")),
-                "graph": bool(report.get("graph")),
+                "fallback_active": report.get("active_backend") in {"fallback", "local_parser"},
+                "indexing": self._capability_available(report.get("indexing")),
+                "query": self._capability_available(report.get("query")),
+                "graph": report.get("graph") == "relationship_metadata",
             },
             dependency_status=self._dependency_status(report),
             warnings=warnings,
@@ -123,6 +125,28 @@ class DiagnosticsService:
             "scoped_query_detail": report.get("scoped_query_detail"),
         }
 
+    def _fallback_dependency_report(
+        self,
+        report: dict[str, Any],
+        *,
+        graph: str,
+    ) -> dict[str, Any]:
+        return {
+            **report,
+            "active_backend": report.get("active_backend") or "local_parser",
+            "indexing": report.get("indexing") or "line_split_local",
+            "query": "unavailable",
+            "graph": graph,
+            "native_scoped_query": False,
+            "scoped_query": "unavailable",
+            "scoped_query_detail": (
+                "Native runtime query is unavailable while runtime mode is inactive."
+            ),
+        }
+
+    def _capability_available(self, value: Any) -> bool:
+        return value not in {None, False, "unavailable"}
+
     def _runtime_dependency_report(
         self,
         checks: list[Any],
@@ -136,8 +160,7 @@ class DiagnosticsService:
             and by_name["neo4j"].status == "ok"
         )
         raganything_available = (
-            by_name.get("raganything") is not None
-            and by_name["raganything"].status == "ok"
+            by_name.get("raganything") is not None and by_name["raganything"].status == "ok"
         )
         scoped_query: str = "requires_storage_verification"
         native_scoped_query: bool | str = "conditional"

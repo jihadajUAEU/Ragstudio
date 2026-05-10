@@ -1,13 +1,76 @@
 import pytest
-from ragstudio.db.models import Experiment, Run, Score
+from ragstudio.db.models import Experiment, IndexRecord, Run, Score, SettingsProfile
+from ragstudio.schemas.common import StageStatus
 from ragstudio.schemas.runtime import RuntimeHealthCheck
 from ragstudio.services.diagnostics_service import DiagnosticsService
 from ragstudio.services.optimizer_service import OptimizerService
 from ragstudio.services.runtime_factory import RuntimeUnavailableError
+from ragstudio.services.runtime_profile_service import RuntimeProfileService
+from ragstudio.services.runtime_types import RuntimeQueryResult
+
+
+class OptimizerRuntime:
+    async def query(self, query, *, document_ids, query_config):
+        return RuntimeQueryResult(
+            answer=f"alpha beta answer for {query}",
+            sources=[
+                {
+                    "chunk_id": "optimizer-runtime-chunk",
+                    "document_id": document_ids[0],
+                    "text": "alpha beta answer",
+                    "source_location": {},
+                    "metadata": {"native_scope": True},
+                }
+            ],
+            chunk_traces=[{"rank": 1, "inclusion_status": "prompt-included"}],
+            reranker_traces=[],
+            timings={"runtime_query_ms": 2},
+            token_metadata={"prompt_tokens": 8},
+        )
+
+
+class OptimizerRuntimeFactory:
+    def __init__(self, *_args, **_kwargs):
+        self.runtime = OptimizerRuntime()
+
+    def build(self, profile):
+        return self.runtime
+
+
+class PassingRuntimeHealthService:
+    def __init__(self, *_args, **_kwargs):
+        pass
+
+    async def check(self, profile):
+        return []
+
+    def blocking_failures(self, checks):
+        return []
+
+
+class OptimizerAnswerService:
+    async def answer(self, query, evidence, profile):
+        return f"alpha beta answer for {query}", {"prompt_tokens": 8}
 
 
 @pytest.mark.asyncio
-async def test_optimizer_recommends_best_variant_from_experiment_runs(client, reindex_document):
+async def test_optimizer_recommends_best_variant_from_experiment_runs(
+    client,
+    monkeypatch,
+    reindex_document,
+):
+    monkeypatch.setattr(
+        "ragstudio.services.query_service.RAGAnythingRuntimeFactory",
+        OptimizerRuntimeFactory,
+    )
+    monkeypatch.setattr(
+        "ragstudio.services.query_service.RuntimeHealthService",
+        PassingRuntimeHealthService,
+    )
+    monkeypatch.setattr(
+        "ragstudio.services.retrieval_orchestrator.RuntimeAnswerService",
+        OptimizerAnswerService,
+    )
     upload = await client.post(
         "/api/documents",
         files={"file": ("optimizer.txt", b"alpha beta answer", "text/plain")},
@@ -15,6 +78,32 @@ async def test_optimizer_recommends_best_variant_from_experiment_runs(client, re
     )
     document_id = upload.json()["id"]
     await reindex_document(document_id)
+    app = client._transport.app
+    async with app.state.session_factory() as session:
+        session.add(
+            SettingsProfile(
+                id="default",
+                provider="openai-compatible",
+                llm_model="gpt-4o",
+                llm_base_url="http://127.0.0.1:8004/v1",
+                embedding_model="text-embedding-3-large",
+                embedding_base_url="http://127.0.0.1:8001/v1",
+                storage_backend="postgres_pgvector_neo4j",
+                runtime_mode="runtime",
+            )
+        )
+        await session.flush()
+        profile = await RuntimeProfileService(session, app.state.settings).get_active_profile()
+        session.add(
+            IndexRecord(
+                document_id=document_id,
+                runtime_profile_id=profile.id,
+                status=StageStatus.SUCCEEDED.value,
+                index_shape=profile.index_shape,
+                chunk_count=1,
+            )
+        )
+        await session.commit()
     first = await client.post(
         "/api/variants", json={"name": "First", "preset": "balanced", "parameters": {}}
     )
@@ -426,6 +515,7 @@ async def test_graph_fallback_scans_only_relationship_metadata_chunks(client):
         graph = await GraphService(session, app.state.settings).get_graph()
 
     assert {node["id"] for node in graph.nodes} == {"a", "b"}
+    assert {tuple(node["labels"]) for node in graph.nodes} == {("RelationshipMetadata",)}
     assert graph.edges[0]["id"] == "a-b-related"
     assert graph.detail is None
 
@@ -527,6 +617,7 @@ async def test_graph_service_builds_fallback_graph_from_chunk_relationship_metad
         graph = await GraphService(session, app.state.settings).get_graph()
 
     assert {node["id"] for node in graph.nodes} == {"reference:2:255", "topic:throne_verse"}
+    assert {tuple(node["labels"]) for node in graph.nodes} == {("RelationshipMetadata",)}
     assert graph.edges == [
         {
             "id": "reference:2:255-topic:throne_verse-mentions",
@@ -716,9 +807,11 @@ async def test_diagnostics_returns_capabilities_and_dependency_status(client):
     assert "raganything_available" in payload["capabilities"]
     assert "fallback_active" in payload["capabilities"]
     assert payload["capabilities"]["indexing"] is True
-    assert payload["capabilities"]["query"] is True
+    assert payload["capabilities"]["query"] is False
+    assert payload["capabilities"]["graph"] is True
     assert payload["overall_status"] == "fallback"
     assert "raganything" in payload["dependency_status"]
+    assert payload["dependency_status"]["graph"] == "relationship_metadata"
     if payload["capabilities"]["raganything_available"]:
         assert any(
             "Default runtime profile is not configured" in warning
@@ -729,7 +822,7 @@ async def test_diagnostics_returns_capabilities_and_dependency_status(client):
 
 
 @pytest.mark.asyncio
-async def test_diagnostics_warns_when_graph_is_disabled_by_fallback_mode(client):
+async def test_diagnostics_reports_relationship_graph_when_fallback_mode_is_active(client):
     response = await client.put(
         "/api/settings/default",
         json={
@@ -746,9 +839,11 @@ async def test_diagnostics_warns_when_graph_is_disabled_by_fallback_mode(client)
 
     assert diagnostics.status_code == 200
     payload = diagnostics.json()
-    assert payload["capabilities"]["graph"] is False
+    assert payload["capabilities"]["graph"] is True
+    assert payload["dependency_status"]["graph"] == "relationship_metadata"
     assert any(
-        "Graph is unavailable because fallback mode" in warning
+        "Runtime graph is inactive; Graph uses relationship metadata derived during parsing"
+        in warning
         for warning in payload["warnings"]
     )
 
@@ -877,14 +972,15 @@ def test_diagnostics_suppresses_missing_dependency_warning_when_package_availabl
         def capability_report(self):
             return {
                 "raganything_available": True,
-                "active_backend": "fallback",
-                "indexing": "line_split_fallback",
-                "query": "simple_fallback",
-                "graph": "placeholder",
+                "active_backend": "local_parser",
+                "parser": "line_split",
+                "indexing": "line_split_local",
             }
 
     payload = DiagnosticsService(adapter=AvailableFallbackAdapter()).get_diagnostics()
 
     assert payload.dependency_status["raganything"] == "available"
     assert payload.capabilities["fallback_active"] is True
+    assert payload.capabilities["query"] is False
+    assert payload.capabilities["graph"] is False
     assert payload.warnings == []

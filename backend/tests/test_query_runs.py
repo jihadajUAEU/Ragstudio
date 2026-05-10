@@ -59,7 +59,7 @@ class PassingHealthService:
 
 
 @pytest.mark.asyncio
-async def test_query_creates_run_with_answer_and_chunk_trace(client, reindex_document):
+async def test_query_fails_run_when_runtime_profile_is_missing(client, reindex_document):
     upload = await client.post(
         "/api/documents",
         files={"file": ("sample.txt", b"alpha answer source", "text/plain")},
@@ -83,44 +83,25 @@ async def test_query_creates_run_with_answer_and_chunk_trace(client, reindex_doc
 
     assert response.status_code == 200
     run = response.json()["runs"][0]
-    assert run["status"] == "succeeded"
-    assert "alpha" in run["answer"]
-    assert run["sources"][0]["document_id"] == document_id
-    assert run["chunk_traces"][0]["inclusion_status"] == "prompt-included"
-    assert run["timings"]["search_ms"] >= 0
+    assert run["status"] == "failed"
+    assert run["runtime_profile_id"] is None
+    assert run["error_type"] == "runtime_profile_missing"
+    assert "runtime_profile" in run["error"]
 
 
 @pytest.mark.asyncio
-async def test_query_uses_configured_reranker_in_fallback_mode(
+async def test_query_fails_before_reranker_when_fallback_mode_is_active(
     client, monkeypatch, reindex_document
 ):
     requests = []
-
-    class FakeResponse:
-        def raise_for_status(self):
-            return None
-
-        def json(self):
-            return {
-                "results": [
-                    {"index": 1, "relevance_score": 0.98},
-                    {"index": 0, "relevance_score": 0.25},
-                ]
-            }
 
     class FakeAsyncClient:
         def __init__(self, timeout):
             self.timeout = timeout
 
         async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, exc_type, exc, traceback):
-            return None
-
-        async def post(self, url, *, headers, json):
-            requests.append({"url": url, "headers": headers, "json": json, "timeout": self.timeout})
-            return FakeResponse()
+            requests.append({"timeout": self.timeout})
+            raise AssertionError("fallback runtime query should not call reranker")
 
     monkeypatch.setattr("ragstudio.services.reranker_service.httpx.AsyncClient", FakeAsyncClient)
     app = client._transport.app
@@ -164,29 +145,15 @@ async def test_query_uses_configured_reranker_in_fallback_mode(
 
     assert response.status_code == 200
     run = response.json()["runs"][0]
-    assert run["status"] == "succeeded"
-    assert run["sources"][0]["text"] == "alpha second"
-    assert run["reranker_traces"][0]["original_rank"] == 2
-    assert requests == [
-        {
-            "url": "http://127.0.0.1:8002/v1/rerank",
-            "headers": {
-                "Content-Type": "application/json",
-                "Authorization": "Bearer secret",
-            },
-            "json": {
-                "query": "alpha",
-                "documents": ["alpha first", "alpha second"],
-                "top_n": 2,
-                "model": "jina-reranker-v2-base-multilingual",
-            },
-            "timeout": 10.0,
-        }
-    ]
+    assert run["status"] == "failed"
+    assert run["runtime_profile_id"] == "default"
+    assert run["error_type"] == "runtime_mode_inactive"
+    assert "Runtime mode 'fallback'" in run["error"]
+    assert requests == []
 
 
 @pytest.mark.asyncio
-async def test_query_keeps_original_results_when_reranker_fails(
+async def test_query_fallback_mode_does_not_fall_back_when_reranker_would_fail(
     client, monkeypatch, reindex_document
 ):
     class FakeAsyncClient:
@@ -242,10 +209,10 @@ async def test_query_keeps_original_results_when_reranker_fails(
 
     assert response.status_code == 200
     run = response.json()["runs"][0]
-    assert run["status"] == "succeeded"
-    assert run["sources"][0]["text"] == "alpha first"
-    assert run["reranker_traces"][0]["status"] == "failed"
-    assert run["reranker_traces"][0]["error_type"] == "RuntimeError"
+    assert run["status"] == "failed"
+    assert run["error_type"] == "runtime_mode_inactive"
+    assert run["sources"] == []
+    assert run["reranker_traces"] == []
 
 
 @pytest.mark.asyncio
@@ -299,8 +266,9 @@ async def test_query_blocks_untrusted_reranker_endpoint_without_calling_it(
 
     assert response.status_code == 200
     run = response.json()["runs"][0]
-    assert run["status"] == "succeeded"
-    assert run["reranker_traces"][0]["status"] == "blocked_endpoint"
+    assert run["status"] == "failed"
+    assert run["error_type"] == "runtime_mode_inactive"
+    assert run["reranker_traces"] == []
 
 
 @pytest.mark.asyncio
@@ -332,7 +300,9 @@ async def test_list_runs_returns_persisted_query_runs(client, reindex_document):
     payload = response.json()
     assert payload["total"] == 1
     assert payload["items"][0]["id"] == run_id
-    assert payload["items"][0]["answer"]
+    assert payload["items"][0]["status"] == "failed"
+    assert payload["items"][0]["answer"] == ""
+    assert payload["items"][0]["error_type"] == "runtime_profile_missing"
 
 
 @pytest.mark.asyncio
@@ -407,7 +377,8 @@ async def test_query_creates_one_run_per_variant(client, reindex_document):
     assert response.status_code == 200
     runs = response.json()["runs"]
     assert [run["variant_id"] for run in runs] == variant_ids
-    assert all(run["status"] == "succeeded" for run in runs)
+    assert all(run["status"] == "failed" for run in runs)
+    assert all(run["error_type"] == "runtime_profile_missing" for run in runs)
 
     persisted_runs = await client.get("/api/runs")
     assert persisted_runs.json()["total"] == 2

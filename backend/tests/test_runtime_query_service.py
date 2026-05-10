@@ -3,7 +3,11 @@ from ragstudio.db.models import Chunk, Document, IndexRecord, SettingsProfile, V
 from ragstudio.schemas.common import StageStatus
 from ragstudio.schemas.query import QueryIn
 from ragstudio.schemas.runtime import RuntimeHealthCheck
-from ragstudio.services.query_service import QueryResourceNotFoundError, QueryService
+from ragstudio.services.query_service import (
+    QueryResourceNotFoundError,
+    QueryRuntimeReadinessError,
+    QueryService,
+)
 from ragstudio.services.retrieval_orchestrator import RetrievalOrchestrator
 from ragstudio.services.runtime_profile_service import RuntimeProfileService
 from ragstudio.services.runtime_types import RuntimeQueryResult
@@ -27,9 +31,7 @@ class FakeRuntime:
             return self.result
         return RuntimeQueryResult(
             answer=f"runtime answer: {query}",
-            sources=(
-                [{"document_id": document_ids[0], "text": "source"}] if document_ids else []
-            ),
+            sources=([{"document_id": document_ids[0], "text": "source"}] if document_ids else []),
             chunk_traces=[{"rank": 1, "inclusion_status": "prompt-included"}],
             reranker_traces=[{"rank": 1, "score": 0.9}],
             timings={"runtime_query_ms": 5},
@@ -53,11 +55,7 @@ class FakeHealthService:
         return self.checks
 
     def blocking_failures(self, checks):
-        return [
-            item
-            for item in checks
-            if item.status == "failed" and item.severity == "blocking"
-        ]
+        return [item for item in checks if item.status == "failed" and item.severity == "blocking"]
 
 
 class FakeChunkSearchService:
@@ -71,11 +69,9 @@ class FakeChunkSearchService:
                         "ChunkLike",
                         (),
                         {
-                        "id": "metadata-1",
+                            "id": "metadata-1",
                             "document_id": (
-                                search_in.document_ids[0]
-                                if search_in.document_ids
-                                else "doc-1"
+                                search_in.document_ids[0] if search_in.document_ids else "doc-1"
                             ),
                             "text": "Sahih al-Bukhari\n\n7277 Hadith Collection",
                             "source_location": {"page": 1},
@@ -352,14 +348,133 @@ async def test_query_service_fails_runs_when_runtime_health_blocks(client):
             settings=app.state.settings,
             runtime_factory=FakeFactory(),
             health_service=FakeHealthService(checks),
-        ).run_query(
-            QueryIn(query="blocked", document_ids=[document.id], variant_ids=[variant.id])
-        )
+        ).run_query(QueryIn(query="blocked", document_ids=[document.id], variant_ids=[variant.id]))
 
     run = result.runs[0]
     assert run.status == StageStatus.FAILED
     assert run.error_type == "runtime_health_blocked"
     assert "raganything" in (run.error or "")
+
+
+@pytest.mark.asyncio
+async def test_query_preflight_rejects_missing_runtime_settings(client):
+    app = client._transport.app
+    async with app.state.session_factory() as session:
+        document = Document(
+            filename="preflight-missing-settings.txt",
+            content_type="text/plain",
+            sha256="preflight-missing-settings",
+            artifact_path=str(app.state.settings.data_dir / "preflight-missing-settings.txt"),
+            status=StageStatus.SUCCEEDED.value,
+        )
+        variant = Variant(name="Preflight Missing Settings", preset="balanced", parameters={})
+        session.add_all([document, variant])
+        await session.commit()
+
+        with pytest.raises(QueryRuntimeReadinessError) as exc_info:
+            await QueryService(
+                session,
+                app.state.settings.data_dir,
+            ).preflight_runtime_readiness(
+                QueryIn(query="missing", document_ids=[document.id], variant_ids=[variant.id])
+            )
+
+    assert exc_info.value.error_type == "runtime_profile_missing"
+    assert "Runtime profile settings are not available" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_query_preflight_rejects_missing_runtime_profile(client):
+    app = client._transport.app
+    async with app.state.session_factory() as session:
+        document = Document(
+            filename="preflight-missing-profile.txt",
+            content_type="text/plain",
+            sha256="preflight-missing-profile",
+            artifact_path=str(app.state.settings.data_dir / "preflight-missing-profile.txt"),
+            status=StageStatus.SUCCEEDED.value,
+        )
+        variant = Variant(name="Preflight Missing Profile", preset="balanced", parameters={})
+        session.add_all([document, variant])
+        await session.commit()
+
+        with pytest.raises(QueryRuntimeReadinessError) as exc_info:
+            await QueryService(
+                session,
+                app.state.settings.data_dir,
+                settings=app.state.settings,
+            ).preflight_runtime_readiness(
+                QueryIn(query="missing", document_ids=[document.id], variant_ids=[variant.id])
+            )
+
+    assert exc_info.value.error_type == "runtime_profile_missing"
+    assert "runtime_profile" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_query_preflight_rejects_fallback_runtime_mode(client):
+    app = client._transport.app
+    async with app.state.session_factory() as session:
+        session.add(
+            SettingsProfile(
+                id="default",
+                provider="fallback",
+                llm_model="fallback",
+                embedding_model="fallback",
+                storage_backend="fallback_local",
+                runtime_mode="fallback",
+            )
+        )
+        document = Document(
+            filename="preflight-fallback.txt",
+            content_type="text/plain",
+            sha256="preflight-fallback",
+            artifact_path=str(app.state.settings.data_dir / "preflight-fallback.txt"),
+            status=StageStatus.SUCCEEDED.value,
+        )
+        variant = Variant(name="Preflight Fallback", preset="balanced", parameters={})
+        session.add_all([document, variant])
+        await session.commit()
+
+        with pytest.raises(QueryRuntimeReadinessError) as exc_info:
+            await QueryService(
+                session,
+                app.state.settings.data_dir,
+                settings=app.state.settings,
+            ).preflight_runtime_readiness(
+                QueryIn(query="fallback", document_ids=[document.id], variant_ids=[variant.id])
+            )
+
+    assert exc_info.value.error_type == "runtime_mode_inactive"
+    assert "Runtime mode 'fallback'" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_query_preflight_rejects_blocking_runtime_health(client):
+    app = client._transport.app
+    checks = [
+        RuntimeHealthCheck(
+            name="raganything",
+            status="failed",
+            severity="blocking",
+            detail="RAG-Anything package is not installed.",
+        )
+    ]
+    async with app.state.session_factory() as session:
+        document, variant = await _create_runtime_records(session, app, indexed=False)
+
+        with pytest.raises(QueryRuntimeReadinessError) as exc_info:
+            await QueryService(
+                session,
+                app.state.settings.data_dir,
+                settings=app.state.settings,
+                health_service=FakeHealthService(checks),
+            ).preflight_runtime_readiness(
+                QueryIn(query="blocked", document_ids=[document.id], variant_ids=[variant.id])
+            )
+
+    assert exc_info.value.error_type == "runtime_health_blocked"
+    assert "raganything" in str(exc_info.value)
 
 
 @pytest.mark.asyncio

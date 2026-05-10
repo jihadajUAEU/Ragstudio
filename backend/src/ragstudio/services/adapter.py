@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from importlib import import_module
 from pathlib import Path
-from typing import Any, overload
+from typing import Any
 
-from ragstudio.services.runtime_types import RuntimeChunk, RuntimeQueryResult
+from ragstudio.services.runtime_types import RuntimeChunk
 
 AdapterChunk = RuntimeChunk
 
@@ -18,10 +18,9 @@ class RAGAnythingAdapter:
     def capability_report(self) -> dict[str, Any]:
         return {
             "raganything_available": self._package_available,
-            "active_backend": "fallback",
-            "indexing": "line_split_fallback",
-            "query": "simple_fallback",
-            "graph": "placeholder",
+            "active_backend": "local_parser",
+            "parser": "line_split",
+            "indexing": "line_split_local",
         }
 
     async def delete_document_index(self, document_id: str) -> None:
@@ -29,58 +28,6 @@ class RAGAnythingAdapter:
 
     async def index_document(self, artifact_path: str | Path) -> list[RuntimeChunk]:
         return self._line_split_index(Path(artifact_path))
-
-    @overload
-    async def query(
-        self,
-        query: str,
-        chunks: list[AdapterChunk],
-        limit: int = 10,
-    ) -> dict[str, Any]: ...
-
-    @overload
-    async def query(
-        self,
-        query: str,
-        chunks: None = None,
-        limit: int = 10,
-        *,
-        document_ids: list[str],
-        query_config: dict[str, Any],
-    ) -> RuntimeQueryResult: ...
-
-    async def query(
-        self,
-        query: str,
-        chunks: list[AdapterChunk] | None = None,
-        limit: int = 10,
-        *,
-        document_ids: list[str] | None = None,
-        query_config: dict[str, Any] | None = None,
-    ) -> dict[str, Any] | RuntimeQueryResult:
-        if chunks is None:
-            return RuntimeQueryResult(
-                answer="",
-                timings={},
-                error="Fallback runtime query requires mirrored chunks.",
-                error_type="fallback_runtime_without_chunks",
-            )
-        selected = chunks[:limit]
-        return {
-            "answer": self._simple_answer(query, selected),
-            "chunk_traces": [
-                {
-                    "rank": index + 1,
-                    "source_location": chunk.source_location,
-                    "metadata": chunk.metadata,
-                    "inclusion_status": "prompt-included",
-                }
-                for index, chunk in enumerate(selected)
-            ],
-        }
-
-    async def graph(self) -> dict[str, Any]:
-        return {"nodes": [], "edges": [], "placeholder": True}
 
     def _line_split_index(self, artifact_path: Path) -> list[RuntimeChunk]:
         artifact_ref = artifact_path.name
@@ -120,12 +67,6 @@ class RAGAnythingAdapter:
             )
 
         return chunks
-
-    def _simple_answer(self, query: str, chunks: list[AdapterChunk]) -> str:
-        if not chunks:
-            return ""
-        excerpts = " ".join(chunk.text for chunk in chunks)
-        return f"{query.strip()}: {excerpts}" if query.strip() else excerpts
 
     def _can_import(self, module: str) -> bool:
         try:

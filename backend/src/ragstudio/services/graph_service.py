@@ -2,7 +2,6 @@ from typing import Any
 
 from ragstudio.db.models import Chunk
 from ragstudio.schemas.graph import GraphOut
-from ragstudio.services.adapter import RAGAnythingAdapter
 from ragstudio.services.runtime_factory import RAGAnythingRuntimeFactory, RuntimeUnavailableError
 from ragstudio.services.runtime_health_service import RuntimeHealthService
 from ragstudio.services.runtime_profile_service import (
@@ -22,13 +21,11 @@ class GraphService:
         self,
         session: AsyncSession | None = None,
         settings=None,
-        adapter: RAGAnythingAdapter | None = None,
         runtime_factory=None,
         health_service=None,
     ):
         self.session = session
         self.settings = settings
-        self.adapter = adapter or RAGAnythingAdapter()
         self.runtime_factory = runtime_factory or RAGAnythingRuntimeFactory(settings)
         self.health_service = health_service
 
@@ -42,19 +39,13 @@ class GraphService:
 
     async def _graph(self) -> dict:
         if self.session is None or self.settings is None:
-            return await self.adapter.graph()
+            return await self._relationship_metadata_graph()
         try:
             profile = await RuntimeProfileService(self.session, self.settings).get_active_profile()
         except RuntimeProfileNotConfiguredError:
-            fallback_graph = await self._relationship_metadata_graph()
-            if fallback_graph["nodes"] or fallback_graph["edges"]:
-                return fallback_graph
-            return fallback_graph
+            return await self._relationship_metadata_graph()
         if profile.runtime_mode == "fallback":
-            fallback_graph = await self._relationship_metadata_graph()
-            if fallback_graph["nodes"] or fallback_graph["edges"]:
-                return fallback_graph
-            return fallback_graph
+            return await self._relationship_metadata_graph()
         try:
             health_service = self.health_service or RuntimeHealthService(
                 self.session,
@@ -73,9 +64,7 @@ class GraphService:
         except RuntimeUnavailableError as exc:
             raise RuntimeGraphUnavailableError(str(exc)) from exc
         except Exception as exc:
-            raise RuntimeGraphUnavailableError(
-                f"Runtime graph is unavailable: {exc}"
-            ) from exc
+            raise RuntimeGraphUnavailableError(f"Runtime graph is unavailable: {exc}") from exc
 
     async def _relationship_metadata_graph(
         self, *, limit: int = 2_000
@@ -84,7 +73,7 @@ class GraphService:
             return {
                 "nodes": [],
                 "edges": [],
-                "detail": "No database session is available for fallback graph metadata.",
+                "detail": "No database session is available for relationship metadata graph.",
             }
         result = await self.session.execute(
             select(Chunk)
@@ -119,7 +108,7 @@ class GraphService:
                     source,
                     {
                         "id": source,
-                        "labels": ["FallbackRelationship"],
+                        "labels": ["RelationshipMetadata"],
                         "properties": {
                             "label": relationship.get("source_label", source),
                             "document_id": chunk.document_id,
@@ -131,7 +120,7 @@ class GraphService:
                     target,
                     {
                         "id": target,
-                        "labels": ["FallbackRelationship"],
+                        "labels": ["RelationshipMetadata"],
                         "properties": {
                             "label": relationship.get("target_label", target),
                             "document_id": chunk.document_id,

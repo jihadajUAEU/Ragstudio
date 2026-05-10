@@ -2,6 +2,7 @@ import pytest
 from ragstudio.config import AppSettings
 from ragstudio.db.engine import init_db, is_postgres_url, make_engine, make_session_factory
 from ragstudio.db.models import IndexRecord, Variant
+from ragstudio.schemas.parsing import IndexDocumentIn
 from ragstudio.schemas.query import QueryIn
 from ragstudio.services.diagnostics_service import DiagnosticsService
 from ragstudio.services.document_service import DocumentService
@@ -113,35 +114,40 @@ async def test_init_db_backfills_runtime_columns_for_existing_postgres_tables(
     async with engine.connect() as connection:
         columns = await connection.run_sync(
             lambda sync_connection: {
-                table: {
-                    column["name"]
-                    for column in inspect(sync_connection).get_columns(table)
-                }
+                table: {column["name"] for column in inspect(sync_connection).get_columns(table)}
                 for table in ("settings_profiles", "chunks", "runs", "index_records")
             }
         )
         settings_row = (
-            await connection.execute(
-                text(
-                    """
+            (
+                await connection.execute(
+                    text(
+                        """
                     SELECT runtime_mode, storage_backend, pgvector_schema,
                            enable_image_processing, mineru_timeout_ms,
                            mineru_require_hpc
                     FROM settings_profiles WHERE id = 'default'
                     """
+                    )
                 )
             )
-        ).mappings().one()
+            .mappings()
+            .one()
+        )
         chunk_row = (
-            await connection.execute(
-                text("SELECT content_type FROM chunks WHERE id = 'chunk-1'")
-            )
-        ).mappings().one()
+            (await connection.execute(text("SELECT content_type FROM chunks WHERE id = 'chunk-1'")))
+            .mappings()
+            .one()
+        )
         run_row = (
-            await connection.execute(
-                text("SELECT document_ids, query_config FROM runs WHERE id = 'run-1'")
+            (
+                await connection.execute(
+                    text("SELECT document_ids, query_config FROM runs WHERE id = 'run-1'")
+                )
             )
-        ).mappings().one()
+            .mappings()
+            .one()
+        )
 
     assert "runtime_mode" in columns["settings_profiles"]
     assert "neo4j_uri" in columns["settings_profiles"]
@@ -171,6 +177,7 @@ async def test_init_db_backfills_runtime_columns_for_existing_postgres_tables(
             "legacy.txt",
             "text/plain",
             b"legacy fallback answer",
+            options=IndexDocumentIn(parser_mode="local_fallback"),
         )
         variant = Variant(name="Legacy Fallback", preset="balanced", parameters={})
         session.add(variant)
@@ -184,8 +191,14 @@ async def test_init_db_backfills_runtime_columns_for_existing_postgres_tables(
             )
         )
         index_records = (
-            await session.execute(select(IndexRecord).where(IndexRecord.document_id == document.id))
-        ).scalars().all()
+            (
+                await session.execute(
+                    select(IndexRecord).where(IndexRecord.document_id == document.id)
+                )
+            )
+            .scalars()
+            .all()
+        )
 
     assert settings is not None
     assert settings.storage_backend == "fallback_local"
@@ -195,10 +208,10 @@ async def test_init_db_backfills_runtime_columns_for_existing_postgres_tables(
     assert runtime_profile.storage_backend == "fallback_local"
     assert runtime_profile.runtime_mode == "fallback"
     assert diagnostics.capabilities["indexing"] is True
-    assert diagnostics.capabilities["query"] is True
+    assert diagnostics.capabilities["query"] is False
     assert diagnostics.overall_status == "fallback"
-    assert query.runs[0].status == "succeeded"
-    assert "legacy fallback answer" in query.runs[0].answer
+    assert query.runs[0].status == "failed"
+    assert query.runs[0].error_type == "runtime_mode_inactive"
     assert index_records == []
 
     await engine.dispose()

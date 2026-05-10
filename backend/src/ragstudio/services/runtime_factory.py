@@ -2,7 +2,6 @@ from importlib import import_module
 
 from ragstudio.config import AppSettings
 from ragstudio.schemas.runtime import RuntimeProfile
-from ragstudio.services.adapter import RAGAnythingAdapter
 from ragstudio.services.native_raganything_adapter import NativeRAGAnythingAdapter
 from ragstudio.services.runtime_types import RuntimeAdapter
 
@@ -16,8 +15,11 @@ class RAGAnythingRuntimeFactory:
         self.settings = settings
 
     def build(self, profile: RuntimeProfile) -> RuntimeAdapter:
-        if profile.runtime_mode == "fallback":
-            return RAGAnythingAdapter()
+        if profile.runtime_mode != "runtime":
+            raise RuntimeUnavailableError(
+                f"Runtime mode '{profile.runtime_mode}' does not provide native "
+                "RAG-Anything execution."
+            )
         try:
             import_module("raganything")
             import_module("lightrag")

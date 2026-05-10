@@ -8,7 +8,10 @@ from ragstudio.services.experiment_service import (
     ExperimentNotFoundError,
     ExperimentService,
 )
-from ragstudio.services.query_service import QueryResourceNotFoundError
+from ragstudio.services.query_service import (
+    QueryResourceNotFoundError,
+    QueryRuntimeReadinessError,
+)
 
 router = APIRouter(prefix="/api/experiments", tags=["experiments"])
 
@@ -29,6 +32,8 @@ async def create_experiment(
         raise HTTPException(status_code=404, detail="Evaluation set not found") from exc
     except QueryResourceNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except QueryRuntimeReadinessError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.get("", response_model=ExperimentPage)

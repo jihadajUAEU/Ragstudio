@@ -4,12 +4,11 @@ from typing import Any
 
 from ragstudio.config import AppSettings
 from ragstudio.db.models import Document, IndexRecord, Run, Variant
-from ragstudio.schemas.chunks import ChunkOut, ChunkSearchIn
 from ragstudio.schemas.common import StageStatus
 from ragstudio.schemas.query import QueryIn, QueryOut
 from ragstudio.schemas.runs import RunOut
 from ragstudio.schemas.runtime import RuntimeHealthCheck
-from ragstudio.services.adapter import AdapterChunk, RAGAnythingAdapter
+from ragstudio.services.adapter import RAGAnythingAdapter
 from ragstudio.services.chunk_service import ChunkService
 from ragstudio.services.reranker_service import RerankerService
 from ragstudio.services.retrieval_orchestrator import RetrievalOrchestrator
@@ -19,7 +18,6 @@ from ragstudio.services.runtime_profile_service import (
     RuntimeProfileNotConfiguredError,
     RuntimeProfileService,
 )
-from ragstudio.services.trace_normalizer import TraceNormalizer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -29,6 +27,20 @@ class QueryResourceNotFoundError(LookupError):
         self.resource = resource
         self.missing_ids = missing_ids
         super().__init__(f"{resource} not found: {', '.join(missing_ids)}")
+
+
+class QueryRuntimeReadinessError(RuntimeError):
+    def __init__(
+        self,
+        checks: list[RuntimeHealthCheck],
+        *,
+        error_type: str = "runtime_health_blocked",
+        runtime_profile_id: str | None = None,
+    ):
+        self.checks = checks
+        self.error_type = error_type
+        self.runtime_profile_id = runtime_profile_id
+        super().__init__(QueryService.runtime_failure_detail(checks))
 
 
 class QueryService:
@@ -43,7 +55,6 @@ class QueryService:
         health_service: Any | None = None,
         reranker_service: RerankerService | None = None,
         retrieval_orchestrator: RetrievalOrchestrator | None = None,
-        normalizer: TraceNormalizer | None = None,
     ):
         self.session = session
         self.data_dir = data_dir
@@ -58,7 +69,6 @@ class QueryService:
             allowed_hosts=settings.allowed_reranker_hosts if settings else None
         )
         self.retrieval_orchestrator = retrieval_orchestrator
-        self.normalizer = normalizer or TraceNormalizer()
 
     async def run_query(self, payload: QueryIn) -> QueryOut:
         await self._validate_query_inputs(payload)
@@ -68,106 +78,64 @@ class QueryService:
                     self.session,
                     self.settings,
                 ).get_active_profile()
-            except RuntimeProfileNotConfiguredError:
-                return await self._run_legacy_query(payload)
-            if profile.runtime_mode != "fallback":
-                return await self._run_runtime_query(payload, profile)
-            return await self._run_legacy_query(payload, profile)
+            except RuntimeProfileNotConfiguredError as exc:
+                return await self._failed_runtime_runs(
+                    payload,
+                    None,
+                    self._runtime_profile_missing_checks(str(exc)),
+                    error_type="runtime_profile_missing",
+                )
+            if profile.runtime_mode != "runtime":
+                return await self._failed_runtime_runs(
+                    payload,
+                    profile.id,
+                    self._inactive_runtime_mode_checks(profile.runtime_mode),
+                    error_type="runtime_mode_inactive",
+                )
+            return await self._run_runtime_query(payload, profile)
 
-        return await self._run_legacy_query(payload)
+        return await self._failed_runtime_runs(
+            payload,
+            None,
+            self._runtime_profile_settings_missing_checks(),
+            error_type="runtime_profile_missing",
+        )
 
     async def preflight_runtime_readiness(self, payload: QueryIn) -> None:
         await self._validate_query_inputs(payload)
         if self.settings is None:
-            return
+            raise QueryRuntimeReadinessError(
+                self._runtime_profile_settings_missing_checks(),
+                error_type="runtime_profile_missing",
+            )
         try:
             profile = await RuntimeProfileService(
                 self.session,
                 self.settings,
             ).get_active_profile()
-        except RuntimeProfileNotConfiguredError:
-            return
-        if profile.runtime_mode == "fallback":
-            return
+        except RuntimeProfileNotConfiguredError as exc:
+            raise QueryRuntimeReadinessError(
+                self._runtime_profile_missing_checks(str(exc)),
+                error_type="runtime_profile_missing",
+            ) from exc
+        if profile.runtime_mode != "runtime":
+            raise QueryRuntimeReadinessError(
+                self._inactive_runtime_mode_checks(profile.runtime_mode),
+                error_type="runtime_mode_inactive",
+                runtime_profile_id=profile.id,
+            )
         checks = await self.health_service.check(profile)
-        if self.health_service.blocking_failures(checks):
-            return
+        blocking = self.health_service.blocking_failures(checks)
+        if blocking:
+            raise QueryRuntimeReadinessError(
+                blocking,
+                runtime_profile_id=profile.id,
+            )
         await self._validate_index_readiness(
             payload.document_ids,
             profile.id,
             profile.index_shape,
         )
-
-    async def _run_legacy_query(self, payload: QueryIn, profile: Any | None = None) -> QueryOut:
-        runs: list[Run] = []
-        for variant_id in payload.variant_ids:
-            started_at = perf_counter()
-            search_started_at = perf_counter()
-            search = await ChunkService(self.session, self.data_dir, self.adapter).search(
-                ChunkSearchIn(
-                    query=payload.query,
-                    document_ids=payload.document_ids,
-                    variant_id=variant_id,
-                    limit=payload.limit,
-                )
-            )
-            search_ms = self._elapsed_ms(search_started_at)
-
-            run = Run(variant_id=variant_id, query=payload.query, status=StageStatus.RUNNING.value)
-            self.session.add(run)
-            try:
-                reranked_items, reranker_traces = await self._rerank_chunks(
-                    payload.query,
-                    search.items,
-                    profile,
-                )
-                adapter_chunks = [self._adapter_chunk(chunk) for chunk in reranked_items]
-                query_started_at = perf_counter()
-                result = await self.adapter.query(
-                    payload.query, adapter_chunks, limit=payload.limit
-                )
-                query_ms = self._elapsed_ms(query_started_at)
-
-                result_timings = result.get("timings", {})
-                if not isinstance(result_timings, dict):
-                    result_timings = {}
-                run.status = StageStatus.SUCCEEDED.value
-                run.answer = str(result.get("answer", ""))
-                run.sources = self._result_list(result.get("sources")) or [
-                    self._source(chunk) for chunk in reranked_items
-                ]
-                run.chunk_traces = self._result_list(result.get("chunk_traces"))
-                run.reranker_traces = reranker_traces
-                run.timings = {
-                    **result_timings,
-                    "search_ms": search_ms,
-                    "query_ms": query_ms,
-                    "total_ms": self._elapsed_ms(started_at),
-                }
-            except Exception as exc:
-                run.status = StageStatus.FAILED.value
-                run.error = str(exc)
-                run.timings = {
-                    "search_ms": search_ms,
-                    "total_ms": self._elapsed_ms(started_at),
-                }
-
-            runs.append(run)
-
-        await self.session.commit()
-        for run in runs:
-            await self.session.refresh(run)
-        return QueryOut(runs=[RunOut.model_validate(run) for run in runs])
-
-    async def _rerank_chunks(
-        self,
-        query: str,
-        chunks: list[ChunkOut],
-        profile: Any | None,
-    ) -> tuple[list[ChunkOut], list[dict[str, Any]]]:
-        if profile is None:
-            return chunks, []
-        return await self.reranker_service.rerank(query, chunks, profile)
 
     async def list_runs(self) -> list[RunOut]:
         result = await self.session.execute(select(Run).order_by(Run.created_at.desc()))
@@ -210,9 +178,7 @@ class QueryService:
                     query_config=query_config,
                 )
                 run.status = (
-                    StageStatus.FAILED.value
-                    if orchestrated.error
-                    else StageStatus.SUCCEEDED.value
+                    StageStatus.FAILED.value if orchestrated.error else StageStatus.SUCCEEDED.value
                 )
                 run.answer = orchestrated.answer
                 run.sources = orchestrated.sources
@@ -289,9 +255,7 @@ class QueryService:
             "context_window": self._int_param(
                 parameters.get("context_window"), profile.context_window
             ),
-            "context_mode": self._text_param(
-                parameters.get("context_mode"), profile.context_mode
-            ),
+            "context_mode": self._text_param(parameters.get("context_mode"), profile.context_mode),
             "max_context_tokens": self._int_param(
                 parameters.get("max_context_tokens"), profile.max_context_tokens
             ),
@@ -302,9 +266,7 @@ class QueryService:
                 parameters.get("include_captions"), profile.include_captions
             ),
             "top_k": self._int_param(parameters.get("top_k"), profile.top_k),
-            "chunk_top_k": self._int_param(
-                parameters.get("chunk_top_k"), profile.chunk_top_k
-            ),
+            "chunk_top_k": self._int_param(parameters.get("chunk_top_k"), profile.chunk_top_k),
             "enable_rerank": self._bool_param(
                 parameters.get("enable_rerank"), profile.enable_rerank
             ),
@@ -412,10 +374,12 @@ class QueryService:
     async def _failed_runtime_runs(
         self,
         payload: QueryIn,
-        runtime_profile_id: str,
+        runtime_profile_id: str | None,
         checks: list[RuntimeHealthCheck],
+        *,
+        error_type: str = "runtime_health_blocked",
     ) -> QueryOut:
-        detail = "; ".join(f"{item.name}: {item.detail}" for item in checks)
+        detail = self.runtime_failure_detail(checks)
         runs = [
             Run(
                 variant_id=variant_id,
@@ -424,7 +388,7 @@ class QueryService:
                 runtime_profile_id=runtime_profile_id,
                 document_ids=payload.document_ids,
                 error=detail,
-                error_type="runtime_health_blocked",
+                error_type=error_type,
             )
             for variant_id in payload.variant_ids
         ]
@@ -434,25 +398,36 @@ class QueryService:
             await self.session.refresh(run)
         return QueryOut(runs=[RunOut.model_validate(run) for run in runs])
 
-    def _adapter_chunk(self, chunk: ChunkOut) -> AdapterChunk:
-        metadata = {**chunk.metadata, "chunk_id": chunk.id, "document_id": chunk.document_id}
-        return AdapterChunk(
-            text=chunk.text, source_location=chunk.source_location, metadata=metadata
-        )
+    @staticmethod
+    def runtime_failure_detail(checks: list[RuntimeHealthCheck]) -> str:
+        return "; ".join(f"{item.name}: {item.detail}" for item in checks)
 
-    def _source(self, chunk: ChunkOut) -> dict[str, Any]:
-        return {
-            "chunk_id": chunk.id,
-            "document_id": chunk.document_id,
-            "text": chunk.text,
-            "source_location": chunk.source_location,
-            "metadata": chunk.metadata,
-        }
+    def _runtime_profile_missing_checks(self, detail: str) -> list[RuntimeHealthCheck]:
+        return [
+            RuntimeHealthCheck(
+                name="runtime_profile",
+                status="failed",
+                severity="blocking",
+                detail=detail,
+                error_type="runtime_profile_missing",
+            )
+        ]
 
-    def _result_list(self, value: Any) -> list[dict[str, Any]]:
-        if not isinstance(value, list):
-            return []
-        return [item for item in value if isinstance(item, dict)]
+    def _runtime_profile_settings_missing_checks(self) -> list[RuntimeHealthCheck]:
+        return self._runtime_profile_missing_checks("Runtime profile settings are not available.")
+
+    def _inactive_runtime_mode_checks(self, runtime_mode: str) -> list[RuntimeHealthCheck]:
+        return [
+            RuntimeHealthCheck(
+                name="runtime_mode",
+                status="failed",
+                severity="blocking",
+                detail=(
+                    f"Runtime mode '{runtime_mode}' does not provide native RAG-Anything execution."
+                ),
+                error_type="runtime_mode_inactive",
+            )
+        ]
 
     def _elapsed_ms(self, started_at: float) -> float:
         return round((perf_counter() - started_at) * 1000, 3)
