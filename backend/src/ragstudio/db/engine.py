@@ -176,7 +176,10 @@ def _backfill_graph_projection_targets(connection) -> None:
                 LEFT JOIN settings_profiles s ON s.id = g.runtime_profile_id
                 WHERE g.graph_workspace_label IS NULL
                    OR g.graph_storage_uri IS NULL
-                   OR g.graph_storage_username IS NULL
+                   OR (
+                       g.graph_storage_username IS NULL
+                       AND s.neo4j_username IS NOT NULL
+                   )
                    OR g.graph_storage_password IS NOT NULL
                 """
             )

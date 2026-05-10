@@ -23,7 +23,7 @@ from ragstudio.services.runtime_profile_service import (
     RuntimeProfileNotConfiguredError,
     RuntimeProfileService,
 )
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -162,12 +162,19 @@ class DocumentService:
         return "deleted"
 
     async def create_index_job(self, document_id: str) -> Job | None:
+        await self.lock_document_workflow(document_id)
         document = await self.session.get(Document, document_id)
         if document is None:
             return None
         if await self.active_index_job(document_id) is not None:
             raise ActiveIndexJobError("Document already has an active indexing job")
         return await self._enqueue_index_job(document)
+
+    async def lock_document_workflow(self, document_id: str) -> None:
+        await self.session.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:lock_key, 0))"),
+            {"lock_key": f"ragstudio:document:{document_id}"},
+        )
 
     async def latest_index_job(self, document_id: str) -> Job | None:
         return await self.session.scalar(

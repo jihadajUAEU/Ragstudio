@@ -148,8 +148,11 @@ async def rematerialize_document_graph(
         settings.data_dir,
         settings=settings,
     )
+    await service.lock_document_workflow(document_id)
     if not await service.document_exists(document_id):
         raise HTTPException(status_code=404, detail="Document not found")
+    if await service.active_index_job(document_id) is not None:
+        raise HTTPException(status_code=409, detail="Document already has an active indexing job")
     result = await GraphProjectionRunner(session, settings).rematerialize_document(document_id)
     await session.commit()
     return {"document_id": document_id, **result}
