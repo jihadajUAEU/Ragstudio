@@ -1,10 +1,11 @@
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from inspect import signature
-from typing import Any
+from typing import Any, Iterator
 
 from ragstudio.config import AppSettings
-from ragstudio.db.models import Chunk, Document, IndexRecord
+from ragstudio.db.models import Chunk, Document, GraphProjectionRecord, IndexRecord
 from ragstudio.schemas.chunks import ChunkOut
 from ragstudio.schemas.common import StageStatus
 from ragstudio.schemas.parsing import IndexDocumentIn
@@ -26,6 +27,22 @@ class RuntimeHealthBlockedError(RuntimeError):
 
 
 MinerUStatusCallback = Callable[[dict[str, Any]], Awaitable[None]]
+
+
+@dataclass(frozen=True)
+class IndexLifecycleResult:
+    chunks: list[ChunkOut]
+    graph_projection_record_id: str | None
+    graph_materialization: dict[str, Any]
+
+    def __iter__(self) -> Iterator[ChunkOut]:
+        return iter(self.chunks)
+
+    def __len__(self) -> int:
+        return len(self.chunks)
+
+    def __getitem__(self, index: int) -> ChunkOut:
+        return self.chunks[index]
 
 
 class IndexLifecycleService:
@@ -59,7 +76,7 @@ class IndexLifecycleService:
         *,
         options: IndexDocumentIn | None = None,
         on_mineru_status: MinerUStatusCallback | None = None,
-    ) -> list[ChunkOut] | None:
+    ) -> IndexLifecycleResult | None:
         document = await self.session.get(Document, document_id)
         if document is None:
             return None
@@ -98,6 +115,9 @@ class IndexLifecycleService:
         await self.session.execute(delete(Chunk).where(Chunk.document_id == document.id))
         await self.session.execute(
             delete(IndexRecord).where(IndexRecord.document_id == document.id)
+        )
+        await self.session.execute(
+            delete(GraphProjectionRecord).where(GraphProjectionRecord.document_id == document.id)
         )
 
         indexed_at = datetime.now(UTC)
@@ -142,6 +162,15 @@ class IndexLifecycleService:
             )
 
         self.session.add_all(chunks)
+        await self.session.flush()
+        projection_record = GraphProjectionRecord(
+            document_id=document.id,
+            runtime_profile_id=profile.id,
+            status="pending",
+            node_count=0,
+            edge_count=0,
+        )
+        self.session.add(projection_record)
         self.session.add(
             IndexRecord(
                 document_id=document.id,
@@ -155,7 +184,16 @@ class IndexLifecycleService:
         await self.session.flush()
         for chunk in chunks:
             await self.session.refresh(chunk)
-        return [ChunkOut.model_validate(chunk) for chunk in chunks]
+        return IndexLifecycleResult(
+            chunks=[ChunkOut.model_validate(chunk) for chunk in chunks],
+            graph_projection_record_id=projection_record.id,
+            graph_materialization={
+                "status": "pending",
+                "node_count": 0,
+                "edge_count": 0,
+                "reason": None,
+            },
+        )
 
     async def _preparse_runtime_document(
         self,

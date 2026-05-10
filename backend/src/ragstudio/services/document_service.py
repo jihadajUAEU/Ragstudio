@@ -12,6 +12,7 @@ from ragstudio.schemas.parsing import DomainMetadata, IndexDocumentIn, ParserMod
 from ragstudio.schemas.runtime import RuntimeProfile
 from ragstudio.services.artifact_store import ArtifactStore
 from ragstudio.services.chunk_service import ChunkService
+from ragstudio.services.graph_projection_runner import GraphProjectionRunner
 from ragstudio.services.index_lifecycle_service import (
     IndexLifecycleService,
     RuntimeHealthBlockedError,
@@ -334,15 +335,22 @@ class DocumentService:
         job.progress = 50
         job.logs = [*job.logs, "Indexing document chunks."]
         profile = await self._active_runtime_profile()
+        graph_materialization: dict[str, Any] = {}
         if profile is not None and profile.runtime_mode != "fallback":
             assert self.settings is not None
-            chunks = await IndexLifecycleService(
+            lifecycle_result = await IndexLifecycleService(
                 self.session,
                 self.settings,
             ).reindex_document(
                 document.id,
                 options=options,
                 on_mineru_status=on_mineru_status,
+            )
+            chunks = lifecycle_result.chunks if lifecycle_result is not None else []
+            graph_materialization = (
+                dict(lifecycle_result.graph_materialization)
+                if lifecycle_result is not None
+                else {}
             )
         else:
             chunks = await ChunkService(self.session, self.store.root).index_document(
@@ -355,8 +363,25 @@ class DocumentService:
         document.status = StageStatus.SUCCEEDED.value
         job.status = StageStatus.SUCCEEDED.value
         job.progress = 100
-        job.result = {**job.result, "document_id": document.id, "chunk_count": chunk_count}
+        job.result = {
+            **job.result,
+            "document_id": document.id,
+            "chunk_count": chunk_count,
+            "graph_materialization": graph_materialization,
+        }
         job.logs = [*job.logs, f"Indexed {chunk_count} chunks."]
+        if graph_materialization.get("status") == "pending" and self.settings is not None:
+            await self.session.commit()
+            graph_materialization = await GraphProjectionRunner(
+                self.session,
+                self.settings,
+            ).materialize_pending(document.id)
+            job.result = {
+                **job.result,
+                "graph_materialization": graph_materialization,
+            }
+            status = str(graph_materialization.get("status") or "unknown")
+            job.logs = [*job.logs, f"Graph projection materialization {status}."]
 
     async def _active_runtime_profile(self) -> RuntimeProfile | None:
         if self.settings is None:

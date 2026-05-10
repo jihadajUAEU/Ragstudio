@@ -1,10 +1,12 @@
 from pathlib import Path
 
 import pytest
-from ragstudio.db.models import Chunk, Document, IndexRecord, SettingsProfile
+from ragstudio.db.models import Chunk, Document, GraphProjectionRecord, IndexRecord, SettingsProfile
 from ragstudio.schemas.common import StageStatus
 from ragstudio.schemas.parsing import IndexDocumentIn
 from ragstudio.services.adapter import AdapterChunk
+from ragstudio.services.graph_materialization_service import GraphMaterializationResult
+from ragstudio.services.graph_projection_runner import GraphProjectionRunner
 from ragstudio.services.index_lifecycle_service import IndexLifecycleService
 from ragstudio.services.runtime_types import RuntimeChunk
 from sqlalchemy import select
@@ -125,6 +127,34 @@ class FakeDocumentParser:
         return self.chunks
 
 
+class FakeGraphMaterializationService:
+    def __init__(
+        self,
+        *,
+        result: GraphMaterializationResult | None = None,
+        error: Exception | None = None,
+    ):
+        self.result = result or GraphMaterializationResult(
+            status="succeeded",
+            node_count=2,
+            edge_count=1,
+        )
+        self.error = error
+        self.calls = []
+
+    async def replace_document_graph(self, *, document_id, profile, chunks):
+        self.calls.append(
+            {
+                "document_id": document_id,
+                "profile_id": profile.id,
+                "chunk_count": len(chunks),
+            }
+        )
+        if self.error is not None:
+            raise self.error
+        return self.result
+
+
 @pytest.mark.asyncio
 async def test_lifecycle_deletes_existing_chunks_and_mirrors_runtime_chunks(client):
     app = client._transport.app
@@ -188,6 +218,11 @@ async def test_lifecycle_deletes_existing_chunks_and_mirrors_runtime_chunks(clie
         records = (
             await session.execute(select(IndexRecord).where(IndexRecord.document_id == document.id))
         ).scalars().all()
+        projection_records = (
+            await session.execute(
+                select(GraphProjectionRecord).where(GraphProjectionRecord.document_id == document.id)
+            )
+        ).scalars().all()
         refreshed_document = await session.get(Document, document.id)
 
     assert runtime.deleted == [document.id]
@@ -205,6 +240,18 @@ async def test_lifecycle_deletes_existing_chunks_and_mirrors_runtime_chunks(clie
     assert len(records) == 1
     assert records[0].runtime_profile_id == "default"
     assert records[0].chunk_count == 1
+    assert len(projection_records) == 1
+    assert projection_records[0].runtime_profile_id == "default"
+    assert projection_records[0].status == "pending"
+    assert projection_records[0].node_count == 0
+    assert projection_records[0].edge_count == 0
+    assert chunks.graph_projection_record_id == projection_records[0].id
+    assert chunks.graph_materialization == {
+        "status": "pending",
+        "node_count": 0,
+        "edge_count": 0,
+        "reason": None,
+    }
     assert refreshed_document is not None
     assert refreshed_document.status == StageStatus.SUCCEEDED.value
 
@@ -594,6 +641,144 @@ async def test_lifecycle_strips_null_bytes_from_runtime_chunks(client):
     assert stored.runtime_source_id == "runtime-1"
     assert stored.content_type == "text/plain"
     assert stored.preview_ref == "preview://runtime-1"
+
+
+@pytest.mark.asyncio
+async def test_graph_projection_runner_materializes_pending_record(client):
+    app = client._transport.app
+
+    async with app.state.session_factory() as session:
+        session.add(
+            SettingsProfile(
+                id="default",
+                provider="openai-compatible",
+                llm_model="gpt-4o",
+                llm_base_url="http://llm.test",
+                embedding_model="text-embedding-3-large",
+                embedding_base_url="http://embedding.test",
+                storage_backend="postgres_pgvector_neo4j",
+                runtime_mode="runtime",
+                neo4j_uri="bolt://neo4j.test:7687",
+            )
+        )
+        document = Document(
+            filename="graph-runner.txt",
+            content_type="text/plain",
+            sha256="graph-runner",
+            artifact_path=str(app.state.settings.data_dir / "graph-runner.txt"),
+            status=StageStatus.SUCCEEDED.value,
+        )
+        session.add(document)
+        await session.flush()
+        session.add(
+            Chunk(
+                document_id=document.id,
+                text="Graph runner chunk",
+                source_location={"page": 1},
+                metadata_json={"relationship_metadata": {"references": ["Bukhari 1"]}},
+                runtime_profile_id="default",
+            )
+        )
+        projection_record = GraphProjectionRecord(
+            document_id=document.id,
+            runtime_profile_id="default",
+            status="pending",
+        )
+        session.add(projection_record)
+        await session.flush()
+
+        fake = FakeGraphMaterializationService()
+        result = await GraphProjectionRunner(
+            session,
+            app.state.settings,
+            materialization_service=fake,
+        ).materialize_pending(document.id)
+        refreshed_record = await session.get(GraphProjectionRecord, projection_record.id)
+
+    assert fake.calls == [
+        {
+            "document_id": document.id,
+            "profile_id": "default",
+            "chunk_count": 1,
+        }
+    ]
+    assert result == {
+        "status": "succeeded",
+        "node_count": 2,
+        "edge_count": 1,
+        "reason": None,
+    }
+    assert refreshed_record is not None
+    assert refreshed_record.status == "succeeded"
+    assert refreshed_record.node_count == 2
+    assert refreshed_record.edge_count == 1
+    assert refreshed_record.error is None
+    assert refreshed_record.projection_run_id is not None
+
+
+@pytest.mark.asyncio
+async def test_graph_projection_runner_records_non_blocking_failure(client):
+    app = client._transport.app
+
+    async with app.state.session_factory() as session:
+        session.add(
+            SettingsProfile(
+                id="default",
+                provider="openai-compatible",
+                llm_model="gpt-4o",
+                llm_base_url="http://llm.test",
+                embedding_model="text-embedding-3-large",
+                embedding_base_url="http://embedding.test",
+                storage_backend="postgres_pgvector_neo4j",
+                runtime_mode="runtime",
+                neo4j_uri="bolt://neo4j.test:7687",
+            )
+        )
+        document = Document(
+            filename="graph-runner-failure.txt",
+            content_type="text/plain",
+            sha256="graph-runner-failure",
+            artifact_path=str(app.state.settings.data_dir / "graph-runner-failure.txt"),
+            status=StageStatus.SUCCEEDED.value,
+        )
+        session.add(document)
+        await session.flush()
+        session.add(
+            Chunk(
+                document_id=document.id,
+                text="Graph runner failure chunk",
+                source_location={},
+                metadata_json={},
+                runtime_profile_id="default",
+            )
+        )
+        projection_record = GraphProjectionRecord(
+            document_id=document.id,
+            runtime_profile_id="default",
+            status="pending",
+        )
+        session.add(projection_record)
+        await session.flush()
+
+        result = await GraphProjectionRunner(
+            session,
+            app.state.settings,
+            materialization_service=FakeGraphMaterializationService(
+                error=RuntimeError("neo4j unavailable")
+            ),
+        ).materialize_pending(document.id)
+        refreshed_record = await session.get(GraphProjectionRecord, projection_record.id)
+
+    assert result == {
+        "status": "failed",
+        "node_count": 0,
+        "edge_count": 0,
+        "reason": "neo4j unavailable",
+    }
+    assert refreshed_record is not None
+    assert refreshed_record.status == "failed"
+    assert refreshed_record.error == "neo4j unavailable"
+    assert refreshed_record.projection_run_id is not None
 
 
 @pytest.mark.asyncio

@@ -35,6 +35,15 @@ class GraphMaterializationService:
     def __init__(self, *, driver_factory: Any | None = None):
         self.driver_factory = driver_factory
 
+    @staticmethod
+    def failure(reason: str) -> GraphMaterializationResult:
+        return GraphMaterializationResult(
+            status="failed",
+            node_count=0,
+            edge_count=0,
+            reason=reason,
+        )
+
     async def replace_document_graph(
         self,
         *,
