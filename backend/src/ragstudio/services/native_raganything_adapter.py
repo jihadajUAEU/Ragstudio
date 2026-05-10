@@ -389,12 +389,31 @@ class NativeRAGAnythingAdapter:
             raise RuntimeError("LightRAG chunks vector storage is not initialized.")
 
         original_chunks_vdb = lightrag.chunks_vdb
+        cache_config = self._llm_cache_config(lightrag)
+        cache_had_enabled_key = (
+            "enable_llm_cache" in cache_config if cache_config is not None else False
+        )
+        original_cache_enabled = (
+            cache_config.get("enable_llm_cache") if cache_config is not None else None
+        )
         proxy = ScopedVectorStorageProxy(original_chunks_vdb, document_ids)
         lightrag.chunks_vdb = proxy
+        if cache_config is not None:
+            cache_config["enable_llm_cache"] = False
         try:
             yield proxy
         finally:
             lightrag.chunks_vdb = original_chunks_vdb
+            if cache_config is not None:
+                if cache_had_enabled_key:
+                    cache_config["enable_llm_cache"] = original_cache_enabled
+                else:
+                    cache_config.pop("enable_llm_cache", None)
+
+    def _llm_cache_config(self, lightrag: Any) -> dict[str, Any] | None:
+        cache = getattr(lightrag, "llm_response_cache", None)
+        global_config = getattr(cache, "global_config", None)
+        return global_config if isinstance(global_config, dict) else None
 
     @asynccontextmanager
     async def _skip_preinsert_doc_status(

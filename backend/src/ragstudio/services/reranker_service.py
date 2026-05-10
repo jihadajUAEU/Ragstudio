@@ -17,8 +17,9 @@ class RerankerService:
         chunks: list[ChunkOut],
         profile: Any,
     ) -> tuple[list[ChunkOut], list[dict[str, Any]]]:
-        if not self._enabled(query, chunks, profile):
-            return chunks, []
+        skipped_trace = self._skipped_trace(query, chunks, profile)
+        if skipped_trace is not None:
+            return chunks, [skipped_trace]
         if not self._is_allowed_endpoint(str(profile.reranker_base_url)):
             return chunks, [self._failure_trace(profile, "blocked_endpoint")]
 
@@ -101,14 +102,38 @@ class RerankerService:
             trace["detail"] = str(exc)
         return trace
 
-    def _enabled(self, query: str, chunks: list[ChunkOut], profile: Any) -> bool:
-        return (
-            bool(query.strip())
-            and bool(chunks)
-            and bool(getattr(profile, "enable_rerank", False))
-            and getattr(profile, "reranker_provider", "disabled") != "disabled"
-            and bool(getattr(profile, "reranker_base_url", None))
-        )
+    def _skipped_trace(
+        self,
+        query: str,
+        chunks: list[ChunkOut],
+        profile: Any,
+    ) -> dict[str, Any] | None:
+        provider = getattr(profile, "reranker_provider", "disabled")
+        model = getattr(profile, "reranker_model", None)
+        if not getattr(profile, "enable_rerank", False) or provider == "disabled":
+            return {"provider": provider, "model": model, "status": "disabled"}
+        if not query.strip():
+            return {
+                "provider": provider,
+                "model": model,
+                "status": "skipped",
+                "reason": "empty_query",
+            }
+        if not chunks:
+            return {
+                "provider": provider,
+                "model": model,
+                "status": "skipped",
+                "reason": "no_chunks",
+            }
+        if not getattr(profile, "reranker_base_url", None):
+            return {
+                "provider": provider,
+                "model": model,
+                "status": "skipped",
+                "reason": "missing_endpoint",
+            }
+        return None
 
     def _payload(self, query: str, chunks: list[ChunkOut], profile: Any) -> dict[str, Any]:
         documents = [chunk.text for chunk in chunks]

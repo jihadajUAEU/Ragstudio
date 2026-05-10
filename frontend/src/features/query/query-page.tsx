@@ -370,7 +370,7 @@ function formatRankCount(count: number) {
 }
 
 function textValue(value: unknown) {
-  return typeof value === "string" && value.trim() ? value : undefined;
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
 function numberValue(value: unknown) {

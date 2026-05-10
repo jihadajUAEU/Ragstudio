@@ -78,6 +78,7 @@ class FakeRAGAnything:
         self.initialized = False
         self.aquery_error = None
         self.aquery_calls = []
+        self.query_cache_enabled = []
         self.status_upserts = []
         self.lightrag = FakeLightRAG()
         self.deleted = self.lightrag.deleted
@@ -104,6 +105,9 @@ class FakeRAGAnything:
             raise AssertionError("aquery called before LightRAG initialization")
         if self.aquery_error is not None:
             raise self.aquery_error
+        self.query_cache_enabled.append(
+            self.lightrag.llm_response_cache.global_config.get("enable_llm_cache")
+        )
         self.aquery_calls.append({"query": query, "mode": mode, "kwargs": dict(kwargs)})
         if "chunk_top_k" not in kwargs:
             return f"native answer: {query}:{mode}:{kwargs['top_k']}"
@@ -164,6 +168,9 @@ class FakeLightRAG:
     def __init__(self):
         self.deleted = []
         self.aquery_data_calls = 0
+        self.llm_response_cache = SimpleNamespace(
+            global_config={"enable_llm_cache": True}
+        )
         self.chunks_vdb = FakeChunkVectorStorage(
             [
                 {
@@ -601,6 +608,26 @@ async def test_native_adapter_queries_selected_documents_with_scoped_lightrag(tm
     assert rag.lightrag.chunks_vdb.calls == [
         {"query": "how many hadith in bukhari", "top_k": 32, "query_embedding": None}
     ]
+    assert rag.query_cache_enabled == [False]
+    assert rag.lightrag.llm_response_cache.global_config["enable_llm_cache"] is True
+
+
+@pytest.mark.asyncio
+async def test_native_adapter_disables_llm_cache_for_scoped_queries(tmp_path):
+    adapter = NativeRAGAnythingAdapter(
+        profile(runtime_working_dir=str(tmp_path / "runtime"), enable_llm_cache=True),
+        AppSettings(database_url="postgresql+asyncpg://user:pass@localhost:5432/ragstudio"),
+    )
+
+    await adapter.query(
+        "same scoped question",
+        document_ids=["doc-1"],
+        query_config={"mode": "hybrid", "top_k": 12, "chunk_top_k": 4},
+    )
+
+    rag = FakeRAGAnything.instances[0]
+    assert rag.query_cache_enabled == [False]
+    assert rag.lightrag.llm_response_cache.global_config["enable_llm_cache"] is True
 
 
 @pytest.mark.asyncio

@@ -87,9 +87,12 @@ describe("PipelineBuilder", () => {
     renderPipeline();
 
     expect(await screen.findByRole("link", { name: "Open Documents" })).toHaveAttribute("href", "/documents");
+    expect(screen.getByRole("link", { name: "Open Chunks" })).toHaveAttribute("href", "/chunks");
     expect(screen.getByRole("link", { name: "Open Settings" })).toHaveAttribute("href", "/settings");
     expect(screen.getByRole("link", { name: "Open Variants" })).toHaveAttribute("href", "/variants");
     expect(screen.getByRole("link", { name: "Open Query" })).toHaveAttribute("href", "/query");
+    expect(screen.getByRole("link", { name: "Open Graph" })).toHaveAttribute("href", "/graph");
+    expect(screen.getByRole("link", { name: "Open Diagnostics" })).toHaveAttribute("href", "/diagnostics");
   });
 
   it("places blocking diagnostics beside affected stages", async () => {

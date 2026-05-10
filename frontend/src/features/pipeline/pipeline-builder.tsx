@@ -225,17 +225,20 @@ export function PipelineBuilder() {
           </div>
           <div className="mt-4 grid gap-2">
             <StageAction href="/documents" label="Open Documents" />
+            <StageAction href="/chunks" label="Open Chunks" />
             <StageAction href="/settings" label="Open Settings" />
             <StageAction href="/variants" label="Open Variants" />
             <StageAction href="/query" label="Open Query" />
+            <StageAction href="/graph" label="Open Graph" />
+            <StageAction href="/diagnostics" label="Open Diagnostics" />
           </div>
           <div className="mt-4 rounded-md border border-[#cfe3ea] bg-[#f5fafb] p-3 text-sm leading-6 text-[#3a4a53]">
             <div className="mb-1 flex items-center gap-2 font-semibold text-[#1f2933]">
               <Info className="h-4 w-4 text-[#176b87]" aria-hidden="true" />
               Read-only map
             </div>
-            This page is implemented as a status view. Use Documents, Settings, Variants, and Query
-            to edit stages, rerun work, or recover failures.
+            This page is implemented as a status view. Use the stage actions to edit stages, inspect
+            graph evidence, rerun work, or recover failures.
           </div>
         </aside>
       </section>

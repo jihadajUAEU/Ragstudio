@@ -83,4 +83,41 @@ describe("QueryPage", () => {
     expect(await screen.findByText("Reranker failed")).toBeVisible();
     expect(screen.getByText("generic_http · ConnectError")).toBeVisible();
   });
+
+  it("summarizes disabled reranker traces", async () => {
+    vi.mocked(apiClient.query).mockResolvedValue({
+      runs: [
+        {
+          id: "run-1",
+          variant_id: "variant-1",
+          experiment_id: null,
+          query: "alpha",
+          status: "succeeded",
+          answer: "answer",
+          sources: [],
+          chunk_traces: [],
+          timings: {},
+          error: null,
+          runtime_profile_id: null,
+          document_ids: ["doc-1"],
+          query_config: {},
+          reranker_traces: [{ status: "disabled", provider: "disabled" }],
+          token_metadata: {},
+          error_type: null,
+        },
+      ],
+    });
+    renderQueryPage();
+
+    fireEvent.change(await screen.findByPlaceholderText("Ask a focused question against selected documents."), {
+      target: { value: "alpha" },
+    });
+    fireEvent.click(await screen.findByText("source.txt"));
+    fireEvent.click((await screen.findAllByText("Balanced"))[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+
+    await waitFor(() => expect(apiClient.query).toHaveBeenCalled());
+    expect(await screen.findByText("Reranker disabled")).toBeVisible();
+    expect(screen.getByText("disabled")).toBeVisible();
+  });
 });

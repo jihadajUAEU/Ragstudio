@@ -166,6 +166,51 @@ async def test_query_uses_configured_reranker_in_fallback_mode(client, monkeypat
 
 
 @pytest.mark.asyncio
+async def test_query_records_disabled_reranker_trace(client):
+    app = client._transport.app
+    async with app.state.session_factory() as session:
+        session.add(
+            SettingsProfile(
+                id="default",
+                provider="fallback",
+                llm_model="fallback",
+                embedding_model="fallback",
+                storage_backend="fallback_local",
+                runtime_mode="fallback",
+                reranker_provider="disabled",
+            )
+        )
+        await session.commit()
+
+    upload = await client.post(
+        "/api/documents",
+        files={"file": ("rerank-disabled.txt", b"alpha first", "text/plain")},
+    )
+    document_id = upload.json()["id"]
+    await client.post(f"/api/chunks/index/{document_id}")
+    variant = await client.post(
+        "/api/variants",
+        json={"name": "No Rerank", "preset": "balanced", "parameters": {}},
+    )
+
+    response = await client.post(
+        "/api/query",
+        json={
+            "query": "alpha",
+            "document_ids": [document_id],
+            "variant_ids": [variant.json()["id"]],
+        },
+    )
+
+    assert response.status_code == 200
+    run = response.json()["runs"][0]
+    assert run["status"] == "succeeded"
+    assert run["reranker_traces"] == [
+        {"provider": "disabled", "model": None, "status": "disabled"}
+    ]
+
+
+@pytest.mark.asyncio
 async def test_query_keeps_original_results_when_reranker_fails(client, monkeypatch):
     class FakeAsyncClient:
         def __init__(self, timeout):
