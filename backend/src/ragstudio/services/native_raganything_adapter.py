@@ -15,6 +15,7 @@ from urllib.parse import unquote
 from ragstudio.config import AppSettings
 from ragstudio.schemas.runtime import RuntimeProfile
 from ragstudio.services.adapter import AdapterChunk
+from ragstudio.services.graph_workspace import workspace_label
 from ragstudio.services.runtime_types import RuntimeChunk, RuntimeQueryResult
 from sqlalchemy.engine import make_url
 
@@ -661,14 +662,10 @@ class NativeRAGAnythingAdapter:
         }
 
     def _workspace(self) -> str:
-        safe = "".join(
-            character if character.isalnum() or character in {"_", "-"} else "_"
-            for character in f"ragstudio_{self.profile.id}"
-        ).strip("_")
-        return safe or "ragstudio_default"
+        return workspace_label(self.profile)
 
     def _workspace_label(self) -> str:
-        return (self._workspace().strip() or "base").replace("`", "``")
+        return workspace_label(self.profile)
 
     def _output_dir(self) -> Path:
         return Path(self.profile.runtime_working_dir) / "parsed"
