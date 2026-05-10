@@ -144,13 +144,14 @@ class OptimizerService:
 
     def _summary_sort_key(self, item: OptimizerCandidateSummary) -> tuple:
         status_rank = {
-            "scoreable": 3,
+            "scoreable": 4,
             "partial": 3,
             "unscored": 2,
             "failed": 1,
         }.get(item.score_status, 0)
         return (
             -status_rank,
+            item.failed_run_count,
             -(item.average_score if item.average_score is not None else -1.0),
             -(item.total_score if item.total_score is not None else -1.0),
             -item.scoreable_run_count,

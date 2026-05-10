@@ -214,6 +214,10 @@ class ScopedVectorStorageProxy:
         return getattr(self.base, name)
 
 
+class NativeScopedStorageUnsupported(RuntimeError):
+    pass
+
+
 class NativeRAGAnythingAdapter:
     """Runtime adapter for the real RAG-Anything and LightRAG stack."""
 
@@ -231,12 +235,12 @@ class NativeRAGAnythingAdapter:
             "indexing": "raganything",
             "query": "raganything",
             "graph": "neo4j",
-            "native_scoped_query": True,
-            "scoped_query": "raganything_full_doc_id_vector",
+            "native_scoped_query": "conditional",
+            "scoped_query": "requires_storage_verification",
             "scoped_query_detail": (
-                "Selected-document native query uses LightRAG chunk full_doc_id "
-                "filtering with vector/naive retrieval; graph modes are not used "
-                "under document scope."
+                "Selected-document native query requires LightRAG chunk storage with "
+                "full_doc_id filtering support; the storage backend is verified when "
+                "a scoped query initializes LightRAG."
             ),
         }
 
@@ -299,31 +303,40 @@ class NativeRAGAnythingAdapter:
             if document_ids:
                 effective_mode = "naive"
                 kwargs["vlm_enhanced"] = False
-                async with self._scoped_chunks_vdb(rag, document_ids) as scoped_proxy:
-                    answer = await rag.aquery(query, mode=effective_mode, **kwargs)
-                    timings = self._scoped_query_timings(started, mode, effective_mode)
-                    if scoped_proxy.query_error is not None:
+                try:
+                    async with self._scoped_chunks_vdb(rag, document_ids) as scoped_proxy:
+                        answer = await rag.aquery(query, mode=effective_mode, **kwargs)
+                        timings = self._scoped_query_timings(started, mode, effective_mode)
+                        if scoped_proxy.query_error is not None:
+                            return RuntimeQueryResult(
+                                answer="",
+                                sources=[],
+                                timings=timings,
+                                error=(
+                                    "Native RAG-Anything scoped query failed while applying "
+                                    "full_doc_id storage filter: "
+                                    f"{scoped_proxy.query_error}"
+                                ),
+                                error_type="native_document_scope_filter_failed",
+                            )
+                        leak = self._scope_leak_error(scoped_proxy, document_ids)
+                        if leak is not None:
+                            return leak
                         return RuntimeQueryResult(
-                            answer="",
-                            sources=[],
-                            timings=timings,
-                            error=(
-                                "Native RAG-Anything scoped query failed while applying "
-                                "full_doc_id storage filter: "
-                                f"{scoped_proxy.query_error}"
+                            answer=str(answer or ""),
+                            sources=self._native_sources_from_proxy(
+                                scoped_proxy,
+                                document_ids,
                             ),
-                            error_type="native_document_scope_filter_failed",
+                            timings=timings,
                         )
-                    leak = self._scope_leak_error(scoped_proxy, document_ids)
-                    if leak is not None:
-                        return leak
+                except NativeScopedStorageUnsupported as exc:
                     return RuntimeQueryResult(
-                        answer=str(answer or ""),
-                        sources=self._native_sources_from_proxy(
-                            scoped_proxy,
-                            document_ids,
-                        ),
-                        timings=timings,
+                        answer="",
+                        sources=[],
+                        timings=self._scoped_query_timings(started, mode, effective_mode),
+                        error=str(exc),
+                        error_type="native_document_scope_unsupported",
                     )
 
             await self._ensure_lightrag(rag)
@@ -499,7 +512,9 @@ class NativeRAGAnythingAdapter:
         await self._ensure_lightrag(rag)
         lightrag = getattr(rag, "lightrag", None)
         if lightrag is None or not hasattr(lightrag, "chunks_vdb"):
-            raise RuntimeError("LightRAG chunks vector storage is not initialized.")
+            raise NativeScopedStorageUnsupported(
+                "LightRAG chunks vector storage is not initialized."
+            )
 
         original_chunks_vdb = lightrag.chunks_vdb
         cache_config = self._llm_cache_config(lightrag)
@@ -515,7 +530,7 @@ class NativeRAGAnythingAdapter:
             require_storage_filter=True,
         )
         if not proxy.supports_storage_filter():
-            raise RuntimeError(
+            raise NativeScopedStorageUnsupported(
                 "LightRAG vector storage does not support storage-level full_doc_id filtering."
             )
         lightrag.chunks_vdb = proxy

@@ -540,13 +540,13 @@ def test_native_adapter_reports_scoped_query_capability(tmp_path):
 
     report = adapter.capability_report()
 
-    assert report["native_scoped_query"] is True
-    assert report["scoped_query"] == "raganything_full_doc_id_vector"
+    assert report["native_scoped_query"] == "conditional"
+    assert report["scoped_query"] == "requires_storage_verification"
     assert (
         report["scoped_query_detail"]
-        == "Selected-document native query uses LightRAG chunk full_doc_id "
-        "filtering with vector/naive retrieval; graph modes are not used "
-        "under document scope."
+        == "Selected-document native query requires LightRAG chunk storage with "
+        "full_doc_id filtering support; the storage backend is verified when "
+        "a scoped query initializes LightRAG."
     )
 
 
@@ -694,13 +694,17 @@ async def test_native_adapter_scoped_query_fails_closed_for_unfiltered_storage(t
     )
     adapter._rag = rag
 
-    with pytest.raises(RuntimeError, match="storage-level full_doc_id filtering"):
-        await adapter.query(
-            "how many hadith in bukhari",
-            document_ids=["doc-1"],
-            query_config={"mode": "hybrid", "top_k": 12, "chunk_top_k": 4},
-        )
+    result = await adapter.query(
+        "how many hadith in bukhari",
+        document_ids=["doc-1"],
+        query_config={"mode": "hybrid", "top_k": 12, "chunk_top_k": 4},
+    )
 
+    assert result.answer == ""
+    assert result.sources == []
+    assert result.error_type == "native_document_scope_unsupported"
+    assert "storage-level full_doc_id filtering" in (result.error or "")
+    assert result.timings["native_scoped_query"] is True
     assert rag.lightrag.chunks_vdb is original_chunks_vdb
     assert rag.lightrag.llm_response_cache.global_config["enable_llm_cache"] is True
 

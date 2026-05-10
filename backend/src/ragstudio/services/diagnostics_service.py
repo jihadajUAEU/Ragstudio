@@ -139,12 +139,12 @@ class DiagnosticsService:
             by_name.get("raganything") is not None
             and by_name["raganything"].status == "ok"
         )
-        scoped_query: bool | str = "raganything_full_doc_id_vector"
-        native_scoped_query = True
+        scoped_query: str = "requires_storage_verification"
+        native_scoped_query: bool | str = "conditional"
         scoped_query_detail = (
-            "Selected-document native query uses LightRAG chunk full_doc_id "
-            "filtering with vector/naive retrieval; graph modes are not used "
-            "under document scope."
+            "Selected-document native query requires LightRAG chunk storage with "
+            "full_doc_id filtering support; the storage backend is verified when "
+            "a scoped query initializes LightRAG."
         )
         if not runtime_available:
             scoped_query = "unavailable"

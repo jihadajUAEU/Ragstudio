@@ -127,6 +127,85 @@ async def test_optimizer_aggregates_scores_per_variant_across_runs(client):
 
 
 @pytest.mark.asyncio
+async def test_optimizer_prefers_fully_scored_variant_over_partial_high_score_with_failures(client):
+    transport = client._transport
+    async with transport.app.state.session_factory() as session:
+        experiment = Experiment(
+            name="Reliability optimizer experiment",
+            document_ids=[],
+            evaluation_set_id="eval",
+            variant_ids=["partial", "reliable"],
+            objective={"metric": "total"},
+        )
+        session.add(experiment)
+        await session.flush()
+        runs = [
+            Run(
+                variant_id="partial",
+                experiment_id=experiment.id,
+                query="q1",
+                status="succeeded",
+                answer="excellent once",
+            ),
+            Run(
+                variant_id="partial",
+                experiment_id=experiment.id,
+                query="q2",
+                status="failed",
+                error="backend timeout",
+            ),
+            Run(
+                variant_id="partial",
+                experiment_id=experiment.id,
+                query="q3",
+                status="failed",
+                error="backend timeout",
+            ),
+            Run(
+                variant_id="reliable",
+                experiment_id=experiment.id,
+                query="q1",
+                status="succeeded",
+                answer="good",
+            ),
+            Run(
+                variant_id="reliable",
+                experiment_id=experiment.id,
+                query="q2",
+                status="succeeded",
+                answer="good",
+            ),
+        ]
+        session.add_all(runs)
+        await session.flush()
+        session.add_all(
+            [
+                Score(run_id=runs[0].id, total=100, details={"total": 100}),
+                Score(run_id=runs[3].id, total=80, details={"total": 80}),
+                Score(run_id=runs[4].id, total=80, details={"total": 80}),
+            ]
+        )
+        await session.commit()
+        experiment_id = experiment.id
+        reliable_run_ids = {runs[3].id, runs[4].id}
+
+    response = await client.post(
+        "/api/optimizer", json={"experiment_id": experiment_id, "objective": {}}
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["selected_variant_id"] == "reliable"
+    assert payload["selected_run_id"] in reliable_run_ids
+    summaries = {item["variant_id"]: item for item in payload["candidate_summaries"]}
+    assert summaries["partial"]["score_status"] == "partial"
+    assert summaries["partial"]["average_score"] == 100
+    assert summaries["partial"]["failed_run_count"] == 2
+    assert summaries["reliable"]["score_status"] == "scoreable"
+    assert summaries["reliable"]["average_score"] == 80
+
+
+@pytest.mark.asyncio
 async def test_optimizer_ranks_unscored_success_below_formal_score(client):
     transport = client._transport
     async with transport.app.state.session_factory() as session:
@@ -724,13 +803,13 @@ async def test_diagnostics_reports_native_dependency_status_for_runtime_mode(cli
     assert payload.dependency_status["indexing"] == "raganything"
     assert payload.dependency_status["query"] == "raganything"
     assert payload.dependency_status["graph"] == "neo4j"
-    assert payload.dependency_status["native_scoped_query"] is True
-    assert payload.dependency_status["scoped_query"] == "raganything_full_doc_id_vector"
+    assert payload.dependency_status["native_scoped_query"] == "conditional"
+    assert payload.dependency_status["scoped_query"] == "requires_storage_verification"
     assert (
         payload.dependency_status["scoped_query_detail"]
-        == "Selected-document native query uses LightRAG chunk full_doc_id "
-        "filtering with vector/naive retrieval; graph modes are not used "
-        "under document scope."
+        == "Selected-document native query requires LightRAG chunk storage with "
+        "full_doc_id filtering support; the storage backend is verified when "
+        "a scoped query initializes LightRAG."
     )
 
 
