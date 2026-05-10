@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 
 from ragstudio.config import AppSettings
 from ragstudio.db.models import Chunk, GraphProjectionRecord
 from ragstudio.schemas.common import new_id
 from ragstudio.services.graph_materialization_service import GraphMaterializationService
+from ragstudio.services.graph_workspace import workspace_label
 from ragstudio.services.runtime_profile_service import (
     RuntimeProfileNotConfiguredError,
     RuntimeProfileService,
@@ -45,10 +47,11 @@ class GraphProjectionRunner:
             profile = await RuntimeProfileService(self.session, self.settings).get_profile(
                 record.runtime_profile_id
             )
+            self._ensure_projection_target(record, profile)
             chunks = await self._chunks(document_id)
             result = await self.materialization_service.replace_document_graph(
                 document_id=document_id,
-                profile=profile,
+                profile=self._profile_for_record(profile, record),
                 chunks=chunks,
             )
         except Exception as exc:
@@ -57,6 +60,8 @@ class GraphProjectionRunner:
         record.node_count = result.node_count
         record.edge_count = result.edge_count
         record.error = result.reason
+        if result.status == "succeeded":
+            await self._delete_stale_records_for_target(record)
         await self.session.flush()
         return result.to_dict()
 
@@ -70,12 +75,14 @@ class GraphProjectionRunner:
                 runtime_profile_id=profile.id,
                 status="pending",
                 projection_run_id=new_id(),
+                graph_workspace_label=workspace_label(profile),
+                graph_storage_uri=profile.neo4j_uri,
             )
             self.session.add(record)
             await self.session.flush()
             result = await self.materialization_service.replace_document_graph(
                 document_id=document_id,
-                profile=profile,
+                profile=self._profile_for_record(profile, record),
                 chunks=chunks,
             )
         except Exception as exc:
@@ -127,21 +134,30 @@ class GraphProjectionRunner:
         edge_count = 0
         profile_service = RuntimeProfileService(self.session, self.settings)
         for runtime_profile_id in cleanup_profile_ids:
-            try:
-                profile = await profile_service.get_profile(runtime_profile_id)
-            except RuntimeProfileNotConfiguredError as exc:
-                raise GraphProjectionCleanupError(str(exc)) from exc
-            result = await self.materialization_service.delete_document_graph(
-                document_id=document_id,
-                profile=profile,
-            )
-            if result.status != "succeeded":
-                detail = f": {result.reason}" if result.reason else ""
-                raise GraphProjectionCleanupError(
-                    f"Graph projection cleanup {result.status}{detail}"
+            profile_records = [
+                record
+                for record in records
+                if record.runtime_profile_id == runtime_profile_id
+                and _needs_graph_cleanup(record)
+            ]
+            targets = {_target_key(record): record for record in profile_records}
+            for target_record in targets.values():
+                try:
+                    profile = await profile_service.get_profile(runtime_profile_id)
+                except RuntimeProfileNotConfiguredError as exc:
+                    raise GraphProjectionCleanupError(str(exc)) from exc
+                self._ensure_projection_target(target_record, profile)
+                result = await self.materialization_service.delete_document_graph(
+                    document_id=document_id,
+                    profile=self._profile_for_record(profile, target_record),
                 )
-            node_count += result.node_count
-            edge_count += result.edge_count
+                if result.status != "succeeded":
+                    detail = f": {result.reason}" if result.reason else ""
+                    raise GraphProjectionCleanupError(
+                        f"Graph projection cleanup {result.status}{detail}"
+                    )
+                node_count += result.node_count
+                edge_count += result.edge_count
 
         await self._delete_projection_records(document_id)
         await self.session.flush()
@@ -183,6 +199,43 @@ class GraphProjectionRunner:
             .all()
         )
 
+    async def _delete_stale_records_for_target(self, record: GraphProjectionRecord) -> None:
+        stale_records = await self._projection_records(record.document_id)
+        target = _target_key(record)
+        stale_ids = [
+            stale_record.id
+            for stale_record in stale_records
+            if stale_record.id != record.id and _target_key(stale_record) == target
+        ]
+        if not stale_ids:
+            return
+        await self.session.execute(
+            delete(GraphProjectionRecord).where(GraphProjectionRecord.id.in_(stale_ids))
+        )
+
+    def _ensure_projection_target(
+        self,
+        record: GraphProjectionRecord,
+        profile: Any,
+    ) -> None:
+        if not record.graph_workspace_label:
+            record.graph_workspace_label = workspace_label(profile)
+        if not record.graph_storage_uri:
+            record.graph_storage_uri = getattr(profile, "neo4j_uri", None)
+
+    def _profile_for_record(
+        self,
+        profile: Any,
+        record: GraphProjectionRecord,
+    ) -> Any:
+        return SimpleNamespace(
+            id=getattr(profile, "id", record.runtime_profile_id),
+            graph_workspace_label=record.graph_workspace_label,
+            neo4j_uri=record.graph_storage_uri,
+            neo4j_username=getattr(profile, "neo4j_username", None),
+            neo4j_password=getattr(profile, "neo4j_password", None),
+        )
+
     async def _latest_record(
         self,
         document_id: str,
@@ -206,3 +259,11 @@ def _needs_graph_cleanup(record: GraphProjectionRecord) -> bool:
     ):
         return False
     return True
+
+
+def _target_key(record: GraphProjectionRecord) -> tuple[str, str | None, str | None]:
+    return (
+        record.runtime_profile_id,
+        record.graph_workspace_label,
+        record.graph_storage_uri,
+    )

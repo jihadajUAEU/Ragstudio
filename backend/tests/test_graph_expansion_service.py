@@ -177,6 +177,39 @@ async def test_graph_expansion_converts_neighbor_rows_to_candidates():
 
 
 @pytest.mark.asyncio
+async def test_graph_expansion_keeps_chunk_id_candidate_without_preview_text():
+    driver = FakeDriver(
+        [
+            FakeRecord(
+                relationship_id="rel-3",
+                relationship_type="RELATED",
+                relationship_properties={},
+                seed_properties={"chunk_id": "seed-1"},
+                neighbor_id="node-4",
+                neighbor_labels=["RagstudioChunk"],
+                neighbor_properties={
+                    "chunk_id": "neighbor-empty-preview",
+                    "document_id": "doc-1",
+                },
+            )
+        ]
+    )
+    service = GraphExpansionService(driver_factory=lambda *args, **kwargs: driver)
+
+    candidates, _ = await service.expand(
+        "show related hadith",
+        seeds=[seed_candidate()],
+        profile=profile(),
+        document_ids=["doc-1"],
+        limit=2,
+    )
+
+    assert len(candidates) == 1
+    assert candidates[0].chunk_id == "neighbor-empty-preview"
+    assert candidates[0].text == ""
+
+
+@pytest.mark.asyncio
 async def test_graph_expansion_returns_trace_when_neo4j_uri_is_missing():
     service = GraphExpansionService(driver_factory=lambda *args, **kwargs: None)
 

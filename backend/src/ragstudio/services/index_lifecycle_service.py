@@ -13,6 +13,7 @@ from ragstudio.services.adapter import AdapterChunk
 from ragstudio.services.chunk_sanitizer import sanitize_db_text, sanitize_db_value
 from ragstudio.services.chunk_splitter import ChunkSplitter
 from ragstudio.services.document_parser_service import DocumentParserService
+from ragstudio.services.graph_workspace import workspace_label
 from ragstudio.services.mineru_relationship_builder import MinerURelationshipBuilder
 from ragstudio.services.runtime_factory import RAGAnythingRuntimeFactory
 from ragstudio.services.runtime_health_service import RuntimeHealthService
@@ -116,10 +117,6 @@ class IndexLifecycleService:
         await self.session.execute(
             delete(IndexRecord).where(IndexRecord.document_id == document.id)
         )
-        await self.session.execute(
-            delete(GraphProjectionRecord).where(GraphProjectionRecord.document_id == document.id)
-        )
-
         indexed_at = datetime.now(UTC)
         normalized_chunks: list[AdapterChunk] = [
             self.normalizer.chunk_to_adapter_chunk(
@@ -167,6 +164,8 @@ class IndexLifecycleService:
             document_id=document.id,
             runtime_profile_id=profile.id,
             status="pending",
+            graph_workspace_label=workspace_label(profile),
+            graph_storage_uri=profile.neo4j_uri,
             node_count=0,
             edge_count=0,
         )

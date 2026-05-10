@@ -68,7 +68,7 @@ class GraphMaterializationService:
                 reason="driver_unavailable",
             )
 
-        label = workspace_label(profile)
+        label = _projection_workspace_label(profile)
         chunk_nodes, reference_nodes, relationships = self._projection(document_id, chunks)
         try:
             await asyncio.to_thread(
@@ -125,7 +125,7 @@ class GraphMaterializationService:
             node_count, edge_count = await asyncio.to_thread(
                 self._delete_graph,
                 driver,
-                workspace_label=workspace_label(profile),
+                workspace_label=_projection_workspace_label(profile),
                 document_id=document_id,
             )
         except Exception as exc:
@@ -367,6 +367,13 @@ def _auth(profile: Any) -> tuple[str, str] | None:
     return None
 
 
+def _projection_workspace_label(profile: Any) -> str:
+    label = getattr(profile, "graph_workspace_label", None)
+    if isinstance(label, str) and label.strip():
+        return label.replace("`", "``")
+    return workspace_label(profile)
+
+
 def _first_row(rows: Any) -> Any:
     for row in rows:
         return row
@@ -401,10 +408,10 @@ def _references(metadata: dict[str, Any]) -> list[str]:
 def _source_location_properties(value: Any) -> dict[str, Any]:
     source_location = value if isinstance(value, dict) else {}
     return {
-        "page": source_location.get("page"),
-        "section": source_location.get("section"),
-        "start_index": source_location.get("start_index"),
-        "end_index": source_location.get("end_index"),
+        "page": _neo4j_property(source_location.get("page")),
+        "section": _neo4j_property(source_location.get("section")),
+        "start_index": _neo4j_property(source_location.get("start_index")),
+        "end_index": _neo4j_property(source_location.get("end_index")),
         "source_location_json": json.dumps(source_location, ensure_ascii=False)
         if source_location
         else None,

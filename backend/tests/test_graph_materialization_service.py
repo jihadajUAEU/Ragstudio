@@ -219,6 +219,36 @@ async def test_replace_document_graph_json_encodes_complex_relationship_evidence
 
 
 @pytest.mark.asyncio
+async def test_replace_document_graph_sanitizes_complex_source_location_properties():
+    chunk = chunk_with_relationships()
+    chunk.source_location = {
+        "page": {"start": 1},
+        "section": ["primitive", {"nested": "no"}],
+        "start_index": 4,
+        "end_index": 9,
+    }
+    driver = FakeDriver()
+    service = GraphMaterializationService(driver_factory=lambda *args, **kwargs: driver)
+
+    result = await service.replace_document_graph(
+        document_id="doc-1",
+        profile=profile(),
+        chunks=[chunk],
+    )
+
+    node_call = next(
+        call for call in driver.session_instance.calls if "UNWIND $chunk_nodes" in call[0]
+    )
+    chunk_node = node_call[1]["chunk_nodes"][0]
+    assert result.status == "succeeded"
+    assert chunk_node["page"] is None
+    assert chunk_node["section"] is None
+    assert chunk_node["start_index"] == 4
+    assert chunk_node["end_index"] == 9
+    assert '"page": {"start": 1}' in chunk_node["source_location_json"]
+
+
+@pytest.mark.asyncio
 async def test_graph_projection_record_is_separate_from_index_readiness(
     tmp_path,
     database_url,

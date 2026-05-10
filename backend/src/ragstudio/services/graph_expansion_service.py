@@ -49,7 +49,7 @@ class GraphExpansionService:
         candidates = [
             candidate
             for index, row in enumerate(rows, start=1)
-            if (candidate := _candidate_from_row(index, row)).text.strip()
+            if _candidate_has_hydration_key(candidate := _candidate_from_row(index, row))
         ]
         return candidates, [
             {
@@ -171,6 +171,10 @@ def _seed_ids(seeds: list[EvidenceCandidate]) -> list[str]:
             if isinstance(value, str) and value and value not in values:
                 values.append(value)
     return values
+
+
+def _candidate_has_hydration_key(candidate: EvidenceCandidate) -> bool:
+    return bool(candidate.text.strip() or candidate.chunk_id)
 
 
 def _candidate_from_row(index: int, row: Any) -> EvidenceCandidate:

@@ -151,6 +151,8 @@ class FakeGraphMaterializationService:
             {
                 "document_id": document_id,
                 "profile_id": profile.id,
+                "neo4j_uri": getattr(profile, "neo4j_uri", None),
+                "graph_workspace_label": getattr(profile, "graph_workspace_label", None),
                 "chunk_count": len(chunks),
             }
         )
@@ -159,7 +161,14 @@ class FakeGraphMaterializationService:
         return self.result
 
     async def delete_document_graph(self, *, document_id, profile):
-        self.delete_calls.append({"document_id": document_id, "profile_id": profile.id})
+        self.delete_calls.append(
+            {
+                "document_id": document_id,
+                "profile_id": profile.id,
+                "neo4j_uri": getattr(profile, "neo4j_uri", None),
+                "graph_workspace_label": getattr(profile, "graph_workspace_label", None),
+            }
+        )
         if self.error is not None:
             raise self.error
         return self.result
@@ -211,6 +220,17 @@ async def test_lifecycle_deletes_existing_chunks_and_mirrors_runtime_chunks(clie
                 chunk_count=1,
             )
         )
+        session.add(
+            GraphProjectionRecord(
+                document_id=document.id,
+                runtime_profile_id="default",
+                status="succeeded",
+                graph_workspace_label="ragstudio_default",
+                graph_storage_uri="bolt://neo4j.test:7687",
+                node_count=2,
+                edge_count=1,
+            )
+        )
         await session.commit()
 
         chunks = await IndexLifecycleService(
@@ -252,12 +272,14 @@ async def test_lifecycle_deletes_existing_chunks_and_mirrors_runtime_chunks(clie
     assert len(records) == 1
     assert records[0].runtime_profile_id == "default"
     assert records[0].chunk_count == 1
-    assert len(projection_records) == 1
-    assert projection_records[0].runtime_profile_id == "default"
-    assert projection_records[0].status == "pending"
-    assert projection_records[0].node_count == 0
-    assert projection_records[0].edge_count == 0
-    assert chunks.graph_projection_record_id == projection_records[0].id
+    assert len(projection_records) == 2
+    projection_by_id = {record.id: record for record in projection_records}
+    pending_projection = projection_by_id[chunks.graph_projection_record_id]
+    assert pending_projection.runtime_profile_id == "default"
+    assert pending_projection.status == "pending"
+    assert pending_projection.graph_workspace_label == "ragstudio_default"
+    assert pending_projection.node_count == 0
+    assert pending_projection.edge_count == 0
     assert chunks.graph_materialization == {
         "status": "pending",
         "node_count": 0,
@@ -711,6 +733,8 @@ async def test_graph_projection_runner_materializes_pending_record(client):
         {
             "document_id": document.id,
             "profile_id": "default",
+            "neo4j_uri": "bolt://neo4j.test:7687",
+            "graph_workspace_label": "ragstudio_default",
             "chunk_count": 1,
         }
     ]
@@ -797,6 +821,8 @@ async def test_graph_projection_runner_uses_record_runtime_profile(client):
         {
             "document_id": document.id,
             "profile_id": "archived",
+            "neo4j_uri": "bolt://archived-neo4j.test:7687",
+            "graph_workspace_label": "ragstudio_archived",
             "chunk_count": 1,
         }
     ]
@@ -868,6 +894,80 @@ async def test_graph_projection_runner_records_non_blocking_failure(client):
 
 
 @pytest.mark.asyncio
+async def test_graph_projection_runner_preserves_old_projection_when_replacement_skips(client):
+    app = client._transport.app
+
+    async with app.state.session_factory() as session:
+        session.add(
+            SettingsProfile(
+                id="default",
+                provider="openai-compatible",
+                llm_model="gpt-4o",
+                llm_base_url="http://llm.test",
+                embedding_model="text-embedding-3-large",
+                embedding_base_url="http://embedding.test",
+                storage_backend="postgres_pgvector_neo4j",
+                runtime_mode="runtime",
+                neo4j_uri="bolt://neo4j.test:7687",
+            )
+        )
+        document = Document(
+            filename="graph-replacement-skips.txt",
+            content_type="text/plain",
+            sha256="graph-replacement-skips",
+            artifact_path=str(app.state.settings.data_dir / "graph-replacement-skips.txt"),
+            status=StageStatus.SUCCEEDED.value,
+        )
+        session.add(document)
+        await session.flush()
+        old_record = GraphProjectionRecord(
+            document_id=document.id,
+            runtime_profile_id="default",
+            status="succeeded",
+            graph_workspace_label="ragstudio_default",
+            graph_storage_uri="bolt://neo4j.test:7687",
+            node_count=2,
+            edge_count=1,
+        )
+        new_record = GraphProjectionRecord(
+            document_id=document.id,
+            runtime_profile_id="default",
+            status="pending",
+            graph_workspace_label="ragstudio_default",
+            graph_storage_uri="bolt://neo4j.test:7687",
+        )
+        session.add_all([old_record, new_record])
+        await session.flush()
+
+        result = await GraphProjectionRunner(
+            session,
+            app.state.settings,
+            materialization_service=FakeGraphMaterializationService(
+                result=GraphMaterializationResult(
+                    status="skipped",
+                    node_count=0,
+                    edge_count=0,
+                    reason="driver_unavailable",
+                )
+            ),
+        ).materialize_pending(document.id)
+        records = (
+            await session.execute(
+                select(GraphProjectionRecord).where(
+                    GraphProjectionRecord.document_id == document.id
+                )
+            )
+        ).scalars().all()
+
+    assert result["status"] == "skipped"
+    assert {record.id for record in records} == {old_record.id, new_record.id}
+    assert {record.id: record.status for record in records} == {
+        old_record.id: "succeeded",
+        new_record.id: "skipped",
+    }
+
+
+@pytest.mark.asyncio
 async def test_graph_projection_runner_rematerializes_from_mirrored_chunks(client):
     app = client._transport.app
 
@@ -919,6 +1019,8 @@ async def test_graph_projection_runner_rematerializes_from_mirrored_chunks(clien
         {
             "document_id": document.id,
             "profile_id": "default",
+            "neo4j_uri": "bolt://neo4j.test:7687",
+            "graph_workspace_label": "ragstudio_default",
             "chunk_count": 1,
         }
     ]
@@ -976,9 +1078,74 @@ async def test_graph_projection_runner_deletes_projection_records_with_graph(cli
             select(GraphProjectionRecord.id).where(GraphProjectionRecord.id == projection_record.id)
         )
 
-    assert fake.delete_calls == [{"document_id": document.id, "profile_id": "default"}]
+    assert fake.delete_calls == [
+        {
+            "document_id": document.id,
+            "profile_id": "default",
+            "neo4j_uri": "bolt://neo4j.test:7687",
+            "graph_workspace_label": "ragstudio_default",
+        }
+    ]
     assert result["status"] == "succeeded"
     assert deleted_record_id is None
+
+
+@pytest.mark.asyncio
+async def test_graph_projection_runner_deletes_using_recorded_target_after_profile_drift(client):
+    app = client._transport.app
+
+    async with app.state.session_factory() as session:
+        session.add(
+            SettingsProfile(
+                id="default",
+                provider="openai-compatible",
+                llm_model="gpt-4o",
+                llm_base_url="http://llm.test",
+                embedding_model="text-embedding-3-large",
+                embedding_base_url="http://embedding.test",
+                storage_backend="postgres_pgvector_neo4j",
+                runtime_mode="runtime",
+                neo4j_uri="bolt://new-neo4j.test:7687",
+            )
+        )
+        document = Document(
+            filename="graph-delete-profile-drift.txt",
+            content_type="text/plain",
+            sha256="graph-delete-profile-drift",
+            artifact_path=str(app.state.settings.data_dir / "graph-delete-profile-drift.txt"),
+            status=StageStatus.SUCCEEDED.value,
+        )
+        session.add(document)
+        await session.flush()
+        session.add(
+            GraphProjectionRecord(
+                document_id=document.id,
+                runtime_profile_id="default",
+                status="succeeded",
+                graph_workspace_label="ragstudio_default",
+                graph_storage_uri="bolt://old-neo4j.test:7687",
+                node_count=2,
+                edge_count=1,
+            )
+        )
+        await session.flush()
+
+        fake = FakeGraphMaterializationService()
+        result = await GraphProjectionRunner(
+            session,
+            app.state.settings,
+            materialization_service=fake,
+        ).delete_document_graph(document.id)
+
+    assert fake.delete_calls == [
+        {
+            "document_id": document.id,
+            "profile_id": "default",
+            "neo4j_uri": "bolt://old-neo4j.test:7687",
+            "graph_workspace_label": "ragstudio_default",
+        }
+    ]
+    assert result["status"] == "succeeded"
 
 
 @pytest.mark.asyncio

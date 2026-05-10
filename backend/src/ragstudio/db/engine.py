@@ -132,6 +132,16 @@ def _ensure_runtime_columns(connection) -> None:
                 "error_type": "VARCHAR",
             },
         )
+    if "graph_projection_records" in table_names:
+        _ensure_columns(
+            connection,
+            inspector,
+            "graph_projection_records",
+            {
+                "graph_workspace_label": "VARCHAR",
+                "graph_storage_uri": "VARCHAR",
+            },
+        )
 
 
 def _ensure_columns(connection, inspector, table_name: str, additions: dict[str, str]) -> None:
