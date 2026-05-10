@@ -1,0 +1,1007 @@
+{
+  "summary": {
+    "created_at": "2026-05-10T03:05:56.123686+00:00",
+    "base_url": "http://localhost:8000",
+    "document_id": "bb5ce512-1795-46a4-868d-eb6e449f9812",
+    "variant_id": "75848293-2f84-4a84-9ec0-110e60df8651",
+    "total": 25,
+    "pass": 0,
+    "fail": 0,
+    "error": 25,
+    "average_elapsed_seconds": 0.0
+  },
+  "results": [
+    {
+      "id": 1,
+      "category": "Collection count",
+      "question": "How many hadith are in Sahih al-Bukhari?",
+      "expected_groups": [
+        [
+          "7277",
+          "7,277"
+        ]
+      ],
+      "started_at": "2026-05-10T03:05:56.006617+00:00",
+      "status": "error",
+      "elapsed_seconds": 0.03,
+      "error": "<HTTPError 422: 'Unprocessable Entity'>",
+      "answer": "",
+      "matched_terms": [],
+      "missing_groups": [
+        [
+          "7277",
+          "7,277"
+        ]
+      ],
+      "source_count": 0,
+      "top_source_title": "",
+      "top_source_text": ""
+    },
+    {
+      "id": 2,
+      "category": "Exact reference",
+      "question": "What is Book 24, Hadith 109 about?",
+      "expected_groups": [
+        [
+          "Zakat-ul-Fitr",
+          "Zakat al-Fitr",
+          "Fitr"
+        ],
+        [
+          "Eid",
+          "prayer"
+        ]
+      ],
+      "started_at": "2026-05-10T03:05:56.036159+00:00",
+      "status": "error",
+      "elapsed_seconds": 0.0,
+      "error": "<HTTPError 422: 'Unprocessable Entity'>",
+      "answer": "",
+      "matched_terms": [],
+      "missing_groups": [
+        [
+          "Zakat-ul-Fitr",
+          "Zakat al-Fitr",
+          "Fitr"
+        ],
+        [
+          "Eid",
+          "prayer"
+        ]
+      ],
+      "source_count": 0,
+      "top_source_title": "",
+      "top_source_text": ""
+    },
+    {
+      "id": 3,
+      "category": "Exact reference",
+      "question": "According to Book 24, Hadith 45, what do the two angels say every morning?",
+      "expected_groups": [
+        [
+          "compensate",
+          "compensation"
+        ],
+        [
+          "spender",
+          "spends",
+          "spending"
+        ],
+        [
+          "destroy",
+          "destruction"
+        ],
+        [
+          "miser",
+          "withholder"
+        ]
+      ],
+      "started_at": "2026-05-10T03:05:56.039290+00:00",
+      "status": "error",
+      "elapsed_seconds": 0.0,
+      "error": "<HTTPError 422: 'Unprocessable Entity'>",
+      "answer": "",
+      "matched_terms": [],
+      "missing_groups": [
+        [
+          "compensate",
+          "compensation"
+        ],
+        [
+          "spender",
+          "spends",
+          "spending"
+        ],
+        [
+          "destroy",
+          "destruction"
+        ],
+        [
+          "miser",
+          "withholder"
+        ]
+      ],
+      "source_count": 0,
+      "top_source_title": "",
+      "top_source_text": ""
+    },
+    {
+      "id": 4,
+      "category": "Exact reference",
+      "question": "According to Book 56, Hadith 88, what did the Prophet leave behind?",
+      "expected_groups": [
+        [
+          "white mule",
+          "mule"
+        ],
+        [
+          "arms",
+          "weapon"
+        ],
+        [
+          "land"
+        ],
+        [
+          "charity",
+          "sadaqa"
+        ]
+      ],
+      "started_at": "2026-05-10T03:05:56.042299+00:00",
+      "status": "error",
+      "elapsed_seconds": 0.0,
+      "error": "<HTTPError 422: 'Unprocessable Entity'>",
+      "answer": "",
+      "matched_terms": [],
+      "missing_groups": [
+        [
+          "white mule",
+          "mule"
+        ],
+        [
+          "arms",
+          "weapon"
+        ],
+        [
+          "land"
+        ],
+        [
+          "charity",
+          "sadaqa"
+        ]
+      ],
+      "source_count": 0,
+      "top_source_title": "",
+      "top_source_text": ""
+    },
+    {
+      "id": 5,
+      "category": "Ablution",
+      "question": "What does Book 4, Hadith 23 say about ablution?",
+      "expected_groups": [
+        [
+          "washing",
+          "washed"
+        ],
+        [
+          "once",
+          "one time"
+        ]
+      ],
+      "started_at": "2026-05-10T03:05:56.045295+00:00",
+      "status": "error",
+      "elapsed_seconds": 0.0,
+      "error": "<HTTPError 422: 'Unprocessable Entity'>",
+      "answer": "",
+      "matched_terms": [],
+      "missing_groups": [
+        [
+          "washing",
+          "washed"
+        ],
+        [
+          "once",
+          "one time"
+        ]
+      ],
+      "source_count": 0,
+      "top_source_title": "",
+      "top_source_text": ""
+    },
+    {
+      "id": 6,
+      "category": "Ablution miracle",
+      "question": "Which Bukhari hadith mentions water springing from underneath the Prophet's fingers?",
+      "expected_groups": [
+        [
+          "water"
+        ],
+        [
+          "finger",
+          "fingers"
+        ],
+        [
+          "Book 4",
+          "Hadith 35",
+          "4, Hadith 35"
+        ]
+      ],
+      "started_at": "2026-05-10T03:05:56.048424+00:00",
+      "status": "error",
+      "elapsed_seconds": 0.0,
+      "error": "<HTTPError 422: 'Unprocessable Entity'>",
+      "answer": "",
+      "matched_terms": [],
+      "missing_groups": [
+        [
+          "water"
+        ],
+        [
+          "finger",
+          "fingers"
+        ],
+        [
+          "Book 4",
+          "Hadith 35",
+          "4, Hadith 35"
+        ]
+      ],
+      "source_count": 0,
+      "top_source_title": "",
+      "top_source_text": ""
+    },
+    {
+      "id": 7,
+      "category": "Eid practice",
+      "question": "What does Book 13, Hadith 30 say about menstruating women on Eid?",
+      "expected_groups": [
+        [
+          "menstruating"
+        ],
+        [
+          "religious gathering",
+          "gathering"
+        ],
+        [
+          "Musalla",
+          "prayer place"
+        ]
+      ],
+      "started_at": "2026-05-10T03:05:56.051702+00:00",
+      "status": "error",
+      "elapsed_seconds": 0.0,
+      "error": "<HTTPError 422: 'Unprocessable Entity'>",
+      "answer": "",
+      "matched_terms": [],
+      "missing_groups": [
+        [
+          "menstruating"
+        ],
+        [
+          "religious gathering",
+          "gathering"
+        ],
+        [
+          "Musalla",
+          "prayer place"
+        ]
+      ],
+      "source_count": 0,
+      "top_source_title": "",
+      "top_source_text": ""
+    },
+    {
+      "id": 8,
+      "category": "Pilgrimage",
+      "question": "What does Book 27, Hadith 13 mention about Ka'b bin Ujra?",
+      "expected_groups": [
+        [
+          "Ka'b",
+          "Kab"
+        ],
+        [
+          "lice"
+        ],
+        [
+          "face"
+        ]
+      ],
+      "started_at": "2026-05-10T03:05:56.054991+00:00",
+      "status": "error",
+      "elapsed_seconds": 0.0,
+      "error": "<HTTPError 422: 'Unprocessable Entity'>",
+      "answer": "",
+      "matched_terms": [],
+      "missing_groups": [
+        [
+          "Ka'b",
+          "Kab"
+        ],
+        [
+          "lice"
+        ],
+        [
+          "face"
+        ]
+      ],
+      "source_count": 0,
+      "top_source_title": "",
+      "top_source_text": ""
+    },
+    {
+      "id": 9,
+      "category": "Mourning",
+      "question": "What is said in Book 23, Hadith 61 about Ibrahim?",
+      "expected_groups": [
+        [
+          "eyes",
+          "eye"
+        ],
+        [
+          "tears",
+          "weeps"
+        ],
+        [
+          "heart"
+        ],
+        [
+          "grieves",
+          "sad"
+        ],
+        [
+          "Lord",
+          "Allah"
+        ]
+      ],
+      "started_at": "2026-05-10T03:05:56.057972+00:00",
+      "status": "error",
+      "elapsed_seconds": 0.0,
+      "error": "<HTTPError 422: 'Unprocessable Entity'>",
+      "answer": "",
+      "matched_terms": [],
+      "missing_groups": [
+        [
+          "eyes",
+          "eye"
+        ],
+        [
+          "tears",
+          "weeps"
+        ],
+        [
+          "heart"
+        ],
+        [
+          "grieves",
+          "sad"
+        ],
+        [
+          "Lord",
+          "Allah"
+        ]
+      ],
+      "source_count": 0,
+      "top_source_title": "",
+      "top_source_text": ""
+    },
+    {
+      "id": 10,
+      "category": "After death",
+      "question": "What does Book 81, Hadith 104 say happens after a person dies?",
+      "expected_groups": [
+        [
+          "shown",
+          "show"
+        ],
+        [
+          "morning"
+        ],
+        [
+          "evening"
+        ],
+        [
+          "resurrection",
+          "resurrected"
+        ]
+      ],
+      "started_at": "2026-05-10T03:05:56.060983+00:00",
+      "status": "error",
+      "elapsed_seconds": 0.0,
+      "error": "<HTTPError 422: 'Unprocessable Entity'>",
+      "answer": "",
+      "matched_terms": [],
+      "missing_groups": [
+        [
+          "shown",
+          "show"
+        ],
+        [
+          "morning"
+        ],
+        [
+          "evening"
+        ],
+        [
+          "resurrection",
+          "resurrected"
+        ]
+      ],
+      "source_count": 0,
+      "top_source_title": "",
+      "top_source_text": ""
+    },
+    {
+      "id": 11,
+      "category": "Virtue",
+      "question": "What comparison is made about Aisha in Book 60, Hadith 104?",
+      "expected_groups": [
+        [
+          "Aisha",
+          "Aisha"
+        ],
+        [
+          "tharid",
+          "Tharid"
+        ],
+        [
+          "women"
+        ]
+      ],
+      "started_at": "2026-05-10T03:05:56.063772+00:00",
+      "status": "error",
+      "elapsed_seconds": 0.0,
+      "error": "<HTTPError 422: 'Unprocessable Entity'>",
+      "answer": "",
+      "matched_terms": [],
+      "missing_groups": [
+        [
+          "Aisha",
+          "Aisha"
+        ],
+        [
+          "tharid",
+          "Tharid"
+        ],
+        [
+          "women"
+        ]
+      ],
+      "source_count": 0,
+      "top_source_title": "",
+      "top_source_text": ""
+    },
+    {
+      "id": 12,
+      "category": "Surah naming",
+      "question": "What did Ibn Abbas call Surat Al-Hashr in Book 65, Hadith 403?",
+      "expected_groups": [
+        [
+          "Surat Al-Nadir",
+          "Surah Nadir",
+          "Al-Nadir",
+          "Nadir"
+        ]
+      ],
+      "started_at": "2026-05-10T03:05:56.067323+00:00",
+      "status": "error",
+      "elapsed_seconds": 0.0,
+      "error": "<HTTPError 422: 'Unprocessable Entity'>",
+      "answer": "",
+      "matched_terms": [],
+      "missing_groups": [
+        [
+          "Surat Al-Nadir",
+          "Surah Nadir",
+          "Al-Nadir",
+          "Nadir"
+        ]
+      ],
+      "source_count": 0,
+      "top_source_title": "",
+      "top_source_text": ""
+    },
+    {
+      "id": 13,
+      "category": "Paradise",
+      "question": "How many from the Ummah enter Paradise in Book 59, Hadith 58?",
+      "expected_groups": [
+        [
+          "seventy thousand",
+          "70,000",
+          "70000",
+          "seven hundred thousand",
+          "700,000",
+          "700000"
+        ],
+        [
+          "moon"
+        ]
+      ],
+      "started_at": "2026-05-10T03:05:56.070836+00:00",
+      "status": "error",
+      "elapsed_seconds": 0.0,
+      "error": "<HTTPError 422: 'Unprocessable Entity'>",
+      "answer": "",
+      "matched_terms": [],
+      "missing_groups": [
+        [
+          "seventy thousand",
+          "70,000",
+          "70000",
+          "seven hundred thousand",
+          "700,000",
+          "700000"
+        ],
+        [
+          "moon"
+        ]
+      ],
+      "source_count": 0,
+      "top_source_title": "",
+      "top_source_text": ""
+    },
+    {
+      "id": 14,
+      "category": "Paradise",
+      "question": "What tree in Paradise is described in Book 59, Hadith 62?",
+      "expected_groups": [
+        [
+          "tree"
+        ],
+        [
+          "shade"
+        ],
+        [
+          "hundred years",
+          "100 years"
+        ]
+      ],
+      "started_at": "2026-05-10T03:05:56.074270+00:00",
+      "status": "error",
+      "elapsed_seconds": 0.0,
+      "error": "<HTTPError 422: 'Unprocessable Entity'>",
+      "answer": "",
+      "matched_terms": [],
+      "missing_groups": [
+        [
+          "tree"
+        ],
+        [
+          "shade"
+        ],
+        [
+          "hundred years",
+          "100 years"
+        ]
+      ],
+      "source_count": 0,
+      "top_source_title": "",
+      "top_source_text": ""
+    },
+    {
+      "id": 15,
+      "category": "Legal vessel terms",
+      "question": "Which vessels are forbidden for Nabidh in Book 74, Hadith 13?",
+      "expected_groups": [
+        [
+          "Ad-Dubba",
+          "Dubba"
+        ],
+        [
+          "Al-Muzaffat",
+          "Muzaffat"
+        ],
+        [
+          "Hantam"
+        ],
+        [
+          "Naqir"
+        ]
+      ],
+      "started_at": "2026-05-10T03:05:56.077360+00:00",
+      "status": "error",
+      "elapsed_seconds": 0.0,
+      "error": "<HTTPError 422: 'Unprocessable Entity'>",
+      "answer": "",
+      "matched_terms": [],
+      "missing_groups": [
+        [
+          "Ad-Dubba",
+          "Dubba"
+        ],
+        [
+          "Al-Muzaffat",
+          "Muzaffat"
+        ],
+        [
+          "Hantam"
+        ],
+        [
+          "Naqir"
+        ]
+      ],
+      "source_count": 0,
+      "top_source_title": "",
+      "top_source_text": ""
+    },
+    {
+      "id": 16,
+      "category": "Trade",
+      "question": "What is Book 34, Hadith 127 about gold and silver sales?",
+      "expected_groups": [
+        [
+          "gold"
+        ],
+        [
+          "silver",
+          "wariq"
+        ],
+        [
+          "equal",
+          "like for like",
+          "same"
+        ]
+      ],
+      "started_at": "2026-05-10T03:05:56.080344+00:00",
+      "status": "error",
+      "elapsed_seconds": 0.0,
+      "error": "<HTTPError 422: 'Unprocessable Entity'>",
+      "answer": "",
+      "matched_terms": [],
+      "missing_groups": [
+        [
+          "gold"
+        ],
+        [
+          "silver",
+          "wariq"
+        ],
+        [
+          "equal",
+          "like for like",
+          "same"
+        ]
+      ],
+      "source_count": 0,
+      "top_source_title": "",
+      "top_source_text": ""
+    },
+    {
+      "id": 17,
+      "category": "Legal ruling",
+      "question": "What is Book 86, Hadith 44 about?",
+      "expected_groups": [
+        [
+          "stoned",
+          "stoning",
+          "rajm"
+        ],
+        [
+          "Jabir",
+          "Jabir"
+        ]
+      ],
+      "started_at": "2026-05-10T03:05:56.083431+00:00",
+      "status": "error",
+      "elapsed_seconds": 0.0,
+      "error": "<HTTPError 422: 'Unprocessable Entity'>",
+      "answer": "",
+      "matched_terms": [],
+      "missing_groups": [
+        [
+          "stoned",
+          "stoning",
+          "rajm"
+        ],
+        [
+          "Jabir",
+          "Jabir"
+        ]
+      ],
+      "source_count": 0,
+      "top_source_title": "",
+      "top_source_text": ""
+    },
+    {
+      "id": 18,
+      "category": "Newborn",
+      "question": "What does Book 71, Hadith 7 say about a newborn?",
+      "expected_groups": [
+        [
+          "Aqiqa",
+          "aqiqah"
+        ],
+        [
+          "blood"
+        ],
+        [
+          "harm"
+        ]
+      ],
+      "started_at": "2026-05-10T03:05:56.086989+00:00",
+      "status": "error",
+      "elapsed_seconds": 0.0,
+      "error": "<HTTPError 422: 'Unprocessable Entity'>",
+      "answer": "",
+      "matched_terms": [],
+      "missing_groups": [
+        [
+          "Aqiqa",
+          "aqiqah"
+        ],
+        [
+          "blood"
+        ],
+        [
+          "harm"
+        ]
+      ],
+      "source_count": 0,
+      "top_source_title": "",
+      "top_source_text": ""
+    },
+    {
+      "id": 19,
+      "category": "Quran verse",
+      "question": "What does Book 65, Hadith 437 say about verse 68:13?",
+      "expected_groups": [
+        [
+          "base-born",
+          "base born"
+        ],
+        [
+          "Quraish"
+        ],
+        [
+          "sign"
+        ]
+      ],
+      "started_at": "2026-05-10T03:05:56.090398+00:00",
+      "status": "error",
+      "elapsed_seconds": 0.0,
+      "error": "<HTTPError 422: 'Unprocessable Entity'>",
+      "answer": "",
+      "matched_terms": [],
+      "missing_groups": [
+        [
+          "base-born",
+          "base born"
+        ],
+        [
+          "Quraish"
+        ],
+        [
+          "sign"
+        ]
+      ],
+      "source_count": 0,
+      "top_source_title": "",
+      "top_source_text": ""
+    },
+    {
+      "id": 20,
+      "category": "Ghazawat",
+      "question": "What did Ibn Abbas say about the number of Ghazawat in Book 64, Hadith 486?",
+      "expected_groups": [
+        [
+          "seventeen",
+          "17"
+        ],
+        [
+          "nineteen",
+          "19"
+        ]
+      ],
+      "started_at": "2026-05-10T03:05:56.093648+00:00",
+      "status": "error",
+      "elapsed_seconds": 0.0,
+      "error": "<HTTPError 422: 'Unprocessable Entity'>",
+      "answer": "",
+      "matched_terms": [],
+      "missing_groups": [
+        [
+          "seventeen",
+          "17"
+        ],
+        [
+          "nineteen",
+          "19"
+        ]
+      ],
+      "source_count": 0,
+      "top_source_title": "",
+      "top_source_text": ""
+    },
+    {
+      "id": 21,
+      "category": "Last words",
+      "question": "What were the last words mentioned in Book 64, Hadith 479?",
+      "expected_groups": [
+        [
+          "Allah"
+        ],
+        [
+          "highest companion",
+          "Companion on high",
+          "الرفيق الأعلى",
+          "Rafiq"
+        ]
+      ],
+      "started_at": "2026-05-10T03:05:56.098708+00:00",
+      "status": "error",
+      "elapsed_seconds": 0.0,
+      "error": "<HTTPError 422: 'Unprocessable Entity'>",
+      "answer": "",
+      "matched_terms": [],
+      "missing_groups": [
+        [
+          "Allah"
+        ],
+        [
+          "highest companion",
+          "Companion on high",
+          "الرفيق الأعلى",
+          "Rafiq"
+        ]
+      ],
+      "source_count": 0,
+      "top_source_title": "",
+      "top_source_text": ""
+    },
+    {
+      "id": 22,
+      "category": "Bridge",
+      "question": "What does Book 46, Hadith 1 say about believers entering Paradise?",
+      "expected_groups": [
+        [
+          "believers"
+        ],
+        [
+          "bridge"
+        ],
+        [
+          "Paradise"
+        ]
+      ],
+      "started_at": "2026-05-10T03:05:56.103192+00:00",
+      "status": "error",
+      "elapsed_seconds": 0.01,
+      "error": "<HTTPError 422: 'Unprocessable Entity'>",
+      "answer": "",
+      "matched_terms": [],
+      "missing_groups": [
+        [
+          "believers"
+        ],
+        [
+          "bridge"
+        ],
+        [
+          "Paradise"
+        ]
+      ],
+      "source_count": 0,
+      "top_source_title": "",
+      "top_source_text": ""
+    },
+    {
+      "id": 23,
+      "category": "Abu Bakr",
+      "question": "What does Book 65, Hadith 162 say about Abu Bakr?",
+      "expected_groups": [
+        [
+          "Abu Bakr"
+        ],
+        [
+          "companion"
+        ],
+        [
+          "cave",
+          "truth"
+        ]
+      ],
+      "started_at": "2026-05-10T03:05:56.111183+00:00",
+      "status": "error",
+      "elapsed_seconds": 0.0,
+      "error": "<HTTPError 422: 'Unprocessable Entity'>",
+      "answer": "",
+      "matched_terms": [],
+      "missing_groups": [
+        [
+          "Abu Bakr"
+        ],
+        [
+          "companion"
+        ],
+        [
+          "cave",
+          "truth"
+        ]
+      ],
+      "source_count": 0,
+      "top_source_title": "",
+      "top_source_text": ""
+    },
+    {
+      "id": 24,
+      "category": "Ablution detail",
+      "question": "What does Book 4, Hadith 63 describe in ablution?",
+      "expected_groups": [
+        [
+          "face"
+        ],
+        [
+          "three times",
+          "thrice"
+        ],
+        [
+          "hands"
+        ],
+        [
+          "feet"
+        ]
+      ],
+      "started_at": "2026-05-10T03:05:56.116051+00:00",
+      "status": "error",
+      "elapsed_seconds": 0.0,
+      "error": "<HTTPError 422: 'Unprocessable Entity'>",
+      "answer": "",
+      "matched_terms": [],
+      "missing_groups": [
+        [
+          "face"
+        ],
+        [
+          "three times",
+          "thrice"
+        ],
+        [
+          "hands"
+        ],
+        [
+          "feet"
+        ]
+      ],
+      "source_count": 0,
+      "top_source_title": "",
+      "top_source_text": ""
+    },
+    {
+      "id": 25,
+      "category": "Muzdalifa",
+      "question": "What does Book 25, Hadith 149 say Ibn Umar did at Jam or Muzdalifa?",
+      "expected_groups": [
+        [
+          "Maghrib"
+        ],
+        [
+          "Isha"
+        ],
+        [
+          "Jam",
+          "Muzdalifa"
+        ]
+      ],
+      "started_at": "2026-05-10T03:05:56.119630+00:00",
+      "status": "error",
+      "elapsed_seconds": 0.0,
+      "error": "<HTTPError 422: 'Unprocessable Entity'>",
+      "answer": "",
+      "matched_terms": [],
+      "missing_groups": [
+        [
+          "Maghrib"
+        ],
+        [
+          "Isha"
+        ],
+        [
+          "Jam",
+          "Muzdalifa"
+        ]
+      ],
+      "source_count": 0,
+      "top_source_title": "",
+      "top_source_text": ""
+    }
+  ]
+}

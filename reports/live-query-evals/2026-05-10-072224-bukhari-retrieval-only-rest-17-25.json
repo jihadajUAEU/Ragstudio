@@ -1,0 +1,289 @@
+{
+  "summary": {
+    "created_at": "2026-05-10T03:22:44.095164+00:00",
+    "mode": "retrieval_only_chunks_search_no_llm",
+    "document_id": "bb5ce512-1795-46a4-868d-eb6e449f9812",
+    "variant_id": "75848293-2f84-4a84-9ec0-110e60df8651",
+    "total": 9,
+    "pass": 6,
+    "fail": 3,
+    "error": 0,
+    "average_elapsed_seconds": 2.15
+  },
+  "results": [
+    {
+      "id": 17,
+      "category": "Legal ruling",
+      "query": "What is Book 86, Hadith 44 about?",
+      "expected_groups": [
+        [
+          "stoned",
+          "stoning",
+          "rajm"
+        ],
+        [
+          "Jabir"
+        ]
+      ],
+      "started_at": "2026-05-10T03:22:24.741494+00:00",
+      "status": "pass",
+      "elapsed_seconds": 2.28,
+      "matched_terms": [
+        "stoned",
+        "Jabir"
+      ],
+      "missing_groups": [],
+      "source_count": 8,
+      "top_source_text": "Book 86, Hadith 44\n\nفرجمناه بالمصلى، فلما أذلقته الحجارة هرب، فأدركناه بالحرة فرجمناه‏.‏ \n‏\"‏.‏ قال ابن شهاب فأخبرني من، سمع جابر بن عبد ، قال فكنت فيمن رجمه أحصنت ‏\"‏.‏ قال نعم‏.‏ فقال النبي صلى  عليه وسلم ‏\"‏ اذهبوا به فارجموه دعاه النبي صلى  عليه وسلم فقال ‏\"‏ أبك جنون ‏\"‏.‏ قال لا‏.‏ قال ‏\"‏ فهل \nفأعرض عنه، حتى ردد عليه أربع مرات، فلما شهد على نفسه أربع شهادات،\n\n صلى  عليه وسلم وهو في المسجد فناداه فقال يا رسول  إني زنيت‏.‏ وسعيد بن المسيب، عن أبي هريرة ـ رضى  عنه ـ قال أتى رجل رسول حدثنا يحيى بن بكير، حدثنا الليث، عن عقيل، عن ابن شهاب، عن أبي سلمة،\n\nNarrated Abu Huraira: A man came to Allah's Messenger (■) while he was in the mosque, and he called him, saying, \"O Allah's\n\nApostle! I have committed illegal sexual intercourse.'\" The Prophet (■) turned his face to the other side, but that man repeated his statement four times, and after he bore witness against himself four times, the Prophet (■) called him, saying, \"Are you mad?\" The man said, \"No.\" The Prophet (■) said, \"Are you married?\" The man said, \"Yes.\" Then the Prophet (■) said, 'Take him away and stone him to death.\" Jabir bin \\`Abdullah said: I was among the ones who participated in stoning him and we stoned him at the ",
+      "evidence_preview": "Book 86, Hadith 44\n\nفرجمناه بالمصلى، فلما أذلقته الحجارة هرب، فأدركناه بالحرة فرجمناه‏.‏ \n‏\"‏.‏ قال ابن شهاب فأخبرني من، سمع جابر بن عبد ، قال فكنت فيمن رجمه أحصنت ‏\"‏.‏ قال نعم‏.‏ فقال النبي صلى  عليه وسلم ‏\"‏ اذهبوا به فارجموه دعاه النبي صلى  عليه وسلم فقال ‏\"‏ أبك جنون ‏\"‏.‏ قال لا‏.‏ قال ‏\"‏ فهل \nفأعرض عنه، حتى ردد عليه أربع مرات، فلما شهد على نفسه أربع شهادات،\n\n صلى  عليه وسلم وهو في المسجد فناداه فقال يا رسول  إني زنيت‏.‏ وسعيد بن المسيب، عن أبي هريرة ـ رضى  عنه ـ قال أتى رجل رسول حدثنا يحيى بن بكير، حدثنا الليث، عن عقيل، عن ابن شهاب، عن أبي سلمة،\n\nNarrated Abu Huraira: A man came to Allah's Messenger (■) while he was in the mosque, and he called him, saying, \"O Allah's\n\nApostle! I have committed illegal sexual intercourse.'\" The Prophet (■) turned his face to the other side, but that man repeated his statement four times, and after he bore witness against himself four times, the Prophet (■) called him, saying, \"Are you mad?\" The man said, \"No.\" The Prophet (■) said, \"Are you married?\" The man said, \"Yes.\" Then the Prophet (■) said, 'Take him away and stone him to death.\" Jabir bin \\`Abdullah said: I was among the ones who participated in stoning him and we stoned him at the Musalla. When the stones troubled him, he fled, but we over took him at Al-Harra and stoned him to death.\n{\"parser\": \"mineru\", \"sha256\": \"80792a16799e5a820d278c1005d1af424900c0921320726c94d46eafd6810e"
+    },
+    {
+      "id": 18,
+      "category": "Newborn",
+      "query": "What does Book 71, Hadith 7 say about a newborn?",
+      "expected_groups": [
+        [
+          "Aqiqa",
+          "aqiqah"
+        ],
+        [
+          "blood"
+        ],
+        [
+          "harm"
+        ]
+      ],
+      "started_at": "2026-05-10T03:22:27.021864+00:00",
+      "status": "fail",
+      "elapsed_seconds": 2.12,
+      "matched_terms": [
+        "Aqiqa"
+      ],
+      "missing_groups": [
+        [
+          "blood"
+        ],
+        [
+          "harm"
+        ]
+      ],
+      "source_count": 8,
+      "top_source_text": "Book 71, Hadith 7\n\nأسأل الحسن، ممن سمع حديث العقيقة، فسألته فقال من سمرة بن جندب‏.‏ حدثنا قريش بن أنس، عن حبيب بن الشهيد، قال أمرني ابن سيرين أن \nعقيقة، فأهريقوا عنه دما وأميطوا عنه الأذى ‏\" ‏.‏ حدثني عبد  بن أبي الأسود، \nبن عامر الضبي قال سمعت رسول  صلى  عليه وسلم يقول ‏ \"‏ مع الغلام عن جرير بن حازم عن أيوب السختياني عن محمد بن سيرين حدثنا سلمان بن إبراهيم عن ابن سيرين عن سلمان قوله‏.‏ وقال أصبغ أخبرني ابن وهب سيرين، عن الرباب، عن سلمان، عن النبي صلى  عليه وسلم‏.‏ ورواه يزيد وقال غير واحد عن عاصم، وهشام، عن حفصة بنت \nNarrated Salman bin 'Amir Ad-Dabbi: I heard Allah's Messenger (■) saying, \"'Aqiqa is to be offered for a (newly \nborn) boy, so slaughter (an \nanimal) for him, and relieve him of his suffering.\" Narrated Habib bin Ash-Shahid: Ibn Seereen told me to ask \nAl-Hassan from whom he had heard the narration of 'Aqiqa. I asked him \nand he said, \"From Samura bin Jundab.\"",
+      "evidence_preview": "Book 71, Hadith 7\n\nأسأل الحسن، ممن سمع حديث العقيقة، فسألته فقال من سمرة بن جندب‏.‏ حدثنا قريش بن أنس، عن حبيب بن الشهيد، قال أمرني ابن سيرين أن \nعقيقة، فأهريقوا عنه دما وأميطوا عنه الأذى ‏\" ‏.‏ حدثني عبد  بن أبي الأسود، \nبن عامر الضبي قال سمعت رسول  صلى  عليه وسلم يقول ‏ \"‏ مع الغلام عن جرير بن حازم عن أيوب السختياني عن محمد بن سيرين حدثنا سلمان بن إبراهيم عن ابن سيرين عن سلمان قوله‏.‏ وقال أصبغ أخبرني ابن وهب سيرين، عن الرباب، عن سلمان، عن النبي صلى  عليه وسلم‏.‏ ورواه يزيد وقال غير واحد عن عاصم، وهشام، عن حفصة بنت \nNarrated Salman bin 'Amir Ad-Dabbi: I heard Allah's Messenger (■) saying, \"'Aqiqa is to be offered for a (newly \nborn) boy, so slaughter (an \nanimal) for him, and relieve him of his suffering.\" Narrated Habib bin Ash-Shahid: Ibn Seereen told me to ask \nAl-Hassan from whom he had heard the narration of 'Aqiqa. I asked him \nand he said, \"From Samura bin Jundab.\"\n{\"parser\": \"mineru\", \"sha256\": \"80792a16799e5a820d278c1005d1af424900c0921320726c94d46eafd6810e56\", \"source_id\": \"bb5ce512-1795-46a4-868d-eb6e449f9812\", \"document_id\": \"bb5ce512-1795-46a4-868d-eb6e449f9812\", \"index_shape\": {\"parser\": \"mineru\", \"parse_method\": \"auto\", \"graph_storage\": \"neo4j\", \"vector_storage\": \"pgvector\", \"embedding_model\": \"Qwen/Qwen3-Embedding-8B\", \"chunk_token_size\": 1200, \"embedding_dimensions\": 1536, \"chunk_overlap_token_size\": 100}, \"parser_mode\": \"mineru_strict\", \"preview_ref\": null, \""
+    },
+    {
+      "id": 19,
+      "category": "Quran verse",
+      "query": "What does Book 65, Hadith 437 say about verse 68:13?",
+      "expected_groups": [
+        [
+          "base-born",
+          "base born"
+        ],
+        [
+          "Quraish"
+        ],
+        [
+          "sign"
+        ]
+      ],
+      "started_at": "2026-05-10T03:22:29.144806+00:00",
+      "status": "fail",
+      "elapsed_seconds": 2.01,
+      "matched_terms": [
+        "sign"
+      ],
+      "missing_groups": [
+        [
+          "base-born",
+          "base born"
+        ],
+        [
+          "Quraish"
+        ]
+      ],
+      "source_count": 8,
+      "top_source_text": "Book 68, Hadith 3\n\n![](images/1ff32e942d7b44a12f3ba46e8a079c7e85a9eb6bb5f89e124b0dd299ffc68a18.jpg)\n\nNarrated Ibn \\`Umar: (Divorcing my wife during her menses) was counted as one legal divorce.",
+      "evidence_preview": "Book 68, Hadith 3\n\n![](images/1ff32e942d7b44a12f3ba46e8a079c7e85a9eb6bb5f89e124b0dd299ffc68a18.jpg)\n\nNarrated Ibn \\`Umar: (Divorcing my wife during her menses) was counted as one legal divorce.\n{\"parser\": \"mineru\", \"sha256\": \"80792a16799e5a820d278c1005d1af424900c0921320726c94d46eafd6810e56\", \"source_id\": \"bb5ce512-1795-46a4-868d-eb6e449f9812\", \"document_id\": \"bb5ce512-1795-46a4-868d-eb6e449f9812\", \"index_shape\": {\"parser\": \"mineru\", \"parse_method\": \"auto\", \"graph_storage\": \"neo4j\", \"vector_storage\": \"pgvector\", \"embedding_model\": \"Qwen/Qwen3-Embedding-8B\", \"chunk_token_size\": 1200, \"embedding_dimensions\": 1536, \"chunk_overlap_token_size\": 100}, \"parser_mode\": \"mineru_strict\", \"preview_ref\": null, \"content_type\": \"text\", \"parse_job_id\": \"bb5ce512-1795-46a4-868d-eb6e449f9812-80792a16799e5a82\", \"parse_method\": \"auto\", \"domain_metadata\": {\"tags\": [\"hadith\", \"islamic_text\", \"arabic\", \"english\", \"religious_text\"], \"domain\": \"hadith\", \"script\": \"mixed\", \"language\": \"mixed\", \"custom_json\": {\"graph\": {\"edge_types\": [\"contains\", \"references\", \"next_hadith\", \"same_book\", \"same_chapter\"], \"node_types\": [\"collection\", \"book\", \"chapter\", \"hadith\", \"chunk\"], \"materialize_from\": [\"mineru_structure\", \"reference_metadata\"], \"confidence_policy\": \"evidence_required\"}, \"chunking\": {\"unit\": \"hadith\", \"include_neighbors\": 1, \"preserve_parallel_text\": true}, \"retrieval\": {\"boost_same_chapter\": true, \""
+    },
+    {
+      "id": 20,
+      "category": "Ghazawat",
+      "query": "What did Ibn Abbas say about the number of Ghazawat in Book 64, Hadith 486?",
+      "expected_groups": [
+        [
+          "seventeen",
+          "17"
+        ],
+        [
+          "nineteen",
+          "19"
+        ]
+      ],
+      "started_at": "2026-05-10T03:22:31.154371+00:00",
+      "status": "pass",
+      "elapsed_seconds": 2.14,
+      "matched_terms": [
+        "seventeen",
+        "nineteen"
+      ],
+      "missing_groups": [],
+      "source_count": 8,
+      "top_source_text": "Book 64, Hadith 486\n\nقال سبع عشرة‏.‏ قلت كم غزا النبي صلى  عليه وسلم قال تسع عشرة‏.‏ زيد بن أرقم ـ رضى  عنه ـ كم غزوت مع رسول  صلى  عليه وسلم حدثنا عبد  بن رجاء، حدثنا إسرائيل، عن أبي إسحاق، قال سألت\n\nNarrated Abu 'Is-haq: I asked Zaid bin Al-Arqam, \"In how many Ghazawat did you take part in the company of Allah's\n\nApostle?\" He replied, \"Seventeen.\" I further asked, \"How many Ghazawat did the Prophet (■) fight?\" He replied, \"Nineteen.\"",
+      "evidence_preview": "Book 64, Hadith 486\n\nقال سبع عشرة‏.‏ قلت كم غزا النبي صلى  عليه وسلم قال تسع عشرة‏.‏ زيد بن أرقم ـ رضى  عنه ـ كم غزوت مع رسول  صلى  عليه وسلم حدثنا عبد  بن رجاء، حدثنا إسرائيل، عن أبي إسحاق، قال سألت\n\nNarrated Abu 'Is-haq: I asked Zaid bin Al-Arqam, \"In how many Ghazawat did you take part in the company of Allah's\n\nApostle?\" He replied, \"Seventeen.\" I further asked, \"How many Ghazawat did the Prophet (■) fight?\" He replied, \"Nineteen.\"\n{\"parser\": \"mineru\", \"sha256\": \"80792a16799e5a820d278c1005d1af424900c0921320726c94d46eafd6810e56\", \"source_id\": \"bb5ce512-1795-46a4-868d-eb6e449f9812\", \"document_id\": \"bb5ce512-1795-46a4-868d-eb6e449f9812\", \"index_shape\": {\"parser\": \"mineru\", \"parse_method\": \"auto\", \"graph_storage\": \"neo4j\", \"vector_storage\": \"pgvector\", \"embedding_model\": \"Qwen/Qwen3-Embedding-8B\", \"chunk_token_size\": 1200, \"embedding_dimensions\": 1536, \"chunk_overlap_token_size\": 100}, \"parser_mode\": \"mineru_strict\", \"preview_ref\": null, \"content_type\": \"text\", \"parse_job_id\": \"bb5ce512-1795-46a4-868d-eb6e449f9812-80792a16799e5a82\", \"parse_method\": \"auto\", \"domain_metadata\": {\"tags\": [\"hadith\", \"islamic_text\", \"arabic\", \"english\", \"religious_text\"], \"domain\": \"hadith\", \"script\": \"mixed\", \"language\": \"mixed\", \"custom_json\": {\"graph\": {\"edge_types\": [\"contains\", \"references\", \"next_hadith\", \"same_book\", \"same_chapter\"], \"node_types\": [\"collection\", \"book\", \"chapter\", \"hadith\", \"c"
+    },
+    {
+      "id": 21,
+      "category": "Last words",
+      "query": "What were the last words mentioned in Book 64, Hadith 479?",
+      "expected_groups": [
+        [
+          "Allah"
+        ],
+        [
+          "highest companion",
+          "Companion on high",
+          "الرفيق الأعلى",
+          "Rafiq"
+        ]
+      ],
+      "started_at": "2026-05-10T03:22:33.297103+00:00",
+      "status": "pass",
+      "elapsed_seconds": 2.2,
+      "matched_terms": [
+        "Allah",
+        "highest companion"
+      ],
+      "missing_groups": [],
+      "source_count": 8,
+      "top_source_text": "Book 64, Hadith 479\n\nيحدثنا وهو صحيح قالت فكانت آخر كلمة تكلم بها ‏\"‏ اللهم الرفيق الأعلى ‏\"‏.‏ \"‏ اللهم الرفيق الأعلى ‏\"‏.‏ فقلت إذا لا يختارنا‏.‏ وعرفت أنه الحديث الذي كان على فخذي غشي عليه، ثم أفاق، فأشخص بصره إلى سقف البيت ثم قال إنه لم يقبض نبي حتى يرى مقعده من الجنة، ثم يخير ‏\"‏.‏ فلما نزل به ورأسه أهل العلم أن عائشة قالت كان النبي صلى  عليه وسلم يقول وهو صحيح ‏ عبد ، قال يونس قال الزهري أخبرني سعيد بن المسيب، في رجال من حدثنا بشر بن محمد، حدثنا\n\nNarrated \\`Aisha: When the Prophet (■) was healthy, he used to say, \"No soul of a prophet is captured till he is shown his\n\nplace in Paradise and then he is given the option.\" When death approached him while his head was on my thigh, he became unconscious and then recovered his consciousness. He then looked at the ceiling of the house and said, \"O Allah! (with) the highest companions.\" I said (to myself), \"Hence, he is not going to choose us.\" Then I realized that what he had said was the application of the narration which he used to mention to us when he was healthy. The last word he spoke was, \"O Allah! (with) the highest companion.\"",
+      "evidence_preview": "Book 64, Hadith 479\n\nيحدثنا وهو صحيح قالت فكانت آخر كلمة تكلم بها ‏\"‏ اللهم الرفيق الأعلى ‏\"‏.‏ \"‏ اللهم الرفيق الأعلى ‏\"‏.‏ فقلت إذا لا يختارنا‏.‏ وعرفت أنه الحديث الذي كان على فخذي غشي عليه، ثم أفاق، فأشخص بصره إلى سقف البيت ثم قال إنه لم يقبض نبي حتى يرى مقعده من الجنة، ثم يخير ‏\"‏.‏ فلما نزل به ورأسه أهل العلم أن عائشة قالت كان النبي صلى  عليه وسلم يقول وهو صحيح ‏ عبد ، قال يونس قال الزهري أخبرني سعيد بن المسيب، في رجال من حدثنا بشر بن محمد، حدثنا\n\nNarrated \\`Aisha: When the Prophet (■) was healthy, he used to say, \"No soul of a prophet is captured till he is shown his\n\nplace in Paradise and then he is given the option.\" When death approached him while his head was on my thigh, he became unconscious and then recovered his consciousness. He then looked at the ceiling of the house and said, \"O Allah! (with) the highest companions.\" I said (to myself), \"Hence, he is not going to choose us.\" Then I realized that what he had said was the application of the narration which he used to mention to us when he was healthy. The last word he spoke was, \"O Allah! (with) the highest companion.\"\n{\"parser\": \"mineru\", \"sha256\": \"80792a16799e5a820d278c1005d1af424900c0921320726c94d46eafd6810e56\", \"source_id\": \"bb5ce512-1795-46a4-868d-eb6e449f9812\", \"document_id\": \"bb5ce512-1795-46a4-868d-eb6e449f9812\", \"index_shape\": {\"parser\": \"mineru\", \"parse_method\": \"auto\", \"graph_storage\": \"neo4j\", \"vecto"
+    },
+    {
+      "id": 22,
+      "category": "Bridge",
+      "query": "What does Book 46, Hadith 1 say about believers entering Paradise?",
+      "expected_groups": [
+        [
+          "believers"
+        ],
+        [
+          "bridge"
+        ],
+        [
+          "Paradise"
+        ]
+      ],
+      "started_at": "2026-05-10T03:22:35.492660+00:00",
+      "status": "pass",
+      "elapsed_seconds": 1.99,
+      "matched_terms": [
+        "believers",
+        "bridge",
+        "Paradise"
+      ],
+      "missing_groups": [],
+      "source_count": 8,
+      "top_source_text": "Book 46, Hadith 1\n\nفي الدنيا ‏\" ‏.‏ وقال يونس بن محمد حدثنا شيبان عن قتادة حدثنا أبو المتوكل‏.‏ محمد صلى  عليه وسلم بيده لأحدهم بمسكنه في الجنة أدل بمنزله كان بينهم في الدنيا، حتى إذا نقوا وهذبوا أذن لهم بدخول الجنة، فوالذي نفس المؤمنون من النار حبسوا بقنطرة بين الجنة والنار، فيتقاصون مظالم كانت الخدري ـ رضى  عنه ـ عن رسول  صلى  عليه وسلم قال ‏ \"‏ إذا خلص بن هشام، حدثني أبي، عن قتادة، عن أبي المتوكل الناجي، عن أبي سعيد حدثنا إسحاق بن إبراهيم، أخبرنا معاذ\n\nNarrated Abu Sa\\`id Al-Khudri: Allah's Messenger (■) said, \"When the believers pass safely over (the bridge across) Hell, they will be\n\nstopped at a bridge in between Hell and Paradise where they will retaliate upon each other for the injustices done among them in the world, and when they get purified of all their sins, they will be admitted into Paradise. By Him in Whose Hands the life of Muhammad is everybody will recognize his dwelling in Paradise better than he recognizes his dwelling in this world.\"",
+      "evidence_preview": "Book 46, Hadith 1\n\nفي الدنيا ‏\" ‏.‏ وقال يونس بن محمد حدثنا شيبان عن قتادة حدثنا أبو المتوكل‏.‏ محمد صلى  عليه وسلم بيده لأحدهم بمسكنه في الجنة أدل بمنزله كان بينهم في الدنيا، حتى إذا نقوا وهذبوا أذن لهم بدخول الجنة، فوالذي نفس المؤمنون من النار حبسوا بقنطرة بين الجنة والنار، فيتقاصون مظالم كانت الخدري ـ رضى  عنه ـ عن رسول  صلى  عليه وسلم قال ‏ \"‏ إذا خلص بن هشام، حدثني أبي، عن قتادة، عن أبي المتوكل الناجي، عن أبي سعيد حدثنا إسحاق بن إبراهيم، أخبرنا معاذ\n\nNarrated Abu Sa\\`id Al-Khudri: Allah's Messenger (■) said, \"When the believers pass safely over (the bridge across) Hell, they will be\n\nstopped at a bridge in between Hell and Paradise where they will retaliate upon each other for the injustices done among them in the world, and when they get purified of all their sins, they will be admitted into Paradise. By Him in Whose Hands the life of Muhammad is everybody will recognize his dwelling in Paradise better than he recognizes his dwelling in this world.\"\n{\"parser\": \"mineru\", \"sha256\": \"80792a16799e5a820d278c1005d1af424900c0921320726c94d46eafd6810e56\", \"source_id\": \"bb5ce512-1795-46a4-868d-eb6e449f9812\", \"document_id\": \"bb5ce512-1795-46a4-868d-eb6e449f9812\", \"index_shape\": {\"parser\": \"mineru\", \"parse_method\": \"auto\", \"graph_storage\": \"neo4j\", \"vector_storage\": \"pgvector\", \"embedding_model\": \"Qwen/Qwen3-Embedding-8B\", \"chunk_token_size\": 1200, \"embedding_dimensions\": 1536, \"chun"
+    },
+    {
+      "id": 23,
+      "category": "Abu Bakr",
+      "query": "What does Book 65, Hadith 162 say about Abu Bakr?",
+      "expected_groups": [
+        [
+          "Abu Bakr"
+        ],
+        [
+          "companion"
+        ],
+        [
+          "cave",
+          "truth"
+        ]
+      ],
+      "started_at": "2026-05-10T03:22:37.479712+00:00",
+      "status": "fail",
+      "elapsed_seconds": 2.16,
+      "matched_terms": [],
+      "missing_groups": [
+        [
+          "Abu Bakr"
+        ],
+        [
+          "companion"
+        ],
+        [
+          "cave",
+          "truth"
+        ]
+      ],
+      "source_count": 8,
+      "top_source_text": "Book 65, Hadith 162\n\nجميعا فقلتم كذبت‏.‏ وقال أبو بكر صدقت ‏ قال أبو عبد  غامر سبق بالخير\"‏.‏ \nصاحبي هل أنتم تاركو لي صاحبي إني قلت يا أيها الناس إني رسول  إليكم  لأنا كنت أظلم فقال رسول  صلى  عليه وسلم ‏\"‏ هل أنتم تاركو لي وغضب رسول  صلى  عليه وسلم وجعل أبو بكر يقول و يا رسول \n عليه وسلم وقص على رسول  صلى  عليه وسلم الخبر‏.‏ قال أبو الدرداء \n‏\"‏.‏ قال وندم عمر على ما كان منه فأقبل حتى سلم وجلس إلى النبي صلى \nونحن عنده فقال رسول  صلى  عليه وسلم ‏\"‏ أما صاحبكم هذا فقد غامر \nفي وجهه، فأقبل أبو بكر إلى رسول  صلى  عليه وسلم فقال أبو الدرداء عمر مغضبا، فاتبعه أبو بكر يسأله أن يستغفر له، فلم يفعل حتى أغلق بابه \nيقول كانت بين أبي بكر وعمر محاورة، فأغضب أبو بكر عمر، فانصرف عنه بسر بن عبيد ، قال حدثني أبو إدريس الخولاني، قال سمعت أبا الدرداء، \nهارون، قالا حدثنا الوليد بن مسلم، حدثنا عبد  بن العلاء بن زبر، قال حدثني حدثنا عبد ، حدثنا سليمان بن عبد الرحمن، وموسى بن\n\nخطاياكم‏} ‏ فبدلوا فدخلوا يزحفون على أستاههم وقالوا حبة في شعرة ‏\"‏.‏ عليه وسلم ‏\"‏ قيل لبني إسرائيل ‏ {‏ادخلوا الباب سجدا وقولوا حطة نغفر لكم همام بن منبه، أنه سمع أبا هريرة ـ رضى  عنه ـ يقول قال رسول  صلى  حدثنا إسحاق، أخبرنا عبد الرزاق، أخبرنا معمر، عن\n\nNarrated Abu Huraira: Allah's Messenger (■) said, \"It was said to the child",
+      "evidence_preview": "Book 65, Hadith 162\n\nجميعا فقلتم كذبت‏.‏ وقال أبو بكر صدقت ‏ قال أبو عبد  غامر سبق بالخير\"‏.‏ \nصاحبي هل أنتم تاركو لي صاحبي إني قلت يا أيها الناس إني رسول  إليكم  لأنا كنت أظلم فقال رسول  صلى  عليه وسلم ‏\"‏ هل أنتم تاركو لي وغضب رسول  صلى  عليه وسلم وجعل أبو بكر يقول و يا رسول \n عليه وسلم وقص على رسول  صلى  عليه وسلم الخبر‏.‏ قال أبو الدرداء \n‏\"‏.‏ قال وندم عمر على ما كان منه فأقبل حتى سلم وجلس إلى النبي صلى \nونحن عنده فقال رسول  صلى  عليه وسلم ‏\"‏ أما صاحبكم هذا فقد غامر \nفي وجهه، فأقبل أبو بكر إلى رسول  صلى  عليه وسلم فقال أبو الدرداء عمر مغضبا، فاتبعه أبو بكر يسأله أن يستغفر له، فلم يفعل حتى أغلق بابه \nيقول كانت بين أبي بكر وعمر محاورة، فأغضب أبو بكر عمر، فانصرف عنه بسر بن عبيد ، قال حدثني أبو إدريس الخولاني، قال سمعت أبا الدرداء، \nهارون، قالا حدثنا الوليد بن مسلم، حدثنا عبد  بن العلاء بن زبر، قال حدثني حدثنا عبد ، حدثنا سليمان بن عبد الرحمن، وموسى بن\n\nخطاياكم‏} ‏ فبدلوا فدخلوا يزحفون على أستاههم وقالوا حبة في شعرة ‏\"‏.‏ عليه وسلم ‏\"‏ قيل لبني إسرائيل ‏ {‏ادخلوا الباب سجدا وقولوا حطة نغفر لكم همام بن منبه، أنه سمع أبا هريرة ـ رضى  عنه ـ يقول قال رسول  صلى  حدثنا إسحاق، أخبرنا عبد الرزاق، أخبرنا معمر، عن\n\nNarrated Abu Huraira: Allah's Messenger (■) said, \"It was said to the children of Israel, 'Enter the gate in prostration and say\n\nHitatun. (7.161) We shall forgive you, your faults.' But they changed (Allah's Order) and entered, dragging themselves on their buttocks and said"
+    },
+    {
+      "id": 24,
+      "category": "Ablution detail",
+      "query": "What does Book 4, Hadith 63 describe in ablution?",
+      "expected_groups": [
+        [
+          "face"
+        ],
+        [
+          "three times",
+          "thrice"
+        ],
+        [
+          "hands"
+        ],
+        [
+          "feet"
+        ]
+      ],
+      "started_at": "2026-05-10T03:22:39.643444+00:00",
+      "status": "pass",
+      "elapsed_seconds": 2.35,
+      "matched_terms": [
+        "face",
+        "thrice",
+        "hands",
+        "feet"
+      ],
+      "missing_groups": [],
+      "source_count": 8,
+      "top_source_text": "Book 4, Hadith 63\n\nوجهه ثلاثا ويديه مرتين مرتين، ومسح برأسه فأقبل به وأدبر، وغسل رجليه‏.‏ رسول  صلى  عليه وسلم فأخرجنا له ماء في تور من صفر فتوضأ، فغسل أبي سلمة، قال حدثنا عمرو بن يحيى، عن أبيه، عن عبد  بن زيد، قال أتى حدثنا أحمد بن يونس، قال حدثنا عبد العزيز بن\n\nNarrated \\`Abdullah bin Zaid: Once Allah's Messenger (■) came to us and we brought out water for him in a brass pot. He performed\n\nablution thus: He washed his face thrice, and his forearms to the elbows twice, then passed his wet hands lightly over the head from front to rear and brought them to front again and washed his feet (up to the ankles).",
+      "evidence_preview": "Book 4, Hadith 63\n\nوجهه ثلاثا ويديه مرتين مرتين، ومسح برأسه فأقبل به وأدبر، وغسل رجليه‏.‏ رسول  صلى  عليه وسلم فأخرجنا له ماء في تور من صفر فتوضأ، فغسل أبي سلمة، قال حدثنا عمرو بن يحيى، عن أبيه، عن عبد  بن زيد، قال أتى حدثنا أحمد بن يونس، قال حدثنا عبد العزيز بن\n\nNarrated \\`Abdullah bin Zaid: Once Allah's Messenger (■) came to us and we brought out water for him in a brass pot. He performed\n\nablution thus: He washed his face thrice, and his forearms to the elbows twice, then passed his wet hands lightly over the head from front to rear and brought them to front again and washed his feet (up to the ankles).\n{\"parser\": \"mineru\", \"sha256\": \"80792a16799e5a820d278c1005d1af424900c0921320726c94d46eafd6810e56\", \"source_id\": \"bb5ce512-1795-46a4-868d-eb6e449f9812\", \"document_id\": \"bb5ce512-1795-46a4-868d-eb6e449f9812\", \"index_shape\": {\"parser\": \"mineru\", \"parse_method\": \"auto\", \"graph_storage\": \"neo4j\", \"vector_storage\": \"pgvector\", \"embedding_model\": \"Qwen/Qwen3-Embedding-8B\", \"chunk_token_size\": 1200, \"embedding_dimensions\": 1536, \"chunk_overlap_token_size\": 100}, \"parser_mode\": \"mineru_strict\", \"preview_ref\": null, \"content_type\": \"text\", \"parse_job_id\": \"bb5ce512-1795-46a4-868d-eb6e449f9812-80792a16799e5a82\", \"parse_method\": \"auto\", \"domain_metadata\": {\"tags\": [\"hadith\", \"islamic_text\", \"arabic\", \"english\", \"religious_text\"], \"domain\": \"hadith\", \"script\": \"mixed\", \"language\": \"mixed\""
+    },
+    {
+      "id": 25,
+      "category": "Muzdalifa",
+      "query": "What does Book 25, Hadith 149 say Ibn Umar did at Jam or Muzdalifa?",
+      "expected_groups": [
+        [
+          "Maghrib"
+        ],
+        [
+          "Isha"
+        ],
+        [
+          "Jam",
+          "Muzdalifa"
+        ]
+      ],
+      "started_at": "2026-05-10T03:22:41.991981+00:00",
+      "status": "pass",
+      "elapsed_seconds": 2.1,
+      "matched_terms": [
+        "Maghrib",
+        "Isha",
+        "Jam"
+      ],
+      "missing_groups": [],
+      "source_count": 8,
+      "top_source_text": "Book 25, Hadith 149\n\n صلى  عليه وسلم فيدخل فينتفض ويتوضأ، ولا يصلي حتى يصلي بجمع‏.‏ ـ يجمع بين المغرب والعشاء بجمع، غير أنه يمر بالشعب الذي أخذه رسول إسماعيل، حدثنا جويرية، عن نافع، قال كان عبد  بن عمر ـ رضى  عنهما حدثنا موسى بن\n\nNarrated Nafi\\`: \\`Abdullah bin \\`Umar used to offer the Maghrib and \\`Isha' prayers together at Jam' (Al-Muzdalifa). But\n\nhe used to pass by that mountain pass where Allah's Messenger (■) went, and he would enter it and answer the call of nature and perform ablution, and would not offer any prayer till he had prayed at Jam.'",
+      "evidence_preview": "Book 25, Hadith 149\n\n صلى  عليه وسلم فيدخل فينتفض ويتوضأ، ولا يصلي حتى يصلي بجمع‏.‏ ـ يجمع بين المغرب والعشاء بجمع، غير أنه يمر بالشعب الذي أخذه رسول إسماعيل، حدثنا جويرية، عن نافع، قال كان عبد  بن عمر ـ رضى  عنهما حدثنا موسى بن\n\nNarrated Nafi\\`: \\`Abdullah bin \\`Umar used to offer the Maghrib and \\`Isha' prayers together at Jam' (Al-Muzdalifa). But\n\nhe used to pass by that mountain pass where Allah's Messenger (■) went, and he would enter it and answer the call of nature and perform ablution, and would not offer any prayer till he had prayed at Jam.'\n{\"parser\": \"mineru\", \"sha256\": \"80792a16799e5a820d278c1005d1af424900c0921320726c94d46eafd6810e56\", \"source_id\": \"bb5ce512-1795-46a4-868d-eb6e449f9812\", \"document_id\": \"bb5ce512-1795-46a4-868d-eb6e449f9812\", \"index_shape\": {\"parser\": \"mineru\", \"parse_method\": \"auto\", \"graph_storage\": \"neo4j\", \"vector_storage\": \"pgvector\", \"embedding_model\": \"Qwen/Qwen3-Embedding-8B\", \"chunk_token_size\": 1200, \"embedding_dimensions\": 1536, \"chunk_overlap_token_size\": 100}, \"parser_mode\": \"mineru_strict\", \"preview_ref\": null, \"content_type\": \"text\", \"parse_job_id\": \"bb5ce512-1795-46a4-868d-eb6e449f9812-80792a16799e5a82\", \"parse_method\": \"auto\", \"domain_metadata\": {\"tags\": [\"hadith\", \"islamic_text\", \"arabic\", \"english\", \"religious_text\"], \"domain\": \"hadith\", \"script\": \"mixed\", \"language\": \"mixed\", \"custom_json\": {\"graph\": {\"edge_types\": [\"contains\", \""
+    }
+  ]
+}
