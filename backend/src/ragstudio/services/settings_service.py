@@ -1,7 +1,13 @@
 from typing import cast
 
 from ragstudio.db.models import SettingsProfile
-from ragstudio.schemas.runtime import QueryMode, RerankerProvider, RuntimeMode, StorageBackend
+from ragstudio.schemas.runtime import (
+    QueryMode,
+    RerankerFallbackProvider,
+    RerankerProvider,
+    RuntimeMode,
+    StorageBackend,
+)
 from ragstudio.schemas.settings import (
     MINERU_DEFAULT_TIMEOUT_MS,
     EmbeddingProvider,
@@ -120,6 +126,10 @@ class SettingsService:
             reranker_provider=cast(
                 RerankerProvider,
                 profile.reranker_provider if profile.reranker_provider else "disabled",
+            ),
+            reranker_fallback_provider=cast(
+                RerankerFallbackProvider,
+                profile.reranker_fallback_provider or "disabled",
             ),
             reranker_model=profile.reranker_model,
             reranker_base_url=profile.reranker_base_url,

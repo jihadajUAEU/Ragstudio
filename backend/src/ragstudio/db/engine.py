@@ -67,6 +67,7 @@ def _ensure_runtime_columns(connection) -> None:
                 "vision_api_key": "VARCHAR",
                 "vision_timeout_ms": "INTEGER DEFAULT 10000 NOT NULL",
                 "reranker_provider": "VARCHAR DEFAULT 'disabled' NOT NULL",
+                "reranker_fallback_provider": "VARCHAR DEFAULT 'disabled' NOT NULL",
                 "reranker_model": "VARCHAR",
                 "reranker_base_url": "VARCHAR",
                 "reranker_api_key": "VARCHAR",
@@ -200,6 +201,17 @@ def _normalize_settings_profile_values(connection) -> None:
             WHERE runtime_mode IS NULL
                OR runtime_mode = ''
                OR runtime_mode NOT IN ('runtime', 'fallback', 'degraded')
+            """
+        )
+    )
+    connection.execute(
+        text(
+            """
+            UPDATE settings_profiles
+            SET reranker_fallback_provider = 'disabled'
+            WHERE reranker_fallback_provider IS NULL
+               OR reranker_fallback_provider = ''
+               OR reranker_fallback_provider NOT IN ('disabled', 'llm')
             """
         )
     )

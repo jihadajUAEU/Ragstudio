@@ -125,6 +125,246 @@ describe("DomainMetadataPanel", () => {
     );
   });
 
+  it("rejects an autosuggested scalar field and restores the prior value", async () => {
+    const file = new File(["memo"], "memo.txt", { type: "text/plain" });
+    mocks.suggestDomainMetadata.mockResolvedValueOnce({
+      domain_metadata: { domain: "policy", document_type: "memo", tags: [] },
+      confidence: 0.9,
+      evidence_pages: [1],
+      rationale: "Detected memo heading.",
+      warnings: [],
+    });
+    const onChange = vi.fn();
+
+    render(
+      <DomainMetadataPanel
+        profiles={[]}
+        value={{
+          parser_mode: "local_fallback",
+          domain_metadata: { domain: "generic", document_type: "document", tags: [] },
+        }}
+        onChange={onChange}
+        suggestContext={{ filename: "memo.txt", content_type: "text/plain", file }}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /Auto-suggest/i }));
+
+    expect(await screen.findByText("Auto-suggest updated metadata")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Reject Domain" }));
+
+    expect(onChange).toHaveBeenLastCalledWith({
+      parser_mode: "local_fallback",
+      domain_metadata: { domain: "generic", document_type: "memo", tags: [] },
+    });
+    expect(screen.queryByText("generic -> policy")).not.toBeInTheDocument();
+    expect(screen.getByText("1 field changed")).toBeVisible();
+  });
+
+  it("accepts an autosuggested field and keeps the suggested value", async () => {
+    const file = new File(["memo"], "memo.txt", { type: "text/plain" });
+    mocks.suggestDomainMetadata.mockResolvedValueOnce({
+      domain_metadata: { domain: "policy", document_type: "memo", tags: [] },
+      ...autosuggestEvidence,
+    });
+    const onChange = vi.fn();
+
+    render(
+      <DomainMetadataPanel
+        profiles={[]}
+        value={{
+          parser_mode: "local_fallback",
+          domain_metadata: { domain: "generic", document_type: "document", tags: [] },
+        }}
+        onChange={onChange}
+        suggestContext={{ filename: "memo.txt", content_type: "text/plain", file }}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /Auto-suggest/i }));
+
+    expect(await screen.findByText("Auto-suggest updated metadata")).toBeVisible();
+    onChange.mockClear();
+    fireEvent.click(screen.getByRole("button", { name: "Accept Domain" }));
+
+    expect(onChange).not.toHaveBeenCalled();
+    expect(screen.queryByText("generic -> policy")).not.toBeInTheDocument();
+    expect(screen.getByText("1 field changed")).toBeVisible();
+  });
+
+  it("rejects autosuggested tags and metadata sources", async () => {
+    const file = new File(["pdf"], "tafseer.pdf", { type: "application/pdf" });
+    mocks.suggestDomainMetadata.mockResolvedValueOnce({
+      domain_metadata: {
+        domain: "tafseer",
+        document_type: "document",
+        tags: ["quran", "tafseer"],
+        metadata_sources: ["heuristic", "profile"],
+      },
+      ...autosuggestEvidence,
+    });
+    const onChange = vi.fn();
+
+    render(
+      <DomainMetadataPanel
+        profiles={[]}
+        value={{
+          parser_mode: "local_fallback",
+          domain_metadata: {
+            domain: "generic",
+            document_type: "document",
+            tags: ["quran"],
+            metadata_sources: ["user"],
+          },
+        }}
+        onChange={onChange}
+        suggestContext={{ filename: "tafseer.pdf", content_type: "application/pdf", file }}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /Auto-suggest/i }));
+
+    expect(await screen.findByText("Auto-suggest updated metadata")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Reject Tags" }));
+
+    expect(onChange).toHaveBeenLastCalledWith({
+      parser_mode: "local_fallback",
+      domain_metadata: {
+        domain: "tafseer",
+        document_type: "document",
+        tags: ["quran"],
+        metadata_sources: ["heuristic", "profile"],
+      },
+    });
+    expect(screen.queryByText("added tafseer")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Reject Metadata sources" }));
+
+    expect(onChange).toHaveBeenLastCalledWith({
+      parser_mode: "local_fallback",
+      domain_metadata: {
+        domain: "tafseer",
+        document_type: "document",
+        tags: ["quran"],
+        metadata_sources: ["user"],
+      },
+    });
+    expect(screen.queryByText("added heuristic, profile; removed user")).not.toBeInTheDocument();
+  });
+
+  it("rejects autosuggested custom JSON and restores the textarea validity", async () => {
+    const file = new File(["pdf"], "policy.pdf", { type: "application/pdf" });
+    mocks.suggestDomainMetadata.mockResolvedValueOnce({
+      domain_metadata: {
+        domain: "policy",
+        document_type: "document",
+        custom_json: { department: "research" },
+      },
+      ...autosuggestEvidence,
+    });
+    const onChange = vi.fn();
+    const onValidityChange = vi.fn();
+
+    render(
+      <DomainMetadataPanel
+        profiles={[]}
+        value={{
+          parser_mode: "local_fallback",
+          domain_metadata: {
+            domain: "generic",
+            document_type: "document",
+            custom_json: { department: "general" },
+          },
+        }}
+        onChange={onChange}
+        onValidityChange={onValidityChange}
+        suggestContext={{ filename: "policy.pdf", content_type: "application/pdf", file }}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /Auto-suggest/i }));
+
+    const customJsonInput = await screen.findByDisplayValue(/research/);
+    fireEvent.change(customJsonInput, {
+      target: { value: "{bad-json" },
+    });
+    expect(screen.getByText("Custom JSON must be valid JSON.")).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: "Reject Custom JSON" }));
+
+    expect(screen.getByDisplayValue(/general/)).toBeVisible();
+    expect(screen.queryByText("Custom JSON must be valid JSON.")).not.toBeInTheDocument();
+    expect(onValidityChange).toHaveBeenLastCalledWith(true);
+    expect(onChange).toHaveBeenLastCalledWith({
+      parser_mode: "local_fallback",
+      domain_metadata: {
+        domain: "policy",
+        document_type: "document",
+        custom_json: { department: "general" },
+      },
+    });
+  });
+
+  it("preserves inserted reference schema when another autosuggested field is rejected", async () => {
+    const file = new File(["pdf"], "policy.pdf", { type: "application/pdf" });
+    mocks.suggestDomainMetadata.mockResolvedValueOnce({
+      domain_metadata: {
+        domain: "policy",
+        document_type: "document",
+        custom_json: { department: "research" },
+      },
+      ...autosuggestEvidence,
+    });
+    mocks.getReferenceJsonExample.mockResolvedValueOnce({
+      custom_json: {
+        reference_schema: {
+          type: "chapter_verse",
+        },
+      },
+    });
+    const onChange = vi.fn();
+
+    render(
+      <DomainMetadataPanel
+        profiles={[]}
+        value={{
+          parser_mode: "local_fallback",
+          domain_metadata: {
+            domain: "generic",
+            document_type: "document",
+            custom_json: { department: "general" },
+          },
+        }}
+        onChange={onChange}
+        suggestContext={{ filename: "policy.pdf", content_type: "application/pdf", file }}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /Auto-suggest/i }));
+
+    expect(await screen.findByDisplayValue(/research/)).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: /insert reference schema/i }));
+    await waitFor(() => {
+      expect(screen.getByLabelText("Custom JSON")).toHaveDisplayValue(/chapter_verse/);
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Reject Domain" }));
+
+    expect(onChange).toHaveBeenLastCalledWith({
+      parser_mode: "local_fallback",
+      domain_metadata: {
+        domain: "generic",
+        document_type: "document",
+        custom_json: {
+          department: "research",
+          reference_schema: {
+            type: "chapter_verse",
+          },
+        },
+      },
+    });
+  });
+
   it("passes the selected profile to auto-suggest and applies profile-refined metadata", async () => {
     const file = new File(["pdf"], "hadith.pdf", { type: "application/pdf" });
     mocks.suggestDomainMetadata.mockResolvedValueOnce({

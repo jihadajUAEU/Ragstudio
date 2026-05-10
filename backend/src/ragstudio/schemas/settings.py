@@ -6,6 +6,7 @@ from pydantic import Field, field_validator, model_validator
 from ragstudio.schemas.common import StudioModel
 from ragstudio.schemas.runtime import (
     QueryMode,
+    RerankerFallbackProvider,
     RerankerProvider,
     RuntimeMode,
     StorageBackend,
@@ -45,6 +46,7 @@ class SettingsProfileIn(StudioModel):
     vision_api_key: str | None = None
     vision_timeout_ms: int = Field(default=10000, ge=100, le=1_800_000)
     reranker_provider: RerankerProvider = "disabled"
+    reranker_fallback_provider: RerankerFallbackProvider = "disabled"
     reranker_model: str | None = None
     reranker_base_url: str | None = None
     reranker_api_key: str | None = None
@@ -198,6 +200,7 @@ class SettingsProfileOut(StudioModel):
     has_vision_api_key: bool
     vision_timeout_ms: int
     reranker_provider: RerankerProvider
+    reranker_fallback_provider: RerankerFallbackProvider
     reranker_model: str | None
     reranker_base_url: str | None
     has_reranker_api_key: bool

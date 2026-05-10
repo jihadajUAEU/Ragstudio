@@ -4,6 +4,7 @@ from ragstudio.config import AppSettings
 from ragstudio.db.models import SettingsProfile
 from ragstudio.schemas.runtime import (
     QueryMode,
+    RerankerFallbackProvider,
     RerankerProvider,
     RuntimeMode,
     RuntimeProfile,
@@ -62,6 +63,10 @@ class RuntimeProfileService:
             reranker_provider=cast(
                 RerankerProvider,
                 profile.reranker_provider or "disabled",
+            ),
+            reranker_fallback_provider=cast(
+                RerankerFallbackProvider,
+                profile.reranker_fallback_provider or "disabled",
             ),
             reranker_model=profile.reranker_model,
             reranker_base_url=profile.reranker_base_url,
