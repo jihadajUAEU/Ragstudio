@@ -156,7 +156,6 @@ class OptimizerService:
             -(item.total_score if item.total_score is not None else -1.0),
             -item.scoreable_run_count,
             -item.unscored_run_count,
-            item.failed_run_count,
             item.variant_id,
         )
 
