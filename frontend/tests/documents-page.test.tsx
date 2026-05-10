@@ -7,6 +7,7 @@ import { DocumentsPage } from "../src/features/documents/documents-page";
 import { apiClient } from "../src/api/client";
 
 vi.mock("../src/api/client", () => ({
+  DEFAULT_PARSER_MODE: "mineru_strict",
   apiClient: {
     documents: vi.fn(),
     jobs: vi.fn(),
@@ -42,6 +43,13 @@ describe("DocumentsPage", () => {
       warnings: [],
     });
     vi.mocked(apiClient.deleteDocument).mockResolvedValue(undefined);
+    vi.mocked(apiClient.uploadDocument).mockResolvedValue({
+      id: "doc-upload",
+      filename: "sample.pdf",
+      content_type: "application/pdf",
+      status: "running",
+      sha256: "sha-upload",
+    });
     vi.mocked(apiClient.createDocumentReindexJob).mockResolvedValue({
       document_id: "doc-1",
       job_id: "job-1",
@@ -65,6 +73,27 @@ describe("DocumentsPage", () => {
     });
 
     expect(uploadButton).toBeEnabled();
+  });
+
+  it("uploads with strict MinerU as the default parser", async () => {
+    renderDocumentsPage();
+
+    const file = new File(["pdf"], "sample.pdf", { type: "application/pdf" });
+    fireEvent.change(screen.getByLabelText(/upload file/i), {
+      target: { files: [file] },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^upload$/i }));
+
+    await waitFor(() => {
+      expect(apiClient.uploadDocument).toHaveBeenCalled();
+    });
+    expect(vi.mocked(apiClient.uploadDocument).mock.calls[0][0]).toEqual({
+      file,
+      options: {
+        parser_mode: "mineru_strict",
+        domain_metadata: { domain: "generic", document_type: "document", tags: [] },
+      },
+    });
   });
 
   it("passes the selected upload file to metadata autosuggest", async () => {

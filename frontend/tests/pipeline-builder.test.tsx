@@ -43,6 +43,7 @@ const defaultDiagnostics: DiagnosticsOut = {
 };
 
 vi.mock("../src/api/client", () => ({
+  DEFAULT_PARSER_MODE: "mineru_strict",
   apiClient: {
     diagnostics: vi.fn(),
     documents: vi.fn().mockResolvedValue({ items: [], total: 0 }),

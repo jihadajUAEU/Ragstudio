@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import { ChunkInspector } from "../src/features/chunks/chunk-inspector";
 
 vi.mock("../src/api/client", () => ({
+  DEFAULT_PARSER_MODE: "mineru_strict",
   apiClient: {
     documents: vi.fn().mockResolvedValue({
       items: [

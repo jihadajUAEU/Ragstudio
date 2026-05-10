@@ -7,6 +7,7 @@ import { apiClient } from "../src/api/client";
 import { DashboardPage } from "../src/features/dashboard/dashboard-page";
 
 vi.mock("../src/api/client", () => ({
+  DEFAULT_PARSER_MODE: "mineru_strict",
   apiClient: {
     health: vi.fn(),
     documents: vi.fn(),

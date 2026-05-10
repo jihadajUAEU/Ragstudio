@@ -10,7 +10,7 @@ import {
   Wand2,
 } from "lucide-react";
 
-import { apiClient } from "../../api/client";
+import { apiClient, DEFAULT_PARSER_MODE } from "../../api/client";
 import type {
   ChunkOut,
   ChunkSearchIn,
@@ -52,7 +52,7 @@ export function ChunkInspector() {
   const [formError, setFormError] = useState("");
   const [searchResult, setSearchResult] = useState<SearchResult | null>(null);
   const [indexOptions, setIndexOptions] = useState<IndexDocumentIn>({
-    parser_mode: "local_fallback",
+    parser_mode: DEFAULT_PARSER_MODE,
     domain_metadata: { domain: "generic", document_type: "document", tags: [] },
   });
   const [metadataValid, setMetadataValid] = useState(true);

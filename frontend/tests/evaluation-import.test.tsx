@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import { EvaluationPage } from "../src/features/evaluation/evaluation-page";
 
 vi.mock("../src/api/client", () => ({
+  DEFAULT_PARSER_MODE: "mineru_strict",
   apiClient: {
     evaluationSets: vi.fn().mockResolvedValue({ items: [], total: 0 }),
     importEvaluationSet: vi.fn(),

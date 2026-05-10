@@ -17,6 +17,7 @@ import type {
   OptimizerIn,
   OptimizerOut,
   Page,
+  ParserMode,
   ProviderSyncPreviewIn,
   ProviderSyncPreviewOut,
   ChunkSearchIn,
@@ -30,6 +31,8 @@ import type {
   VariantOut,
   VariantUpdate,
 } from "./generated";
+
+export const DEFAULT_PARSER_MODE: ParserMode = "mineru_strict";
 
 export class ApiError extends Error {
   readonly status: number;
@@ -103,7 +106,7 @@ export const apiClient = {
   uploadDocument: ({ file, options }: { file: File; options: IndexDocumentIn }) => {
     const formData = new FormData();
     formData.set("file", file);
-    formData.set("parser_mode", options.parser_mode ?? "local_fallback");
+    formData.set("parser_mode", options.parser_mode ?? DEFAULT_PARSER_MODE);
     formData.set("domain_metadata", JSON.stringify(options.domain_metadata ?? {}));
     return request<DocumentOut>("/api/documents", {
       method: "POST",

@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("../src/api/client", () => ({
+  DEFAULT_PARSER_MODE: "mineru_strict",
   apiClient: {
     getReferenceJsonExample: mocks.getReferenceJsonExample,
     suggestDomainMetadata: mocks.suggestDomainMetadata,
@@ -75,6 +76,20 @@ describe("DomainMetadataPanel", () => {
         }),
       }),
     );
+  });
+
+  it("selects strict MinerU when parser mode is omitted", () => {
+    render(
+      <DomainMetadataPanel
+        profiles={[]}
+        value={{
+          domain_metadata: { domain: "generic", document_type: "document", tags: [] },
+        }}
+        onChange={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByLabelText("Parser")).toHaveValue("mineru_strict");
   });
 
   it("auto-suggests metadata and edits custom JSON", async () => {

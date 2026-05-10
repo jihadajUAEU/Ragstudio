@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Braces, Loader2, Wand2 } from "lucide-react";
 
-import { apiClient } from "../../api/client";
+import { apiClient, DEFAULT_PARSER_MODE } from "../../api/client";
 import type {
   DomainMetadata,
   DomainProfileOut,
@@ -283,7 +283,7 @@ export function DomainMetadataPanel({
           <select
             aria-label="Parser"
             className="h-10 w-full rounded-md border border-[#cfd8dd] bg-white px-3 text-sm"
-            value={value.parser_mode ?? "local_fallback"}
+            value={value.parser_mode ?? DEFAULT_PARSER_MODE}
             disabled={disabled}
             onChange={(event) =>
               onChange({ ...value, parser_mode: event.target.value as ParserMode })

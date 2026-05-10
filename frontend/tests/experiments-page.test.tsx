@@ -8,6 +8,7 @@ import type { ExperimentOut, ExperimentSummaryOut } from "../src/api/generated";
 import { ExperimentsPage } from "../src/features/experiments/experiments-page";
 
 vi.mock("../src/api/client", () => ({
+  DEFAULT_PARSER_MODE: "mineru_strict",
   apiClient: {
     documents: vi.fn(),
     variants: vi.fn(),

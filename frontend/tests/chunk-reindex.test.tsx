@@ -7,6 +7,7 @@ import { apiClient } from "../src/api/client";
 import { ChunkInspector } from "../src/features/chunks/chunk-inspector";
 
 vi.mock("../src/api/client", () => ({
+  DEFAULT_PARSER_MODE: "mineru_strict",
   apiClient: {
     documents: vi.fn(),
     domainProfiles: vi.fn(),

@@ -103,6 +103,42 @@ async def test_upload_accepts_parser_mode_and_domain_metadata(client):
 
 
 @pytest.mark.asyncio
+async def test_upload_uses_default_parser_mode_when_omitted(client, monkeypatch):
+    scheduled = []
+
+    async def fake_run_index_job(settings, document_id, job_id, options):
+        scheduled.append(
+            {
+                "document_id": document_id,
+                "job_id": job_id,
+                "parser_mode": options.parser_mode,
+                "domain_metadata": options.domain_metadata.model_dump(exclude_none=True),
+            }
+        )
+
+    monkeypatch.setattr("ragstudio.api.routes.documents._run_index_job", fake_run_index_job)
+
+    response = await client.post(
+        "/api/documents",
+        data={
+            "domain_metadata": json.dumps(
+                {"domain": "policy", "document_type": "admin_document"}
+            ),
+        },
+        files={"file": ("policy.txt", b"Policy line\n", "text/plain")},
+    )
+
+    for _ in range(20):
+        if scheduled:
+            break
+        await asyncio.sleep(0.01)
+
+    assert response.status_code == 201
+    assert scheduled[0]["parser_mode"] == "mineru_strict"
+    assert scheduled[0]["domain_metadata"]["domain"] == "policy"
+
+
+@pytest.mark.asyncio
 async def test_documents_list_includes_latest_index_options(client, tmp_path):
     session_factory = client._transport.app.state.session_factory
     artifact = tmp_path / "uploads" / "indexed-sha"

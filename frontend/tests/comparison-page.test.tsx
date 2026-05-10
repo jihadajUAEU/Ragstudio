@@ -12,6 +12,7 @@ const apiMocks = vi.hoisted(() => ({
 }));
 
 vi.mock("../src/api/client", () => ({
+  DEFAULT_PARSER_MODE: "mineru_strict",
   apiClient: {
     runs: apiMocks.runs,
     variants: apiMocks.variants,

@@ -28,6 +28,7 @@ from ragstudio.services.index_lifecycle_service import RuntimeHealthBlockedError
 from ragstudio.services.metadata_json_schema import validate_custom_json
 from ragstudio.services.runtime_factory import RuntimeUnavailableError
 from ragstudio.services.runtime_health_service import RuntimeHealthService
+from ragstudio.services.runtime_policy import DEFAULT_PARSER_MODE
 from ragstudio.services.runtime_profile_service import (
     RuntimeProfileNotConfiguredError,
     RuntimeProfileService,
@@ -212,7 +213,7 @@ def _parse_index_options(
     try:
         return IndexDocumentIn.model_validate(
             {
-                "parser_mode": parser_mode or "local_fallback",
+                "parser_mode": parser_mode or DEFAULT_PARSER_MODE,
                 "domain_metadata": metadata_payload,
             }
         )

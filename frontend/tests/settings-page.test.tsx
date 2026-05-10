@@ -8,6 +8,7 @@ import type { SettingsProfileOut } from "../src/api/generated";
 import { SettingsPage } from "../src/features/settings/settings-page";
 
 vi.mock("../src/api/client", () => ({
+  DEFAULT_PARSER_MODE: "mineru_strict",
   apiClient: {
     defaultSettings: vi.fn(),
     updateDefaultSettings: vi.fn(),

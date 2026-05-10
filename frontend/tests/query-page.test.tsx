@@ -7,6 +7,7 @@ import { apiClient } from "../src/api/client";
 import { QueryPage } from "../src/features/query/query-page";
 
 vi.mock("../src/api/client", () => ({
+  DEFAULT_PARSER_MODE: "mineru_strict",
   apiClient: {
     documents: vi.fn(),
     variants: vi.fn(),

@@ -34,6 +34,7 @@ vi.mock("@xyflow/react", () => ({
 }));
 
 vi.mock("../src/api/client", () => ({
+  DEFAULT_PARSER_MODE: "mineru_strict",
   apiClient: {
     diagnostics: vi.fn(),
     graph: vi.fn(),

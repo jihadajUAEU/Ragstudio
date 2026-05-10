@@ -8,6 +8,7 @@ import type { VariantOut, VariantPreset } from "../src/api/generated";
 import { VariantsPage } from "../src/features/variants/variants-page";
 
 vi.mock("../src/api/client", () => ({
+  DEFAULT_PARSER_MODE: "mineru_strict",
   apiClient: {
     variants: vi.fn(),
     createVariant: vi.fn(),
