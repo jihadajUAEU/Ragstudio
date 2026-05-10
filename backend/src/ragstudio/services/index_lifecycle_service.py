@@ -1,8 +1,8 @@
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from inspect import signature
-from typing import Any, Iterator
+from typing import Any
 
 from ragstudio.config import AppSettings
 from ragstudio.db.models import Chunk, Document, GraphProjectionRecord, IndexRecord
