@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build a default-on Retrieval Orchestrator that improves runtime query quality by fusing native RAG-Anything retrieval, Studio metadata-aware retrieval, optional reranking, relationship expansion, and runtime LLM answer generation.
+**Goal:** Build a default-on Retrieval Orchestrator that improves runtime query quality by fusing native RAG-Anything retrieval, Studio metadata-aware retrieval, Neo4j graph expansion, optional reranking, and runtime LLM answer generation.
 
-**Architecture:** Add focused backend services under `backend/src/ragstudio/services/` so retrieval planning, evidence fusion, answer generation, and QueryService integration stay testable in isolation. The orchestrator runs native and metadata retrieval in parallel, ranks fused evidence with deterministic metadata-aware scoring plus optional reranker, then answers from fused evidence using the active runtime LLM.
+**Architecture:** Add focused backend services under `backend/src/ragstudio/services/` so retrieval planning, evidence fusion, graph expansion, answer generation, and QueryService integration stay testable in isolation. The orchestrator runs native and metadata retrieval in parallel, expands high-confidence seed evidence through Neo4j relationships when graph settings are available, ranks fused evidence with deterministic metadata-aware scoring plus optional reranker, then answers from fused evidence using the active runtime LLM.
 
-**Tech Stack:** FastAPI service layer, SQLAlchemy async sessions, existing `ChunkService`, existing `RerankerService`, existing runtime profile/settings models, OpenAI-compatible HTTP endpoints through `httpx`, pytest.
+**Tech Stack:** FastAPI service layer, SQLAlchemy async sessions, Neo4j Python driver, existing `ChunkService`, existing `RerankerService`, existing runtime profile/settings models, OpenAI-compatible HTTP endpoints through `httpx`, pytest.
 
 ---
 
@@ -18,6 +18,8 @@
   - Defines `EvidenceCandidate`, `RetrievalPlan`, `OrchestratedAnswer`, and helper methods for source/trace serialization.
 - Create `backend/src/ragstudio/services/runtime_answer_service.py`
   - Generates the final answer from fused evidence through the active runtime LLM endpoint.
+- Create `backend/src/ragstudio/services/graph_expansion_service.py`
+  - Expands seed evidence through Neo4j relationships scoped to the active runtime workspace and returns graph evidence candidates with relationship traces.
 - Modify `backend/src/ragstudio/services/query_service.py`
   - Uses `RetrievalOrchestrator` as the default runtime query path and preserves existing runtime/native fallback behavior.
 - Modify `backend/src/ragstudio/services/hybrid_chunk_search.py`
@@ -26,6 +28,8 @@
   - Unit coverage for planning, fusion, metadata scoring, dedupe, reranker traces, fallback, and answer context ordering.
 - Test in `backend/tests/test_runtime_answer_service.py`
   - Unit coverage for OpenAI-compatible answer generation and failure behavior.
+- Test in `backend/tests/test_graph_expansion_service.py`
+  - Unit coverage for Neo4j query scoping, graph candidate conversion, unavailable graph behavior, and relationship traces.
 - Extend `backend/tests/test_runtime_query_service.py`
   - Service-level coverage that runtime queries use orchestrated fused evidence.
 
@@ -710,7 +714,367 @@ git commit -m "feat: answer from fused retrieval evidence"
 
 ---
 
-### Task 4: Retrieval Orchestrator Service
+### Task 4: Neo4j Graph Expansion Service
+
+**Files:**
+- Create: `backend/src/ragstudio/services/graph_expansion_service.py`
+- Test: `backend/tests/test_graph_expansion_service.py`
+
+- [ ] **Step 1: Write failing tests for graph expansion**
+
+Create `backend/tests/test_graph_expansion_service.py`:
+
+```python
+import pytest
+
+from ragstudio.services.graph_expansion_service import GraphExpansionService
+from ragstudio.services.retrieval_evidence import EvidenceCandidate
+
+
+class FakeRecord(dict):
+    def __getitem__(self, key):
+        return self.get(key)
+
+
+class FakeSession:
+    def __init__(self, rows):
+        self.rows = rows
+        self.calls = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return None
+
+    def run(self, query, **params):
+        self.calls.append((query, params))
+        return self.rows
+
+
+class FakeDriver:
+    def __init__(self, rows):
+        self.session_instance = FakeSession(rows)
+
+    def session(self):
+        return self.session_instance
+
+
+def seed_candidate():
+    return EvidenceCandidate(
+        candidate_id="metadata:seed-1",
+        text="Book 1 Hadith 1",
+        document_id="doc-1",
+        chunk_id="seed-1",
+        source_location={"page": 1},
+        metadata={"runtime_source_id": "seed-runtime"},
+        tool="metadata",
+        tool_rank=1,
+        base_score=10.0,
+    )
+
+
+def profile(**overrides):
+    values = {
+        "id": "tenant`one",
+        "neo4j_uri": "bolt://127.0.0.1:7687",
+        "neo4j_username": "neo4j",
+        "neo4j_password": "secret",
+    }
+    values.update(overrides)
+    return type("Profile", (), values)()
+
+
+@pytest.mark.asyncio
+async def test_graph_expansion_scopes_query_to_workspace_label():
+    row = FakeRecord(
+        relationship_id="rel-1",
+        relationship_type="NEXT",
+        relationship_properties={"weight": 0.8},
+        seed_properties={"chunk_id": "seed-1"},
+        neighbor_id="node-2",
+        neighbor_labels=["ragstudio_tenant_one"],
+        neighbor_properties={
+            "chunk_id": "neighbor-1",
+            "document_id": "doc-1",
+            "text": "Book 1 Hadith 2",
+            "page": 2,
+        },
+    )
+    driver = FakeDriver([row])
+    service = GraphExpansionService(driver_factory=lambda *args, **kwargs: driver)
+
+    candidates, traces = await service.expand(
+        "show related hadith",
+        seeds=[seed_candidate()],
+        profile=profile(),
+        document_ids=["doc-1"],
+        limit=4,
+    )
+
+    query, params = driver.session_instance.calls[0]
+    assert "MATCH (seed:`ragstudio_tenant_one`)-[relationship]-(neighbor:`ragstudio_tenant_one`)" in query
+    assert params["seed_ids"] == ["seed-1", "seed-runtime"]
+    assert params["document_ids"] == ["doc-1"]
+    assert candidates[0].tool == "graph"
+    assert candidates[0].chunk_id == "neighbor-1"
+    assert candidates[0].metadata["graph_relationship"]["type"] == "NEXT"
+    assert traces[0]["stage"] == "graph_expansion"
+    assert traces[0]["expanded_candidates"] == 1
+
+
+@pytest.mark.asyncio
+async def test_graph_expansion_returns_trace_when_neo4j_is_unavailable():
+    service = GraphExpansionService(driver_factory=lambda *args, **kwargs: None)
+
+    candidates, traces = await service.expand(
+        "show related hadith",
+        seeds=[seed_candidate()],
+        profile=profile(neo4j_uri=None),
+        document_ids=["doc-1"],
+        limit=4,
+    )
+
+    assert candidates == []
+    assert traces == [
+        {
+            "stage": "graph_expansion",
+            "status": "skipped",
+            "reason": "neo4j_uri_missing",
+        }
+    ]
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run:
+
+```bash
+PATH=$PWD/.venv/bin:$PATH PYTHONPATH=backend/src python -m pytest backend/tests/test_graph_expansion_service.py -q
+```
+
+Expected: FAIL with `ModuleNotFoundError: No module named 'ragstudio.services.graph_expansion_service'`.
+
+- [ ] **Step 3: Implement graph expansion service**
+
+Create `backend/src/ragstudio/services/graph_expansion_service.py`:
+
+```python
+from __future__ import annotations
+
+from importlib import import_module
+from typing import Any
+
+from ragstudio.services.retrieval_evidence import EvidenceCandidate
+
+
+class GraphExpansionService:
+    def __init__(self, *, driver_factory: Any | None = None):
+        self.driver_factory = driver_factory
+
+    async def expand(
+        self,
+        query: str,
+        *,
+        seeds: list[EvidenceCandidate],
+        profile: Any,
+        document_ids: list[str],
+        limit: int,
+    ) -> tuple[list[EvidenceCandidate], list[dict[str, Any]]]:
+        if not getattr(profile, "neo4j_uri", None):
+            return [], [
+                {
+                    "stage": "graph_expansion",
+                    "status": "skipped",
+                    "reason": "neo4j_uri_missing",
+                }
+            ]
+        seed_ids = _seed_ids(seeds)
+        if not seed_ids:
+            return [], [
+                {
+                    "stage": "graph_expansion",
+                    "status": "skipped",
+                    "reason": "no_seed_ids",
+                }
+            ]
+
+        driver = self._driver(profile)
+        if driver is None:
+            return [], [
+                {
+                    "stage": "graph_expansion",
+                    "status": "skipped",
+                    "reason": "driver_unavailable",
+                }
+            ]
+
+        workspace_label = _workspace_label(profile)
+        rows = self._run_query(
+            driver,
+            workspace_label=workspace_label,
+            seed_ids=seed_ids,
+            document_ids=document_ids,
+            limit=limit,
+        )
+        candidates = [_candidate_from_row(index, row) for index, row in enumerate(rows, start=1)]
+        candidates = [candidate for candidate in candidates if candidate.text.strip()]
+        return candidates, [
+            {
+                "stage": "graph_expansion",
+                "status": "ok",
+                "seed_count": len(seed_ids),
+                "expanded_candidates": len(candidates),
+                "workspace_label": workspace_label,
+            }
+        ]
+
+    def _driver(self, profile: Any) -> Any:
+        if self.driver_factory is not None:
+            return self.driver_factory(
+                profile.neo4j_uri,
+                auth=_auth(profile),
+            )
+        graph_database = import_module("neo4j").GraphDatabase
+        return graph_database.driver(
+            profile.neo4j_uri,
+            auth=_auth(profile),
+        )
+
+    def _run_query(
+        self,
+        driver: Any,
+        *,
+        workspace_label: str,
+        seed_ids: list[str],
+        document_ids: list[str],
+        limit: int,
+    ) -> list[Any]:
+        cypher = f"""
+        MATCH (seed:`{workspace_label}`)-[relationship]-(neighbor:`{workspace_label}`)
+        WHERE coalesce(
+            seed.chunk_id,
+            seed.runtime_source_id,
+            seed.id,
+            seed.source_id
+        ) IN $seed_ids
+        AND (
+            size($document_ids) = 0
+            OR coalesce(neighbor.document_id, neighbor.full_doc_id, neighbor.doc_id) IN $document_ids
+        )
+        RETURN elementId(relationship) AS relationship_id,
+               type(relationship) AS relationship_type,
+               properties(relationship) AS relationship_properties,
+               properties(seed) AS seed_properties,
+               elementId(neighbor) AS neighbor_id,
+               labels(neighbor) AS neighbor_labels,
+               properties(neighbor) AS neighbor_properties
+        LIMIT $limit
+        """
+        with driver.session() as session:
+            return list(
+                session.run(
+                    cypher,
+                    seed_ids=seed_ids,
+                    document_ids=document_ids,
+                    limit=max(limit, 1),
+                )
+            )
+
+
+def _seed_ids(seeds: list[EvidenceCandidate]) -> list[str]:
+    values: list[str] = []
+    for seed in seeds:
+        for value in (
+            seed.chunk_id,
+            seed.metadata.get("runtime_source_id"),
+            seed.metadata.get("id"),
+            seed.metadata.get("source_id"),
+        ):
+            if isinstance(value, str) and value and value not in values:
+                values.append(value)
+    return values
+
+
+def _candidate_from_row(index: int, row: Any) -> EvidenceCandidate:
+    properties = dict(row["neighbor_properties"] or {})
+    relationship = {
+        "id": row["relationship_id"],
+        "type": row["relationship_type"],
+        "properties": dict(row["relationship_properties"] or {}),
+        "seed": dict(row["seed_properties"] or {}),
+    }
+    chunk_id = _first_str(properties, "chunk_id", "runtime_source_id", "id", "source_id")
+    document_id = _first_str(properties, "document_id", "full_doc_id", "doc_id")
+    text = _first_str(properties, "text", "content", "description", "summary") or ""
+    source_location = {
+        key: properties[key]
+        for key in ("page", "section", "bbox", "start_index", "end_index")
+        if key in properties
+    }
+    metadata = {
+        **properties,
+        "graph_relationship": relationship,
+        "graph_labels": list(row["neighbor_labels"] or []),
+    }
+    return EvidenceCandidate(
+        candidate_id=f"graph:{row['neighbor_id']}",
+        text=text,
+        document_id=document_id,
+        chunk_id=chunk_id,
+        source_location=source_location,
+        metadata=metadata,
+        tool="graph",
+        tool_rank=index,
+        base_score=max(1.0, 18.0 - index),
+        boost_score=2.0,
+        final_score=max(1.0, 20.0 - index),
+        reasons=["graph_neighbor"],
+    )
+
+
+def _workspace_label(profile: Any) -> str:
+    raw = f"ragstudio_{getattr(profile, 'id', 'default')}"
+    safe = "".join(character if character.isalnum() or character in {"_", "-"} else "_" for character in raw).strip("_")
+    return (safe or "ragstudio_default").replace("`", "``")
+
+
+def _auth(profile: Any) -> tuple[str, str] | None:
+    username = getattr(profile, "neo4j_username", None)
+    password = getattr(profile, "neo4j_password", None)
+    if username or password:
+        return (username or "", password or "")
+    return None
+
+
+def _first_str(properties: dict[str, Any], *keys: str) -> str | None:
+    for key in keys:
+        value = properties.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return None
+```
+
+- [ ] **Step 4: Run graph tests**
+
+Run:
+
+```bash
+PATH=$PWD/.venv/bin:$PATH PYTHONPATH=backend/src python -m pytest backend/tests/test_graph_expansion_service.py -q
+```
+
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add backend/src/ragstudio/services/graph_expansion_service.py backend/tests/test_graph_expansion_service.py
+git commit -m "feat: expand retrieval evidence through graph"
+```
+
+---
+
+### Task 5: Retrieval Orchestrator Service
 
 **Files:**
 - Create: `backend/src/ragstudio/services/retrieval_orchestrator.py`
@@ -723,6 +1087,7 @@ Append:
 ```python
 from ragstudio.schemas.chunks import ChunkOut
 from ragstudio.services.retrieval_orchestrator import RetrievalOrchestrator
+from ragstudio.services.retrieval_evidence import EvidenceCandidate
 from ragstudio.services.runtime_types import RuntimeQueryResult
 
 
@@ -782,6 +1147,31 @@ class FakeRerankerService:
         return chunks, [{"provider": "disabled", "status": "disabled"}]
 
 
+class FakeGraphExpansionService:
+    async def expand(self, query, *, seeds, profile, document_ids, limit):
+        return [
+            EvidenceCandidate(
+                candidate_id="graph:g1",
+                text="Sahih al-Bukhari collection overview confirms 7277 hadith",
+                document_id="doc-1",
+                chunk_id="graph-1",
+                source_location={"page": 2},
+                metadata={
+                    "graph_relationship": {
+                        "type": "RELATED",
+                        "seed": {"chunk_id": seeds[0].chunk_id},
+                    }
+                },
+                tool="graph",
+                tool_rank=1,
+                base_score=12.0,
+                boost_score=2.0,
+                final_score=14.0,
+                reasons=["graph_neighbor"],
+            )
+        ], [{"stage": "graph_expansion", "status": "ok", "expanded_candidates": 1}]
+
+
 @pytest.mark.asyncio
 async def test_orchestrator_fuses_native_and_metadata_before_answering():
     answer_service = FakeAnswerService()
@@ -789,6 +1179,7 @@ async def test_orchestrator_fuses_native_and_metadata_before_answering():
         chunk_service=FakeChunkSearchService(),
         answer_service=answer_service,
         reranker_service=FakeRerankerService(),
+        graph_expansion_service=FakeGraphExpansionService(),
     )
 
     result = await orchestrator.query(
@@ -805,6 +1196,8 @@ async def test_orchestrator_fuses_native_and_metadata_before_answering():
     assert answer_service.evidence[0].chunk_id == "metadata-1"
     assert result.timings["orchestrated_query"] is True
     assert any(trace["stage"] == "planner" for trace in result.chunk_traces)
+    assert any(source["metadata"]["retrieval_tool"] == "graph" for source in result.sources)
+    assert any(trace["stage"] == "graph_expansion" for trace in result.chunk_traces)
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -830,6 +1223,7 @@ from typing import Any
 
 from ragstudio.schemas.chunks import ChunkOut, ChunkSearchIn
 from ragstudio.services.chunk_service import ChunkService
+from ragstudio.services.graph_expansion_service import GraphExpansionService
 from ragstudio.services.reranker_service import RerankerService
 from ragstudio.services.retrieval_evidence import (
     EvidenceCandidate,
@@ -847,10 +1241,12 @@ class RetrievalOrchestrator:
         chunk_service: ChunkService,
         answer_service: RuntimeAnswerService | None = None,
         reranker_service: RerankerService | None = None,
+        graph_expansion_service: GraphExpansionService | None = None,
     ):
         self.chunk_service = chunk_service
         self.answer_service = answer_service or RuntimeAnswerService()
         self.reranker_service = reranker_service or RerankerService()
+        self.graph_expansion_service = graph_expansion_service or GraphExpansionService()
 
     async def query(
         self,
@@ -869,7 +1265,7 @@ class RetrievalOrchestrator:
             {
                 "stage": "planner",
                 "intent": plan.intent,
-                "tools": ["native", "metadata", "relationships"],
+                "tools": ["native", "metadata", "graph"],
                 "candidate_limit": plan.candidate_limit,
             }
         ]
@@ -886,7 +1282,17 @@ class RetrievalOrchestrator:
             }
         )
 
-        fused = fuse_candidates(plan, [*native_candidates, *metadata_candidates])
+        seed_candidates = fuse_candidates(plan, [*native_candidates, *metadata_candidates])
+        graph_candidates, graph_traces = await self.graph_expansion_service.expand(
+            query,
+            seeds=seed_candidates[:limit],
+            profile=profile,
+            document_ids=document_ids,
+            limit=limit,
+        )
+        traces.extend(graph_traces)
+
+        fused = fuse_candidates(plan, [*seed_candidates, *graph_candidates])
         reranker_traces: list[dict[str, Any]] = []
         reranked = fused
         if getattr(profile, "enable_rerank", False):
@@ -960,7 +1366,7 @@ class RetrievalOrchestrator:
 
     def _candidate_from_chunk(self, chunk: ChunkOut, rank: int) -> EvidenceCandidate:
         score = chunk.metadata.get("score")
-        base_score = float(score) if isinstance(score, int | float) else max(1.0, 20.0 - rank)
+        base_score = float(score) if isinstance(score, (int, float)) else max(1.0, 20.0 - rank)
         return EvidenceCandidate(
             candidate_id=f"metadata:{chunk.id}",
             text=chunk.text,
@@ -1031,7 +1437,7 @@ git commit -m "feat: orchestrate fused retrieval evidence"
 
 ---
 
-### Task 5: QueryService Default Runtime Integration
+### Task 6: QueryService Default Runtime Integration
 
 **Files:**
 - Modify: `backend/src/ragstudio/services/query_service.py`
@@ -1207,7 +1613,7 @@ git commit -m "feat: use retrieval orchestrator for runtime queries"
 
 ---
 
-### Task 6: Metadata Search Quality Boosts
+### Task 7: Metadata Search Quality Boosts
 
 **Files:**
 - Modify: `backend/src/ragstudio/services/hybrid_chunk_search.py`
@@ -1340,7 +1746,7 @@ git commit -m "feat: boost answer-bearing metadata chunks"
 
 ---
 
-### Task 7: End-to-End Runtime Quality Test
+### Task 8: End-to-End Runtime Quality Test
 
 **Files:**
 - Modify: `backend/tests/test_runtime_query_service.py`
@@ -1444,7 +1850,7 @@ Expected: PASS.
 Run:
 
 ```bash
-PATH=$PWD/.venv/bin:$PATH PYTHONPATH=backend/src python -m pytest backend/tests/test_retrieval_orchestrator.py backend/tests/test_runtime_answer_service.py backend/tests/test_runtime_query_service.py backend/tests/test_chunks.py::test_search_chunks_boosts_collection_count_title -q
+PATH=$PWD/.venv/bin:$PATH PYTHONPATH=backend/src python -m pytest backend/tests/test_retrieval_orchestrator.py backend/tests/test_graph_expansion_service.py backend/tests/test_runtime_answer_service.py backend/tests/test_runtime_query_service.py backend/tests/test_chunks.py::test_search_chunks_boosts_collection_count_title -q
 ```
 
 Expected: PASS.
@@ -1458,7 +1864,7 @@ git commit -m "test: prove orchestrated metadata quality path"
 
 ---
 
-### Task 8: Live Smoke and Final Validation
+### Task 9: Live Smoke and Final Validation
 
 **Files:**
 - No code changes expected.
@@ -1508,7 +1914,7 @@ Run:
 curl --max-time 120 -sS -X POST http://localhost:5173/api/query \
   -H 'Content-Type: application/json' \
   -d '{"query":"how many hadith in bukhari","document_ids":["bb5ce512-1795-46a4-868d-eb6e449f9812"],"variant_ids":["75848293-2f84-4a84-9ec0-110e60df8651"],"limit":8}' \
-  | jq '.runs[0] | {status,answer,timings,source_count:(.sources|length),first_source:.sources[0],planner_trace:.chunk_traces[0]}'
+  | jq '.runs[0] | {status,answer,timings,source_count:(.sources|length),first_source:.sources[0],planner_trace:.chunk_traces[0],graph_trace:(.chunk_traces[] | select(.stage=="graph_expansion") | .)}'
 ```
 
 Expected:
@@ -1526,12 +1932,17 @@ Expected:
   },
   "planner_trace": {
     "stage": "planner",
-    "intent": "count"
+    "intent": "count",
+    "tools": ["native", "metadata", "graph"]
+  },
+  "graph_trace": {
+    "stage": "graph_expansion",
+    "status": "ok"
   }
 }
 ```
 
-The exact answer wording may differ, but it must include `7277`, status must be `succeeded`, and the first source must contain `7277 Hadith Collection`.
+The exact answer wording may differ, but it must include `7277`, status must be `succeeded`, the first source must contain `7277 Hadith Collection`, and `graph_trace.status` must be either `ok` or `skipped` with a concrete `reason`.
 
 - [ ] **Step 4: Run lint and focused tests**
 
@@ -1541,10 +1952,12 @@ Run:
 PATH=$PWD/.venv/bin:$PATH python -m ruff check \
   backend/src/ragstudio/services/retrieval_evidence.py \
   backend/src/ragstudio/services/retrieval_orchestrator.py \
+  backend/src/ragstudio/services/graph_expansion_service.py \
   backend/src/ragstudio/services/runtime_answer_service.py \
   backend/src/ragstudio/services/query_service.py \
   backend/src/ragstudio/services/hybrid_chunk_search.py \
   backend/tests/test_retrieval_orchestrator.py \
+  backend/tests/test_graph_expansion_service.py \
   backend/tests/test_runtime_answer_service.py \
   backend/tests/test_runtime_query_service.py
 ```
@@ -1556,6 +1969,7 @@ Run:
 ```bash
 PATH=$PWD/.venv/bin:$PATH PYTHONPATH=backend/src python -m pytest \
   backend/tests/test_retrieval_orchestrator.py \
+  backend/tests/test_graph_expansion_service.py \
   backend/tests/test_runtime_answer_service.py \
   backend/tests/test_runtime_query_service.py \
   backend/tests/test_chunks.py::test_search_chunks_boosts_collection_count_title \
@@ -1578,7 +1992,7 @@ Expected: only unrelated pre-existing files may remain, such as `?? REVIEW.md`.
 
 ## Self-Review Notes
 
-- Spec coverage: default-on full planner, native retrieval, metadata retrieval, graph-aware relationship hooks through metadata, optional reranker, fused evidence, runtime LLM answerer, and full traces are each covered by tasks.
-- Placeholder scan: no task uses undefined future work as a requirement. Graph is represented through relationship metadata in v1 and does not require a new Neo4j traversal tool in this plan.
-- Type consistency: `EvidenceCandidate`, `RetrievalPlan`, `OrchestratedAnswer`, `RetrievalOrchestrator.query()`, and `RuntimeAnswerService.answer()` signatures are introduced before use.
+- Spec coverage: default-on full planner, native retrieval, metadata retrieval, Neo4j graph expansion, optional reranker, fused evidence, runtime LLM answerer, and full traces are each covered by tasks.
+- Placeholder scan: no task uses undefined deferred work as a requirement. Graph expansion is implemented in `GraphExpansionService` and wired into the orchestrator before reranking.
+- Type consistency: `EvidenceCandidate`, `RetrievalPlan`, `OrchestratedAnswer`, `GraphExpansionService.expand()`, `RetrievalOrchestrator.query()`, and `RuntimeAnswerService.answer()` signatures are introduced before use.
 - Scope check: this is one coherent backend feature. No UI redesign, settings redesign, or new reranker endpoint setup is included.
