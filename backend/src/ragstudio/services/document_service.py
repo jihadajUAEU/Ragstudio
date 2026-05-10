@@ -5,7 +5,7 @@ from typing import Any, Literal
 
 from pydantic import ValidationError
 from ragstudio.config import AppSettings
-from ragstudio.db.models import Chunk, Document, IndexRecord, Job
+from ragstudio.db.models import Chunk, Document, GraphProjectionRecord, IndexRecord, Job
 from ragstudio.schemas.common import StageStatus
 from ragstudio.schemas.documents import DocumentOut
 from ragstudio.schemas.parsing import DomainMetadata, IndexDocumentIn, ParserMode
@@ -141,9 +141,20 @@ class DocumentService:
         await self.session.execute(
             delete(IndexRecord).where(IndexRecord.document_id == document.id)
         )
-        await self.session.delete(document)
         try:
             artifact_path.unlink(missing_ok=True)
+            if self.settings is not None:
+                await GraphProjectionRunner(
+                    self.session,
+                    self.settings,
+                ).delete_document_graph(document.id)
+            else:
+                await self.session.execute(
+                    delete(GraphProjectionRecord).where(
+                        GraphProjectionRecord.document_id == document.id
+                    )
+                )
+            await self.session.delete(document)
             await self.session.commit()
         except OSError:
             await self.session.rollback()

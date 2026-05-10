@@ -98,12 +98,56 @@ class GraphMaterializationService:
             edge_count=len(relationships),
         )
 
+    async def delete_document_graph(
+        self,
+        *,
+        document_id: str,
+        profile: Any,
+    ) -> GraphMaterializationResult:
+        if not getattr(profile, "neo4j_uri", None):
+            return GraphMaterializationResult(
+                status="skipped",
+                node_count=0,
+                edge_count=0,
+                reason="neo4j_uri_missing",
+            )
+
+        driver = self._driver(profile)
+        if driver is None:
+            return GraphMaterializationResult(
+                status="skipped",
+                node_count=0,
+                edge_count=0,
+                reason="driver_unavailable",
+            )
+
+        try:
+            node_count, edge_count = await asyncio.to_thread(
+                self._delete_graph,
+                driver,
+                workspace_label=workspace_label(profile),
+                document_id=document_id,
+            )
+        except Exception as exc:
+            return self.failure(str(exc))
+        finally:
+            close = getattr(driver, "close", None)
+            if close is not None:
+                await asyncio.to_thread(close)
+
+        return GraphMaterializationResult(
+            status="succeeded",
+            node_count=node_count,
+            edge_count=edge_count,
+        )
+
     def _driver(self, profile: Any) -> Any:
         try:
+            neo4j_uri = getattr(profile, "neo4j_uri", None)
             if self.driver_factory is not None:
-                return self.driver_factory(getattr(profile, "neo4j_uri"), auth=_auth(profile))
+                return self.driver_factory(neo4j_uri, auth=_auth(profile))
             graph_database = import_module("neo4j").GraphDatabase
-            return graph_database.driver(getattr(profile, "neo4j_uri"), auth=_auth(profile))
+            return graph_database.driver(neo4j_uri, auth=_auth(profile))
         except (ImportError, ModuleNotFoundError, RuntimeError, OSError):
             return None
 
@@ -255,10 +299,13 @@ class GraphMaterializationService:
                 tx.run(
                     f"""
                     UNWIND $relationships AS rel
-                    MATCH (source:`{workspace_label}` {{id: rel.source, document_id: rel.document_id}})
-                    MATCH (target:`{workspace_label}` {{id: rel.target, document_id: rel.document_id}})
-                    MERGE (source)-[relationship:`{rel_type}` {{document_id: rel.document_id}}]->(target)
-                    SET relationship.evidence = rel.evidence
+                    MATCH (source:`{workspace_label}` {{id: rel.source}})
+                    WHERE source.document_id = rel.document_id
+                    MATCH (target:`{workspace_label}` {{id: rel.target}})
+                    WHERE target.document_id = rel.document_id
+                    MERGE (source)-[relationship:`{rel_type}`]->(target)
+                    SET relationship.document_id = rel.document_id,
+                        relationship.evidence = rel.evidence
                     """,
                     relationships=typed_relationships,
                 )
@@ -266,6 +313,32 @@ class GraphMaterializationService:
         with driver.session() as session:
             self._ensure_indexes(session)
             session.execute_write(write_transaction)
+
+    def _delete_graph(
+        self,
+        driver: Any,
+        *,
+        workspace_label: str,
+        document_id: str,
+    ) -> tuple[int, int]:
+        count_query = f"""
+        MATCH (n:`{workspace_label}`)
+        WHERE n.document_id = $document_id
+        OPTIONAL MATCH (n)-[relationship]-()
+        RETURN count(DISTINCT n) AS node_count,
+               count(DISTINCT relationship) AS edge_count
+        """
+        delete_query = f"""
+        MATCH (n:`{workspace_label}`)
+        WHERE n.document_id = $document_id
+        DETACH DELETE n
+        """
+        with driver.session() as session:
+            count_row = _first_row(session.run(count_query, document_id=document_id))
+            node_count = _int_from_row(count_row, "node_count")
+            edge_count = _int_from_row(count_row, "edge_count")
+            session.run(delete_query, document_id=document_id)
+        return node_count, edge_count
 
     def _ensure_indexes(self, session: Any) -> None:
         session.run(
@@ -290,6 +363,22 @@ def _auth(profile: Any) -> tuple[str, str] | None:
     if username or password:
         return (username or "", password or "")
     return None
+
+
+def _first_row(rows: Any) -> Any:
+    for row in rows:
+        return row
+    return None
+
+
+def _int_from_row(row: Any, key: str) -> int:
+    if row is None:
+        return 0
+    try:
+        value = row.get(key) if hasattr(row, "get") else row[key]
+    except (KeyError, TypeError):
+        return 0
+    return int(value) if isinstance(value, (int, float)) else 0
 
 
 def _references(metadata: dict[str, Any]) -> list[str]:

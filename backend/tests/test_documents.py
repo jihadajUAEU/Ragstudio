@@ -4,7 +4,14 @@ from pathlib import Path
 
 import httpx
 import pytest
-from ragstudio.db.models import Chunk, Document, IndexRecord, Job, SettingsProfile
+from ragstudio.db.models import (
+    Chunk,
+    Document,
+    GraphProjectionRecord,
+    IndexRecord,
+    Job,
+    SettingsProfile,
+)
 from ragstudio.schemas.common import StageStatus
 from ragstudio.schemas.runtime import RuntimeHealthCheck
 from ragstudio.services.document_service import DocumentService
@@ -926,6 +933,15 @@ async def test_delete_document_removes_runtime_index_records(client, tmp_path):
                 chunk_count=1,
             )
         )
+        session.add(
+            GraphProjectionRecord(
+                document_id=document.id,
+                runtime_profile_id="default",
+                status="succeeded",
+                node_count=1,
+                edge_count=0,
+            )
+        )
         await session.commit()
         document_id = document.id
 
@@ -936,7 +952,11 @@ async def test_delete_document_removes_runtime_index_records(client, tmp_path):
         record = await session.scalar(
             select(IndexRecord).where(IndexRecord.document_id == document_id)
         )
+        projection_record = await session.scalar(
+            select(GraphProjectionRecord).where(GraphProjectionRecord.document_id == document_id)
+        )
     assert record is None
+    assert projection_record is None
 
 
 @pytest.mark.asyncio

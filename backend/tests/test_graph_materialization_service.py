@@ -9,9 +9,10 @@ from ragstudio.services.query_service import QueryService
 
 
 class FakeSession:
-    def __init__(self, *, fail: bool = False):
+    def __init__(self, *, fail: bool = False, count_rows=None):
         self.calls = []
         self.fail = fail
+        self.count_rows = count_rows or []
 
     def __enter__(self):
         return self
@@ -23,6 +24,8 @@ class FakeSession:
         if self.fail:
             raise RuntimeError("neo4j write failed")
         self.calls.append((query, params))
+        if "RETURN count(DISTINCT n) AS node_count" in query:
+            return self.count_rows
         return []
 
     def execute_write(self, callback):
@@ -30,8 +33,8 @@ class FakeSession:
 
 
 class FakeDriver:
-    def __init__(self, *, fail: bool = False):
-        self.session_instance = FakeSession(fail=fail)
+    def __init__(self, *, fail: bool = False, count_rows=None):
+        self.session_instance = FakeSession(fail=fail, count_rows=count_rows)
         self.closed = False
 
     def session(self):
@@ -148,6 +151,25 @@ async def test_replace_document_graph_soft_fails_when_neo4j_write_fails():
     assert result.reason == "neo4j write failed"
     assert result.node_count == 0
     assert result.edge_count == 0
+    assert driver.closed is True
+
+
+@pytest.mark.asyncio
+async def test_delete_document_graph_removes_document_projection():
+    driver = FakeDriver(count_rows=[{"node_count": 3, "edge_count": 2}])
+    service = GraphMaterializationService(driver_factory=lambda *args, **kwargs: driver)
+
+    result = await service.delete_document_graph(
+        document_id="doc-1",
+        profile=profile(),
+    )
+
+    queries = [query for query, _ in driver.session_instance.calls]
+    assert any("RETURN count(DISTINCT n) AS node_count" in query for query in queries)
+    assert any("DETACH DELETE n" in query for query in queries)
+    assert result.status == "succeeded"
+    assert result.node_count == 3
+    assert result.edge_count == 2
     assert driver.closed is True
 
 

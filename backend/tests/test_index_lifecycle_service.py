@@ -141,6 +141,7 @@ class FakeGraphMaterializationService:
         )
         self.error = error
         self.calls = []
+        self.delete_calls = []
 
     async def replace_document_graph(self, *, document_id, profile, chunks):
         self.calls.append(
@@ -150,6 +151,12 @@ class FakeGraphMaterializationService:
                 "chunk_count": len(chunks),
             }
         )
+        if self.error is not None:
+            raise self.error
+        return self.result
+
+    async def delete_document_graph(self, *, document_id, profile):
+        self.delete_calls.append({"document_id": document_id, "profile_id": profile.id})
         if self.error is not None:
             raise self.error
         return self.result
@@ -220,7 +227,9 @@ async def test_lifecycle_deletes_existing_chunks_and_mirrors_runtime_chunks(clie
         ).scalars().all()
         projection_records = (
             await session.execute(
-                select(GraphProjectionRecord).where(GraphProjectionRecord.document_id == document.id)
+                select(GraphProjectionRecord).where(
+                    GraphProjectionRecord.document_id == document.id
+                )
             )
         ).scalars().all()
         refreshed_document = await session.get(Document, document.id)
@@ -779,6 +788,120 @@ async def test_graph_projection_runner_records_non_blocking_failure(client):
     assert refreshed_record.status == "failed"
     assert refreshed_record.error == "neo4j unavailable"
     assert refreshed_record.projection_run_id is not None
+
+
+@pytest.mark.asyncio
+async def test_graph_projection_runner_rematerializes_from_mirrored_chunks(client):
+    app = client._transport.app
+
+    async with app.state.session_factory() as session:
+        session.add(
+            SettingsProfile(
+                id="default",
+                provider="openai-compatible",
+                llm_model="gpt-4o",
+                llm_base_url="http://llm.test",
+                embedding_model="text-embedding-3-large",
+                embedding_base_url="http://embedding.test",
+                storage_backend="postgres_pgvector_neo4j",
+                runtime_mode="runtime",
+                neo4j_uri="bolt://neo4j.test:7687",
+            )
+        )
+        document = Document(
+            filename="graph-rematerialize.txt",
+            content_type="text/plain",
+            sha256="graph-rematerialize",
+            artifact_path=str(app.state.settings.data_dir / "graph-rematerialize.txt"),
+            status=StageStatus.SUCCEEDED.value,
+        )
+        session.add(document)
+        await session.flush()
+        session.add(
+            Chunk(
+                document_id=document.id,
+                text="Graph rematerialize chunk",
+                source_location={},
+                metadata_json={"relationship_metadata": {"references": ["Bukhari 2"]}},
+                runtime_profile_id="default",
+            )
+        )
+        await session.flush()
+
+        fake = FakeGraphMaterializationService()
+        result = await GraphProjectionRunner(
+            session,
+            app.state.settings,
+            materialization_service=fake,
+        ).rematerialize_document(document.id)
+        projection_record = await session.scalar(
+            select(GraphProjectionRecord).where(GraphProjectionRecord.document_id == document.id)
+        )
+
+    assert fake.calls == [
+        {
+            "document_id": document.id,
+            "profile_id": "default",
+            "chunk_count": 1,
+        }
+    ]
+    assert result["status"] == "succeeded"
+    assert projection_record is not None
+    assert projection_record.status == "succeeded"
+    assert projection_record.node_count == 2
+    assert projection_record.edge_count == 1
+
+
+@pytest.mark.asyncio
+async def test_graph_projection_runner_deletes_projection_records_with_graph(client):
+    app = client._transport.app
+
+    async with app.state.session_factory() as session:
+        session.add(
+            SettingsProfile(
+                id="default",
+                provider="openai-compatible",
+                llm_model="gpt-4o",
+                llm_base_url="http://llm.test",
+                embedding_model="text-embedding-3-large",
+                embedding_base_url="http://embedding.test",
+                storage_backend="postgres_pgvector_neo4j",
+                runtime_mode="runtime",
+                neo4j_uri="bolt://neo4j.test:7687",
+            )
+        )
+        document = Document(
+            filename="graph-delete.txt",
+            content_type="text/plain",
+            sha256="graph-delete",
+            artifact_path=str(app.state.settings.data_dir / "graph-delete.txt"),
+            status=StageStatus.SUCCEEDED.value,
+        )
+        session.add(document)
+        await session.flush()
+        projection_record = GraphProjectionRecord(
+            document_id=document.id,
+            runtime_profile_id="default",
+            status="succeeded",
+            node_count=2,
+            edge_count=1,
+        )
+        session.add(projection_record)
+        await session.flush()
+
+        fake = FakeGraphMaterializationService()
+        result = await GraphProjectionRunner(
+            session,
+            app.state.settings,
+            materialization_service=fake,
+        ).delete_document_graph(document.id)
+        deleted_record_id = await session.scalar(
+            select(GraphProjectionRecord.id).where(GraphProjectionRecord.id == projection_record.id)
+        )
+
+    assert fake.delete_calls == [{"document_id": document.id, "profile_id": "default"}]
+    assert result["status"] == "succeeded"
+    assert deleted_record_id is None
 
 
 @pytest.mark.asyncio
