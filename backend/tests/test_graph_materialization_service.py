@@ -122,6 +122,165 @@ async def test_replace_document_graph_deletes_and_rebuilds_projection():
 
 
 @pytest.mark.asyncio
+async def test_replace_document_graph_resolves_preserved_chunk_source_alias_to_current_chunk():
+    chunk = chunk_with_relationships()
+    metadata = dict(chunk.metadata_json)
+    relationship_metadata = dict(metadata["relationship_metadata"])
+    relationship_metadata["references"] = ["existing:1"]
+    relationship_metadata["graph_relationships"] = [
+        {
+            "type": "custom",
+            "source": "chunk:legacy",
+            "target": "ref:existing:1",
+            "evidence": "existing",
+        }
+    ]
+    metadata["relationship_metadata"] = relationship_metadata
+    chunk.metadata_json = metadata
+    driver = FakeDriver()
+    service = GraphMaterializationService(driver_factory=lambda *args, **kwargs: driver)
+
+    result = await service.replace_document_graph(
+        document_id="doc-1",
+        profile=profile(),
+        chunks=[chunk],
+    )
+
+    relationship_call = next(
+        call for call in driver.session_instance.calls if "UNWIND $relationships AS rel" in call[0]
+    )
+    relationship_payload = relationship_call[1]["relationships"][0]
+    assert result.status == "succeeded"
+    assert relationship_payload["source"] == "chunk:doc-1:chunk-1"
+    assert relationship_payload["target"] == "ref:doc-1:existing:1"
+    assert relationship_payload["type"] == "CUSTOM"
+
+
+@pytest.mark.asyncio
+async def test_replace_document_graph_prefers_current_chunk_for_duplicate_source_aliases():
+    first = Chunk(
+        id="chunk-a",
+        document_id="doc-1",
+        text="First split chunk with preserved relationship.",
+        source_location={},
+        metadata_json={
+            "relationship_metadata": {
+                "references": ["existing:1"],
+                "graph_relationships": [
+                    {
+                        "type": "custom",
+                        "source": "chunk:shared-runtime",
+                        "target": "ref:existing:1",
+                        "evidence": "existing",
+                    }
+                ],
+            },
+        },
+        runtime_profile_id="default",
+        runtime_source_id="shared-runtime",
+        content_type="text",
+    )
+    second = Chunk(
+        id="chunk-b",
+        document_id="doc-1",
+        text="Second split chunk with the same runtime source.",
+        source_location={},
+        metadata_json={},
+        runtime_profile_id="default",
+        runtime_source_id="shared-runtime",
+        content_type="text",
+    )
+    driver = FakeDriver()
+    service = GraphMaterializationService(driver_factory=lambda *args, **kwargs: driver)
+
+    result = await service.replace_document_graph(
+        document_id="doc-1",
+        profile=profile(),
+        chunks=[first, second],
+    )
+
+    relationship_call = next(
+        call for call in driver.session_instance.calls if "UNWIND $relationships AS rel" in call[0]
+    )
+    relationship_payload = relationship_call[1]["relationships"][0]
+    assert result.status == "succeeded"
+    assert relationship_payload["source"] == "chunk:doc-1:chunk-a"
+    assert relationship_payload["target"] == "ref:doc-1:existing:1"
+
+
+@pytest.mark.asyncio
+async def test_replace_document_graph_resolves_preserved_chunk_target_alias_to_current_chunk():
+    chunk = chunk_with_relationships()
+    metadata = dict(chunk.metadata_json)
+    relationship_metadata = dict(metadata["relationship_metadata"])
+    relationship_metadata["references"] = ["existing:1"]
+    relationship_metadata["graph_relationships"] = [
+        {
+            "type": "custom",
+            "source": "ref:existing:1",
+            "target": "chunk:legacy",
+            "evidence": "existing",
+        }
+    ]
+    metadata["relationship_metadata"] = relationship_metadata
+    chunk.metadata_json = metadata
+    driver = FakeDriver()
+    service = GraphMaterializationService(driver_factory=lambda *args, **kwargs: driver)
+
+    result = await service.replace_document_graph(
+        document_id="doc-1",
+        profile=profile(),
+        chunks=[chunk],
+    )
+
+    relationship_call = next(
+        call for call in driver.session_instance.calls if "UNWIND $relationships AS rel" in call[0]
+    )
+    relationship_payload = relationship_call[1]["relationships"][0]
+    assert result.status == "succeeded"
+    assert relationship_payload["source"] == "ref:doc-1:existing:1"
+    assert relationship_payload["target"] == "chunk:doc-1:chunk-1"
+
+
+@pytest.mark.asyncio
+async def test_replace_document_graph_skips_unresolved_chunk_aliases():
+    chunk = chunk_with_relationships()
+    metadata = dict(chunk.metadata_json)
+    relationship_metadata = dict(metadata["relationship_metadata"])
+    relationship_metadata["references"] = ["existing:1"]
+    relationship_metadata["graph_relationships"] = [
+        {
+            "type": "custom",
+            "source": "chunk:not-this-chunk",
+            "target": "ref:existing:1",
+            "evidence": "existing",
+        },
+        {
+            "type": "custom",
+            "source": "ref:existing:1",
+            "target": "chunk:not-this-chunk",
+            "evidence": "existing",
+        },
+    ]
+    metadata["relationship_metadata"] = relationship_metadata
+    chunk.metadata_json = metadata
+    driver = FakeDriver()
+    service = GraphMaterializationService(driver_factory=lambda *args, **kwargs: driver)
+
+    result = await service.replace_document_graph(
+        document_id="doc-1",
+        profile=profile(),
+        chunks=[chunk],
+    )
+
+    relationship_calls = [
+        call for call in driver.session_instance.calls if "UNWIND $relationships AS rel" in call[0]
+    ]
+    assert result.status == "succeeded"
+    assert relationship_calls == []
+
+
+@pytest.mark.asyncio
 async def test_replace_document_graph_skips_when_neo4j_uri_missing():
     service = GraphMaterializationService(driver_factory=lambda *args, **kwargs: None)
     result = await service.replace_document_graph(

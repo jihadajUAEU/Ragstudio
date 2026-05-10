@@ -295,3 +295,168 @@ async def test_init_db_backfills_runtime_columns_for_existing_postgres_tables(
     assert index_records == []
 
     await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_init_db_does_not_rewrite_authless_graph_projection_targets(database_url):
+    engine = make_engine(database_url)
+    async with engine.begin() as connection:
+        await connection.execute(
+            text(
+                """
+                CREATE TABLE settings_profiles (
+                    id VARCHAR PRIMARY KEY,
+                    provider VARCHAR NOT NULL,
+                    llm_model VARCHAR NOT NULL,
+                    embedding_model VARCHAR NOT NULL,
+                    storage_backend VARCHAR NOT NULL,
+                    neo4j_uri VARCHAR,
+                    neo4j_username VARCHAR,
+                    neo4j_password VARCHAR,
+                    created_at TIMESTAMP,
+                    updated_at TIMESTAMP
+                )
+                """
+            )
+        )
+        await connection.execute(
+            text(
+                """
+                INSERT INTO settings_profiles (
+                    id, provider, llm_model, embedding_model, storage_backend,
+                    neo4j_uri, neo4j_username, neo4j_password
+                )
+                VALUES
+                    (
+                        'authless',
+                        'legacy',
+                        'legacy-llm',
+                        'legacy-embedding',
+                        'local',
+                        'bolt://authless-neo4j.test:7687',
+                        NULL,
+                        NULL
+                    ),
+                    (
+                        'authed',
+                        'legacy',
+                        'legacy-llm',
+                        'legacy-embedding',
+                        'local',
+                        'bolt://authed-neo4j.test:7687',
+                        'neo4j',
+                        'secret'
+                    )
+                """
+            )
+        )
+        await connection.execute(
+            text(
+                """
+                CREATE TABLE graph_projection_records (
+                    id VARCHAR PRIMARY KEY,
+                    document_id VARCHAR NOT NULL,
+                    runtime_profile_id VARCHAR NOT NULL,
+                    status VARCHAR DEFAULT 'succeeded' NOT NULL,
+                    projection_run_id VARCHAR,
+                    graph_workspace_label VARCHAR,
+                    graph_storage_uri VARCHAR,
+                    graph_storage_username VARCHAR,
+                    graph_storage_password VARCHAR,
+                    node_count INTEGER DEFAULT 1 NOT NULL,
+                    edge_count INTEGER DEFAULT 0 NOT NULL,
+                    error TEXT,
+                    update_count INTEGER DEFAULT 0 NOT NULL,
+                    created_at TIMESTAMP,
+                    updated_at TIMESTAMP
+                )
+                """
+            )
+        )
+        await connection.execute(
+            text(
+                """
+                CREATE OR REPLACE FUNCTION graph_projection_update_count()
+                RETURNS trigger AS $$
+                BEGIN
+                    NEW.update_count = OLD.update_count + 1;
+                    RETURN NEW;
+                END;
+                $$ LANGUAGE plpgsql
+                """
+            )
+        )
+        await connection.execute(
+            text(
+                """
+                CREATE TRIGGER graph_projection_update_count_trigger
+                BEFORE UPDATE ON graph_projection_records
+                FOR EACH ROW
+                EXECUTE FUNCTION graph_projection_update_count()
+                """
+            )
+        )
+        await connection.execute(
+            text(
+                """
+                INSERT INTO graph_projection_records (
+                    id, document_id, runtime_profile_id, graph_workspace_label,
+                    graph_storage_uri, graph_storage_username, graph_storage_password,
+                    created_at, updated_at
+                )
+                VALUES
+                    (
+                        'authless-projection',
+                        'doc-1',
+                        'authless',
+                        'ragstudio_authless',
+                        'bolt://authless-neo4j.test:7687',
+                        NULL,
+                        NULL,
+                        NOW(),
+                        NOW()
+                    ),
+                    (
+                        'authed-projection',
+                        'doc-2',
+                        'authed',
+                        'ragstudio_authed',
+                        'bolt://authed-neo4j.test:7687',
+                        NULL,
+                        NULL,
+                        NOW(),
+                        NOW()
+                    )
+                """
+            )
+        )
+
+    await init_db(engine)
+
+    async with engine.connect() as connection:
+        rows = {
+            row["id"]: row
+            for row in (
+                await connection.execute(
+                    text(
+                        """
+                        SELECT id, graph_storage_username, graph_storage_password,
+                               update_count
+                        FROM graph_projection_records
+                        ORDER BY id
+                        """
+                    )
+                )
+            )
+            .mappings()
+            .all()
+        }
+
+    assert rows["authless-projection"]["graph_storage_username"] is None
+    assert rows["authless-projection"]["graph_storage_password"] is None
+    assert rows["authless-projection"]["update_count"] == 0
+    assert rows["authed-projection"]["graph_storage_username"] == "neo4j"
+    assert rows["authed-projection"]["graph_storage_password"] == "secret"
+    assert rows["authed-projection"]["update_count"] == 1
+
+    await engine.dispose()

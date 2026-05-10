@@ -159,12 +159,17 @@ class GraphMaterializationService:
         chunk_nodes: list[dict[str, Any]] = []
         reference_nodes_by_id: dict[str, dict[str, Any]] = {}
         relationships: list[dict[str, Any]] = []
+        aliases_by_chunk_node_id: dict[str, set[str]] = {}
+        alias_targets: dict[str, set[str]] = {}
         legacy_to_chunk_id: dict[str, str] = {}
 
         for index, chunk in enumerate(chunks):
             node_id = chunk_graph_id(document_id=document_id, chunk_id=chunk.id)
-            legacy_to_chunk_id[f"chunk:{index}"] = node_id
             metadata = chunk.metadata_json if isinstance(chunk.metadata_json, dict) else {}
+            aliases = _chunk_aliases(chunk, index, metadata)
+            aliases_by_chunk_node_id[node_id] = aliases
+            for alias in aliases:
+                alias_targets.setdefault(alias, set()).add(node_id)
             references = _references(metadata)
             for reference in references:
                 ref_id = reference_graph_id(document_id=document_id, reference=reference)
@@ -189,9 +194,16 @@ class GraphMaterializationService:
                     "references": references,
                 }
             )
+        legacy_to_chunk_id = {
+            alias: next(iter(targets))
+            for alias, targets in alias_targets.items()
+            if len(targets) == 1
+        }
 
         allowed_relationships = _allowed_relationship_types(chunks)
         for chunk in chunks:
+            current_chunk_node_id = chunk_graph_id(document_id=document_id, chunk_id=chunk.id)
+            current_chunk_aliases = aliases_by_chunk_node_id.get(current_chunk_node_id, set())
             metadata = chunk.metadata_json if isinstance(chunk.metadata_json, dict) else {}
             relationship_metadata = metadata.get("relationship_metadata")
             if not isinstance(relationship_metadata, dict):
@@ -203,11 +215,15 @@ class GraphMaterializationService:
                     str(relationship.get("source") or ""),
                     legacy_to_chunk_id,
                     document_id=document_id,
+                    current_chunk_node_id=current_chunk_node_id,
+                    current_chunk_aliases=current_chunk_aliases,
                 )
                 target = _graph_node_id(
                     str(relationship.get("target") or ""),
                     legacy_to_chunk_id,
                     document_id=document_id,
+                    current_chunk_node_id=current_chunk_node_id,
+                    current_chunk_aliases=current_chunk_aliases,
                 )
                 rel_type = graph_relationship_type(str(relationship.get("type") or "RELATED"))
                 if allowed_relationships and rel_type not in allowed_relationships:
@@ -451,20 +467,43 @@ def _neo4j_json_property(value: Any) -> str | None:
     return json.dumps(value, ensure_ascii=False, default=str)
 
 
+def _chunk_aliases(chunk: Chunk, index: int, metadata: dict[str, Any]) -> set[str]:
+    aliases = {f"chunk:{index}", f"chunk:{chunk.id}"}
+    if chunk.runtime_source_id:
+        aliases.add(f"chunk:{chunk.runtime_source_id}")
+    source_id = metadata.get("source_id")
+    if isinstance(source_id, str) and source_id:
+        aliases.add(f"chunk:{source_id}")
+    relationship_metadata = metadata.get("relationship_metadata")
+    if isinstance(relationship_metadata, dict):
+        for relationship in relationship_metadata.get("graph_relationships", []):
+            if not isinstance(relationship, dict):
+                continue
+            if relationship.get("source") == "chunk:legacy":
+                aliases.add("chunk:legacy")
+            if relationship.get("target") == "chunk:legacy":
+                aliases.add("chunk:legacy")
+    return aliases
+
+
 def _graph_node_id(
     value: str,
     legacy_to_chunk_id: dict[str, str],
     *,
     document_id: str,
+    current_chunk_node_id: str | None = None,
+    current_chunk_aliases: set[str] | None = None,
 ) -> str:
     if not value:
         return ""
+    if current_chunk_node_id and current_chunk_aliases and value in current_chunk_aliases:
+        return current_chunk_node_id
     if value in legacy_to_chunk_id:
         return legacy_to_chunk_id[value]
     if value.startswith("ref:"):
         return reference_graph_id(document_id=document_id, reference=value)
     if value.startswith("chunk:"):
-        return value
+        return ""
     return reference_graph_id(document_id=document_id, reference=value)
 
 
