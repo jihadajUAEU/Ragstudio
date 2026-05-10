@@ -249,6 +249,28 @@ async def test_replace_document_graph_sanitizes_complex_source_location_properti
 
 
 @pytest.mark.asyncio
+async def test_replace_document_graph_sanitizes_complex_source_id_metadata():
+    chunk = chunk_with_relationships()
+    metadata = dict(chunk.metadata_json)
+    metadata["source_id"] = {"artifact": "doc-1"}
+    chunk.metadata_json = metadata
+    driver = FakeDriver()
+    service = GraphMaterializationService(driver_factory=lambda *args, **kwargs: driver)
+
+    result = await service.replace_document_graph(
+        document_id="doc-1",
+        profile=profile(),
+        chunks=[chunk],
+    )
+
+    node_call = next(
+        call for call in driver.session_instance.calls if "UNWIND $chunk_nodes" in call[0]
+    )
+    assert result.status == "succeeded"
+    assert node_call[1]["chunk_nodes"][0]["source_id"] is None
+
+
+@pytest.mark.asyncio
 async def test_graph_projection_record_is_separate_from_index_readiness(
     tmp_path,
     database_url,

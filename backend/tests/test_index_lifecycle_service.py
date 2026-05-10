@@ -1172,6 +1172,98 @@ async def test_graph_projection_runner_deletes_using_recorded_target_after_profi
 
 
 @pytest.mark.asyncio
+async def test_graph_projection_runner_deletes_using_recorded_target_without_live_profile(client):
+    app = client._transport.app
+
+    async with app.state.session_factory() as session:
+        document = Document(
+            filename="graph-delete-profile-removed.txt",
+            content_type="text/plain",
+            sha256="graph-delete-profile-removed",
+            artifact_path=str(app.state.settings.data_dir / "graph-delete-profile-removed.txt"),
+            status=StageStatus.SUCCEEDED.value,
+        )
+        session.add(document)
+        await session.flush()
+        session.add(
+            GraphProjectionRecord(
+                document_id=document.id,
+                runtime_profile_id="removed-profile",
+                status="succeeded",
+                graph_workspace_label="ragstudio_removed_profile",
+                graph_storage_uri="bolt://old-neo4j.test:7687",
+                graph_storage_username="old-user",
+                graph_storage_password="old-password",
+                node_count=2,
+                edge_count=1,
+            )
+        )
+        await session.flush()
+
+        fake = FakeGraphMaterializationService()
+        result = await GraphProjectionRunner(
+            session,
+            app.state.settings,
+            materialization_service=fake,
+        ).delete_document_graph(document.id)
+
+    assert fake.delete_calls == [
+        {
+            "document_id": document.id,
+            "profile_id": "removed-profile",
+            "neo4j_uri": "bolt://old-neo4j.test:7687",
+            "neo4j_username": "old-user",
+            "neo4j_password": "old-password",
+            "graph_workspace_label": "ragstudio_removed_profile",
+        }
+    ]
+    assert result["status"] == "succeeded"
+
+
+@pytest.mark.asyncio
+async def test_graph_projection_runner_removes_failed_zero_count_record_without_graph_cleanup(
+    client,
+):
+    app = client._transport.app
+
+    async with app.state.session_factory() as session:
+        document = Document(
+            filename="graph-delete-failed-zero.txt",
+            content_type="text/plain",
+            sha256="graph-delete-failed-zero",
+            artifact_path=str(app.state.settings.data_dir / "graph-delete-failed-zero.txt"),
+            status=StageStatus.SUCCEEDED.value,
+        )
+        session.add(document)
+        await session.flush()
+        projection_record = GraphProjectionRecord(
+            document_id=document.id,
+            runtime_profile_id="missing-profile",
+            status="failed",
+            node_count=0,
+            edge_count=0,
+            error="neo4j write failed before commit",
+        )
+        session.add(projection_record)
+        await session.flush()
+
+        fake = FakeGraphMaterializationService()
+        result = await GraphProjectionRunner(
+            session,
+            app.state.settings,
+            materialization_service=fake,
+        ).delete_document_graph(document.id)
+        deleted_record_id = await session.scalar(
+            select(GraphProjectionRecord.id).where(GraphProjectionRecord.id == projection_record.id)
+        )
+
+    assert fake.delete_calls == []
+    assert result["status"] == "skipped"
+    assert result["reason"] == "no_materialized_projection"
+    assert deleted_record_id is None
+
+
+@pytest.mark.asyncio
 async def test_graph_projection_runner_preserves_records_when_graph_delete_fails(client):
     app = client._transport.app
 

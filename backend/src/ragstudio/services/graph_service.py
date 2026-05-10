@@ -62,7 +62,9 @@ class GraphService:
             if graph.get("nodes") or graph.get("edges"):
                 return graph
             fallback = await self._relationship_metadata_graph()
-            projection_detail = await self._latest_projection_detail()
+            projection_detail = await self._latest_projection_detail(
+                runtime_profile_id=profile.id
+            )
             if fallback.get("nodes") or fallback.get("edges"):
                 fallback["detail"] = self._runtime_empty_detail(
                     projection_detail,
@@ -172,13 +174,20 @@ class GraphService:
             detail = "Relationship metadata fallback graph."
         return {"nodes": list(nodes.values()), "edges": list(edges.values()), "detail": detail}
 
-    async def _latest_projection_detail(self) -> str | None:
+    async def _latest_projection_detail(
+        self,
+        *,
+        runtime_profile_id: str | None = None,
+    ) -> str | None:
         if self.session is None:
             return None
+        statement = select(GraphProjectionRecord)
+        if runtime_profile_id is not None:
+            statement = statement.where(
+                GraphProjectionRecord.runtime_profile_id == runtime_profile_id
+            )
         record = await self.session.scalar(
-            select(GraphProjectionRecord)
-            .order_by(GraphProjectionRecord.created_at.desc())
-            .limit(1)
+            statement.order_by(GraphProjectionRecord.created_at.desc()).limit(1)
         )
         if record is None:
             return None

@@ -518,6 +518,57 @@ async def test_reindex_missing_document_returns_404(client):
 
 
 @pytest.mark.asyncio
+async def test_rematerialize_document_graph_route_retries_projection(client, monkeypatch):
+    calls = []
+
+    async def fake_rematerialize_document(self, document_id):
+        calls.append(document_id)
+        return {
+            "status": "succeeded",
+            "node_count": 2,
+            "edge_count": 1,
+            "reason": None,
+        }
+
+    monkeypatch.setattr(
+        "ragstudio.api.routes.documents.GraphProjectionRunner.rematerialize_document",
+        fake_rematerialize_document,
+    )
+    app = client._transport.app
+    async with app.state.session_factory() as session:
+        document = Document(
+            filename="graph-rematerialize-route.txt",
+            content_type="text/plain",
+            sha256="graph-rematerialize-route",
+            artifact_path=str(app.state.settings.data_dir / "graph-rematerialize-route.txt"),
+            status=StageStatus.SUCCEEDED.value,
+        )
+        session.add(document)
+        await session.commit()
+        document_id = document.id
+
+    response = await client.post(f"/api/documents/{document_id}/graph/rematerialize")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "document_id": document_id,
+        "status": "succeeded",
+        "node_count": 2,
+        "edge_count": 1,
+        "reason": None,
+    }
+    assert calls == [document_id]
+
+
+@pytest.mark.asyncio
+async def test_rematerialize_missing_document_graph_returns_404(client):
+    response = await client.post("/api/documents/missing-document/graph/rematerialize")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Document not found"
+
+
+@pytest.mark.asyncio
 async def test_reindex_document_validates_custom_json(client, tmp_path):
     session_factory = client._transport.app.state.session_factory
     artifact = tmp_path / "uploads" / "invalid-json-reindex-sha"

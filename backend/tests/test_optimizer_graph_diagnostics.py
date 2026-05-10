@@ -1075,6 +1075,86 @@ async def test_diagnostics_reports_latest_graph_projection_status(client):
 
 
 @pytest.mark.asyncio
+async def test_diagnostics_scopes_graph_projection_status_to_active_profile(client):
+    from datetime import UTC, datetime, timedelta
+
+    from ragstudio.db.models import Document, GraphProjectionRecord
+
+    class ReadyRuntimeHealthService:
+        async def check(self, profile):
+            return [
+                RuntimeHealthCheck(
+                    name="raganything",
+                    status="ok",
+                    detail="RAG-Anything package is importable.",
+                ),
+                RuntimeHealthCheck(
+                    name="neo4j",
+                    status="ok",
+                    detail="Neo4j connectivity and authentication succeeded.",
+                ),
+            ]
+
+        def blocking_failures(self, checks):
+            return []
+
+    settings = await client.put(
+        "/api/settings/default",
+        json={
+            "provider": "openai-compatible",
+            "runtime_mode": "runtime",
+            "llm_model": "gpt-4o",
+            "embedding_model": "text-embedding-3-large",
+            "storage_backend": "postgres_pgvector_neo4j",
+        },
+    )
+    assert settings.status_code == 200
+
+    app = client._transport.app
+    created_at = datetime(2026, 5, 10, tzinfo=UTC)
+    async with app.state.session_factory() as session:
+        document = Document(
+            filename="projection-diagnostics-scope.txt",
+            content_type="text/plain",
+            sha256="projection-diagnostics-scope",
+            artifact_path=str(app.state.settings.data_dir / "projection-diagnostics-scope.txt"),
+            status=StageStatus.SUCCEEDED.value,
+        )
+        session.add(document)
+        await session.flush()
+        session.add_all(
+            [
+                GraphProjectionRecord(
+                    document_id=document.id,
+                    runtime_profile_id="default",
+                    status="succeeded",
+                    node_count=2,
+                    edge_count=1,
+                    created_at=created_at,
+                ),
+                GraphProjectionRecord(
+                    document_id=document.id,
+                    runtime_profile_id="other-profile",
+                    status="failed",
+                    error="other profile failed",
+                    created_at=created_at + timedelta(minutes=1),
+                ),
+            ]
+        )
+        await session.commit()
+
+        payload = await DiagnosticsService(
+            session,
+            app.state.settings,
+            health_service=ReadyRuntimeHealthService(),
+        ).get_diagnostics()
+
+    assert payload.dependency_status["graph_projection"] == "succeeded"
+    assert payload.dependency_status["graph_projection_detail"] == "2 nodes, 1 edges"
+    assert all("other profile failed" not in warning for warning in payload.warnings)
+
+
+@pytest.mark.asyncio
 async def test_diagnostics_requires_runtime_packages_for_native_graph(client):
     class MissingPackageHealthService:
         async def check(self, profile):

@@ -665,7 +665,7 @@ class NativeRAGAnythingAdapter:
         return workspace_label(self.profile)
 
     def _workspace_label(self) -> str:
-        return workspace_label(self.profile)
+        return self._workspace().replace("`", "``")
 
     def _output_dir(self) -> Path:
         return Path(self.profile.runtime_working_dir) / "parsed"

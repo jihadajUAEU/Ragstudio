@@ -182,7 +182,7 @@ class GraphMaterializationService:
                     "chunk_id": chunk.id,
                     "document_id": document_id,
                     "runtime_source_id": chunk.runtime_source_id,
-                    "source_id": metadata.get("source_id"),
+                    "source_id": _neo4j_property(metadata.get("source_id")),
                     "text_preview": chunk.text[:500],
                     "content_type": chunk.content_type,
                     **_source_location_properties(chunk.source_location),

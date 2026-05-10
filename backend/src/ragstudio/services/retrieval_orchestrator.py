@@ -120,6 +120,7 @@ class RetrievalOrchestrator:
             traces.extend(graph_traces)
             graph_candidates, graph_hydration_traces = await self._hydrate_graph_candidates(
                 graph_candidates,
+                document_ids=document_ids,
                 timings=timings,
             )
             traces.extend(graph_hydration_traces)
@@ -461,6 +462,7 @@ class RetrievalOrchestrator:
         self,
         candidates: list[EvidenceCandidate],
         *,
+        document_ids: list[str],
         timings: dict[str, Any],
     ) -> tuple[list[EvidenceCandidate], list[dict[str, Any]]]:
         hydration_started = perf_counter()
@@ -509,15 +511,20 @@ class RetrievalOrchestrator:
             ]
 
         chunks_by_id = {chunk.id: chunk for chunk in hydrated_chunks}
+        allowed_document_ids = set(document_ids)
         hydrated: list[EvidenceCandidate] = []
         missing_count = 0
         dropped_preview_count = 0
+        scope_mismatch_count = 0
         for candidate in candidates:
             chunk_id = _graph_candidate_chunk_id(candidate)
             chunk = chunks_by_id.get(chunk_id or "")
             if chunk is None:
                 missing_count += 1 if chunk_id else 0
                 dropped_preview_count += 1
+                continue
+            if allowed_document_ids and chunk.document_id not in allowed_document_ids:
+                scope_mismatch_count += 1
                 continue
             hydrated.append(_hydrated_graph_candidate(candidate, chunk))
 
@@ -530,6 +537,7 @@ class RetrievalOrchestrator:
                 "hydrated_candidates": len(hydrated),
                 "unique_hydrated_chunks": len(chunks_by_id),
                 "missing_candidates": missing_count,
+                "scope_mismatch_candidates": scope_mismatch_count,
                 "dropped_preview_candidates": dropped_preview_count,
             }
         ]

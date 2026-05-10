@@ -215,6 +215,22 @@ class GraphHydrationMissingChunkSearchService(FakeChunkSearchService):
         return []
 
 
+class GraphHydrationWrongDocumentChunkSearchService(FakeChunkSearchService):
+    async def chunks_by_id(self, chunk_ids):
+        self.chunk_lookup_calls.append(chunk_ids)
+        return [
+            ChunkOut(
+                id="graph-1",
+                document_id="doc-2",
+                text="This hydrated chunk belongs to a different document.",
+                source_location={"page": 99},
+                metadata={"reference_metadata": {"references": ["collection:other"]}},
+            )
+            for chunk_id in chunk_ids
+            if chunk_id == "graph-1"
+        ]
+
+
 class MetadataSearchShouldNotRun:
     def __init__(self):
         self.calls = 0
@@ -465,6 +481,34 @@ async def test_orchestrator_drops_graph_candidates_missing_postgres_chunks():
     )
     assert hydration_trace["missing_candidates"] == 1
     assert hydration_trace["dropped_preview_candidates"] == 1
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_drops_graph_candidates_outside_requested_document_scope():
+    answer_service = FakeAnswerService()
+    orchestrator = RetrievalOrchestrator(
+        chunk_service=GraphHydrationWrongDocumentChunkSearchService(),
+        answer_service=answer_service,
+        reranker_service=FakeRerankerService(),
+        graph_expansion_service=FakeGraphExpansionService(),
+    )
+
+    result = await orchestrator.query(
+        "how many hadith in bukhari",
+        runtime=FakeRuntimeTool(),
+        profile=type("Profile", (), {"enable_rerank": False, "reranker_provider": "disabled"})(),
+        document_ids=["doc-1"],
+        variant_id="variant-1",
+        query_config={"limit": 8},
+    )
+
+    assert result.error is None
+    assert all(candidate.tool != "graph" for candidate in answer_service.evidence)
+    assert all(source["metadata"]["retrieval_tool"] != "graph" for source in result.sources)
+    hydration_trace = next(
+        trace for trace in result.chunk_traces if trace["stage"] == "graph_hydration"
+    )
+    assert hydration_trace["scope_mismatch_candidates"] == 1
 
 
 @pytest.mark.asyncio

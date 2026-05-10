@@ -61,7 +61,12 @@ class DiagnosticsService:
             if runtime_mode == "fallback"
             else self._runtime_dependency_report(checks, blocking)
         )
-        dependency_report.update(await self._graph_projection_report(session))
+        dependency_report.update(
+            await self._graph_projection_report(
+                session,
+                runtime_profile_id=profile.id if profile else None,
+            )
+        )
         raganything_available = bool(dependency_report.get("raganything_available"))
 
         if not raganything_available:
@@ -200,11 +205,19 @@ class DiagnosticsService:
             "scoped_query_detail": scoped_query_detail,
         }
 
-    async def _graph_projection_report(self, session: AsyncSession) -> dict[str, Any]:
+    async def _graph_projection_report(
+        self,
+        session: AsyncSession,
+        *,
+        runtime_profile_id: str | None = None,
+    ) -> dict[str, Any]:
+        statement = select(GraphProjectionRecord)
+        if runtime_profile_id is not None:
+            statement = statement.where(
+                GraphProjectionRecord.runtime_profile_id == runtime_profile_id
+            )
         record = await session.scalar(
-            select(GraphProjectionRecord)
-            .order_by(GraphProjectionRecord.created_at.desc())
-            .limit(1)
+            statement.order_by(GraphProjectionRecord.created_at.desc()).limit(1)
         )
         if record is None:
             return {}

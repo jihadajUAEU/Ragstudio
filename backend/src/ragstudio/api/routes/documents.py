@@ -24,7 +24,10 @@ from ragstudio.schemas.documents import DocumentOut
 from ragstudio.schemas.parsing import IndexDocumentIn
 from ragstudio.services.chunk_service import ChunkService
 from ragstudio.services.document_service import ActiveIndexJobError, DocumentService
-from ragstudio.services.graph_projection_runner import GraphProjectionCleanupError
+from ragstudio.services.graph_projection_runner import (
+    GraphProjectionCleanupError,
+    GraphProjectionRunner,
+)
 from ragstudio.services.index_lifecycle_service import RuntimeHealthBlockedError
 from ragstudio.services.metadata_json_schema import validate_custom_json
 from ragstudio.services.runtime_factory import RuntimeUnavailableError
@@ -131,6 +134,25 @@ async def reindex_document(
         return {"document_id": document_id, "job_id": job.id, "status": job.status}
     except (RuntimeHealthBlockedError, RuntimeUnavailableError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/{document_id}/graph/rematerialize")
+async def rematerialize_document_graph(
+    document_id: str,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, object]:
+    settings = request.app.state.settings
+    service = DocumentService(
+        session,
+        settings.data_dir,
+        settings=settings,
+    )
+    if not await service.document_exists(document_id):
+        raise HTTPException(status_code=404, detail="Document not found")
+    result = await GraphProjectionRunner(session, settings).rematerialize_document(document_id)
+    await session.commit()
+    return {"document_id": document_id, **result}
 
 
 async def _ensure_runtime_ready(session: AsyncSession, settings: AppSettings) -> None:
