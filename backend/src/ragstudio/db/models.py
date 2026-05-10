@@ -53,6 +53,7 @@ class SettingsProfile(Base, TimestampMixin):
     vision_api_key: Mapped[str | None] = mapped_column(String, nullable=True)
     vision_timeout_ms: Mapped[int] = mapped_column(Integer, default=10000)
     reranker_provider: Mapped[str] = mapped_column(String, default="disabled")
+    reranker_fallback_provider: Mapped[str] = mapped_column(String, default="disabled")
     reranker_model: Mapped[str | None] = mapped_column(String, nullable=True)
     reranker_base_url: Mapped[str | None] = mapped_column(String, nullable=True)
     reranker_api_key: Mapped[str | None] = mapped_column(String, nullable=True)

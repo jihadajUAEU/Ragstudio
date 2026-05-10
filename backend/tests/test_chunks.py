@@ -318,6 +318,54 @@ async def test_search_chunks_preserves_source_order_for_ties_and_empty_query(cli
 
 
 @pytest.mark.asyncio
+async def test_search_chunks_boosts_collection_count_title(client):
+    upload_response = await client.post(
+        "/api/documents",
+        files={"file": ("bukhari.pdf", b"%PDF fake", "application/pdf")},
+    )
+    document_id = upload_response.json()["id"]
+
+    app = client._transport.app
+    async with app.state.session_factory() as session:
+        session.add_all(
+            [
+                Chunk(
+                    document_id=document_id,
+                    text="Book 65, Hadith 201 mentions truthfulness.",
+                    source_location={"page": 65},
+                    metadata_json={"domain_metadata": {"domain": "hadith"}},
+                ),
+                Chunk(
+                    document_id=document_id,
+                    text="Sahih al-Bukhari\n\n7277 Hadith Collection",
+                    source_location={"page": 1},
+                    metadata_json={
+                        "document_metadata": {
+                            "title": "Sahih al-Bukhari 7277 Hadith Collection"
+                        },
+                        "domain_metadata": {
+                            "domain": "hadith",
+                            "document_type": "collection",
+                            "collection": "Sahih al-Bukhari",
+                        },
+                    },
+                ),
+            ]
+        )
+        await session.commit()
+
+    search_response = await client.post(
+        "/api/chunks/search",
+        json={"query": "how many hadith in bukhari", "document_ids": [document_id], "limit": 2},
+    )
+
+    assert search_response.status_code == 200
+    result = search_response.json()
+    assert result["items"][0]["text"] == "Sahih al-Bukhari\n\n7277 Hadith Collection"
+    assert result["items"][0]["metadata"]["score_breakdown"]["answer_bearing_count"] > 0
+
+
+@pytest.mark.asyncio
 async def test_search_chunks_exact_reference_returns_matching_verse_top_one(client):
     upload_response = await client.post(
         "/api/documents",

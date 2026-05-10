@@ -54,6 +54,7 @@ const DEFAULT_FORM_VALUES: SettingsProfileIn = {
   vision_base_url: "",
   vision_timeout_ms: 10000,
   reranker_provider: "disabled",
+  reranker_fallback_provider: "disabled",
   reranker_model: "",
   reranker_base_url: "",
   reranker_timeout_ms: 10000,
@@ -198,6 +199,7 @@ export function SettingsPage() {
       storage_backend: formValues.storage_backend ?? "fallback_local",
       vision_timeout_ms: formValues.vision_timeout_ms ?? 10000,
       reranker_provider: formValues.reranker_provider ?? "disabled",
+      reranker_fallback_provider: formValues.reranker_fallback_provider ?? "disabled",
       reranker_timeout_ms: formValues.reranker_timeout_ms ?? 10000,
       pgvector_schema: formValues.pgvector_schema ?? "public",
       pgvector_table_prefix: formValues.pgvector_table_prefix ?? "ragstudio",
@@ -501,6 +503,23 @@ export function SettingsPage() {
                 { value: "cohere_compatible", label: "Cohere-compatible" },
                 { value: "jina_compatible", label: "Jina-compatible" },
                 { value: "generic_http", label: "Generic HTTP" },
+                { value: "llm", label: "Existing LLM" },
+              ]}
+            />
+            <SelectField
+              label="Reranker fallback"
+              name="reranker_fallback_provider"
+              value={formValues?.reranker_fallback_provider ?? "disabled"}
+              disabled={busy}
+              onChange={(value) =>
+                updateField(
+                  "reranker_fallback_provider",
+                  value as SettingsProfileIn["reranker_fallback_provider"],
+                )
+              }
+              options={[
+                { value: "disabled", label: "Disabled" },
+                { value: "llm", label: "Existing LLM" },
               ]}
             />
             <Field
@@ -1197,6 +1216,7 @@ function settingsToFormValues(settings: SettingsProfileOut): SettingsProfileIn {
     vision_base_url: settings.vision_base_url ?? "",
     vision_timeout_ms: settings.vision_timeout_ms,
     reranker_provider: settings.reranker_provider,
+    reranker_fallback_provider: settings.reranker_fallback_provider ?? "disabled",
     reranker_model: settings.reranker_model ?? "",
     reranker_base_url: settings.reranker_base_url ?? "",
     reranker_timeout_ms: settings.reranker_timeout_ms,

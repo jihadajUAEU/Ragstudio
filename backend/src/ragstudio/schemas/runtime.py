@@ -9,7 +9,14 @@ RuntimeOverallStatus = Literal["ready", "degraded", "failed", "fallback"]
 RuntimeCheckStatus = Literal["ok", "warning", "failed", "skipped"]
 RuntimeCheckSeverity = Literal["info", "warning", "blocking"]
 StorageBackend = Literal["postgres_pgvector_neo4j", "fallback_local"]
-RerankerProvider = Literal["disabled", "cohere_compatible", "jina_compatible", "generic_http"]
+RerankerProvider = Literal[
+    "disabled",
+    "cohere_compatible",
+    "jina_compatible",
+    "generic_http",
+    "llm",
+]
+RerankerFallbackProvider = Literal["disabled", "llm"]
 QueryMode = Literal["mix", "hybrid", "local", "global", "naive"]
 
 
@@ -44,6 +51,7 @@ class RuntimeProfile(StudioModel):
     embedding_batch_size: int
     embedding_timeout_ms: int
     reranker_provider: RerankerProvider
+    reranker_fallback_provider: RerankerFallbackProvider = "disabled"
     reranker_model: str | None = None
     reranker_base_url: str | None = None
     reranker_api_key: str | None = None

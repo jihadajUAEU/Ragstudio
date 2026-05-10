@@ -5,11 +5,17 @@ from urllib.parse import urlparse
 
 import httpx
 from ragstudio.schemas.chunks import ChunkOut
+from ragstudio.services.llm_reranker_service import LLMRerankerService
 
 
 class RerankerService:
-    def __init__(self, allowed_hosts: list[str] | None = None):
+    def __init__(
+        self,
+        allowed_hosts: list[str] | None = None,
+        llm_reranker: LLMRerankerService | None = None,
+    ):
         self.allowed_hosts = {host.lower() for host in (allowed_hosts or [])}
+        self.llm_reranker = llm_reranker or LLMRerankerService()
 
     async def rerank(
         self,
@@ -20,8 +26,15 @@ class RerankerService:
         skipped_trace = self._skipped_trace(query, chunks, profile)
         if skipped_trace is not None:
             return chunks, [skipped_trace]
+        if profile.reranker_provider == "llm":
+            return await self.llm_reranker.rerank(query, chunks, profile)
         if not self._is_allowed_endpoint(str(profile.reranker_base_url)):
-            return chunks, [self._failure_trace(profile, "blocked_endpoint")]
+            return await self._fallback_or_return(
+                query,
+                chunks,
+                profile,
+                self._failure_trace(profile, "blocked_endpoint"),
+            )
 
         payload = self._payload(query, chunks, profile)
         headers = self._headers(profile)
@@ -36,17 +49,25 @@ class RerankerService:
                 response.raise_for_status()
                 body = response.json()
         except Exception as exc:
-            return chunks, [self._failure_trace(profile, "failed", exc)]
+            return await self._fallback_or_return(
+                query,
+                chunks,
+                profile,
+                self._failure_trace(profile, "failed", exc),
+            )
 
         scores = self._scores(body)
         if not scores:
-            return chunks, [
+            return await self._fallback_or_return(
+                query,
+                chunks,
+                profile,
                 {
                     "provider": profile.reranker_provider,
                     "model": profile.reranker_model,
                     "status": "no_results",
-                }
-            ]
+                },
+            )
 
         indexed_chunks = {index: chunk for index, chunk in enumerate(chunks)}
         ranked_indices = [
@@ -55,13 +76,16 @@ class RerankerService:
         reranked = [indexed_chunks[index] for index in ranked_indices if index in indexed_chunks]
         reranked.extend(chunk for index, chunk in indexed_chunks.items() if index not in scores)
         if not any(index in indexed_chunks for index in scores):
-            return chunks, [
+            return await self._fallback_or_return(
+                query,
+                chunks,
+                profile,
                 {
                     "provider": profile.reranker_provider,
                     "model": profile.reranker_model,
                     "status": "no_usable_results",
-                }
-            ]
+                },
+            )
 
         traces = [
             {
@@ -79,6 +103,18 @@ class RerankerService:
             if index in indexed_chunks
         ]
         return reranked, traces
+
+    async def _fallback_or_return(
+        self,
+        query: str,
+        chunks: list[ChunkOut],
+        profile: Any,
+        primary_trace: dict[str, Any],
+    ) -> tuple[list[ChunkOut], list[dict[str, Any]]]:
+        if getattr(profile, "reranker_fallback_provider", "disabled") != "llm":
+            return chunks, [primary_trace]
+        reranked, fallback_traces = await self.llm_reranker.rerank(query, chunks, profile)
+        return reranked, [{**primary_trace, "fallback_provider": "llm"}, *fallback_traces]
 
     def _is_allowed_endpoint(self, url: str) -> bool:
         if not self.allowed_hosts:
@@ -126,6 +162,8 @@ class RerankerService:
                 "status": "skipped",
                 "reason": "no_chunks",
             }
+        if provider == "llm":
+            return None
         if not getattr(profile, "reranker_base_url", None):
             return {
                 "provider": provider,

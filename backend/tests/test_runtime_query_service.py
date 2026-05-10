@@ -4,6 +4,8 @@ from ragstudio.schemas.common import StageStatus
 from ragstudio.schemas.query import QueryIn
 from ragstudio.schemas.runtime import RuntimeHealthCheck
 from ragstudio.services.query_service import QueryResourceNotFoundError, QueryService
+from ragstudio.services.retrieval_evidence import OrchestratedAnswer
+from ragstudio.services.retrieval_orchestrator import NativeScopedQueryUnsupported
 from ragstudio.services.runtime_profile_service import RuntimeProfileService
 from ragstudio.services.runtime_types import RuntimeQueryResult
 
@@ -57,6 +59,62 @@ class FakeHealthService:
             for item in checks
             if item.status == "failed" and item.severity == "blocking"
         ]
+
+
+class FakeOrchestrator:
+    def __init__(
+        self,
+        *,
+        answer: str | None = None,
+        sources: list[dict] | None = None,
+        chunk_traces: list[dict] | None = None,
+        reranker_traces: list[dict] | None = None,
+        token_metadata: dict | None = None,
+        timings: dict | None = None,
+        error: str | None = None,
+        error_type: str | None = None,
+        raise_native_scope_unsupported: bool = False,
+    ):
+        self.answer = answer
+        self.sources = sources
+        self.chunk_traces = chunk_traces
+        self.reranker_traces = reranker_traces
+        self.token_metadata = token_metadata
+        self.timings = timings
+        self.error = error
+        self.error_type = error_type
+        self.raise_native_scope_unsupported = raise_native_scope_unsupported
+        self.calls = []
+
+    async def query(self, query, *, runtime, profile, document_ids, variant_id, query_config):
+        self.calls.append(
+            {
+                "query": query,
+                "document_ids": document_ids,
+                "variant_id": variant_id,
+                "query_config": query_config,
+            }
+        )
+        if self.raise_native_scope_unsupported:
+            raise NativeScopedQueryUnsupported("native scoped query unsupported")
+        return OrchestratedAnswer(
+            answer=self.answer if self.answer is not None else f"runtime answer: {query}",
+            sources=self.sources
+            if self.sources is not None
+            else ([{"document_id": document_ids[0], "text": "source"}] if document_ids else []),
+            chunk_traces=self.chunk_traces
+            if self.chunk_traces is not None
+            else [{"rank": 1, "inclusion_status": "prompt-included"}],
+            reranker_traces=self.reranker_traces
+            if self.reranker_traces is not None
+            else [{"rank": 1, "score": 0.9}],
+            timings=self.timings if self.timings is not None else {"orchestrated_query": True},
+            token_metadata=self.token_metadata
+            if self.token_metadata is not None
+            else {"prompt_tokens": 11},
+            error=self.error,
+            error_type=self.error_type,
+        )
 
 
 async def _create_runtime_records(
@@ -113,6 +171,7 @@ async def test_query_service_uses_runtime_without_chunk_search(client):
             settings=app.state.settings,
             runtime_factory=FakeFactory(),
             health_service=FakeHealthService(),
+            retrieval_orchestrator=FakeOrchestrator(),
         ).run_query(
             QueryIn(query="What happened?", document_ids=[document.id], variant_ids=[variant.id])
         )
@@ -154,6 +213,19 @@ async def test_query_service_records_native_scoped_runtime_success(client):
             settings=app.state.settings,
             runtime_factory=FakeFactory(runtime),
             health_service=FakeHealthService(),
+            retrieval_orchestrator=FakeOrchestrator(
+                answer="native scoped answer",
+                sources=[
+                    {
+                        "chunk_id": "chunk-1",
+                        "document_id": "doc-1",
+                        "text": "Sahih al-Bukhari 7277 Hadith Collection",
+                        "metadata": {"native_scope": True},
+                    }
+                ],
+                chunk_traces=[{"rank": 1, "inclusion_status": "native-scoped"}],
+                timings={"runtime_query_ms": 7, "native_scoped_query": True},
+            ),
         ).run_query(
             QueryIn(
                 query="how many hadith in bukhari",
@@ -203,6 +275,7 @@ async def test_query_service_falls_back_to_mirrored_chunks_for_native_scope_limi
             settings=app.state.settings,
             runtime_factory=FakeFactory(runtime),
             health_service=FakeHealthService(),
+            retrieval_orchestrator=FakeOrchestrator(raise_native_scope_unsupported=True),
         ).run_query(
             QueryIn(
                 query="how many hadith in bukhari",
@@ -232,6 +305,7 @@ async def test_query_service_allows_unscoped_runtime_query_when_no_documents_req
             settings=app.state.settings,
             runtime_factory=FakeFactory(),
             health_service=FakeHealthService(),
+            retrieval_orchestrator=FakeOrchestrator(),
         ).run_query(QueryIn(query="unscoped?", document_ids=[], variant_ids=[variant.id]))
 
     run = result.runs[0]
@@ -258,6 +332,12 @@ async def test_query_service_persists_runtime_errors(client):
             settings=app.state.settings,
             runtime_factory=FakeFactory(runtime),
             health_service=FakeHealthService(),
+            retrieval_orchestrator=FakeOrchestrator(
+                answer="",
+                sources=[],
+                error="runtime exploded",
+                error_type="runtime_query_error",
+            ),
         ).run_query(QueryIn(query="boom", document_ids=[document.id], variant_ids=[variant.id]))
 
     run = result.runs[0]

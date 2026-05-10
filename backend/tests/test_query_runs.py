@@ -271,6 +271,91 @@ async def test_query_keeps_original_results_when_reranker_fails(client, monkeypa
 
 
 @pytest.mark.asyncio
+async def test_query_falls_back_to_llm_when_dedicated_reranker_fails(client, monkeypatch):
+    class FailingRerankerClient:
+        def __init__(self, timeout):
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return None
+
+        async def post(self, url, *, headers, json):
+            raise RuntimeError("reranker offline")
+
+    monkeypatch.setattr(
+        "ragstudio.services.reranker_service.httpx.AsyncClient",
+        FailingRerankerClient,
+    )
+
+    async def fake_llm_rerank(self, query, chunks, profile):
+        return [chunks[1], chunks[0]], [
+            {
+                "provider": "llm",
+                "model": profile.llm_model,
+                "rank": 1,
+                "original_rank": 2,
+                "chunk_id": chunks[1].id,
+                "score": 0.99,
+                "reason": "better match",
+            }
+        ]
+
+    monkeypatch.setattr(
+        "ragstudio.services.llm_reranker_service.LLMRerankerService.rerank",
+        fake_llm_rerank,
+    )
+    app = client._transport.app
+    async with app.state.session_factory() as session:
+        session.add(
+            SettingsProfile(
+                id="default",
+                provider="fallback",
+                llm_model="fallback-llm",
+                llm_base_url="http://127.0.0.1:8004/v1",
+                embedding_model="fallback",
+                storage_backend="fallback_local",
+                runtime_mode="fallback",
+                reranker_provider="generic_http",
+                reranker_fallback_provider="llm",
+                reranker_base_url="http://127.0.0.1:8002/v1/rerank",
+            )
+        )
+        await session.commit()
+
+    upload = await client.post(
+        "/api/documents",
+        files={"file": ("rerank-llm-fallback.txt", b"alpha first\nalpha second", "text/plain")},
+    )
+    document_id = upload.json()["id"]
+    await client.post(f"/api/chunks/index/{document_id}")
+    variant = await client.post(
+        "/api/variants",
+        json={"name": "Rerank LLM Fallback", "preset": "balanced", "parameters": {}},
+    )
+
+    response = await client.post(
+        "/api/query",
+        json={
+            "query": "alpha",
+            "document_ids": [document_id],
+            "variant_ids": [variant.json()["id"]],
+        },
+    )
+
+    assert response.status_code == 200
+    run = response.json()["runs"][0]
+    assert run["status"] == "succeeded"
+    assert run["sources"][0]["text"] == "alpha second"
+    assert run["reranker_traces"][0]["status"] == "failed"
+    assert run["reranker_traces"][0]["fallback_provider"] == "llm"
+    assert run["reranker_traces"][1]["provider"] == "llm"
+    assert run["reranker_traces"][1]["chunk_id"] == run["sources"][0]["chunk_id"]
+
+
+@pytest.mark.asyncio
 async def test_query_blocks_untrusted_reranker_endpoint_without_calling_it(client, monkeypatch):
     class FakeAsyncClient:
         def __init__(self, timeout):
@@ -437,6 +522,15 @@ async def test_query_route_uses_runtime_profile_when_configured(client, monkeypa
         "ragstudio.services.query_service.RuntimeHealthService",
         PassingHealthService,
     )
+
+    async def fake_answer(self, query, evidence, profile):
+        return f"runtime route: {query}", {"prompt_tokens": 9}
+
+    monkeypatch.setattr(
+        "ragstudio.services.runtime_answer_service.RuntimeAnswerService.answer",
+        fake_answer,
+    )
+
     app = client._transport.app
     async with app.state.session_factory() as session:
         session.add(
@@ -491,7 +585,7 @@ async def test_query_route_uses_runtime_profile_when_configured(client, monkeypa
     assert run["runtime_profile_id"] == "default"
     assert run["query_config"]["top_k"] == 7
     assert run["query_config"]["parser"] == "mineru"
-    assert run["reranker_traces"][0]["score"] == 0.75
+    assert run["reranker_traces"][0]["status"] == "disabled"
     assert run["token_metadata"]["prompt_tokens"] == 9
 
 

@@ -709,3 +709,66 @@ async def test_mineru_connection_test_reports_invalid_health_payload(client, mon
     assert response.status_code == 200
     assert response.json()["ok"] is False
     assert response.json()["detail"] == "MinerU health check returned invalid JSON."
+
+
+@pytest.mark.asyncio
+async def test_settings_accepts_llm_reranker_with_llm_fallback(client):
+    response = await client.put(
+        "/api/settings/default",
+        json={
+            "provider": "openai-compatible",
+            "llm_provider": "openai_compatible",
+            "llm_model": "QuantTrio/Qwen3-VL-32B-Instruct-AWQ",
+            "llm_base_url": "http://10.10.9.195:8004/v1",
+            "embedding_provider": "vllm_openai",
+            "embedding_model": "Qwen/Qwen3-Embedding-8B",
+            "embedding_base_url": "http://10.10.9.192:8001/v1",
+            "embedding_dimensions": 1536,
+            "storage_backend": "postgres_pgvector_neo4j",
+            "runtime_mode": "runtime",
+            "mineru_enabled": True,
+            "mineru_base_url": "http://10.10.9.193:8003",
+            "reranker_provider": "llm",
+            "reranker_model": "",
+            "reranker_base_url": "",
+            "reranker_fallback_provider": "disabled",
+            "enable_rerank": True,
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["reranker_provider"] == "llm"
+    assert body["reranker_fallback_provider"] == "disabled"
+
+
+@pytest.mark.asyncio
+async def test_settings_accepts_dedicated_bge_with_llm_fallback(client):
+    response = await client.put(
+        "/api/settings/default",
+        json={
+            "provider": "openai-compatible",
+            "llm_provider": "openai_compatible",
+            "llm_model": "QuantTrio/Qwen3-VL-32B-Instruct-AWQ",
+            "llm_base_url": "http://10.10.9.195:8004/v1",
+            "embedding_provider": "vllm_openai",
+            "embedding_model": "Qwen/Qwen3-Embedding-8B",
+            "embedding_base_url": "http://10.10.9.192:8001/v1",
+            "embedding_dimensions": 1536,
+            "storage_backend": "postgres_pgvector_neo4j",
+            "runtime_mode": "runtime",
+            "mineru_enabled": True,
+            "mineru_base_url": "http://10.10.9.193:8003",
+            "reranker_provider": "generic_http",
+            "reranker_model": "BAAI/bge-reranker-v2-m3",
+            "reranker_base_url": "http://127.0.0.1:8002/v1/rerank",
+            "reranker_fallback_provider": "llm",
+            "enable_rerank": True,
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["reranker_provider"] == "generic_http"
+    assert body["reranker_model"] == "BAAI/bge-reranker-v2-m3"
+    assert body["reranker_fallback_provider"] == "llm"

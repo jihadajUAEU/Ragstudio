@@ -57,6 +57,7 @@ const settings: SettingsProfileOut = {
   has_vision_api_key: false,
   vision_timeout_ms: 10000,
   reranker_provider: "disabled",
+  reranker_fallback_provider: "disabled",
   reranker_model: null,
   reranker_base_url: null,
   has_reranker_api_key: false,
@@ -282,6 +283,28 @@ describe("SettingsPage provider sync", () => {
     expect(screen.getByLabelText("Neo4j password")).toHaveValue("typed-again");
     fireEvent.click(screen.getByRole("button", { name: /^Reset$/i }));
     expect(screen.getByLabelText("Neo4j password")).toHaveValue("");
+  });
+
+  it("submits LLM reranker provider and fallback values", async () => {
+    renderSettings();
+
+    await screen.findByText("Vision and reranker");
+    await screen.findByDisplayValue("gpt-4.1");
+    fireEvent.change(screen.getByLabelText("Reranker provider"), {
+      target: { value: "llm" },
+    });
+    fireEvent.change(screen.getByLabelText("Reranker fallback"), {
+      target: { value: "llm" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^Save$/i }));
+
+    await waitFor(() => expect(apiClient.updateDefaultSettings).toHaveBeenCalled());
+    expect(vi.mocked(apiClient.updateDefaultSettings).mock.calls[0][0]).toEqual(
+      expect.objectContaining({
+        reranker_provider: "llm",
+        reranker_fallback_provider: "llm",
+      }),
+    );
   });
 
   it("allows saving the first profile when settings are missing", async () => {

@@ -25,7 +25,9 @@ export type RerankerProvider =
   | "disabled"
   | "cohere_compatible"
   | "jina_compatible"
-  | "generic_http";
+  | "generic_http"
+  | "llm";
+export type RerankerFallbackProvider = "disabled" | "llm";
 export type QueryMode = "mix" | "hybrid" | "local" | "global" | "naive";
 
 export interface RuntimeHealthCheck {
@@ -75,6 +77,7 @@ export interface SettingsProfileIn {
   vision_api_key?: string | null;
   vision_timeout_ms?: number;
   reranker_provider?: RerankerProvider;
+  reranker_fallback_provider?: RerankerFallbackProvider;
   reranker_model?: string | null;
   reranker_base_url?: string | null;
   reranker_api_key?: string | null;
@@ -140,6 +143,7 @@ export interface SettingsProfileOut {
   has_vision_api_key: boolean;
   vision_timeout_ms: number;
   reranker_provider: RerankerProvider;
+  reranker_fallback_provider: RerankerFallbackProvider;
   reranker_model: string | null;
   reranker_base_url: string | null;
   has_reranker_api_key: boolean;
