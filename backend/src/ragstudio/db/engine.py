@@ -1,5 +1,6 @@
 from collections.abc import AsyncIterator
 
+from ragstudio.config import AppSettings
 from ragstudio.db.base import Base
 from sqlalchemy import inspect, text
 from sqlalchemy.engine import make_url
@@ -156,6 +157,7 @@ def _ensure_columns(connection, inspector, table_name: str, additions: dict[str,
 
 
 def _backfill_graph_projection_targets(connection) -> None:
+    settings = AppSettings()
     rows = (
         connection.execute(
             text(
@@ -200,8 +202,8 @@ def _backfill_graph_projection_targets(connection) -> None:
             {
                 "id": row["id"],
                 "graph_workspace_label": _workspace_label(row["runtime_profile_id"]),
-                "graph_storage_uri": row["neo4j_uri"],
-                "graph_storage_username": row["neo4j_username"],
+                "graph_storage_uri": row["neo4j_uri"] or settings.neo4j_uri,
+                "graph_storage_username": row["neo4j_username"] or settings.neo4j_username,
             },
         )
 

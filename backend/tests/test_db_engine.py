@@ -441,3 +441,129 @@ async def test_init_db_clears_graph_projection_password_snapshots(database_url):
     ]
 
     await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_init_db_backfills_projection_target_from_settings_defaults_and_clears_password(
+    tmp_path,
+    database_url,
+    monkeypatch,
+):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("RAGSTUDIO_NEO4J_URI", raising=False)
+    monkeypatch.delenv("RAGSTUDIO_NEO4J_USERNAME", raising=False)
+    engine = make_engine(database_url)
+    async with engine.begin() as connection:
+        await connection.execute(
+            text(
+                """
+                CREATE TABLE settings_profiles (
+                    id VARCHAR PRIMARY KEY,
+                    provider VARCHAR NOT NULL,
+                    llm_model VARCHAR NOT NULL,
+                    embedding_model VARCHAR NOT NULL,
+                    storage_backend VARCHAR NOT NULL,
+                    neo4j_uri VARCHAR,
+                    neo4j_username VARCHAR,
+                    neo4j_password VARCHAR,
+                    created_at TIMESTAMP,
+                    updated_at TIMESTAMP
+                )
+                """
+            )
+        )
+        await connection.execute(
+            text(
+                """
+                INSERT INTO settings_profiles (
+                    id, provider, llm_model, embedding_model, storage_backend,
+                    neo4j_uri, neo4j_username, neo4j_password
+                )
+                VALUES (
+                    'default',
+                    'legacy',
+                    'legacy-llm',
+                    'legacy-embedding',
+                    'local',
+                    NULL,
+                    NULL,
+                    'legacy-profile-password'
+                )
+                """
+            )
+        )
+        await connection.execute(
+            text(
+                """
+                CREATE TABLE graph_projection_records (
+                    id VARCHAR PRIMARY KEY,
+                    document_id VARCHAR NOT NULL,
+                    runtime_profile_id VARCHAR NOT NULL,
+                    status VARCHAR DEFAULT 'succeeded' NOT NULL,
+                    projection_run_id VARCHAR,
+                    graph_workspace_label VARCHAR,
+                    graph_storage_uri VARCHAR,
+                    graph_storage_username VARCHAR,
+                    graph_storage_password VARCHAR,
+                    node_count INTEGER DEFAULT 1 NOT NULL,
+                    edge_count INTEGER DEFAULT 0 NOT NULL,
+                    error TEXT,
+                    created_at TIMESTAMP,
+                    updated_at TIMESTAMP
+                )
+                """
+            )
+        )
+        await connection.execute(
+            text(
+                """
+                INSERT INTO graph_projection_records (
+                    id, document_id, runtime_profile_id, status,
+                    graph_workspace_label, graph_storage_uri, graph_storage_username,
+                    graph_storage_password, node_count, edge_count,
+                    created_at, updated_at
+                )
+                VALUES (
+                    'projection-settings-defaults',
+                    'doc-1',
+                    'default',
+                    'succeeded',
+                    NULL,
+                    NULL,
+                    NULL,
+                    'legacy-projection-password',
+                    1,
+                    0,
+                    NOW(),
+                    NOW()
+                )
+                """
+            )
+        )
+
+    await init_db(engine)
+
+    async with engine.connect() as connection:
+        projection_row = (
+            (
+                await connection.execute(
+                    text(
+                        """
+                        SELECT graph_workspace_label, graph_storage_uri,
+                               graph_storage_username, graph_storage_password
+                        FROM graph_projection_records
+                        WHERE id = 'projection-settings-defaults'
+                        """
+                    )
+                )
+            )
+            .mappings()
+            .one()
+        )
+
+    assert projection_row["graph_workspace_label"] == "ragstudio_default"
+    assert projection_row["graph_storage_uri"] == "bolt://127.0.0.1:57687"
+    assert projection_row["graph_storage_username"] == "neo4j"
+    assert projection_row["graph_storage_password"] is None
+
+    await engine.dispose()
