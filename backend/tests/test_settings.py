@@ -17,7 +17,7 @@ async def test_settings_profile_round_trip(client):
     assert read_response.status_code == 200
     assert read_response.json()["provider"] == "openai"
     assert read_response.json()["storage_backend"] == "postgres_pgvector_neo4j"
-    assert read_response.json()["runtime_mode"] == "fallback"
+    assert read_response.json()["runtime_mode"] == "runtime"
     assert read_response.json()["query_mode"] == "mix"
     assert read_response.json()["top_k"] == 40
 

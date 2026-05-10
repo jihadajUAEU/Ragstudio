@@ -5,16 +5,18 @@ from ragstudio.schemas.runtime import (
     QueryMode,
     RerankerFallbackProvider,
     RerankerProvider,
-    RuntimeMode,
-    StorageBackend,
 )
 from ragstudio.schemas.settings import (
     MINERU_DEFAULT_TIMEOUT_MS,
-    EmbeddingProvider,
     LlmCapability,
     LlmProvider,
     SettingsProfileIn,
     SettingsProfileOut,
+)
+from ragstudio.services.runtime_policy import (
+    normalize_embedding_provider,
+    normalize_runtime_mode,
+    normalize_storage_backend,
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -102,11 +104,8 @@ class SettingsService:
                 if capability in {"text", "vision", "reasoning"}
             ],
             embedding_model=profile.embedding_model,
-            storage_backend=self._storage_backend(profile.storage_backend),
-            embedding_provider=cast(
-                EmbeddingProvider,
-                profile.embedding_provider if profile.embedding_provider else "fallback",
-            ),
+            storage_backend=normalize_storage_backend(profile.storage_backend),
+            embedding_provider=normalize_embedding_provider(profile.embedding_provider),
             embedding_base_url=profile.embedding_base_url,
             has_embedding_api_key=bool(profile.embedding_api_key),
             embedding_timeout_ms=profile.embedding_timeout_ms or 10000,
@@ -118,7 +117,10 @@ class SettingsService:
             mineru_timeout_ms=max(profile.mineru_timeout_ms or 0, MINERU_DEFAULT_TIMEOUT_MS),
             mineru_poll_interval_ms=profile.mineru_poll_interval_ms or 1_000,
             mineru_require_hpc=default_bool(profile.mineru_require_hpc, True),
-            runtime_mode=self._runtime_mode(profile.runtime_mode, profile.storage_backend),
+            runtime_mode=normalize_runtime_mode(
+                profile.runtime_mode,
+                profile.storage_backend,
+            ),
             vision_model=profile.vision_model,
             vision_base_url=profile.vision_base_url,
             has_vision_api_key=bool(profile.vision_api_key),
@@ -170,29 +172,18 @@ class SettingsService:
             max_parallel_insert=profile.max_parallel_insert or 2,
         )
 
-    def _storage_backend(self, value: str | None) -> StorageBackend:
-        if value in {"postgres_pgvector_neo4j", "fallback_local"}:
-            return cast(StorageBackend, value)
-        return "fallback_local"
-
-    def _runtime_mode(
-        self,
-        value: str | None,
-        storage_backend: str | None,
-    ) -> RuntimeMode:
-        if self._storage_backend(storage_backend) == "fallback_local":
-            return "fallback"
-        if value in {"runtime", "fallback", "degraded"}:
-            return cast(RuntimeMode, value)
-        return "fallback"
-
     def _normalize_runtime_values(self, values: dict[str, object]) -> dict[str, object]:
-        storage_backend = self._storage_backend(
+        storage_backend = normalize_storage_backend(
             cast(str | None, values.get("storage_backend"))
         )
-        if storage_backend == "fallback_local":
-            values["storage_backend"] = "fallback_local"
-            values["runtime_mode"] = "fallback"
+        values["storage_backend"] = storage_backend
+        values["runtime_mode"] = normalize_runtime_mode(
+            cast(str | None, values.get("runtime_mode")),
+            storage_backend,
+        )
+        values["embedding_provider"] = normalize_embedding_provider(
+            cast(str | None, values.get("embedding_provider"))
+        )
         timeout = values.get("mineru_timeout_ms")
         if isinstance(timeout, int):
             values["mineru_timeout_ms"] = max(timeout, MINERU_DEFAULT_TIMEOUT_MS)

@@ -3,6 +3,7 @@ from typing import Any, Literal
 from pydantic import Field
 
 from ragstudio.schemas.common import StudioModel
+from ragstudio.services.runtime_policy import DEFAULT_PARSER_MODE
 
 ParserMode = Literal["local_fallback", "mineru_strict", "mineru_with_fallback"]
 
@@ -52,5 +53,5 @@ class DomainMetadataSuggestOut(StudioModel):
 
 
 class IndexDocumentIn(StudioModel):
-    parser_mode: ParserMode = "local_fallback"
+    parser_mode: ParserMode = DEFAULT_PARSER_MODE
     domain_metadata: DomainMetadata = Field(default_factory=DomainMetadata)

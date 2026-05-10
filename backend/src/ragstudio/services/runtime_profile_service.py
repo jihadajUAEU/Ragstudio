@@ -6,9 +6,13 @@ from ragstudio.schemas.runtime import (
     QueryMode,
     RerankerFallbackProvider,
     RerankerProvider,
-    RuntimeMode,
     RuntimeProfile,
-    StorageBackend,
+)
+from ragstudio.services.runtime_policy import (
+    DEFAULT_EMBEDDING_PROVIDER,
+    normalize_embedding_provider,
+    normalize_runtime_mode,
+    normalize_storage_backend,
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -27,8 +31,8 @@ class RuntimeProfileService:
         if profile is None:
             raise RuntimeProfileNotConfiguredError("Default runtime profile is not configured.")
 
-        storage_backend = self._storage_backend(profile.storage_backend)
-        runtime_mode = self._runtime_mode(profile.runtime_mode, storage_backend)
+        storage_backend = normalize_storage_backend(profile.storage_backend)
+        runtime_mode = normalize_runtime_mode(profile.runtime_mode, storage_backend)
         index_shape = {
             "embedding_model": profile.embedding_model,
             "embedding_dimensions": profile.embedding_dimensions or 1536,
@@ -53,7 +57,9 @@ class RuntimeProfileService:
             vision_base_url=profile.vision_base_url,
             vision_api_key=profile.vision_api_key,
             vision_timeout_ms=profile.vision_timeout_ms or 10000,
-            embedding_provider=profile.embedding_provider or "fallback",
+            embedding_provider=normalize_embedding_provider(
+                profile.embedding_provider or DEFAULT_EMBEDDING_PROVIDER
+            ),
             embedding_model=profile.embedding_model,
             embedding_base_url=profile.embedding_base_url,
             embedding_api_key=profile.embedding_api_key,
@@ -118,15 +124,3 @@ class RuntimeProfileService:
     @staticmethod
     def _default_bool(value: bool | None, default: bool) -> bool:
         return default if value is None else bool(value)
-
-    def _storage_backend(self, value: str | None) -> StorageBackend:
-        if value in {"postgres_pgvector_neo4j", "fallback_local"}:
-            return cast(StorageBackend, value)
-        return "fallback_local"
-
-    def _runtime_mode(self, value: str | None, storage_backend: StorageBackend) -> RuntimeMode:
-        if storage_backend == "fallback_local":
-            return "fallback"
-        if value in {"runtime", "fallback", "degraded"}:
-            return cast(RuntimeMode, value)
-        return "fallback"

@@ -3,7 +3,8 @@ from pathlib import Path
 from ragstudio.config import AppSettings
 
 
-def test_app_settings_default_database_is_postgres():
+def test_app_settings_default_database_is_postgres(monkeypatch):
+    monkeypatch.delenv("RAGSTUDIO_NEO4J_URI", raising=False)
     settings = AppSettings(data_dir=Path("/tmp/ragstudio-test"))
 
     assert settings.resolved_database_url.startswith("postgresql+asyncpg://")

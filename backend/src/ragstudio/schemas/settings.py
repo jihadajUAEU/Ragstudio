@@ -11,6 +11,12 @@ from ragstudio.schemas.runtime import (
     RuntimeMode,
     StorageBackend,
 )
+from ragstudio.services.runtime_policy import (
+    DEFAULT_EMBEDDING_PROVIDER,
+    DEFAULT_RUNTIME_MODE,
+    DEFAULT_STORAGE_BACKEND,
+    normalize_runtime_mode,
+)
 
 EmbeddingProvider = Literal["fallback", "vllm_openai"]
 LlmProvider = Literal["openai_compatible"]
@@ -27,8 +33,8 @@ class SettingsProfileIn(StudioModel):
     llm_timeout_ms: int = Field(default=10000, ge=100, le=1_800_000)
     llm_capabilities: list[LlmCapability] = Field(default_factory=list)
     embedding_model: str
-    storage_backend: StorageBackend
-    embedding_provider: EmbeddingProvider = "fallback"
+    storage_backend: StorageBackend = DEFAULT_STORAGE_BACKEND
+    embedding_provider: EmbeddingProvider = DEFAULT_EMBEDDING_PROVIDER
     embedding_base_url: str | None = None
     embedding_api_key: str | None = None
     embedding_timeout_ms: int = Field(default=10000, ge=100, le=1_800_000)
@@ -40,7 +46,7 @@ class SettingsProfileIn(StudioModel):
     mineru_timeout_ms: int = Field(default=MINERU_DEFAULT_TIMEOUT_MS, ge=100, le=28_800_000)
     mineru_poll_interval_ms: int = Field(default=1_000, ge=100, le=60_000)
     mineru_require_hpc: bool = True
-    runtime_mode: RuntimeMode = "fallback"
+    runtime_mode: RuntimeMode = DEFAULT_RUNTIME_MODE
     vision_model: str | None = None
     vision_base_url: str | None = None
     vision_api_key: str | None = None
@@ -84,8 +90,7 @@ class SettingsProfileIn(StudioModel):
 
     @model_validator(mode="after")
     def normalize_runtime_storage_pair(self) -> Self:
-        if self.storage_backend == "fallback_local":
-            self.runtime_mode = "fallback"
+        self.runtime_mode = normalize_runtime_mode(self.runtime_mode, self.storage_backend)
         return self
 
     @field_validator("llm_base_url")
