@@ -33,11 +33,17 @@ class FakeRuntime:
 
 
 class FakeRuntimeFactory:
+    def __init__(self, *_args, **_kwargs):
+        pass
+
     def build(self, profile):
         return FakeRuntime()
 
 
 class PassingHealthService:
+    def __init__(self, *_args, **_kwargs):
+        pass
+
     async def check(self, profile):
         return []
 

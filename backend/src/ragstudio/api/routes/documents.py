@@ -58,7 +58,7 @@ async def upload_document(
     except RuntimeProfileNotConfiguredError:
         profile = None
     if profile is not None and profile.runtime_mode != "fallback":
-        health_service = _runtime_health_service(session)
+        health_service = RuntimeHealthService(session, verify_storage=True)
         checks = await health_service.check(profile)
         blocking = health_service.blocking_failures(checks)
         if blocking:
@@ -138,7 +138,7 @@ async def _ensure_runtime_ready(session: AsyncSession, settings: AppSettings) ->
         profile = None
     if profile is None or profile.runtime_mode == "fallback":
         return
-    health_service = _runtime_health_service(session)
+    health_service = RuntimeHealthService(session, verify_storage=True)
     checks = await health_service.check(profile)
     blocking = health_service.blocking_failures(checks)
     if blocking:
@@ -225,13 +225,6 @@ def _validate_index_options(options: IndexDocumentIn) -> None:
         validate_custom_json(options.domain_metadata.custom_json)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-
-def _runtime_health_service(session: AsyncSession) -> RuntimeHealthService:
-    try:
-        return RuntimeHealthService(session, verify_storage=True)
-    except TypeError:
-        return RuntimeHealthService()
 
 
 @router.get("")

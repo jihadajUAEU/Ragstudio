@@ -41,8 +41,11 @@ class IndexLifecycleService:
     ):
         self.session = session
         self.settings = settings
-        self.runtime_factory = runtime_factory or self._runtime_factory(settings)
-        self.health_service = health_service or self._health_service(session)
+        self.runtime_factory = runtime_factory or RAGAnythingRuntimeFactory(settings)
+        self.health_service = health_service or RuntimeHealthService(
+            session,
+            verify_storage=True,
+        )
         self.normalizer = normalizer or TraceNormalizer()
         self.document_parser = document_parser or DocumentParserService(
             session,
@@ -190,18 +193,6 @@ class IndexLifecycleService:
         if "document_id" in parameters:
             return await runtime.index_document(artifact_path, document_id=document_id)
         return await runtime.index_document(artifact_path)
-
-    def _runtime_factory(self, settings: AppSettings) -> Any:
-        try:
-            return RAGAnythingRuntimeFactory(settings)
-        except TypeError:
-            return RAGAnythingRuntimeFactory()
-
-    def _health_service(self, session: AsyncSession) -> RuntimeHealthService:
-        try:
-            return RuntimeHealthService(session, verify_storage=True)
-        except TypeError:
-            return RuntimeHealthService()
 
     def _merge_options_metadata(
         self,

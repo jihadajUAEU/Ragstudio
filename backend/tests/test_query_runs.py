@@ -35,7 +35,7 @@ class FakeRuntime:
 
 
 class FakeRuntimeFactory:
-    def __init__(self):
+    def __init__(self, *_args, **_kwargs):
         self.runtime = FakeRuntime()
 
     def build(self, profile):
@@ -48,6 +48,9 @@ class FakeRuntimeAnswerService:
 
 
 class PassingHealthService:
+    def __init__(self, *_args, **_kwargs):
+        pass
+
     async def check(self, profile):
         return []
 
@@ -62,7 +65,10 @@ async def test_query_creates_run_with_answer_and_chunk_trace(client):
         files={"file": ("sample.txt", b"alpha answer source", "text/plain")},
     )
     document_id = upload.json()["id"]
-    await client.post(f"/api/chunks/index/{document_id}")
+    await client.post(
+        f"/api/chunks/index/{document_id}",
+        json={"parser_mode": "local_fallback", "domain_metadata": {}},
+    )
     variant = await client.post(
         "/api/variants",
         json={"name": "Balanced", "preset": "balanced", "parameters": {}},
@@ -140,7 +146,10 @@ async def test_query_uses_configured_reranker_in_fallback_mode(client, monkeypat
         files={"file": ("rerank.txt", b"alpha first\nalpha second", "text/plain")},
     )
     document_id = upload.json()["id"]
-    await client.post(f"/api/chunks/index/{document_id}")
+    await client.post(
+        f"/api/chunks/index/{document_id}",
+        json={"parser_mode": "local_fallback", "domain_metadata": {}},
+    )
     variant = await client.post(
         "/api/variants",
         json={"name": "Rerank", "preset": "balanced", "parameters": {}},
@@ -215,7 +224,10 @@ async def test_query_keeps_original_results_when_reranker_fails(client, monkeypa
         files={"file": ("rerank-failure.txt", b"alpha first\nalpha second", "text/plain")},
     )
     document_id = upload.json()["id"]
-    await client.post(f"/api/chunks/index/{document_id}")
+    await client.post(
+        f"/api/chunks/index/{document_id}",
+        json={"parser_mode": "local_fallback", "domain_metadata": {}},
+    )
     variant = await client.post(
         "/api/variants",
         json={"name": "Rerank Failure", "preset": "balanced", "parameters": {}},
@@ -269,7 +281,10 @@ async def test_query_blocks_untrusted_reranker_endpoint_without_calling_it(clien
         files={"file": ("rerank-blocked.txt", b"alpha first", "text/plain")},
     )
     document_id = upload.json()["id"]
-    await client.post(f"/api/chunks/index/{document_id}")
+    await client.post(
+        f"/api/chunks/index/{document_id}",
+        json={"parser_mode": "local_fallback", "domain_metadata": {}},
+    )
     variant = await client.post(
         "/api/variants",
         json={"name": "Rerank Blocked", "preset": "balanced", "parameters": {}},
@@ -297,7 +312,10 @@ async def test_list_runs_returns_persisted_query_runs(client):
         files={"file": ("history.txt", b"history answer", "text/plain")},
     )
     document_id = upload.json()["id"]
-    await client.post(f"/api/chunks/index/{document_id}")
+    await client.post(
+        f"/api/chunks/index/{document_id}",
+        json={"parser_mode": "local_fallback", "domain_metadata": {}},
+    )
     variant = await client.post(
         "/api/variants",
         json={"name": "History", "preset": "balanced", "parameters": {}},
@@ -328,7 +346,10 @@ async def test_query_invalid_variant_id_returns_error_without_persisting_runs(cl
         files={"file": ("variant-missing.txt", b"variant missing", "text/plain")},
     )
     document_id = upload.json()["id"]
-    await client.post(f"/api/chunks/index/{document_id}")
+    await client.post(
+        f"/api/chunks/index/{document_id}",
+        json={"parser_mode": "local_fallback", "domain_metadata": {}},
+    )
 
     response = await client.post(
         "/api/query",
@@ -372,7 +393,10 @@ async def test_query_creates_one_run_per_variant(client):
         files={"file": ("multi.txt", b"shared answer", "text/plain")},
     )
     document_id = upload.json()["id"]
-    await client.post(f"/api/chunks/index/{document_id}")
+    await client.post(
+        f"/api/chunks/index/{document_id}",
+        json={"parser_mode": "local_fallback", "domain_metadata": {}},
+    )
     first = await client.post(
         "/api/variants", json={"name": "First", "preset": "balanced", "parameters": {}}
     )

@@ -39,6 +39,9 @@ class FakeRuntime:
 
 
 class FakeRuntimeFactory:
+    def __init__(self, *_args, **_kwargs):
+        pass
+
     def build(self, profile):
         return FakeRuntime()
 
@@ -148,6 +151,9 @@ def test_chunk_splitter_splits_mineru_content_list_by_reference_units(tmp_path):
 
 
 class PassingHealthService:
+    def __init__(self, *_args, **_kwargs):
+        pass
+
     async def check(self, profile):
         return []
 
