@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build a default-on Retrieval Orchestrator that improves runtime query quality by fusing native RAG-Anything retrieval, Studio metadata-aware retrieval, Neo4j graph expansion, optional reranking, and runtime LLM answer generation.
+**Goal:** Build a default-on Retrieval Orchestrator that improves runtime query quality by fusing native RAG-Anything retrieval, Studio metadata-aware retrieval, Neo4j graph expansion, dedicated reranking with LLM fallback, and runtime LLM answer generation.
 
-**Architecture:** Add focused backend services under `backend/src/ragstudio/services/` so retrieval planning, evidence fusion, graph expansion, answer generation, and QueryService integration stay testable in isolation. The orchestrator runs native and metadata retrieval in parallel, expands high-confidence seed evidence through Neo4j relationships when graph settings are available, ranks fused evidence with deterministic metadata-aware scoring plus optional reranker, then answers from fused evidence using the active runtime LLM.
+**Architecture:** Add focused backend services under `backend/src/ragstudio/services/` so retrieval planning, evidence fusion, graph expansion, reranking, answer generation, and QueryService integration stay testable in isolation. The orchestrator runs native and metadata retrieval in parallel, expands high-confidence seed evidence through Neo4j relationships when graph settings are available, applies the configured dedicated reranker when available, falls back to the active runtime LLM reranker when configured, then answers from fused evidence using the active runtime LLM. If reranking is disabled or unavailable, deterministic metadata/graph scoring still produces a complete answer path.
 
 **Tech Stack:** FastAPI service layer, SQLAlchemy async sessions, Neo4j Python driver, existing `ChunkService`, existing `RerankerService`, existing runtime profile/settings models, OpenAI-compatible HTTP endpoints through `httpx`, pytest.
 
@@ -18,8 +18,16 @@
   - Defines `EvidenceCandidate`, `RetrievalPlan`, `OrchestratedAnswer`, and helper methods for source/trace serialization.
 - Create `backend/src/ragstudio/services/runtime_answer_service.py`
   - Generates the final answer from fused evidence through the active runtime LLM endpoint.
+- Create `backend/src/ragstudio/services/llm_reranker_service.py`
+  - Uses the active runtime LLM endpoint to rank fused evidence as a fallback reranker with strict JSON parsing.
 - Create `backend/src/ragstudio/services/graph_expansion_service.py`
   - Expands seed evidence through Neo4j relationships scoped to the active runtime workspace and returns graph evidence candidates with relationship traces.
+- Modify `backend/src/ragstudio/schemas/runtime.py`
+  - Adds `llm` as a reranker provider and adds `reranker_fallback_provider` for explicit LLM fallback.
+- Modify `backend/src/ragstudio/schemas/settings.py`, `backend/src/ragstudio/db/models.py`, `backend/src/ragstudio/db/engine.py`, `backend/src/ragstudio/services/settings_service.py`, and `backend/src/ragstudio/services/runtime_profile_service.py`
+  - Persists and exposes the reranker fallback setting on the existing Settings profile.
+- Modify `frontend/src/features/settings/settings-page.tsx`
+  - Adds the Settings UI control in the existing `Vision and reranker` section.
 - Modify `backend/src/ragstudio/services/query_service.py`
   - Uses `RetrievalOrchestrator` as the default runtime query path and preserves existing runtime/native fallback behavior.
 - Modify `backend/src/ragstudio/services/hybrid_chunk_search.py`
@@ -28,8 +36,12 @@
   - Unit coverage for planning, fusion, metadata scoring, dedupe, reranker traces, fallback, and answer context ordering.
 - Test in `backend/tests/test_runtime_answer_service.py`
   - Unit coverage for OpenAI-compatible answer generation and failure behavior.
+- Test in `backend/tests/test_llm_reranker_service.py`
+  - Unit coverage for LLM rerank request construction, strict JSON parsing, invalid output fallback, and trace shape.
 - Test in `backend/tests/test_graph_expansion_service.py`
   - Unit coverage for Neo4j query scoping, graph candidate conversion, unavailable graph behavior, and relationship traces.
+- Extend `backend/tests/test_settings.py` and `frontend/tests/settings-page.test.tsx`
+  - Coverage for the new provider option and fallback setting.
 - Extend `backend/tests/test_runtime_query_service.py`
   - Service-level coverage that runtime queries use orchestrated fused evidence.
 
@@ -714,7 +726,565 @@ git commit -m "feat: answer from fused retrieval evidence"
 
 ---
 
-### Task 4: Neo4j Graph Expansion Service
+### Task 4: Reranker Settings and LLM Fallback
+
+**Files:**
+- Modify: `backend/src/ragstudio/schemas/runtime.py`
+- Modify: `backend/src/ragstudio/schemas/settings.py`
+- Modify: `backend/src/ragstudio/db/models.py`
+- Modify: `backend/src/ragstudio/db/engine.py`
+- Modify: `backend/src/ragstudio/services/settings_service.py`
+- Modify: `backend/src/ragstudio/services/runtime_profile_service.py`
+- Modify: `backend/src/ragstudio/services/reranker_service.py`
+- Create: `backend/src/ragstudio/services/llm_reranker_service.py`
+- Modify: `frontend/src/features/settings/settings-page.tsx`
+- Test: `backend/tests/test_settings.py`
+- Test: `backend/tests/test_query_runs.py`
+- Test: `backend/tests/test_llm_reranker_service.py`
+- Test: `frontend/tests/settings-page.test.tsx`
+
+- [ ] **Step 1: Write failing backend settings tests**
+
+Append to `backend/tests/test_settings.py`:
+
+```python
+async def test_settings_accepts_llm_reranker_with_llm_fallback(client):
+    response = await client.put(
+        "/api/settings/default",
+        json={
+            "provider": "openai-compatible",
+            "llm_provider": "openai_compatible",
+            "llm_model": "QuantTrio/Qwen3-VL-32B-Instruct-AWQ",
+            "llm_base_url": "http://10.10.9.195:8004/v1",
+            "embedding_provider": "vllm_openai",
+            "embedding_model": "Qwen/Qwen3-Embedding-8B",
+            "embedding_base_url": "http://10.10.9.192:8001/v1",
+            "embedding_dimensions": 1536,
+            "storage_backend": "postgres_pgvector_neo4j",
+            "runtime_mode": "runtime",
+            "mineru_enabled": True,
+            "mineru_base_url": "http://10.10.9.193:8003",
+            "reranker_provider": "llm",
+            "reranker_model": "",
+            "reranker_base_url": "",
+            "reranker_fallback_provider": "disabled",
+            "enable_rerank": True,
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["reranker_provider"] == "llm"
+    assert body["reranker_fallback_provider"] == "disabled"
+
+
+async def test_settings_accepts_dedicated_bge_with_llm_fallback(client):
+    response = await client.put(
+        "/api/settings/default",
+        json={
+            "provider": "openai-compatible",
+            "llm_provider": "openai_compatible",
+            "llm_model": "QuantTrio/Qwen3-VL-32B-Instruct-AWQ",
+            "llm_base_url": "http://10.10.9.195:8004/v1",
+            "embedding_provider": "vllm_openai",
+            "embedding_model": "Qwen/Qwen3-Embedding-8B",
+            "embedding_base_url": "http://10.10.9.192:8001/v1",
+            "embedding_dimensions": 1536,
+            "storage_backend": "postgres_pgvector_neo4j",
+            "runtime_mode": "runtime",
+            "mineru_enabled": True,
+            "mineru_base_url": "http://10.10.9.193:8003",
+            "reranker_provider": "generic_http",
+            "reranker_model": "BAAI/bge-reranker-v2-m3",
+            "reranker_base_url": "http://127.0.0.1:8002/v1/rerank",
+            "reranker_fallback_provider": "llm",
+            "enable_rerank": True,
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["reranker_provider"] == "generic_http"
+    assert body["reranker_model"] == "BAAI/bge-reranker-v2-m3"
+    assert body["reranker_fallback_provider"] == "llm"
+```
+
+- [ ] **Step 2: Run settings tests to verify failure**
+
+Run:
+
+```bash
+PATH=$PWD/.venv/bin:$PATH PYTHONPATH=backend/src python -m pytest backend/tests/test_settings.py::test_settings_accepts_llm_reranker_with_llm_fallback backend/tests/test_settings.py::test_settings_accepts_dedicated_bge_with_llm_fallback -q
+```
+
+Expected: FAIL because `llm` and `reranker_fallback_provider` are not accepted yet.
+
+- [ ] **Step 3: Add persisted reranker fallback settings**
+
+Modify `backend/src/ragstudio/schemas/runtime.py`:
+
+```python
+RerankerProvider = Literal["disabled", "cohere_compatible", "jina_compatible", "generic_http", "llm"]
+RerankerFallbackProvider = Literal["disabled", "llm"]
+```
+
+Add to `RuntimeProfile`:
+
+```python
+    reranker_fallback_provider: RerankerFallbackProvider = "disabled"
+```
+
+Modify `backend/src/ragstudio/schemas/settings.py` imports:
+
+```python
+    RerankerFallbackProvider,
+```
+
+Add to `SettingsProfileIn` beside `reranker_provider`:
+
+```python
+    reranker_fallback_provider: RerankerFallbackProvider = "disabled"
+```
+
+Add to `SettingsProfileOut` beside `reranker_provider`:
+
+```python
+    reranker_fallback_provider: RerankerFallbackProvider
+```
+
+Modify `backend/src/ragstudio/db/models.py` beside `reranker_provider`:
+
+```python
+    reranker_fallback_provider: Mapped[str] = mapped_column(String, default="disabled")
+```
+
+Modify `backend/src/ragstudio/db/engine.py` column defaults:
+
+```python
+                "reranker_fallback_provider": "VARCHAR DEFAULT 'disabled' NOT NULL",
+```
+
+Modify `backend/src/ragstudio/services/settings_service.py` to persist and return the field:
+
+```python
+        profile.reranker_fallback_provider = data.reranker_fallback_provider
+```
+
+```python
+            reranker_fallback_provider=cast(
+                RerankerFallbackProvider,
+                profile.reranker_fallback_provider or "disabled",
+            ),
+```
+
+Modify `backend/src/ragstudio/services/runtime_profile_service.py` to return the field:
+
+```python
+            reranker_fallback_provider=cast(
+                RerankerFallbackProvider,
+                profile.reranker_fallback_provider or "disabled",
+            ),
+```
+
+- [ ] **Step 4: Run settings tests**
+
+Run:
+
+```bash
+PATH=$PWD/.venv/bin:$PATH PYTHONPATH=backend/src python -m pytest backend/tests/test_settings.py::test_settings_accepts_llm_reranker_with_llm_fallback backend/tests/test_settings.py::test_settings_accepts_dedicated_bge_with_llm_fallback -q
+```
+
+Expected: PASS.
+
+- [ ] **Step 5: Write failing LLM reranker tests**
+
+Create `backend/tests/test_llm_reranker_service.py`:
+
+```python
+import pytest
+
+from ragstudio.schemas.chunks import ChunkOut
+from ragstudio.services.llm_reranker_service import LLMRerankerService
+
+
+class FakeResponse:
+    def __init__(self, body):
+        self.body = body
+
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        return self.body
+
+
+class FakeAsyncClient:
+    requests = []
+
+    def __init__(self, *args, **kwargs):
+        return None
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        return None
+
+    async def post(self, url, *, headers, json):
+        self.requests.append({"url": url, "headers": headers, "json": json})
+        return FakeResponse(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": '[{"index": 1, "score": 0.98, "reason": "direct answer"}]'
+                        }
+                    }
+                ],
+                "usage": {"prompt_tokens": 30, "completion_tokens": 12},
+            }
+        )
+
+
+def profile():
+    return type(
+        "Profile",
+        (),
+        {
+            "llm_base_url": "http://127.0.0.1:8004/v1",
+            "llm_api_key": None,
+            "llm_model": "QuantTrio/Qwen3-VL-32B-Instruct-AWQ",
+            "llm_timeout_ms": 5000,
+            "reranker_model": "",
+        },
+    )()
+
+
+@pytest.mark.asyncio
+async def test_llm_reranker_reorders_chunks(monkeypatch):
+    monkeypatch.setattr("ragstudio.services.llm_reranker_service.httpx.AsyncClient", FakeAsyncClient)
+    chunks = [
+        ChunkOut(id="weak", document_id="doc-1", text="Book 65, Hadith 201", source_location={}, metadata={}),
+        ChunkOut(id="strong", document_id="doc-1", text="Sahih al-Bukhari 7277 Hadith Collection", source_location={}, metadata={}),
+    ]
+
+    reranked, traces = await LLMRerankerService().rerank(
+        "how many hadith in bukhari",
+        chunks,
+        profile(),
+    )
+
+    assert reranked[0].id == "strong"
+    assert traces[0]["provider"] == "llm"
+    assert traces[0]["chunk_id"] == "strong"
+    assert traces[0]["score"] == 0.98
+
+
+@pytest.mark.asyncio
+async def test_llm_reranker_returns_original_order_when_json_is_invalid(monkeypatch):
+    class BadJsonClient(FakeAsyncClient):
+        async def post(self, url, *, headers, json):
+            return FakeResponse({"choices": [{"message": {"content": "not json"}}]})
+
+    monkeypatch.setattr("ragstudio.services.llm_reranker_service.httpx.AsyncClient", BadJsonClient)
+    chunks = [
+        ChunkOut(id="first", document_id="doc-1", text="first", source_location={}, metadata={}),
+        ChunkOut(id="second", document_id="doc-1", text="second", source_location={}, metadata={}),
+    ]
+
+    reranked, traces = await LLMRerankerService().rerank("query", chunks, profile())
+
+    assert [chunk.id for chunk in reranked] == ["first", "second"]
+    assert traces[0]["status"] == "invalid_json"
+```
+
+- [ ] **Step 6: Implement LLM reranker**
+
+Create `backend/src/ragstudio/services/llm_reranker_service.py`:
+
+```python
+from __future__ import annotations
+
+import json
+from typing import Any
+
+import httpx
+
+from ragstudio.schemas.chunks import ChunkOut
+
+
+class LLMRerankerService:
+    async def rerank(
+        self,
+        query: str,
+        chunks: list[ChunkOut],
+        profile: Any,
+    ) -> tuple[list[ChunkOut], list[dict[str, Any]]]:
+        if not getattr(profile, "llm_base_url", None):
+            return chunks, [{"provider": "llm", "status": "skipped", "reason": "missing_llm_base_url"}]
+        if not chunks:
+            return chunks, [{"provider": "llm", "status": "skipped", "reason": "no_chunks"}]
+
+        payload = _payload(query, chunks, profile)
+        headers = {"Content-Type": "application/json"}
+        if getattr(profile, "llm_api_key", None):
+            headers["Authorization"] = f"Bearer {profile.llm_api_key}"
+
+        try:
+            async with httpx.AsyncClient(timeout=(profile.llm_timeout_ms or 10000) / 1000) as client:
+                response = await client.post(_chat_url(profile.llm_base_url), headers=headers, json=payload)
+                response.raise_for_status()
+                body = response.json()
+        except Exception as exc:
+            return chunks, [{"provider": "llm", "status": "failed", "error_type": exc.__class__.__name__, "detail": str(exc)}]
+
+        content = _content(body)
+        rankings = _rankings(content)
+        if not rankings:
+            return chunks, [{"provider": "llm", "status": "invalid_json"}]
+
+        by_index = {item["index"]: item for item in rankings}
+        indexed = {index: chunk for index, chunk in enumerate(chunks)}
+        ranked_indices = [item["index"] for item in sorted(rankings, key=lambda item: item["score"], reverse=True)]
+        reranked = [indexed[index] for index in ranked_indices if index in indexed]
+        reranked.extend(chunk for index, chunk in indexed.items() if index not in by_index)
+        traces = [
+            {
+                "provider": "llm",
+                "model": getattr(profile, "reranker_model", None) or getattr(profile, "llm_model", None),
+                "rank": rank,
+                "original_rank": index + 1,
+                "chunk_id": indexed[index].id,
+                "score": by_index[index]["score"],
+                "reason": by_index[index].get("reason", ""),
+            }
+            for rank, index in enumerate(ranked_indices, start=1)
+            if index in indexed
+        ]
+        return reranked, traces
+
+
+def _payload(query: str, chunks: list[ChunkOut], profile: Any) -> dict[str, Any]:
+    evidence = "\n".join(
+        f"[{index}] {chunk.text[:1200]}"
+        for index, chunk in enumerate(chunks)
+    )
+    return {
+        "model": getattr(profile, "reranker_model", None) or profile.llm_model,
+        "temperature": 0,
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "Rank evidence for the user query. Return only JSON array items with "
+                    "index, score, and reason. Use zero-based indexes from the provided evidence."
+                ),
+            },
+            {"role": "user", "content": f"Query: {query}\n\nEvidence:\n{evidence}"},
+        ],
+    }
+
+
+def _chat_url(base_url: str) -> str:
+    base = base_url.rstrip("/")
+    return base if base.endswith("/chat/completions") else f"{base}/chat/completions"
+
+
+def _content(body: Any) -> str:
+    if not isinstance(body, dict):
+        return ""
+    choices = body.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return ""
+    message = choices[0].get("message") if isinstance(choices[0], dict) else None
+    if isinstance(message, dict) and isinstance(message.get("content"), str):
+        return message["content"]
+    return ""
+
+
+def _rankings(content: str) -> list[dict[str, Any]]:
+    try:
+        data = json.loads(content)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(data, list):
+        return []
+    rankings = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        index = item.get("index")
+        score = item.get("score")
+        if isinstance(index, int) and isinstance(score, (int, float)):
+            rankings.append({"index": index, "score": float(score), "reason": str(item.get("reason") or "")})
+    return rankings
+```
+
+- [ ] **Step 7: Wire reranker service fallback**
+
+Modify `backend/src/ragstudio/services/reranker_service.py` imports:
+
+```python
+from ragstudio.services.llm_reranker_service import LLMRerankerService
+```
+
+Modify `RerankerService.__init__`:
+
+```python
+    def __init__(
+        self,
+        allowed_hosts: list[str] | None = None,
+        llm_reranker: LLMRerankerService | None = None,
+    ):
+        self.allowed_hosts = {host.lower() for host in (allowed_hosts or [])}
+        self.llm_reranker = llm_reranker or LLMRerankerService()
+```
+
+Add this at the top of `rerank()` after `skipped_trace` handling:
+
+```python
+        if profile.reranker_provider == "llm":
+            return await self.llm_reranker.rerank(query, chunks, profile)
+```
+
+Replace each dedicated reranker failure return with `_fallback_or_return(...)`:
+
+```python
+            return await self._fallback_or_return(query, chunks, profile, self._failure_trace(profile, "blocked_endpoint"))
+```
+
+Add helper:
+
+```python
+    async def _fallback_or_return(
+        self,
+        query: str,
+        chunks: list[ChunkOut],
+        profile: Any,
+        primary_trace: dict[str, Any],
+    ) -> tuple[list[ChunkOut], list[dict[str, Any]]]:
+        if getattr(profile, "reranker_fallback_provider", "disabled") != "llm":
+            return chunks, [primary_trace]
+        reranked, fallback_traces = await self.llm_reranker.rerank(query, chunks, profile)
+        return reranked, [{**primary_trace, "fallback_provider": "llm"}, *fallback_traces]
+```
+
+Dedicated BGE behavior is now:
+
+```text
+reranker_provider = generic_http
+reranker_model = BAAI/bge-reranker-v2-m3
+reranker_base_url = http://127.0.0.1:8002/v1/rerank
+reranker_fallback_provider = llm
+```
+
+LLM-only behavior is:
+
+```text
+reranker_provider = llm
+reranker_model = blank to reuse llm_model
+reranker_base_url = blank because llm_base_url is reused
+reranker_fallback_provider = disabled
+```
+
+Deterministic-only behavior is:
+
+```text
+reranker_provider = disabled
+reranker_fallback_provider = disabled
+enable_rerank = false
+```
+
+- [ ] **Step 8: Add Settings page controls**
+
+Modify `frontend/src/features/settings/settings-page.tsx`.
+
+Add default form field:
+
+```ts
+  reranker_fallback_provider: "disabled",
+```
+
+Add provider option:
+
+```tsx
+                { value: "llm", label: "Existing LLM" },
+```
+
+Add this `SelectField` after `Reranker provider`:
+
+```tsx
+            <SelectField
+              label="Reranker fallback"
+              name="reranker_fallback_provider"
+              value={formValues?.reranker_fallback_provider ?? "disabled"}
+              disabled={busy}
+              onChange={(value) =>
+                updateField(
+                  "reranker_fallback_provider",
+                  value as SettingsProfileIn["reranker_fallback_provider"],
+                )
+              }
+              options={[
+                { value: "disabled", label: "Disabled" },
+                { value: "llm", label: "Existing LLM" },
+              ]}
+            />
+```
+
+Add it to `preparePayload`:
+
+```ts
+      reranker_fallback_provider: formValues.reranker_fallback_provider ?? "disabled",
+```
+
+Add it to `settingsToFormValues`:
+
+```ts
+    reranker_fallback_provider: settings.reranker_fallback_provider ?? "disabled",
+```
+
+- [ ] **Step 9: Run reranker and settings tests**
+
+Run:
+
+```bash
+PATH=$PWD/.venv/bin:$PATH PYTHONPATH=backend/src python -m pytest backend/tests/test_llm_reranker_service.py backend/tests/test_query_runs.py backend/tests/test_settings.py -q
+```
+
+Expected: PASS.
+
+Run:
+
+```bash
+npm --prefix frontend test -- settings-page
+```
+
+Expected: PASS.
+
+- [ ] **Step 10: Commit**
+
+```bash
+git add \
+  backend/src/ragstudio/schemas/runtime.py \
+  backend/src/ragstudio/schemas/settings.py \
+  backend/src/ragstudio/db/models.py \
+  backend/src/ragstudio/db/engine.py \
+  backend/src/ragstudio/services/settings_service.py \
+  backend/src/ragstudio/services/runtime_profile_service.py \
+  backend/src/ragstudio/services/reranker_service.py \
+  backend/src/ragstudio/services/llm_reranker_service.py \
+  backend/tests/test_settings.py \
+  backend/tests/test_query_runs.py \
+  backend/tests/test_llm_reranker_service.py \
+  frontend/src/features/settings/settings-page.tsx \
+  frontend/tests/settings-page.test.tsx
+git commit -m "feat: add llm reranker fallback settings"
+```
+
+---
+
+### Task 5: Neo4j Graph Expansion Service
 
 **Files:**
 - Create: `backend/src/ragstudio/services/graph_expansion_service.py`
@@ -1074,7 +1644,7 @@ git commit -m "feat: expand retrieval evidence through graph"
 
 ---
 
-### Task 5: Retrieval Orchestrator Service
+### Task 6: Retrieval Orchestrator Service
 
 **Files:**
 - Create: `backend/src/ragstudio/services/retrieval_orchestrator.py`
@@ -1437,7 +2007,7 @@ git commit -m "feat: orchestrate fused retrieval evidence"
 
 ---
 
-### Task 6: QueryService Default Runtime Integration
+### Task 7: QueryService Default Runtime Integration
 
 **Files:**
 - Modify: `backend/src/ragstudio/services/query_service.py`
@@ -1613,7 +2183,7 @@ git commit -m "feat: use retrieval orchestrator for runtime queries"
 
 ---
 
-### Task 7: Metadata Search Quality Boosts
+### Task 8: Metadata Search Quality Boosts
 
 **Files:**
 - Modify: `backend/src/ragstudio/services/hybrid_chunk_search.py`
@@ -1746,7 +2316,7 @@ git commit -m "feat: boost answer-bearing metadata chunks"
 
 ---
 
-### Task 8: End-to-End Runtime Quality Test
+### Task 9: End-to-End Runtime Quality Test
 
 **Files:**
 - Modify: `backend/tests/test_runtime_query_service.py`
@@ -1864,7 +2434,7 @@ git commit -m "test: prove orchestrated metadata quality path"
 
 ---
 
-### Task 9: Live Smoke and Final Validation
+### Task 10: Live Smoke and Final Validation
 
 **Files:**
 - No code changes expected.
@@ -1950,16 +2520,22 @@ Run:
 
 ```bash
 PATH=$PWD/.venv/bin:$PATH python -m ruff check \
+  backend/src/ragstudio/schemas/runtime.py \
+  backend/src/ragstudio/schemas/settings.py \
   backend/src/ragstudio/services/retrieval_evidence.py \
   backend/src/ragstudio/services/retrieval_orchestrator.py \
   backend/src/ragstudio/services/graph_expansion_service.py \
+  backend/src/ragstudio/services/llm_reranker_service.py \
   backend/src/ragstudio/services/runtime_answer_service.py \
+  backend/src/ragstudio/services/reranker_service.py \
   backend/src/ragstudio/services/query_service.py \
   backend/src/ragstudio/services/hybrid_chunk_search.py \
   backend/tests/test_retrieval_orchestrator.py \
   backend/tests/test_graph_expansion_service.py \
+  backend/tests/test_llm_reranker_service.py \
   backend/tests/test_runtime_answer_service.py \
-  backend/tests/test_runtime_query_service.py
+  backend/tests/test_runtime_query_service.py \
+  backend/tests/test_settings.py
 ```
 
 Expected: `All checks passed!`
@@ -1970,10 +2546,20 @@ Run:
 PATH=$PWD/.venv/bin:$PATH PYTHONPATH=backend/src python -m pytest \
   backend/tests/test_retrieval_orchestrator.py \
   backend/tests/test_graph_expansion_service.py \
+  backend/tests/test_llm_reranker_service.py \
   backend/tests/test_runtime_answer_service.py \
   backend/tests/test_runtime_query_service.py \
+  backend/tests/test_settings.py \
   backend/tests/test_chunks.py::test_search_chunks_boosts_collection_count_title \
   -q
+```
+
+Expected: PASS.
+
+Run:
+
+```bash
+npm --prefix frontend test -- settings-page
 ```
 
 Expected: PASS.
@@ -1992,7 +2578,7 @@ Expected: only unrelated pre-existing files may remain, such as `?? REVIEW.md`.
 
 ## Self-Review Notes
 
-- Spec coverage: default-on full planner, native retrieval, metadata retrieval, Neo4j graph expansion, optional reranker, fused evidence, runtime LLM answerer, and full traces are each covered by tasks.
+- Spec coverage: default-on full planner, native retrieval, metadata retrieval, Neo4j graph expansion, dedicated BGE-compatible reranker, existing LLM reranker fallback, deterministic no-reranker mode, fused evidence, runtime LLM answerer, and full traces are each covered by tasks.
 - Placeholder scan: no task uses undefined deferred work as a requirement. Graph expansion is implemented in `GraphExpansionService` and wired into the orchestrator before reranking.
-- Type consistency: `EvidenceCandidate`, `RetrievalPlan`, `OrchestratedAnswer`, `GraphExpansionService.expand()`, `RetrievalOrchestrator.query()`, and `RuntimeAnswerService.answer()` signatures are introduced before use.
-- Scope check: this is one coherent backend feature. No UI redesign, settings redesign, or new reranker endpoint setup is included.
+- Type consistency: `EvidenceCandidate`, `RetrievalPlan`, `OrchestratedAnswer`, `GraphExpansionService.expand()`, `LLMRerankerService.rerank()`, `RetrievalOrchestrator.query()`, and `RuntimeAnswerService.answer()` signatures are introduced before use.
+- Scope check: this is one coherent backend feature. Settings changes are limited to the existing `Vision and reranker` section, and no new dedicated reranker endpoint setup is included.
