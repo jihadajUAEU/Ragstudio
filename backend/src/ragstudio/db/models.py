@@ -155,6 +155,8 @@ class GraphProjectionRecord(Base, TimestampMixin):
     projection_run_id: Mapped[str | None] = mapped_column(String, nullable=True)
     graph_workspace_label: Mapped[str | None] = mapped_column(String, nullable=True)
     graph_storage_uri: Mapped[str | None] = mapped_column(String, nullable=True)
+    graph_storage_username: Mapped[str | None] = mapped_column(String, nullable=True)
+    graph_storage_password: Mapped[str | None] = mapped_column(String, nullable=True)
     node_count: Mapped[int] = mapped_column(Integer, default=0)
     edge_count: Mapped[int] = mapped_column(Integer, default=0)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)

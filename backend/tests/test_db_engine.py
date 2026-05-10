@@ -41,6 +41,9 @@ async def test_init_db_backfills_runtime_columns_for_existing_postgres_tables(
                     llm_model VARCHAR NOT NULL,
                     embedding_model VARCHAR NOT NULL,
                     storage_backend VARCHAR NOT NULL,
+                    neo4j_uri VARCHAR,
+                    neo4j_username VARCHAR,
+                    neo4j_password VARCHAR,
                     created_at TIMESTAMP,
                     updated_at TIMESTAMP
                 )
@@ -51,9 +54,19 @@ async def test_init_db_backfills_runtime_columns_for_existing_postgres_tables(
             text(
                 """
                 INSERT INTO settings_profiles (
-                    id, provider, llm_model, embedding_model, storage_backend
+                    id, provider, llm_model, embedding_model, storage_backend,
+                    neo4j_uri, neo4j_username, neo4j_password
                 )
-                VALUES ('default', 'legacy', 'legacy-llm', 'legacy-embedding', 'local')
+                VALUES (
+                    'default',
+                    'legacy',
+                    'legacy-llm',
+                    'legacy-embedding',
+                    'local',
+                    'bolt://legacy-neo4j.test:7687',
+                    'legacy-user',
+                    'legacy-password'
+                )
                 """
             )
         )
@@ -108,6 +121,44 @@ async def test_init_db_backfills_runtime_columns_for_existing_postgres_tables(
                 """
             )
         )
+        await connection.execute(
+            text(
+                """
+                CREATE TABLE graph_projection_records (
+                    id VARCHAR PRIMARY KEY,
+                    document_id VARCHAR NOT NULL,
+                    runtime_profile_id VARCHAR NOT NULL,
+                    status VARCHAR DEFAULT 'succeeded' NOT NULL,
+                    projection_run_id VARCHAR,
+                    node_count INTEGER DEFAULT 1 NOT NULL,
+                    edge_count INTEGER DEFAULT 0 NOT NULL,
+                    error TEXT,
+                    created_at TIMESTAMP,
+                    updated_at TIMESTAMP
+                )
+                """
+            )
+        )
+        await connection.execute(
+            text(
+                """
+                INSERT INTO graph_projection_records (
+                    id, document_id, runtime_profile_id, status, node_count, edge_count,
+                    created_at, updated_at
+                )
+                VALUES (
+                    'projection-1',
+                    'doc-1',
+                    'default',
+                    'succeeded',
+                    1,
+                    0,
+                    NOW(),
+                    NOW()
+                )
+                """
+            )
+        )
 
     await init_db(engine)
 
@@ -115,7 +166,13 @@ async def test_init_db_backfills_runtime_columns_for_existing_postgres_tables(
         columns = await connection.run_sync(
             lambda sync_connection: {
                 table: {column["name"] for column in inspect(sync_connection).get_columns(table)}
-                for table in ("settings_profiles", "chunks", "runs", "index_records")
+                for table in (
+                    "settings_profiles",
+                    "chunks",
+                    "runs",
+                    "index_records",
+                    "graph_projection_records",
+                )
             }
         )
         settings_row = (
@@ -148,12 +205,31 @@ async def test_init_db_backfills_runtime_columns_for_existing_postgres_tables(
             .mappings()
             .one()
         )
+        projection_row = (
+            (
+                await connection.execute(
+                    text(
+                        """
+                    SELECT graph_workspace_label, graph_storage_uri,
+                           graph_storage_username, graph_storage_password
+                    FROM graph_projection_records WHERE id = 'projection-1'
+                    """
+                    )
+                )
+            )
+            .mappings()
+            .one()
+        )
 
     assert "runtime_mode" in columns["settings_profiles"]
     assert "neo4j_uri" in columns["settings_profiles"]
     assert "content_type" in columns["chunks"]
     assert "runtime_profile_id" in columns["runs"]
     assert "document_id" in columns["index_records"]
+    assert "graph_workspace_label" in columns["graph_projection_records"]
+    assert "graph_storage_uri" in columns["graph_projection_records"]
+    assert "graph_storage_username" in columns["graph_projection_records"]
+    assert "graph_storage_password" in columns["graph_projection_records"]
     assert settings_row["runtime_mode"] == "fallback"
     assert settings_row["storage_backend"] == "fallback_local"
     assert settings_row["pgvector_schema"] == "public"
@@ -163,6 +239,10 @@ async def test_init_db_backfills_runtime_columns_for_existing_postgres_tables(
     assert chunk_row["content_type"] == "text"
     assert run_row["document_ids"] == []
     assert run_row["query_config"] == {}
+    assert projection_row["graph_workspace_label"] == "ragstudio_default"
+    assert projection_row["graph_storage_uri"] == "bolt://legacy-neo4j.test:7687"
+    assert projection_row["graph_storage_username"] == "legacy-user"
+    assert projection_row["graph_storage_password"] == "legacy-password"
 
     settings_obj = AppSettings(
         data_dir=tmp_path,

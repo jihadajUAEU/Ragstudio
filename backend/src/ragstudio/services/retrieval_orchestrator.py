@@ -527,7 +527,8 @@ class RetrievalOrchestrator:
                 "stage": "graph_hydration",
                 "status": "ok",
                 "input_candidates": len(candidates),
-                "hydrated_candidates": len(chunks_by_id),
+                "hydrated_candidates": len(hydrated),
+                "unique_hydrated_chunks": len(chunks_by_id),
                 "missing_candidates": missing_count,
                 "dropped_preview_candidates": dropped_preview_count,
             }

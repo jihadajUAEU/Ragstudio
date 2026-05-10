@@ -77,6 +77,8 @@ class GraphProjectionRunner:
                 projection_run_id=new_id(),
                 graph_workspace_label=workspace_label(profile),
                 graph_storage_uri=profile.neo4j_uri,
+                graph_storage_username=profile.neo4j_username,
+                graph_storage_password=profile.neo4j_password,
             )
             self.session.add(record)
             await self.session.flush()
@@ -222,6 +224,10 @@ class GraphProjectionRunner:
             record.graph_workspace_label = workspace_label(profile)
         if not record.graph_storage_uri:
             record.graph_storage_uri = getattr(profile, "neo4j_uri", None)
+        if not record.graph_storage_username:
+            record.graph_storage_username = getattr(profile, "neo4j_username", None)
+        if not record.graph_storage_password:
+            record.graph_storage_password = getattr(profile, "neo4j_password", None)
 
     def _profile_for_record(
         self,
@@ -232,8 +238,8 @@ class GraphProjectionRunner:
             id=getattr(profile, "id", record.runtime_profile_id),
             graph_workspace_label=record.graph_workspace_label,
             neo4j_uri=record.graph_storage_uri,
-            neo4j_username=getattr(profile, "neo4j_username", None),
-            neo4j_password=getattr(profile, "neo4j_password", None),
+            neo4j_username=record.graph_storage_username,
+            neo4j_password=record.graph_storage_password,
         )
 
     async def _latest_record(
@@ -261,9 +267,13 @@ def _needs_graph_cleanup(record: GraphProjectionRecord) -> bool:
     return True
 
 
-def _target_key(record: GraphProjectionRecord) -> tuple[str, str | None, str | None]:
+def _target_key(
+    record: GraphProjectionRecord,
+) -> tuple[str, str | None, str | None, str | None, str | None]:
     return (
         record.runtime_profile_id,
         record.graph_workspace_label,
         record.graph_storage_uri,
+        record.graph_storage_username,
+        record.graph_storage_password,
     )

@@ -147,31 +147,40 @@ class FakeGraphMaterializationService:
         self.delete_calls = []
 
     async def replace_document_graph(self, *, document_id, profile, chunks):
-        self.calls.append(
-            {
-                "document_id": document_id,
-                "profile_id": profile.id,
-                "neo4j_uri": getattr(profile, "neo4j_uri", None),
-                "graph_workspace_label": getattr(profile, "graph_workspace_label", None),
-                "chunk_count": len(chunks),
-            }
-        )
+        call = {
+            "document_id": document_id,
+            "profile_id": profile.id,
+            "neo4j_uri": getattr(profile, "neo4j_uri", None),
+            "graph_workspace_label": getattr(profile, "graph_workspace_label", None),
+            "chunk_count": len(chunks),
+        }
+        _add_auth_to_call(call, profile)
+        self.calls.append(call)
         if self.error is not None:
             raise self.error
         return self.result
 
     async def delete_document_graph(self, *, document_id, profile):
-        self.delete_calls.append(
-            {
-                "document_id": document_id,
-                "profile_id": profile.id,
-                "neo4j_uri": getattr(profile, "neo4j_uri", None),
-                "graph_workspace_label": getattr(profile, "graph_workspace_label", None),
-            }
-        )
+        call = {
+            "document_id": document_id,
+            "profile_id": profile.id,
+            "neo4j_uri": getattr(profile, "neo4j_uri", None),
+            "graph_workspace_label": getattr(profile, "graph_workspace_label", None),
+        }
+        _add_auth_to_call(call, profile)
+        self.delete_calls.append(call)
         if self.error is not None:
             raise self.error
         return self.result
+
+
+def _add_auth_to_call(call: dict, profile) -> None:
+    username = getattr(profile, "neo4j_username", None)
+    password = getattr(profile, "neo4j_password", None)
+    if username is not None:
+        call["neo4j_username"] = username
+    if password is not None:
+        call["neo4j_password"] = password
 
 
 @pytest.mark.asyncio
@@ -734,6 +743,8 @@ async def test_graph_projection_runner_materializes_pending_record(client):
             "document_id": document.id,
             "profile_id": "default",
             "neo4j_uri": "bolt://neo4j.test:7687",
+            "neo4j_username": "neo4j",
+            "neo4j_password": "ragstudio-password",
             "graph_workspace_label": "ragstudio_default",
             "chunk_count": 1,
         }
@@ -822,6 +833,8 @@ async def test_graph_projection_runner_uses_record_runtime_profile(client):
             "document_id": document.id,
             "profile_id": "archived",
             "neo4j_uri": "bolt://archived-neo4j.test:7687",
+            "neo4j_username": "neo4j",
+            "neo4j_password": "ragstudio-password",
             "graph_workspace_label": "ragstudio_archived",
             "chunk_count": 1,
         }
@@ -1020,6 +1033,8 @@ async def test_graph_projection_runner_rematerializes_from_mirrored_chunks(clien
             "document_id": document.id,
             "profile_id": "default",
             "neo4j_uri": "bolt://neo4j.test:7687",
+            "neo4j_username": "neo4j",
+            "neo4j_password": "ragstudio-password",
             "graph_workspace_label": "ragstudio_default",
             "chunk_count": 1,
         }
@@ -1083,6 +1098,8 @@ async def test_graph_projection_runner_deletes_projection_records_with_graph(cli
             "document_id": document.id,
             "profile_id": "default",
             "neo4j_uri": "bolt://neo4j.test:7687",
+            "neo4j_username": "neo4j",
+            "neo4j_password": "ragstudio-password",
             "graph_workspace_label": "ragstudio_default",
         }
     ]
@@ -1106,6 +1123,8 @@ async def test_graph_projection_runner_deletes_using_recorded_target_after_profi
                 storage_backend="postgres_pgvector_neo4j",
                 runtime_mode="runtime",
                 neo4j_uri="bolt://new-neo4j.test:7687",
+                neo4j_username="new-user",
+                neo4j_password="new-password",
             )
         )
         document = Document(
@@ -1124,6 +1143,8 @@ async def test_graph_projection_runner_deletes_using_recorded_target_after_profi
                 status="succeeded",
                 graph_workspace_label="ragstudio_default",
                 graph_storage_uri="bolt://old-neo4j.test:7687",
+                graph_storage_username="old-user",
+                graph_storage_password="old-password",
                 node_count=2,
                 edge_count=1,
             )
@@ -1142,6 +1163,8 @@ async def test_graph_projection_runner_deletes_using_recorded_target_after_profi
             "document_id": document.id,
             "profile_id": "default",
             "neo4j_uri": "bolt://old-neo4j.test:7687",
+            "neo4j_username": "old-user",
+            "neo4j_password": "old-password",
             "graph_workspace_label": "ragstudio_default",
         }
     ]

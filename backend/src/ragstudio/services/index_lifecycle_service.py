@@ -166,6 +166,8 @@ class IndexLifecycleService:
             status="pending",
             graph_workspace_label=workspace_label(profile),
             graph_storage_uri=profile.neo4j_uri,
+            graph_storage_username=profile.neo4j_username,
+            graph_storage_password=profile.neo4j_password,
             node_count=0,
             edge_count=0,
         )

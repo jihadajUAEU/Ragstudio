@@ -140,8 +140,12 @@ def _ensure_runtime_columns(connection) -> None:
             {
                 "graph_workspace_label": "VARCHAR",
                 "graph_storage_uri": "VARCHAR",
+                "graph_storage_username": "VARCHAR",
+                "graph_storage_password": "VARCHAR",
             },
         )
+        if "settings_profiles" in table_names:
+            _backfill_graph_projection_targets(connection)
 
 
 def _ensure_columns(connection, inspector, table_name: str, additions: dict[str, str]) -> None:
@@ -149,6 +153,72 @@ def _ensure_columns(connection, inspector, table_name: str, additions: dict[str,
     for column, definition in additions.items():
         if column not in existing:
             connection.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {column} {definition}"))
+
+
+def _backfill_graph_projection_targets(connection) -> None:
+    rows = (
+        connection.execute(
+            text(
+                """
+                SELECT g.id,
+                       g.runtime_profile_id,
+                       g.graph_workspace_label,
+                       g.graph_storage_uri,
+                       g.graph_storage_username,
+                       g.graph_storage_password,
+                       s.neo4j_uri,
+                       s.neo4j_username,
+                       s.neo4j_password
+                FROM graph_projection_records g
+                LEFT JOIN settings_profiles s ON s.id = g.runtime_profile_id
+                WHERE g.graph_workspace_label IS NULL
+                   OR g.graph_storage_uri IS NULL
+                   OR g.graph_storage_username IS NULL
+                   OR g.graph_storage_password IS NULL
+                """
+            )
+        )
+        .mappings()
+        .all()
+    )
+    for row in rows:
+        connection.execute(
+            text(
+                """
+                UPDATE graph_projection_records
+                SET graph_workspace_label = COALESCE(
+                        graph_workspace_label,
+                        :graph_workspace_label
+                    ),
+                    graph_storage_uri = COALESCE(graph_storage_uri, :graph_storage_uri),
+                    graph_storage_username = COALESCE(
+                        graph_storage_username,
+                        :graph_storage_username
+                    ),
+                    graph_storage_password = COALESCE(
+                        graph_storage_password,
+                        :graph_storage_password
+                    )
+                WHERE id = :id
+                """
+            ),
+            {
+                "id": row["id"],
+                "graph_workspace_label": _workspace_label(row["runtime_profile_id"]),
+                "graph_storage_uri": row["neo4j_uri"],
+                "graph_storage_username": row["neo4j_username"],
+                "graph_storage_password": row["neo4j_password"],
+            },
+        )
+
+
+def _workspace_label(profile_id: str | None) -> str:
+    raw = f"ragstudio_{profile_id or 'default'}"
+    safe = "".join(
+        character if character.isalnum() or character in {"_", "-"} else "_"
+        for character in raw
+    ).strip("_")
+    return (safe or "ragstudio_default").replace("`", "``")
 
 
 def _normalize_settings_profile_values(connection) -> None:
