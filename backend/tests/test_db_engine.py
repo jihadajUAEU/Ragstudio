@@ -242,7 +242,7 @@ async def test_init_db_backfills_runtime_columns_for_existing_postgres_tables(
     assert projection_row["graph_workspace_label"] == "ragstudio_default"
     assert projection_row["graph_storage_uri"] == "bolt://legacy-neo4j.test:7687"
     assert projection_row["graph_storage_username"] == "legacy-user"
-    assert projection_row["graph_storage_password"] == "legacy-password"
+    assert projection_row["graph_storage_password"] is None
 
     settings_obj = AppSettings(
         data_dir=tmp_path,
@@ -293,5 +293,151 @@ async def test_init_db_backfills_runtime_columns_for_existing_postgres_tables(
     assert query.runs[0].status == "failed"
     assert query.runs[0].error_type == "runtime_mode_inactive"
     assert index_records == []
+
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_init_db_clears_graph_projection_password_snapshots(database_url):
+    engine = make_engine(database_url)
+    async with engine.begin() as connection:
+        await connection.execute(
+            text(
+                """
+                CREATE TABLE settings_profiles (
+                    id VARCHAR PRIMARY KEY,
+                    provider VARCHAR NOT NULL,
+                    llm_model VARCHAR NOT NULL,
+                    embedding_model VARCHAR NOT NULL,
+                    storage_backend VARCHAR NOT NULL,
+                    neo4j_uri VARCHAR,
+                    neo4j_username VARCHAR,
+                    neo4j_password VARCHAR,
+                    created_at TIMESTAMP,
+                    updated_at TIMESTAMP
+                )
+                """
+            )
+        )
+        await connection.execute(
+            text(
+                """
+                INSERT INTO settings_profiles (
+                    id, provider, llm_model, embedding_model, storage_backend,
+                    neo4j_uri, neo4j_username, neo4j_password
+                )
+                VALUES (
+                    'default',
+                    'legacy',
+                    'legacy-llm',
+                    'legacy-embedding',
+                    'local',
+                    'bolt://profile-neo4j.test:7687',
+                    'profile-user',
+                    'profile-password'
+                )
+                """
+            )
+        )
+        await connection.execute(
+            text(
+                """
+                CREATE TABLE graph_projection_records (
+                    id VARCHAR PRIMARY KEY,
+                    document_id VARCHAR NOT NULL,
+                    runtime_profile_id VARCHAR NOT NULL,
+                    status VARCHAR DEFAULT 'succeeded' NOT NULL,
+                    projection_run_id VARCHAR,
+                    graph_workspace_label VARCHAR,
+                    graph_storage_uri VARCHAR,
+                    graph_storage_username VARCHAR,
+                    graph_storage_password VARCHAR,
+                    node_count INTEGER DEFAULT 1 NOT NULL,
+                    edge_count INTEGER DEFAULT 0 NOT NULL,
+                    error TEXT,
+                    created_at TIMESTAMP,
+                    updated_at TIMESTAMP
+                )
+                """
+            )
+        )
+        await connection.execute(
+            text(
+                """
+                INSERT INTO graph_projection_records (
+                    id, document_id, runtime_profile_id, status,
+                    graph_workspace_label, graph_storage_uri, graph_storage_username,
+                    graph_storage_password, node_count, edge_count,
+                    created_at, updated_at
+                )
+                VALUES (
+                    'projection-legacy-password',
+                    'doc-1',
+                    'default',
+                    'succeeded',
+                    'ragstudio_default',
+                    'bolt://stored-neo4j.test:7687',
+                    'stored-user',
+                    'legacy-password',
+                    1,
+                    0,
+                    NOW(),
+                    NOW()
+                ),
+                (
+                    'projection-passwordless',
+                    'doc-2',
+                    'default',
+                    'succeeded',
+                    NULL,
+                    NULL,
+                    NULL,
+                    NULL,
+                    1,
+                    0,
+                    NOW(),
+                    NOW()
+                )
+                """
+            )
+        )
+
+    await init_db(engine)
+
+    async with engine.connect() as connection:
+        rows = (
+            (
+                await connection.execute(
+                    text(
+                        """
+                        SELECT id, graph_workspace_label, graph_storage_uri,
+                               graph_storage_username, graph_storage_password
+                        FROM graph_projection_records
+                        ORDER BY id
+                        """
+                    )
+                )
+            )
+            .mappings()
+            .all()
+        )
+        rows = [dict(row) for row in rows]
+
+    assert rows == [
+        {
+            "id": "projection-legacy-password",
+            "graph_workspace_label": "ragstudio_default",
+            "graph_storage_uri": "bolt://stored-neo4j.test:7687",
+            "graph_storage_username": "stored-user",
+            "graph_storage_password": None,
+        },
+        {
+            "id": "projection-passwordless",
+            "graph_workspace_label": "ragstudio_default",
+            "graph_storage_uri": "bolt://profile-neo4j.test:7687",
+            "graph_storage_username": "profile-user",
+            "graph_storage_password": None,
+        },
+    ]
 
     await engine.dispose()

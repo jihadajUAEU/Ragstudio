@@ -144,13 +144,14 @@ class GraphProjectionRunner:
             ]
             targets = {_target_key(record): record for record in profile_records}
             for target_record in targets.values():
-                if _has_stored_graph_target(target_record):
-                    profile = SimpleNamespace(id=runtime_profile_id)
-                else:
-                    try:
-                        profile = await profile_service.get_profile(runtime_profile_id)
-                    except RuntimeProfileNotConfiguredError as exc:
+                try:
+                    profile = await profile_service.get_profile(runtime_profile_id)
+                except RuntimeProfileNotConfiguredError as exc:
+                    if _has_stored_graph_target(target_record):
+                        profile = SimpleNamespace(id=runtime_profile_id)
+                    else:
                         raise GraphProjectionCleanupError(str(exc)) from exc
+                if not _has_stored_graph_target(target_record):
                     self._ensure_projection_target(target_record, profile)
                 result = await self.materialization_service.delete_document_graph(
                     document_id=document_id,

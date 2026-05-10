@@ -165,16 +165,14 @@ def _backfill_graph_projection_targets(connection) -> None:
                        g.graph_workspace_label,
                        g.graph_storage_uri,
                        g.graph_storage_username,
-                       g.graph_storage_password,
                        s.neo4j_uri,
-                       s.neo4j_username,
-                       s.neo4j_password
+                       s.neo4j_username
                 FROM graph_projection_records g
                 LEFT JOIN settings_profiles s ON s.id = g.runtime_profile_id
                 WHERE g.graph_workspace_label IS NULL
                    OR g.graph_storage_uri IS NULL
                    OR g.graph_storage_username IS NULL
-                   OR g.graph_storage_password IS NULL
+                   OR g.graph_storage_password IS NOT NULL
                 """
             )
         )
@@ -195,10 +193,7 @@ def _backfill_graph_projection_targets(connection) -> None:
                         graph_storage_username,
                         :graph_storage_username
                     ),
-                    graph_storage_password = COALESCE(
-                        graph_storage_password,
-                        :graph_storage_password
-                    )
+                    graph_storage_password = NULL
                 WHERE id = :id
                 """
             ),
@@ -207,7 +202,6 @@ def _backfill_graph_projection_targets(connection) -> None:
                 "graph_workspace_label": _workspace_label(row["runtime_profile_id"]),
                 "graph_storage_uri": row["neo4j_uri"],
                 "graph_storage_username": row["neo4j_username"],
-                "graph_storage_password": row["neo4j_password"],
             },
         )
 

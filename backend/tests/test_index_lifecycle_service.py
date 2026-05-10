@@ -1225,6 +1225,79 @@ async def test_graph_projection_runner_deletes_projection_records_with_graph(cli
 
 
 @pytest.mark.asyncio
+async def test_graph_projection_runner_delete_uses_profile_password_for_passwordless_target(client):
+    app = client._transport.app
+
+    async with app.state.session_factory() as session:
+        session.add(
+            SettingsProfile(
+                id="default",
+                provider="openai-compatible",
+                llm_model="gpt-4o",
+                llm_base_url="http://llm.test",
+                embedding_model="text-embedding-3-large",
+                embedding_base_url="http://embedding.test",
+                storage_backend="postgres_pgvector_neo4j",
+                runtime_mode="runtime",
+                neo4j_uri="bolt://profile-neo4j.test:7687",
+                neo4j_username="profile-user",
+                neo4j_password="profile-password",
+            )
+        )
+        document = Document(
+            filename="graph-delete-passwordless-target.txt",
+            content_type="text/plain",
+            sha256="graph-delete-passwordless-target",
+            artifact_path=str(app.state.settings.data_dir / "graph-delete-passwordless-target.txt"),
+            status=StageStatus.SUCCEEDED.value,
+        )
+        session.add(document)
+        await session.flush()
+        projection_record = GraphProjectionRecord(
+            document_id=document.id,
+            runtime_profile_id="default",
+            status="succeeded",
+            graph_workspace_label="ragstudio_default",
+            graph_storage_uri="bolt://stored-neo4j.test:7687",
+            graph_storage_username="stored-user",
+            graph_storage_password=None,
+            node_count=2,
+            edge_count=1,
+        )
+        session.add(projection_record)
+        await session.flush()
+
+        fake = FakeGraphMaterializationService(
+            result=GraphMaterializationResult(
+                status="failed",
+                node_count=0,
+                edge_count=0,
+                reason="stop-before-delete",
+            )
+        )
+        with pytest.raises(GraphProjectionCleanupError, match="stop-before-delete"):
+            await GraphProjectionRunner(
+                session,
+                app.state.settings,
+                materialization_service=fake,
+            ).delete_document_graph(document.id)
+        refreshed_record = await session.get(GraphProjectionRecord, projection_record.id)
+
+    assert fake.delete_calls == [
+        {
+            "document_id": document.id,
+            "profile_id": "default",
+            "neo4j_uri": "bolt://stored-neo4j.test:7687",
+            "neo4j_username": "stored-user",
+            "neo4j_password": "profile-password",
+            "graph_workspace_label": "ragstudio_default",
+        }
+    ]
+    assert refreshed_record is not None
+    assert refreshed_record.graph_storage_password is None
+
+
+@pytest.mark.asyncio
 async def test_graph_projection_runner_deletes_using_recorded_target_after_profile_drift(client):
     app = client._transport.app
 
