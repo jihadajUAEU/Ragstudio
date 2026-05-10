@@ -15,6 +15,7 @@ from ragstudio.db.models import (
 from ragstudio.schemas.common import StageStatus
 from ragstudio.schemas.runtime import RuntimeHealthCheck
 from ragstudio.services.document_service import DocumentService
+from ragstudio.services.graph_materialization_service import GraphMaterializationResult
 from ragstudio.services.graph_projection_runner import GraphProjectionCleanupError
 from ragstudio.services.runtime_types import RuntimeChunk
 from sqlalchemy import select
@@ -1060,6 +1061,95 @@ async def test_delete_document_blocks_when_graph_projection_cleanup_fails(client
             select(GraphProjectionRecord).where(GraphProjectionRecord.document_id == document_id)
         )
     assert projection_record is not None
+
+
+@pytest.mark.asyncio
+async def test_delete_document_does_not_repeat_graph_cleanup_after_artifact_unlink_failure(
+    client,
+    tmp_path,
+    monkeypatch,
+):
+    app = client._transport.app
+    session_factory = app.state.session_factory
+    artifact = tmp_path / "uploads" / "graph-delete-unlink-fails"
+    artifact.parent.mkdir(parents=True, exist_ok=True)
+    artifact.write_text("alpha", encoding="utf-8")
+    async with session_factory() as session:
+        session.add(
+            SettingsProfile(
+                id="default",
+                provider="openai-compatible",
+                llm_model="gpt-4o",
+                embedding_model="text-embedding-3-large",
+                storage_backend="postgres_pgvector_neo4j",
+                runtime_mode="runtime",
+                neo4j_uri="bolt://neo4j.test:7687",
+            )
+        )
+        document = Document(
+            filename="graph-delete-unlink-fails.txt",
+            content_type="text/plain",
+            sha256="graph-delete-unlink-fails",
+            artifact_path=str(artifact),
+            status=StageStatus.SUCCEEDED.value,
+        )
+        session.add(document)
+        await session.flush()
+        session.add(
+            GraphProjectionRecord(
+                document_id=document.id,
+                runtime_profile_id="default",
+                status="succeeded",
+                graph_workspace_label="ragstudio_default",
+                graph_storage_uri="bolt://neo4j.test:7687",
+                node_count=1,
+                edge_count=0,
+            )
+        )
+        await session.commit()
+        document_id = document.id
+
+    graph_cleanup_calls = []
+
+    async def fake_delete_document_graph(self, *, document_id, profile):
+        graph_cleanup_calls.append(document_id)
+        return GraphMaterializationResult(status="succeeded", node_count=1, edge_count=0)
+
+    monkeypatch.setattr(
+        "ragstudio.services.graph_materialization_service.GraphMaterializationService.delete_document_graph",
+        fake_delete_document_graph,
+    )
+
+    original_unlink = Path.unlink
+    calls = {"count": 0}
+
+    def flaky_unlink(self, *args, **kwargs):
+        if self == artifact and calls["count"] == 0:
+            calls["count"] += 1
+            raise OSError("unlink failed once")
+        return original_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", flaky_unlink)
+
+    transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as retry_client:
+        first_response = await retry_client.delete(f"/api/documents/{document_id}")
+
+        assert first_response.status_code == 500
+        async with session_factory() as session:
+            projection_record = await session.scalar(
+                select(GraphProjectionRecord).where(
+                    GraphProjectionRecord.document_id == document_id
+                )
+            )
+        assert projection_record is not None
+        assert projection_record.cleanup_status == "succeeded"
+
+        second_response = await retry_client.delete(f"/api/documents/{document_id}")
+
+    assert second_response.status_code == 204
+    assert not artifact.exists()
+    assert graph_cleanup_calls == [document_id]
 
 
 @pytest.mark.asyncio
