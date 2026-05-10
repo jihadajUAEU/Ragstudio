@@ -419,12 +419,29 @@ def _source_location_properties(value: Any) -> dict[str, Any]:
 
 
 def _neo4j_property(value: Any) -> Any:
-    if value is None or isinstance(value, (str, int, float, bool)):
+    if value is None or _neo4j_scalar_type(value) is not None:
         return value
-    if isinstance(value, list) and all(
-        isinstance(item, (str, int, float, bool)) for item in value
-    ):
+    if isinstance(value, list) and _neo4j_homogeneous_list(value):
         return value
+    return None
+
+
+def _neo4j_homogeneous_list(value: list[Any]) -> bool:
+    if not value:
+        return True
+    item_types = {_neo4j_scalar_type(item) for item in value}
+    return None not in item_types and len(item_types) == 1
+
+
+def _neo4j_scalar_type(value: Any) -> type | None:
+    if isinstance(value, bool):
+        return bool
+    if isinstance(value, str):
+        return str
+    if isinstance(value, int):
+        return int
+    if isinstance(value, float):
+        return float
     return None
 
 
