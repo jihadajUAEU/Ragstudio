@@ -180,7 +180,10 @@ async def test_index_uploaded_document_creates_line_chunks(client):
     )
     document_id = upload_response.json()["id"]
 
-    index_response = await client.post(f"/api/chunks/index/{document_id}")
+    index_response = await client.post(
+        f"/api/chunks/index/{document_id}",
+        json={"parser_mode": "local_fallback", "domain_metadata": {}},
+    )
 
     assert index_response.status_code == 200
     chunks = index_response.json()
@@ -269,7 +272,10 @@ async def test_search_chunks_returns_ranked_matches(client):
         },
     )
     document_id = upload_response.json()["id"]
-    await client.post(f"/api/chunks/index/{document_id}")
+    await client.post(
+        f"/api/chunks/index/{document_id}",
+        json={"parser_mode": "local_fallback", "domain_metadata": {}},
+    )
 
     search_response = await client.post(
         "/api/chunks/search",
@@ -299,7 +305,10 @@ async def test_search_chunks_preserves_source_order_for_ties_and_empty_query(cli
         },
     )
     document_id = upload_response.json()["id"]
-    await client.post(f"/api/chunks/index/{document_id}")
+    await client.post(
+        f"/api/chunks/index/{document_id}",
+        json={"parser_mode": "local_fallback", "domain_metadata": {}},
+    )
 
     tie_response = await client.post(
         "/api/chunks/search",
@@ -866,8 +875,14 @@ async def test_reindex_replaces_existing_chunks(client):
     )
     document_id = upload_response.json()["id"]
 
-    first_index_response = await client.post(f"/api/chunks/index/{document_id}")
-    second_index_response = await client.post(f"/api/chunks/index/{document_id}")
+    first_index_response = await client.post(
+        f"/api/chunks/index/{document_id}",
+        json={"parser_mode": "local_fallback", "domain_metadata": {}},
+    )
+    second_index_response = await client.post(
+        f"/api/chunks/index/{document_id}",
+        json={"parser_mode": "local_fallback", "domain_metadata": {}},
+    )
 
     assert first_index_response.status_code == 200
     assert second_index_response.status_code == 200
@@ -971,32 +986,33 @@ async def test_index_mineru_strict_uses_adapter_chunks(client, monkeypatch):
     )
     document_id = upload_response.json()["id"]
 
-    async def fake_index_document(self, document_id, *, options, on_mineru_status=None):
-        from ragstudio.services.adapter import AdapterChunk
-
-        return [
-            AdapterChunk(
-                text="MinerU text",
-                source_location={"page": 1, "artifact": "pages/page-1.md"},
-                metadata={
-                    "parser_metadata": {
-                        "backend": "mineru",
-                        "parser_mode": "mineru_strict",
-                        "parse_job_id": "job-1",
-                        "content_type": "text",
-                    }
-                },
-            )
-        ]
-
-    monkeypatch.setattr(
-        "ragstudio.services.chunk_service.ChunkService._mineru_adapter_chunks",
-        fake_index_document,
-    )
+    class FakeDocumentParser:
+        async def parse(self, document, options, *, on_mineru_status=None):
+            assert document.id == document_id
+            assert options.parser_mode == "mineru_strict"
+            assert on_mineru_status is None
+            return [
+                AdapterChunk(
+                    text="MinerU text",
+                    source_location={"page": 1, "artifact": "pages/page-1.md"},
+                    metadata={
+                        "parser_metadata": {
+                            "backend": "mineru",
+                            "parser_mode": "mineru_strict",
+                            "parse_job_id": "job-1",
+                            "content_type": "text",
+                        }
+                    },
+                )
+            ]
 
     app = client._transport.app
     async with app.state.session_factory() as session:
-        chunks = await ChunkService(session, app.state.settings.data_dir).index_document(
+        chunks = await ChunkService(
+            session,
+            app.state.settings.data_dir,
+            document_parser=FakeDocumentParser(),
+        ).index_document(
             document_id,
             options=IndexDocumentIn(
                 parser_mode="mineru_strict",
@@ -1019,40 +1035,42 @@ async def test_index_mineru_strict_splits_huge_markdown_adapter_chunk(client, mo
     )
     document_id = upload_response.json()["id"]
 
-    async def fake_mineru_adapter_chunks(self, document_id, *, options, on_mineru_status=None):
-        return [
-            AdapterChunk(
-                text="\n\n".join(
-                    [
-                        "# Tafsir",
-                        "## Surah 1",
-                        f"Verse 1:1\n\n{words(900, 'alpha')}",
-                        f"Verse 1:2\n\n{words(900, 'beta')}",
-                        "## Surah 2",
-                        f"Verse 2:1\n\n{words(900, 'gamma')}",
-                    ]
-                ),
-                source_location={"artifact": "source/auto/source.md"},
-                metadata={
-                    "parser_metadata": {
-                        "backend": "mineru",
-                        "parser_mode": "mineru_strict",
-                        "parse_job_id": "job-huge",
-                        "artifact_ref": "source/auto/source.md",
-                        "chunk_index": 0,
-                    }
-                },
-            )
-        ]
-
-    monkeypatch.setattr(
-        "ragstudio.services.chunk_service.ChunkService._mineru_adapter_chunks",
-        fake_mineru_adapter_chunks,
-    )
+    class FakeDocumentParser:
+        async def parse(self, document, options, *, on_mineru_status=None):
+            assert document.id == document_id
+            assert options.parser_mode == "mineru_strict"
+            return [
+                AdapterChunk(
+                    text="\n\n".join(
+                        [
+                            "# Tafsir",
+                            "## Surah 1",
+                            f"Verse 1:1\n\n{words(900, 'alpha')}",
+                            f"Verse 1:2\n\n{words(900, 'beta')}",
+                            "## Surah 2",
+                            f"Verse 2:1\n\n{words(900, 'gamma')}",
+                        ]
+                    ),
+                    source_location={"artifact": "source/auto/source.md"},
+                    metadata={
+                        "parser_metadata": {
+                            "backend": "mineru",
+                            "parser_mode": "mineru_strict",
+                            "parse_job_id": "job-huge",
+                            "artifact_ref": "source/auto/source.md",
+                            "chunk_index": 0,
+                        }
+                    },
+                )
+            ]
 
     app = client._transport.app
     async with app.state.session_factory() as session:
-        chunks = await ChunkService(session, app.state.settings.data_dir).index_document(
+        chunks = await ChunkService(
+            session,
+            app.state.settings.data_dir,
+            document_parser=FakeDocumentParser(),
+        ).index_document(
             document_id,
             options=IndexDocumentIn(
                 parser_mode="mineru_strict",
@@ -1117,7 +1135,10 @@ async def test_runtime_index_route_persists_chunks_and_index_record(client, monk
         await session.commit()
         document_id = document.id
 
-    response = await client.post(f"/api/chunks/index/{document_id}")
+    response = await client.post(
+        f"/api/chunks/index/{document_id}",
+        json={"parser_mode": "local_fallback", "domain_metadata": {}},
+    )
 
     assert response.status_code == 200
     assert response.json()[0]["runtime_profile_id"] == "default"
@@ -1164,7 +1185,10 @@ async def test_runtime_index_route_reports_blocking_health_as_conflict(client):
         await session.commit()
         document_id = document.id
 
-    response = await client.post(f"/api/chunks/index/{document_id}")
+    response = await client.post(
+        f"/api/chunks/index/{document_id}",
+        json={"parser_mode": "local_fallback", "domain_metadata": {}},
+    )
 
     assert response.status_code == 409
     detail = response.json()["detail"].lower()
@@ -1179,7 +1203,10 @@ async def test_saved_fallback_profile_uses_legacy_chunk_indexing(client):
     )
     document_id = upload_response.json()["id"]
 
-    response = await client.post(f"/api/chunks/index/{document_id}")
+    response = await client.post(
+        f"/api/chunks/index/{document_id}",
+        json={"parser_mode": "local_fallback", "domain_metadata": {}},
+    )
 
     assert response.status_code == 200
     chunk = response.json()[0]

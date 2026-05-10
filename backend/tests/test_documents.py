@@ -279,6 +279,7 @@ async def test_upload_mineru_strict_failure_persists_failed_job(client, monkeypa
 async def test_duplicate_upload_mineru_strict_failure_persists_failed_job(client, monkeypatch):
     first_response = await client.post(
         "/api/documents",
+        data={"parser_mode": "local_fallback", "domain_metadata": "{}"},
         files={"file": ("paper.pdf", b"%PDF fake", "application/pdf")},
     )
     await wait_for_jobs(client, 1)
@@ -641,6 +642,7 @@ async def test_upload_uses_runtime_index_lifecycle_when_profile_exists(client, m
 
     response = await client.post(
         "/api/documents",
+        data={"parser_mode": "local_fallback", "domain_metadata": "{}"},
         files={"file": ("runtime-upload.txt", b"runtime upload", "text/plain")},
     )
 
@@ -782,6 +784,7 @@ async def test_upload_local_fallback_index_failure_propagates(client, monkeypatc
 async def test_delete_document_removes_document_chunks_jobs_and_artifact(client):
     upload_response = await client.post(
         "/api/documents",
+        data={"parser_mode": "local_fallback", "domain_metadata": "{}"},
         files={"file": ("delete-me.txt", b"alpha beta\ngamma delta", "text/plain")},
     )
     assert upload_response.status_code == 201

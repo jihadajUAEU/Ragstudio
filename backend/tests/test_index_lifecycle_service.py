@@ -91,6 +91,40 @@ class FakeHealthService:
         return []
 
 
+class FakeDocumentParser:
+    def __init__(
+        self,
+        chunks: list[AdapterChunk] | None = None,
+        *,
+        error: Exception | None = None,
+        status_payload: dict | None = None,
+    ):
+        self.chunks = chunks or [
+            AdapterChunk(
+                text="Remote MinerU chunk",
+                source_location={"page_start": 1, "page_end": 1},
+                metadata={"parser_metadata": {"backend": "mineru"}},
+            )
+        ]
+        self.error = error
+        self.status_payload = status_payload
+        self.calls = []
+
+    async def parse(self, document, options, *, on_mineru_status=None):
+        self.calls.append(
+            {
+                "document_id": document.id,
+                "parser_mode": options.parser_mode,
+                "has_status_callback": on_mineru_status is not None,
+            }
+        )
+        if self.status_payload is not None and on_mineru_status is not None:
+            await on_mineru_status(self.status_payload)
+        if self.error is not None:
+            raise self.error
+        return self.chunks
+
+
 @pytest.mark.asyncio
 async def test_lifecycle_deletes_existing_chunks_and_mirrors_runtime_chunks(client):
     app = client._transport.app
@@ -144,7 +178,10 @@ async def test_lifecycle_deletes_existing_chunks_and_mirrors_runtime_chunks(clie
             app.state.settings,
             runtime_factory=FakeFactory(runtime),
             health_service=FakeHealthService(),
-        ).reindex_document(document.id, options=IndexDocumentIn())
+        ).reindex_document(
+            document.id,
+            options=IndexDocumentIn(parser_mode="local_fallback"),
+        )
 
         remaining = await session.execute(select(Chunk).where(Chunk.document_id == document.id))
         stored = remaining.scalars().all()
@@ -208,10 +245,59 @@ async def test_lifecycle_releases_studio_transaction_before_runtime_storage_work
             app.state.settings,
             runtime_factory=FakeFactory(runtime),
             health_service=FakeHealthService(),
-        ).reindex_document(document.id, options=IndexDocumentIn())
+        ).reindex_document(
+            document.id,
+            options=IndexDocumentIn(parser_mode="local_fallback"),
+        )
 
     assert runtime.in_transaction_during_delete is False
     assert runtime.in_transaction_during_index is False
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_falls_back_to_runtime_index_when_preparse_is_unsupported(client):
+    app = client._transport.app
+    runtime = FakeRuntime()
+    artifact_path = app.state.settings.data_dir / "unsupported-preparse-runtime.pdf"
+    artifact_path.write_text("runtime text", encoding="utf-8")
+
+    async with app.state.session_factory() as session:
+        session.add(
+            SettingsProfile(
+                id="default",
+                provider="openai-compatible",
+                llm_model="gpt-4o",
+                llm_base_url="http://llm.test",
+                embedding_model="text-embedding-3-large",
+                embedding_base_url="http://embedding.test",
+                storage_backend="postgres_pgvector_neo4j",
+                runtime_mode="runtime",
+            )
+        )
+        document = Document(
+            filename="unsupported-preparse-runtime.pdf",
+            content_type="application/pdf",
+            sha256="unsupported-preparse-runtime",
+            artifact_path=str(artifact_path),
+            status=StageStatus.READY.value,
+        )
+        session.add(document)
+        await session.commit()
+
+        chunks = await IndexLifecycleService(
+            session,
+            app.state.settings,
+            runtime_factory=FakeFactory(runtime),
+            health_service=FakeHealthService(),
+        ).reindex_document(
+            document.id,
+            options=IndexDocumentIn(parser_mode="mineru_strict"),
+        )
+
+    assert runtime.deleted == [document.id]
+    assert runtime.indexed_paths == [str(artifact_path)]
+    assert chunks is not None
+    assert [chunk.text for chunk in chunks] == ["Runtime chunk"]
 
 
 @pytest.mark.asyncio
@@ -246,23 +332,7 @@ async def test_lifecycle_uses_preparsed_mineru_chunks_for_strict_runtime_reindex
         session.add(document)
         await session.commit()
 
-        async def fake_mineru_chunks(self, document_arg, options, *, on_mineru_status=None):
-            assert document_arg.id == document.id
-            assert options.parser_mode == "mineru_strict"
-            assert on_mineru_status is None
-            return [
-                AdapterChunk(
-                    text="Remote MinerU chunk",
-                    source_location={"page_start": 1, "page_end": 1},
-                    metadata={"parser_metadata": {"backend": "mineru"}},
-                )
-            ]
-
-        monkeypatch.setattr(
-            IndexLifecycleService,
-            "_mineru_adapter_chunks",
-            fake_mineru_chunks,
-        )
+        document_parser = FakeDocumentParser()
         runtime = PreparsedRuntime()
 
         chunks = await IndexLifecycleService(
@@ -270,12 +340,20 @@ async def test_lifecycle_uses_preparsed_mineru_chunks_for_strict_runtime_reindex
             app.state.settings,
             runtime_factory=FakeFactory(runtime),
             health_service=FakeHealthService(),
+            document_parser=document_parser,
         ).reindex_document(
             document.id,
             options=IndexDocumentIn(parser_mode="mineru_strict"),
         )
 
     assert runtime.preparsed_paths == [str(artifact_path)]
+    assert document_parser.calls == [
+        {
+            "document_id": document.id,
+            "parser_mode": "mineru_strict",
+            "has_status_callback": False,
+        }
+    ]
     assert chunks is not None
     assert [chunk.text for chunk in chunks] == ["Remote MinerU chunk"]
 
@@ -312,14 +390,7 @@ async def test_lifecycle_preserves_runtime_index_when_strict_mineru_parse_fails(
         session.add(document)
         await session.commit()
 
-        async def failing_mineru_chunks(self, document_arg, options, *, on_mineru_status=None):
-            raise RuntimeError("remote MinerU failed")
-
-        monkeypatch.setattr(
-            IndexLifecycleService,
-            "_mineru_adapter_chunks",
-            failing_mineru_chunks,
-        )
+        document_parser = FakeDocumentParser(error=RuntimeError("remote MinerU failed"))
         runtime = PreparsedRuntime()
 
         with pytest.raises(RuntimeError, match="remote MinerU failed"):
@@ -328,6 +399,7 @@ async def test_lifecycle_preserves_runtime_index_when_strict_mineru_parse_fails(
                 app.state.settings,
                 runtime_factory=FakeFactory(runtime),
                 health_service=FakeHealthService(),
+                document_parser=document_parser,
             ).reindex_document(
                 document.id,
                 options=IndexDocumentIn(parser_mode="mineru_strict"),
@@ -367,24 +439,11 @@ async def test_lifecycle_forwards_runtime_mineru_status_callback(client, monkeyp
         session.add(document)
         await session.commit()
 
-        async def fake_mineru_chunks(self, document_arg, options, *, on_mineru_status=None):
-            assert on_mineru_status is not None
-            await on_mineru_status({"status": "running", "progress": 42})
-            return [
-                AdapterChunk(
-                    text="Remote MinerU chunk",
-                    source_location={"page_start": 1, "page_end": 1},
-                    metadata={"parser_metadata": {"backend": "mineru"}},
-                )
-            ]
-
         async def collect_status(status):
             statuses.append(status)
 
-        monkeypatch.setattr(
-            IndexLifecycleService,
-            "_mineru_adapter_chunks",
-            fake_mineru_chunks,
+        document_parser = FakeDocumentParser(
+            status_payload={"status": "running", "progress": 42},
         )
 
         await IndexLifecycleService(
@@ -392,6 +451,7 @@ async def test_lifecycle_forwards_runtime_mineru_status_callback(client, monkeyp
             app.state.settings,
             runtime_factory=FakeFactory(PreparsedRuntime()),
             health_service=FakeHealthService(),
+            document_parser=document_parser,
         ).reindex_document(
             document.id,
             options=IndexDocumentIn(parser_mode="mineru_strict"),
@@ -517,7 +577,10 @@ async def test_lifecycle_strips_null_bytes_from_runtime_chunks(client):
             app.state.settings,
             runtime_factory=FakeFactory(runtime),
             health_service=FakeHealthService(),
-        ).reindex_document(document.id, options=IndexDocumentIn())
+        ).reindex_document(
+            document.id,
+            options=IndexDocumentIn(parser_mode="local_fallback"),
+        )
 
         stored = (
             await session.execute(select(Chunk).where(Chunk.document_id == document.id))

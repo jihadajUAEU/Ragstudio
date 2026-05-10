@@ -2,13 +2,13 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path, PureWindowsPath
 from typing import Any
 
-import httpx
-from ragstudio.db.models import Chunk, Document, SettingsProfile
+from ragstudio.db.models import Chunk, Document
 from ragstudio.schemas.chunks import ChunkOut, ChunkSearchIn, ChunkSearchOut
 from ragstudio.schemas.parsing import DomainMetadata, IndexDocumentIn, ParserMode
 from ragstudio.services.adapter import AdapterChunk, RAGAnythingAdapter
 from ragstudio.services.chunk_sanitizer import sanitize_db_text, sanitize_db_value
 from ragstudio.services.chunk_splitter import ChunkSplitter
+from ragstudio.services.document_parser_service import DocumentParserService
 from ragstudio.services.hybrid_chunk_search import ChunkScore, HybridChunkSearch
 from ragstudio.services.mineru_client import MinerUClient
 from ragstudio.services.mineru_relationship_builder import MinerURelationshipBuilder
@@ -28,6 +28,7 @@ class ChunkService:
         chunk_splitter: ChunkSplitter | None = None,
         chunk_search: HybridChunkSearch | None = None,
         relationship_builder: MinerURelationshipBuilder | None = None,
+        document_parser: DocumentParserService | None = None,
     ):
         self.session = session
         self.data_dir = data_dir
@@ -36,6 +37,12 @@ class ChunkService:
         self.chunk_splitter = chunk_splitter or ChunkSplitter()
         self.chunk_search = chunk_search or HybridChunkSearch()
         self.relationship_builder = relationship_builder or MinerURelationshipBuilder()
+        self.document_parser = document_parser or DocumentParserService(
+            session,
+            data_dir,
+            local_parser=self.adapter,
+            mineru_client_factory=self.mineru_client_factory,
+        )
 
     async def index_document(
         self,
@@ -103,96 +110,14 @@ class ChunkService:
         *,
         on_mineru_status: MinerUStatusCallback | None = None,
     ) -> list[AdapterChunk]:
-        if options.parser_mode == "local_fallback":
-            return await self.adapter.index_document(document.artifact_path)
-        try:
-            return await self._mineru_adapter_chunks(
-                document.id,
-                options=options,
-                on_mineru_status=on_mineru_status,
-            )
-        except Exception as exc:
-            if options.parser_mode == "mineru_strict":
-                raise
-            chunks = await self.adapter.index_document(document.artifact_path)
-            return [
-                AdapterChunk(
-                    text=chunk.text,
-                    source_location=chunk.source_location,
-                    metadata={
-                        **chunk.metadata,
-                        "parser_metadata": {
-                            "backend": "fallback",
-                            "parser_mode": "mineru_with_fallback",
-                            "mineru_error": str(exc),
-                            "fallback_used": True,
-                        },
-                    },
-                )
-                for chunk in chunks
-            ]
-
-    async def _mineru_adapter_chunks(
-        self,
-        document_id: str,
-        *,
-        options: IndexDocumentIn,
-        on_mineru_status: MinerUStatusCallback | None = None,
-    ) -> list[AdapterChunk]:
-        document = await self.session.get(Document, document_id)
-        if document is None:
-            return []
-        _, client = await self._validated_mineru_client()
-        artifact_dir = self.data_dir / "mineru-artifacts" / document.id
-        job_result = await client.parse_document(
-            artifact_path=document.artifact_path,
-            document_id=document.id,
-            artifact_dir=artifact_dir,
-            content_type=document.content_type,
-            sha256=document.sha256,
-            domain_metadata=options.domain_metadata.model_dump(exclude_none=True),
-            on_status=on_mineru_status,
-        )
-        return client.normalize_artifact_zip(
-            artifact_zip=job_result.artifact_zip,
-            extract_dir=artifact_dir / "extracted",
-            document_id=document.id,
-            parser_mode=options.parser_mode,
-            parse_job_id=job_result.parse_job_id,
+        return await self.document_parser.parse(
+            document,
+            options,
+            on_mineru_status=on_mineru_status,
         )
 
     async def validate_strict_mineru_sidecar(self, options: IndexDocumentIn) -> None:
-        if options.parser_mode != "mineru_strict":
-            return
-        await self._validated_mineru_client()
-
-    async def _validated_mineru_client(self) -> tuple[SettingsProfile, MinerUClient]:
-        settings = await self.session.get(SettingsProfile, "default")
-        if settings is None or not settings.mineru_base_url:
-            raise RuntimeError("MinerU base URL is not configured.")
-        if not settings.mineru_enabled:
-            raise RuntimeError("MinerU is disabled in settings.")
-        client = self.mineru_client_factory(
-            base_url=settings.mineru_base_url,
-            timeout_ms=settings.mineru_timeout_ms or 14_400_000,
-            poll_interval_ms=settings.mineru_poll_interval_ms or 1_000,
-        )
-        try:
-            health = await client.health()
-        except httpx.HTTPError as exc:
-            raise RuntimeError(f"MinerU health check failed: {exc}") from exc
-        if not health.ready:
-            raise RuntimeError(health.detail or "MinerU sidecar is not ready.")
-        if settings.mineru_require_hpc and not health.is_hpc_coordinator:
-            mode = health.hpc_mode or "unknown"
-            raise RuntimeError(
-                "MinerU sidecar is not in HPC coordinator mode. "
-                f"Health detail: {health.detail or 'no detail'}; "
-                f"hpcMineru.enabled={health.hpc_enabled}; mode={mode}. "
-                "Start the HPC MinerU sidecar/coordinator or disable "
-                "'Require HPC MinerU coordinator' in Settings."
-            )
-        return settings, client
+        await self.document_parser.validate_strict_mineru_sidecar(options)
 
     async def search(self, search_in: ChunkSearchIn) -> ChunkSearchOut:
         limit = max(search_in.limit, 0)

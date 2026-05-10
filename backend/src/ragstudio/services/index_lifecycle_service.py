@@ -3,16 +3,15 @@ from datetime import UTC, datetime
 from inspect import signature
 from typing import Any
 
-import httpx
 from ragstudio.config import AppSettings
-from ragstudio.db.models import Chunk, Document, IndexRecord, SettingsProfile
+from ragstudio.db.models import Chunk, Document, IndexRecord
 from ragstudio.schemas.chunks import ChunkOut
 from ragstudio.schemas.common import StageStatus
 from ragstudio.schemas.parsing import IndexDocumentIn
 from ragstudio.services.adapter import AdapterChunk
 from ragstudio.services.chunk_sanitizer import sanitize_db_text, sanitize_db_value
 from ragstudio.services.chunk_splitter import ChunkSplitter
-from ragstudio.services.mineru_client import MinerUClient
+from ragstudio.services.document_parser_service import DocumentParserService
 from ragstudio.services.mineru_relationship_builder import MinerURelationshipBuilder
 from ragstudio.services.runtime_factory import RAGAnythingRuntimeFactory
 from ragstudio.services.runtime_health_service import RuntimeHealthService
@@ -38,12 +37,18 @@ class IndexLifecycleService:
         runtime_factory: Any | None = None,
         health_service: RuntimeHealthService | None = None,
         normalizer: TraceNormalizer | None = None,
+        document_parser: DocumentParserService | None = None,
     ):
         self.session = session
         self.settings = settings
         self.runtime_factory = runtime_factory or self._runtime_factory(settings)
         self.health_service = health_service or self._health_service(session)
         self.normalizer = normalizer or TraceNormalizer()
+        self.document_parser = document_parser or DocumentParserService(
+            session,
+            settings.data_dir,
+            commit_before_remote_parse=True,
+        )
 
     async def reindex_document(
         self,
@@ -157,21 +162,15 @@ class IndexLifecycleService:
         *,
         on_mineru_status: MinerUStatusCallback | None = None,
     ) -> list[AdapterChunk] | None:
-        if options.parser_mode == "local_fallback" or not hasattr(
-            runtime,
-            "index_preparsed_chunks",
-        ):
+        if options.parser_mode == "local_fallback":
             return None
-        try:
-            return await self._mineru_adapter_chunks(
-                document,
-                options,
-                on_mineru_status=on_mineru_status,
-            )
-        except Exception:
-            if options.parser_mode == "mineru_strict":
-                raise
+        if not hasattr(runtime, "index_preparsed_chunks"):
             return None
+        return await self.document_parser.parse(
+            document,
+            options,
+            on_mineru_status=on_mineru_status,
+        )
 
     async def _index_runtime_document(
         self,
@@ -191,66 +190,6 @@ class IndexLifecycleService:
         if "document_id" in parameters:
             return await runtime.index_document(artifact_path, document_id=document_id)
         return await runtime.index_document(artifact_path)
-
-    async def _mineru_adapter_chunks(
-        self,
-        document: Document,
-        options: IndexDocumentIn,
-        *,
-        on_mineru_status: MinerUStatusCallback | None = None,
-    ) -> list[AdapterChunk]:
-        settings = await self.session.get(SettingsProfile, "default")
-        if settings is None or not settings.mineru_base_url:
-            raise RuntimeError("MinerU base URL is not configured.")
-        if not settings.mineru_enabled:
-            raise RuntimeError("MinerU is disabled in settings.")
-
-        client = MinerUClient(
-            base_url=settings.mineru_base_url,
-            timeout_ms=settings.mineru_timeout_ms or 14_400_000,
-            poll_interval_ms=settings.mineru_poll_interval_ms or 1_000,
-        )
-        try:
-            health = await client.health()
-        except httpx.HTTPError as exc:
-            raise RuntimeError(f"MinerU health check failed: {exc}") from exc
-        if not health.ready:
-            raise RuntimeError(health.detail or "MinerU sidecar is not ready.")
-        if settings.mineru_require_hpc and not health.is_hpc_coordinator:
-            mode = health.hpc_mode or "unknown"
-            raise RuntimeError(
-                "MinerU sidecar is not in HPC coordinator mode. "
-                f"Health detail: {health.detail or 'no detail'}; "
-                f"hpcMineru.enabled={health.hpc_enabled}; mode={mode}. "
-                "Start the HPC MinerU sidecar/coordinator or disable "
-                "'Require HPC MinerU coordinator' in Settings."
-            )
-
-        artifact_dir = self.settings.data_dir / "mineru-artifacts" / document.id
-        artifact_path = document.artifact_path
-        content_type = document.content_type
-        sha256 = document.sha256
-        document_id = document.id
-        domain_metadata = options.domain_metadata.model_dump(exclude_none=True)
-
-        # Release the SettingsProfile read transaction before waiting on remote MinerU.
-        await self.session.commit()
-        job_result = await client.parse_document(
-            artifact_path=artifact_path,
-            document_id=document_id,
-            artifact_dir=artifact_dir,
-            content_type=content_type,
-            sha256=sha256,
-            domain_metadata=domain_metadata,
-            on_status=on_mineru_status,
-        )
-        return client.normalize_artifact_zip(
-            artifact_zip=job_result.artifact_zip,
-            extract_dir=artifact_dir / "extracted",
-            document_id=document_id,
-            parser_mode=options.parser_mode,
-            parse_job_id=job_result.parse_job_id,
-        )
 
     def _runtime_factory(self, settings: AppSettings) -> Any:
         try:
