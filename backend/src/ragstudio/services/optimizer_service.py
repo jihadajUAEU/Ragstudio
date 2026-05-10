@@ -84,11 +84,15 @@ class OptimizerService:
     ) -> list[OptimizerCandidateSummary]:
         grouped: dict[str, list[_RunScore]] = {}
         for run in runs:
-            grouped.setdefault(run.variant_id, []).append(self._run_score(run, scores_by_run_id.get(run.id)))
+            grouped.setdefault(run.variant_id, []).append(
+                self._run_score(run, scores_by_run_id.get(run.id))
+            )
 
         summaries: list[OptimizerCandidateSummary] = []
         for variant_id, run_scores in grouped.items():
-            scoreable_scores = [item.score for item in run_scores if item.scoreable and item.score is not None]
+            scoreable_scores = [
+                item.score for item in run_scores if item.scoreable and item.score is not None
+            ]
             total_score = sum(scoreable_scores) if scoreable_scores else None
             average_score = (
                 round(total_score / len(scoreable_scores), 2)

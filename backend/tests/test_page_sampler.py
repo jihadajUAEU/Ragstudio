@@ -1,5 +1,4 @@
 import fitz
-
 from ragstudio.services.page_sampler import PageSampler
 
 

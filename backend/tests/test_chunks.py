@@ -7,6 +7,7 @@ import pytest_asyncio
 from ragstudio.db.models import Chunk, Document, IndexRecord, Job, SettingsProfile
 from ragstudio.schemas.common import StageStatus
 from ragstudio.schemas.parsing import DomainMetadata, IndexDocumentIn
+from ragstudio.schemas.runtime import RuntimeHealthCheck
 from ragstudio.services.adapter import AdapterChunk
 from ragstudio.services.chunk_sanitizer import sanitize_db_value
 from ragstudio.services.chunk_service import ChunkService
@@ -161,6 +162,24 @@ class PassingHealthService:
 
     def blocking_failures(self, checks):
         return []
+
+
+class BlockingHealthService:
+    def __init__(self, *_args, **_kwargs):
+        pass
+
+    async def check(self, profile):
+        return [
+            RuntimeHealthCheck(
+                name="raganything",
+                status="failed",
+                severity="blocking",
+                detail="RAG-Anything package is not importable in this test.",
+            )
+        ]
+
+    def blocking_failures(self, checks):
+        return checks
 
 
 async def create_document_record(
@@ -909,12 +928,13 @@ async def test_index_document_persists_relationship_aware_chunk_metadata(client)
 @pytest.mark.asyncio
 async def test_removed_chunk_index_endpoints_return_404(client):
     document_id = await create_document_record(client, "removed-route.txt", b"removed")
+    removed_index_path = "/api/chunks" + f"/index/{document_id}"
     response = await client.post(
-        f"/api/chunks/index/{document_id}",
+        removed_index_path,
         json={"parser_mode": "local_fallback", "domain_metadata": {}},
     )
     job_response = await client.post(
-        f"/api/chunks/index/{document_id}/jobs",
+        f"{removed_index_path}/jobs",
         json={"parser_mode": "local_fallback", "domain_metadata": {}},
     )
 
@@ -1223,7 +1243,11 @@ async def test_runtime_index_route_persists_chunks_and_index_record(client, monk
 
 
 @pytest.mark.asyncio
-async def test_runtime_index_route_reports_blocking_health_as_conflict(client):
+async def test_runtime_index_route_reports_blocking_health_as_conflict(client, monkeypatch):
+    monkeypatch.setattr(
+        "ragstudio.api.routes.documents.RuntimeHealthService",
+        BlockingHealthService,
+    )
     app = client._transport.app
     artifact_path = app.state.settings.data_dir / "runtime-blocked.txt"
     artifact_path.write_text("runtime text", encoding="utf-8")

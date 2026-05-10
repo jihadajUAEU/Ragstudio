@@ -47,8 +47,10 @@ class ReferenceSemantics:
     def from_metadata(cls, metadata: DomainMetadata) -> ReferenceSemantics:
         custom = metadata.custom_json if isinstance(metadata.custom_json, dict) else {}
         reference_schema = custom.get("reference_schema")
-        chunking = custom.get("chunking") if isinstance(custom.get("chunking"), dict) else {}
-        retrieval = custom.get("retrieval") if isinstance(custom.get("retrieval"), dict) else {}
+        chunking_value = custom.get("chunking")
+        retrieval_value = custom.get("retrieval")
+        chunking: dict[str, Any] = chunking_value if isinstance(chunking_value, dict) else {}
+        retrieval: dict[str, Any] = retrieval_value if isinstance(retrieval_value, dict) else {}
         schema_pattern = cls._schema_pattern(reference_schema)
 
         has_reference_schema = isinstance(reference_schema, dict)

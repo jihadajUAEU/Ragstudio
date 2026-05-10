@@ -4,6 +4,7 @@ from hashlib import sha256
 import pytest
 from ragstudio.db.engine import init_db, make_engine, make_session_factory
 from ragstudio.db.models import Document, Job
+from ragstudio.schemas.parsing import IndexDocumentIn
 from ragstudio.services import document_service
 from ragstudio.services.document_service import DocumentService
 from sqlalchemy import select
@@ -26,7 +27,11 @@ async def wait_for_document_status(client, document_id: str, status: str) -> dic
 async def test_upload_document_creates_document_and_index_job(client):
     files = {"file": ("sample.txt", b"alpha beta gamma", "text/plain")}
 
-    upload_response = await client.post("/api/documents", files=files)
+    upload_response = await client.post(
+        "/api/documents",
+        data={"parser_mode": "local_fallback", "domain_metadata": "{}"},
+        files=files,
+    )
 
     assert upload_response.status_code == 201
     document = upload_response.json()
@@ -69,7 +74,11 @@ async def test_upload_document_rejects_oversize_body(client):
 async def test_upload_document_is_idempotent_by_content_hash(client):
     files = {"file": ("sample.txt", b"same bytes", "text/plain")}
 
-    first_response = await client.post("/api/documents", files=files)
+    first_response = await client.post(
+        "/api/documents",
+        data={"parser_mode": "local_fallback", "domain_metadata": "{}"},
+        files=files,
+    )
     await wait_for_document_status(client, first_response.json()["id"], "succeeded")
     second_response = await client.post(
         "/api/documents",
@@ -106,8 +115,9 @@ async def test_duplicate_uploads_with_different_filenames_share_one_artifact(
 
     async with session_factory() as session:
         service = DocumentService(session, tmp_path)
-        first_document = await service.upload("first.txt", "text/plain", content)
-        second_document = await service.upload("second.txt", "text/plain", content)
+        options = IndexDocumentIn(parser_mode="local_fallback")
+        first_document = await service.upload("first.txt", "text/plain", content, options=options)
+        second_document = await service.upload("second.txt", "text/plain", content, options=options)
         documents = (await session.execute(select(Document))).scalars().all()
 
     await engine.dispose()
@@ -140,7 +150,10 @@ async def test_duplicate_upload_indexes_legacy_unindexed_document(tmp_path, data
         session.add(document)
         await session.commit()
         document_out = await DocumentService(session, tmp_path).upload(
-            "legacy-copy.txt", "text/plain", content
+            "legacy-copy.txt",
+            "text/plain",
+            content,
+            options=IndexDocumentIn(parser_mode="local_fallback"),
         )
         jobs = (await session.execute(select(Job))).scalars().all()
 
@@ -157,6 +170,7 @@ async def test_concurrent_duplicate_uploads_are_idempotent(client):
     async def upload_copy(index: int):
         return await client.post(
             "/api/documents",
+            data={"parser_mode": "local_fallback", "domain_metadata": "{}"},
             files={"file": (f"copy-{index}.txt", b"concurrent bytes", "text/plain")},
         )
 
@@ -223,6 +237,7 @@ async def test_upload_document_sanitizes_artifact_path_for_unsafe_filename(
             filename="../sample.txt",
             content_type="text/plain",
             content=b"traversal check",
+            options=IndexDocumentIn(parser_mode="local_fallback"),
         )
         document = await session.scalar(select(Document).where(Document.id == document_out.id))
 

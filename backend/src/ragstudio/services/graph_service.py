@@ -100,8 +100,13 @@ class GraphService:
                 source = relationship.get("source")
                 target = relationship.get("target")
                 rel_type = relationship.get("type")
-                if not all(
-                    isinstance(value, str) and value for value in [source, target, rel_type]
+                if (
+                    not isinstance(source, str)
+                    or not source
+                    or not isinstance(target, str)
+                    or not target
+                    or not isinstance(rel_type, str)
+                    or not rel_type
                 ):
                     continue
                 nodes.setdefault(

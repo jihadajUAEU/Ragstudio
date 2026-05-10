@@ -171,7 +171,10 @@ class RetrievalOrchestrator:
                 native_result = await native_task
             except Exception as exc:
                 native_result = exc
-            if _is_native_document_scope_unsupported(native_result):
+            if (
+                isinstance(native_result, NativeRuntimeQueryFailed)
+                and native_result.error_type == "native_document_scope_unsupported"
+            ):
                 native_timings = getattr(native_result, "timings", None)
                 if isinstance(native_timings, dict):
                     timings.update(native_timings)

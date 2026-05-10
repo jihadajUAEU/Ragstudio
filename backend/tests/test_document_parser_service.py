@@ -7,8 +7,7 @@ from ragstudio.db.models import Document, SettingsProfile
 from ragstudio.schemas.parsing import IndexDocumentIn
 from ragstudio.services.adapter import AdapterChunk
 from ragstudio.services.document_parser_service import DocumentParserService
-from ragstudio.services.mineru_client import MinerUJobResult
-from ragstudio.services.mineru_client import MinerUSidecarHealth
+from ragstudio.services.mineru_client import MinerUJobResult, MinerUSidecarHealth
 
 
 class LocalParser:

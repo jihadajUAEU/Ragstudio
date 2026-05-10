@@ -65,10 +65,11 @@ class PageSampler:
                 pages: list[SampledPage] = []
                 for index in indexes:
                     page = document.load_page(index)
+                    page_text = str(page.get_text("text"))
                     pages.append(
                         SampledPage(
                             page_number=index + 1,
-                            text=page.get_text("text")[: self.max_text_chars].strip(),
+                            text=page_text[: self.max_text_chars].strip(),
                             image_data_url=self._page_image_data_url(page, fitz),
                         )
                     )

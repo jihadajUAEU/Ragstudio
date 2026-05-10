@@ -6,6 +6,7 @@ from ragstudio.db.engine import init_db, make_engine, make_session_factory
 from ragstudio.db.models import Chunk, Document, Job, SettingsProfile
 from ragstudio.schemas.chunks import ChunkSearchIn
 from ragstudio.schemas.parsing import IndexDocumentIn
+from ragstudio.schemas.runtime import RuntimeHealthCheck
 from ragstudio.services.chunk_service import ChunkService
 from ragstudio.services.document_service import DocumentService
 from ragstudio.services.mineru_client import MinerUSidecarHealth
@@ -20,6 +21,24 @@ class FailingIndexService(DocumentService):
         job.progress = 25
         job.logs = [*job.logs, "MinerU parsing on HPC."]
         raise RuntimeError("MinerU parse timed out for job remote-123.")
+
+
+class BlockingHealthService:
+    def __init__(self, *_args, **_kwargs):
+        pass
+
+    async def check(self, profile):
+        return [
+            RuntimeHealthCheck(
+                name="raganything",
+                status="failed",
+                severity="blocking",
+                detail="RAG-Anything package is not importable in this test.",
+            )
+        ]
+
+    def blocking_failures(self, checks):
+        return checks
 
 
 @pytest.mark.asyncio
@@ -451,7 +470,13 @@ async def test_create_strict_reindex_job_returns_not_found_before_sidecar_check(
 
 
 @pytest.mark.asyncio
-async def test_create_reindex_job_returns_conflict_when_runtime_health_blocks(client):
+async def test_create_reindex_job_returns_conflict_when_runtime_health_blocks(
+    client, monkeypatch
+):
+    monkeypatch.setattr(
+        "ragstudio.api.routes.documents.RuntimeHealthService",
+        BlockingHealthService,
+    )
     upload_response = await client.post(
         "/api/documents",
         files={"file": ("runtime-job.pdf", b"%PDF-1.4", "application/pdf")},

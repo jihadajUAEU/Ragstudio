@@ -6,6 +6,7 @@ import httpx
 import pytest
 from ragstudio.db.models import Chunk, Document, IndexRecord, Job, SettingsProfile
 from ragstudio.schemas.common import StageStatus
+from ragstudio.schemas.runtime import RuntimeHealthCheck
 from ragstudio.services.document_service import DocumentService
 from ragstudio.services.runtime_types import RuntimeChunk
 from sqlalchemy import select
@@ -49,6 +50,24 @@ class PassingHealthService:
 
     def blocking_failures(self, checks):
         return []
+
+
+class BlockingHealthService:
+    def __init__(self, *_args, **_kwargs):
+        pass
+
+    async def check(self, profile):
+        return [
+            RuntimeHealthCheck(
+                name="raganything",
+                status="failed",
+                severity="blocking",
+                detail="RAG-Anything package is not importable in this test.",
+            )
+        ]
+
+    def blocking_failures(self, checks):
+        return checks
 
 
 async def wait_for_jobs(client, expected_count: int, terminal: bool = True) -> list[dict]:
@@ -702,7 +721,11 @@ async def test_upload_uses_runtime_index_lifecycle_when_profile_exists(client, m
 
 
 @pytest.mark.asyncio
-async def test_duplicate_upload_requires_runtime_index_when_profile_changes(client):
+async def test_duplicate_upload_requires_runtime_index_when_profile_changes(client, monkeypatch):
+    monkeypatch.setattr(
+        "ragstudio.api.routes.documents.RuntimeHealthService",
+        BlockingHealthService,
+    )
     first_response = await client.post(
         "/api/documents",
         files={"file": ("runtime-change.txt", b"same runtime bytes", "text/plain")},
@@ -735,7 +758,11 @@ async def test_duplicate_upload_requires_runtime_index_when_profile_changes(clie
 
 
 @pytest.mark.asyncio
-async def test_runtime_blocked_mineru_strict_upload_returns_conflict(client):
+async def test_runtime_blocked_mineru_strict_upload_returns_conflict(client, monkeypatch):
+    monkeypatch.setattr(
+        "ragstudio.api.routes.documents.RuntimeHealthService",
+        BlockingHealthService,
+    )
     app = client._transport.app
     async with app.state.session_factory() as session:
         session.add(
@@ -764,7 +791,13 @@ async def test_runtime_blocked_mineru_strict_upload_returns_conflict(client):
 
 
 @pytest.mark.asyncio
-async def test_duplicate_runtime_blocked_mineru_strict_upload_returns_conflict(client):
+async def test_duplicate_runtime_blocked_mineru_strict_upload_returns_conflict(
+    client, monkeypatch
+):
+    monkeypatch.setattr(
+        "ragstudio.api.routes.documents.RuntimeHealthService",
+        BlockingHealthService,
+    )
     first_response = await client.post(
         "/api/documents",
         files={"file": ("runtime-strict.pdf", b"%PDF fake", "application/pdf")},

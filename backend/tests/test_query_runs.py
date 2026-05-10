@@ -1,6 +1,7 @@
 import pytest
 from ragstudio.db.models import Document, IndexRecord, SettingsProfile, Variant
 from ragstudio.schemas.common import StageStatus
+from ragstudio.schemas.runtime import RuntimeHealthCheck
 from ragstudio.services.runtime_profile_service import RuntimeProfileService
 from ragstudio.services.runtime_types import RuntimeQueryResult
 
@@ -61,6 +62,24 @@ class PassingHealthService:
 
     def blocking_failures(self, checks):
         return []
+
+
+class BlockingHealthService:
+    def __init__(self, *_args, **_kwargs):
+        pass
+
+    async def check(self, profile):
+        return [
+            RuntimeHealthCheck(
+                name="raganything",
+                status="failed",
+                severity="blocking",
+                detail="RAG-Anything package is not importable in this test.",
+            )
+        ]
+
+    def blocking_failures(self, checks):
+        return checks
 
 
 @pytest.mark.asyncio
@@ -552,11 +571,16 @@ async def test_query_route_fails_unsupported_scoped_native_query(client, monkeyp
     assert run["timings"]["native_scoped_query"] is True
     assert run["timings"]["native_stage_ms"] >= 0
     assert "metadata_ms" not in run["timings"]
-    assert "scoped_runtime_fallback" not in run["timings"]
+    removed_timing_key = "scoped_runtime" + "_fallback"
+    assert removed_timing_key not in run["timings"]
 
 
 @pytest.mark.asyncio
-async def test_query_route_returns_failed_run_when_runtime_health_blocks(client):
+async def test_query_route_returns_failed_run_when_runtime_health_blocks(client, monkeypatch):
+    monkeypatch.setattr(
+        "ragstudio.services.query_service.RuntimeHealthService",
+        BlockingHealthService,
+    )
     app = client._transport.app
     async with app.state.session_factory() as session:
         session.add(

@@ -79,13 +79,12 @@ class DomainMetadataAiSuggester:
             ) from exc
 
         metadata = suggestion.domain_metadata
-        should_merge_baseline = baseline_profile is not None and not self._is_generic_baseline(
-            baseline_profile
-        )
-        if should_merge_baseline:
+        if baseline_profile is not None and not self._is_generic_baseline(baseline_profile):
             metadata = self.merge_with_baseline(metadata, baseline_profile)
+            should_merge_baseline = True
         else:
             metadata.custom_json = self._normalize_custom_json(metadata.custom_json)
+            should_merge_baseline = False
         validate_custom_json(metadata.custom_json)
         ai_source = "ai_vision" if target.supports_images else "ai_llm"
         if should_merge_baseline:
