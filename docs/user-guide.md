@@ -131,7 +131,7 @@ Results appear under `Answers and traces`:
 - `Chunk traces`: adapter trace objects, including inclusion status when available.
 - `Timings`: measured `search_ms`, `query_ms`, and `total_ms`, plus adapter timings when provided.
 
-When the local fallback adapter is active, a generated answer is the question followed by selected chunk excerpts. This is useful for validating indexing, search, and trace plumbing even without a full `raganything` backend.
+Local fallback parsing remains available as an explicit parser mode for small text-oriented documents. It creates local chunks for inspection and metadata search, but query execution in runtime profiles requires a configured native RAG-Anything runtime.
 
 ### Evaluation
 
@@ -211,7 +211,7 @@ The `Variant matrix` table lists each variant name, ID, preset, and parameter ke
 
 `Graph` reads `/api/graph` and exposes the returned graph payload for debugging graph-backed retrieval.
 
-It shows node and edge counts, then previews up to 50 `Nodes` and 50 `Edges`. In fallback mode, the graph service returns no nodes or edges, so the page shows `Graph is empty`.
+It shows node and edge counts, then previews up to 50 `Nodes` and 50 `Edges`. When runtime graph storage is inactive, the Graph page shows relationship metadata derived during parsing when those relationships exist. If no relationship metadata exists, the page reports that no runtime graph or relationship metadata is available.
 
 ### Diagnostics
 
@@ -224,7 +224,7 @@ It shows:
 - `Warnings`: active runtime warnings.
 - `Raw diagnostics`: expandable full JSON payload.
 
-If `raganything` is not installed in the active Python environment, Diagnostics reports a warning and Studio uses the local fallback adapter. Run `./scripts/setup.sh` or `python -m pip install -e 'backend[dev]'` to install the backend with its declared dependencies, including `raganything[all]`.
+If `raganything` is not installed in the active Python environment, Diagnostics reports a warning and native runtime query execution is unavailable until the dependency is installed. Local fallback parsing can still create chunks for inspection. Run `./scripts/setup.sh` or `python -m pip install -e 'backend[dev]'` to install the backend with its declared dependencies, including `raganything[all]`.
 
 ### Settings
 
@@ -300,6 +300,12 @@ Upload and Index actions support three parser modes:
 - `MinerU with fallback`: tries MinerU first, then indexes locally if MinerU fails.
 
 Before parsing, choose or review domain metadata. This metadata is copied onto every resulting chunk, including local fallback chunks. MinerU adds parser metadata such as page numbers, artifact references, content type, and parse job id.
+
+Document reindexing uses the canonical background job endpoint:
+
+```text
+POST /api/documents/{document_id}/reindex
+```
 
 Auto-suggest uses the configured vision model before upload indexing starts. Ragstudio samples up to four representative pages from the selected file, asks the model for strict domain metadata JSON, validates the response, and shows changed fields before applying them. Filename-only heuristics are not used for autosuggest.
 
@@ -433,9 +439,11 @@ Required inputs:
 For each selected variant, Studio:
 
 1. Validates the selected document and variant IDs.
-2. Searches chunks scoped to selected documents.
-3. Sends selected chunks to the active adapter.
+2. Builds a native runtime query using the active runtime profile and selected variant parameters.
+3. Combines native runtime evidence with metadata and graph-derived evidence when those paths are available.
 4. Records a run with status, answer, sources, chunk traces, timings, and any error.
+
+If native document-scoped filtering is unsupported by the configured runtime storage, the run fails with a runtime error instead of falling back to metadata-only retrieval.
 
 The returned runs are also available in `Comparison`, `Optimizer`, and the `Dashboard`.
 
@@ -443,18 +451,13 @@ The returned runs are also available in `Comparison`, `Optimizer`, and the `Dash
 
 Studio has a safe adapter boundary around the optional `raganything` integration.
 
-When `raganything` is available, Diagnostics reports `raganything_available: true` and clears the missing-dependency warning. The current adapter can still report fallback execution for paths not yet wired to upstream RAG-Anything APIs. When `raganything` is unavailable, the backend still runs with fallback behavior:
+When `raganything` is available, Diagnostics reports `raganything_available: true` and clears the missing-dependency warning. Runtime profiles execute queries through the native RAG-Anything runtime; missing runtime profiles, inactive runtime modes, and unhealthy runtime dependencies create explicit failed runs instead of simple local answers.
 
-- `active_backend`: `fallback`
-- `indexing`: `line_split_fallback`
-- `query`: `simple_fallback`
-- `graph`: `placeholder`
+Local fallback parsing remains available as an explicit parser mode for small text-oriented documents. It creates local chunks for inspection and metadata search, but query execution in runtime profiles requires a configured native RAG-Anything runtime.
 
-Fallback indexing reads uploaded bytes as UTF-8 with replacement for invalid characters, splits content into non-empty lines, and creates one chunk per non-empty line. If the file has no line breaks but has text, it creates one chunk from the stripped content.
+Local fallback parsing reads uploaded bytes as UTF-8 with replacement for invalid characters, splits content into non-empty lines, and creates one chunk per non-empty line. If the file has no line breaks but has text, it creates one chunk from the stripped content.
 
-Fallback query uses the selected chunks directly. If chunks are present, the answer is the stripped query followed by the selected chunk text. If no chunks are selected, the answer is empty.
-
-Fallback graph returns an empty graph payload. This is why `Graph` may show `Graph is empty` even when document upload, chunk search, and query runs work.
+When runtime graph storage is inactive, the Graph page shows relationship metadata derived during parsing when those relationships exist. If no relationship metadata exists, the page reports that no runtime graph or relationship metadata is available.
 
 ## Troubleshooting
 
@@ -484,7 +487,7 @@ python -m pip install -e "backend[dev]"
 
 That backend install includes the declared `raganything[all]` dependency.
 
-The app still works in fallback mode, but graph output is a placeholder and query answers are simple chunk excerpts.
+Local fallback parsing can still create chunks for inspection, but query execution requires a configured native runtime profile.
 
 ### Settings shows `No default profile saved`
 
@@ -532,4 +535,4 @@ Run an experiment first from `Experiments`, then copy the returned experiment ID
 
 ### Graph is empty
 
-An empty graph is expected in fallback mode. Confirm `Diagnostics` first. If `graph` reports `placeholder`, graph-backed retrieval data is not available from the current adapter.
+An empty graph means neither native runtime graph storage nor parsed relationship metadata currently has nodes or edges to show. Confirm `Diagnostics` first, then reindex documents with parser/domain metadata that can derive relationships.

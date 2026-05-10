@@ -11,7 +11,7 @@ This design intentionally chooses the heavier production path:
 - Neo4j stores graph retrieval data.
 - RAG-Anything and LightRAG execute indexing and query flows.
 - Studio keeps mirrored chunk snapshots for inspection, not as the retrieval source of truth.
-- Fallback behavior remains available only for development diagnostics and explicit degraded-mode testing.
+- Local fallback behavior remains available only as an explicit parser mode for local chunk creation and inspection.
 
 ## Current State
 
@@ -21,9 +21,9 @@ Ragstudio already has the shape of this system:
 - `RAGAnythingAdapter` isolates upstream RAG-Anything imports.
 - Documents, chunks, variants, experiments, runs, scores, diagnostics, and optimizer screens exist.
 - MinerU sidecar parsing and artifact import exist.
-- Query and chunk inspection flows work through Studio-managed chunks.
+- Query, chunk inspection, and graph flows are wired through runtime-first services with Studio-managed mirrored chunks for inspection.
 
-The missing piece is that these parts do not yet build or run a production RAG-Anything runtime. Storage is mostly descriptive, the adapter reports fallback mode, SQLite chunks are currently the retrieval source, and variants are not compiled into real RAG-Anything/LightRAG execution parameters.
+The remaining work is operational hardening around production RAG-Anything dependencies, storage readiness, and benchmark coverage. Runtime profiles are the source of query execution; local fallback is parser-only and is not a query/runtime substitute.
 
 ## Goals
 
@@ -140,7 +140,7 @@ For each selected variant:
 5. Normalize the answer, sources, chunk traces, reranker traces, timings, token metadata, and errors.
 6. Store a Studio run for experiments, comparison, and optimizer workflows.
 
-Production runtime profiles must not silently fall back to local query behavior. If runtime dependencies are unhealthy, the run fails with a clear dependency error. Explicit fallback mode can remain available for development diagnostics.
+Production runtime profiles must not silently fall back to local query behavior. If runtime dependencies are unhealthy, the run fails with a clear dependency error. Explicit local fallback remains parser-only for local chunk creation and inspection.
 
 ## Mirrored Chunks And Inspection
 
@@ -250,7 +250,7 @@ Testing moves in layers:
 6. Add destructive document reindexing through the runtime.
 7. Add query execution through the runtime.
 8. Add mirrored chunk/source/trace inspection.
-9. Keep fallback mode available only as explicit development diagnostics.
+9. Keep local fallback available only as explicit parser behavior for development inspection.
 
 ## Success Criteria
 
@@ -262,3 +262,7 @@ Testing moves in layers:
 - Diagnostics clearly identify missing or unhealthy runtime dependencies.
 - Production runtime profiles do not silently fall back to local fallback behavior.
 - Tests cover runtime profile validation, health checks, config compilation, destructive reindex behavior, and query failure handling.
+
+## Runtime-First Cleanup Update
+
+Production runtime profiles no longer use local fallback query behavior or local graph placeholders. Unsupported scoped native query filtering is a runtime error, not a metadata fallback. Local fallback remains only as a parser mode for explicit local chunk creation.
