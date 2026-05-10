@@ -394,7 +394,10 @@ class NativeRAGAnythingAdapter:
             openai_module.openai_complete_if_cache,
             model=self.profile.llm_model,
             base_url=self.profile.llm_base_url,
-            api_key=self.profile.llm_api_key,
+            api_key=self._openai_client_api_key(
+                self.profile.llm_api_key,
+                self.profile.llm_base_url,
+            ),
             timeout=self.profile.llm_timeout_ms / 1000,
         )
         embedding_impl = getattr(openai_module.openai_embed, "func", openai_module.openai_embed)
@@ -404,9 +407,13 @@ class NativeRAGAnythingAdapter:
                 embedding_impl,
                 model=self.profile.embedding_model,
                 base_url=self.profile.embedding_base_url,
-                api_key=self.profile.embedding_api_key,
+                api_key=self._openai_client_api_key(
+                    self.profile.embedding_api_key,
+                    self.profile.embedding_base_url,
+                ),
             ),
             model_name=self.profile.embedding_model,
+            send_dimensions=True,
         )
         vision_func = None
         if self.profile.vision_base_url or "vision" in self.profile.llm_capabilities:
@@ -414,7 +421,10 @@ class NativeRAGAnythingAdapter:
                 openai_module.openai_complete_if_cache,
                 model=self.profile.vision_model or self.profile.llm_model,
                 base_url=self.profile.vision_base_url or self.profile.llm_base_url,
-                api_key=self.profile.vision_api_key or self.profile.llm_api_key,
+                api_key=self._openai_client_api_key(
+                    self.profile.vision_api_key or self.profile.llm_api_key,
+                    self.profile.vision_base_url or self.profile.llm_base_url,
+                ),
                 timeout=self.profile.vision_timeout_ms / 1000,
             )
 
@@ -441,6 +451,13 @@ class NativeRAGAnythingAdapter:
             lightrag_kwargs=self._lightrag_kwargs(),
         )
         return self._rag
+
+    def _openai_client_api_key(self, api_key: str | None, base_url: str | None) -> str | None:
+        if api_key:
+            return api_key
+        if base_url:
+            return "unused"
+        return None
 
     def _lightrag_kwargs(self) -> dict[str, Any]:
         return {

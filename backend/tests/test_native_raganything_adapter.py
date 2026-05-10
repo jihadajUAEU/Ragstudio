@@ -550,6 +550,33 @@ def test_native_adapter_reports_scoped_query_capability(tmp_path):
     )
 
 
+def test_native_adapter_supplies_placeholder_api_key_for_local_openai_compatible_endpoints(
+    tmp_path,
+):
+    runtime_profile = profile(
+        runtime_working_dir=str(tmp_path / "runtime"),
+        llm_api_key=None,
+        embedding_api_key=None,
+        vision_api_key=None,
+    )
+    adapter = NativeRAGAnythingAdapter(
+        runtime_profile,
+        AppSettings(database_url="postgresql+asyncpg://user:pass@localhost:5432/ragstudio"),
+    )
+
+    adapter._raganything()
+
+    rag = FakeRAGAnything.instances[0]
+    llm_func = rag.kwargs["llm_model_func"]
+    embedding_wrapper = rag.kwargs["embedding_func"]
+    embedding_func = embedding_wrapper.kwargs["func"]
+    vision_func = rag.kwargs["vision_model_func"]
+    assert llm_func.keywords["api_key"] == "unused"
+    assert embedding_func.keywords["api_key"] == "unused"
+    assert embedding_wrapper.kwargs["send_dimensions"] is True
+    assert vision_func.keywords["api_key"] == "unused"
+
+
 @pytest.mark.asyncio
 async def test_native_adapter_queries_selected_documents_with_scoped_lightrag(tmp_path):
     adapter = NativeRAGAnythingAdapter(
