@@ -668,6 +668,91 @@ async def test_run_index_job_preserves_mineru_status_on_success(
 
 
 @pytest.mark.asyncio
+async def test_run_index_job_merges_mineru_status_diagnostics(
+    tmp_path,
+    database_url,
+    monkeypatch,
+):
+    engine = make_engine(database_url)
+    session_factory = make_session_factory(engine)
+    await init_db(engine)
+
+    async with session_factory() as session:
+        artifact = tmp_path / "quran.pdf"
+        artifact.write_bytes(b"%PDF-1.4")
+        document = Document(
+            filename="quran_arabic_english.pdf",
+            content_type="application/pdf",
+            sha256="strict-merged-diagnostics-sha",
+            artifact_path=str(artifact),
+            status="ready",
+        )
+        session.add(document)
+        await session.flush()
+        job = Job(type="index_document", target_id=document.id, status="ready", progress=0)
+        session.add(job)
+        await session.commit()
+
+        async def fake_index_document(
+            self,
+            document_id,
+            *,
+            options=None,
+            commit=True,
+            on_mineru_status=None,
+        ):
+            if on_mineru_status is not None:
+                await on_mineru_status(
+                    {
+                        "jobId": "remote-validated",
+                        "status": "processing",
+                        "progress": 45,
+                        "detail": "MinerU artifacts received.",
+                        "updatedAt": "2026-05-11T08:30:00Z",
+                    }
+                )
+                await on_mineru_status(
+                    {
+                        "jobId": "remote-validated",
+                        "status": "validated",
+                        "progress": 80,
+                        "detail": "MinerU artifacts validated.",
+                        "chunkCount": 12,
+                        "characterCount": 34567,
+                        "pageCount": 9,
+                    }
+                )
+            return [object(), object()]
+
+        monkeypatch.setattr(ChunkService, "index_document", fake_index_document)
+
+        service = DocumentService(session, tmp_path)
+        await service.run_index_job(
+            document.id,
+            job.id,
+            IndexDocumentIn(parser_mode="mineru_strict"),
+        )
+
+        refreshed_job = await session.get(Job, job.id)
+
+    await engine.dispose()
+
+    assert refreshed_job is not None
+    assert refreshed_job.status == "succeeded"
+    assert refreshed_job.result["chunk_count"] == 2
+    assert refreshed_job.result["mineru"] == {
+        "job_id": "remote-validated",
+        "status": "validated",
+        "progress": 80,
+        "detail": "MinerU artifacts validated.",
+        "updated_at": "2026-05-11T08:30:00Z",
+        "chunk_count": 12,
+        "character_count": 34567,
+        "page_count": 9,
+    }
+
+
+@pytest.mark.asyncio
 async def test_run_index_job_marks_searchable_document_succeeded_when_enrichment_skips(
     tmp_path,
     database_url,

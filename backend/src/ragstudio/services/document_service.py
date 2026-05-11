@@ -493,21 +493,46 @@ class DocumentService:
             return
 
         async def on_mineru_status(payload: dict[str, Any]) -> None:
-            status = str(payload.get("status") or "unknown")
+            result = job.result or {}
+            existing_mineru = result.get("mineru")
+            mineru = dict(existing_mineru) if isinstance(existing_mineru, dict) else {}
+
+            status_payload = payload.get("status")
+            if status_payload is not None:
+                mineru["status"] = str(status_payload)
+            status = str(mineru.get("status") or "unknown")
+
             progress_value = payload.get("progress")
-            progress = progress_value if isinstance(progress_value, int) else None
+            if isinstance(progress_value, int):
+                mineru["progress"] = progress_value
+                progress = progress_value
+            else:
+                progress = None
+
             remote_job_id = payload.get("jobId")
-            detail = str(payload.get("detail") or status)
-            job.result = {
-                **job.result,
-                "mineru": {
-                    "job_id": str(remote_job_id) if remote_job_id else None,
-                    "status": status,
-                    "progress": progress,
-                    "detail": detail,
-                    "updated_at": payload.get("updatedAt"),
-                },
-            }
+            if remote_job_id is not None:
+                mineru["job_id"] = str(remote_job_id)
+
+            detail_payload = payload.get("detail")
+            if detail_payload is not None:
+                mineru["detail"] = str(detail_payload)
+            detail = str(mineru.get("detail") or status)
+
+            updated_at = payload.get("updatedAt")
+            if updated_at is not None:
+                mineru["updated_at"] = updated_at
+
+            for payload_key, result_key in (
+                ("chunkCount", "chunk_count"),
+                ("characterCount", "character_count"),
+                ("pageCount", "page_count"),
+                ("error", "error"),
+            ):
+                value = payload.get(payload_key)
+                if value is not None:
+                    mineru[result_key] = value
+
+            job.result = {**result, "mineru": mineru}
             if progress is not None:
                 job.progress = max(1, min(progress, 99))
             job.logs = [*job.logs, f"MinerU {status}: {detail}"][-20:]
