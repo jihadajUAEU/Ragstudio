@@ -395,6 +395,56 @@ describe("DocumentsPage", () => {
     expect(screen.queryByText("doc-1")).not.toBeInTheDocument();
   });
 
+  it("shows indexing stage details and warnings", async () => {
+    vi.mocked(apiClient.documents).mockResolvedValue({
+      items: [
+        {
+          id: "doc-1",
+          filename: "quran.pdf",
+          content_type: "application/pdf",
+          status: "succeeded",
+          sha256: "sha-1",
+        },
+      ],
+      total: 1,
+    });
+    vi.mocked(apiClient.jobs).mockResolvedValue({
+      items: [
+        {
+          id: "job-1",
+          type: "index_document",
+          status: "succeeded",
+          target_id: "doc-1",
+          progress: 100,
+          logs: ["Indexing completed with warnings"],
+          result: {
+            indexing_stage: {
+              status: "ready_with_warnings",
+              label: "Ready with warnings",
+              detail: "Vector index ready; graph skipped",
+              chunk_count: 1754,
+            },
+            warnings: [
+              "Graph extraction skipped because Neo4j is unavailable",
+              "Some chunk metadata could not be normalized",
+            ],
+          },
+        },
+      ],
+      total: 1,
+    });
+
+    renderDocumentsPage();
+
+    expect(await screen.findByText("Index quran.pdf")).toBeVisible();
+    expect(
+      screen.getByText("Ready with warnings · Vector index ready; graph skipped · 1754 chunks"),
+    ).toBeVisible();
+    expect(screen.getByText("Graph extraction skipped because Neo4j is unavailable")).toBeVisible();
+    expect(screen.getByText("Some chunk metadata could not be normalized")).toBeVisible();
+    expect(screen.getByText("Indexing completed with warnings")).toBeVisible();
+  });
+
   it("polls jobs and documents while work is active", async () => {
     vi.useFakeTimers();
     vi.mocked(apiClient.jobs)

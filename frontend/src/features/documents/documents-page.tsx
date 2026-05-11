@@ -255,12 +255,20 @@ export function DocumentsPage() {
         header: "Latest log",
         cell: ({ row }) => {
           const mineruStatus = formatMinerUResult(row.original);
+          const stageText = jobStageText(row.original);
+          const warnings = jobWarnings(row.original);
 
           return (
             <div className="min-w-0 space-y-1 text-xs text-[#62717a]">
               {mineruStatus ? (
                 <p className="truncate font-medium text-[#3a4a53]">MinerU: {mineruStatus}</p>
               ) : null}
+              {stageText ? <p className="line-clamp-2 text-[#3a4a53]">{stageText}</p> : null}
+              {warnings.map((warning) => (
+                <p key={warning} className="line-clamp-2 text-[#8a5a00]">
+                  {warning}
+                </p>
+              ))}
               <p className="line-clamp-2">{row.original.logs.at(-1) ?? "No logs"}</p>
             </div>
           );
@@ -463,6 +471,30 @@ function formatMinerUResult(job: JobOut): string | null {
       : null;
 
   return [mineru.status, progress, mineru.detail].filter(Boolean).join(" · ") || null;
+}
+
+function jobStageText(job: JobOut | undefined): string | null {
+  const stage = job?.result?.indexing_stage;
+  if (!isRecord(stage)) {
+    return null;
+  }
+
+  const label = typeof stage.label === "string" ? stage.label : null;
+  const detail = typeof stage.detail === "string" ? stage.detail : null;
+  const chunkCount = typeof stage.chunk_count === "number" ? stage.chunk_count : null;
+  const parts = [label, detail].filter(Boolean);
+  if (chunkCount !== null) {
+    parts.push(`${chunkCount} chunks`);
+  }
+  return parts.length ? parts.join(" · ") : null;
+}
+
+function jobWarnings(job: JobOut | undefined): string[] {
+  const warnings = job?.result?.warnings;
+  if (!Array.isArray(warnings)) {
+    return [];
+  }
+  return warnings.filter((warning): warning is string => typeof warning === "string");
 }
 
 function getMinerUStatus(result: Record<string, unknown>): {
