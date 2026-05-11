@@ -123,11 +123,48 @@ class RetrievalOrchestrator:
             return self._failed_orchestrated_answer(exc, started, timings)
 
         traces.append(retrieval_trace)
+        observability.record_stage(
+            "primary_retrieval",
+            candidate_count=len(native_candidates) + len(metadata_candidates),
+            latency_ms=timings.get("native_stage_ms", 0.0) + timings.get("metadata_ms", 0.0),
+            detail={
+                "native_candidates": len(native_candidates),
+                "metadata_candidates": len(metadata_candidates),
+                "vector_candidates": _vector_candidate_count(native_candidates),
+            },
+        )
+        traces.append(
+            {
+                "stage": "primary_retrieval",
+                "native_candidates": len(native_candidates),
+                "metadata_candidates": len(metadata_candidates),
+                "vector_candidates": _vector_candidate_count(native_candidates),
+            }
+        )
 
         try:
             fuse_started = perf_counter()
             seed_candidates = fuse_candidates(plan, [*native_candidates, *metadata_candidates])
             timings["initial_fusion_ms"] = _elapsed_ms(fuse_started)
+            seed_candidate_ids = [
+                candidate.candidate_id for candidate in seed_candidates[:limit]
+            ]
+            observability.record_stage(
+                "seed_fusion",
+                candidate_count=len(seed_candidates),
+                latency_ms=timings["initial_fusion_ms"],
+                detail={
+                    "seed_candidates": len(seed_candidates),
+                    "seed_candidate_ids": seed_candidate_ids,
+                },
+            )
+            traces.append(
+                {
+                    "stage": "seed_fusion",
+                    "seed_candidates": len(seed_candidates),
+                    "seed_candidate_ids": seed_candidate_ids,
+                }
+            )
 
             graph_candidates, graph_traces = await self._safe_graph_expansion(
                 query,
@@ -155,7 +192,8 @@ class RetrievalOrchestrator:
             timings["final_fusion_ms"] = _elapsed_ms(refusion_started)
             traces.append(
                 {
-                    "stage": "retrieval_fusion",
+                    "stage": "final_fusion",
+                    "compat_stage": "retrieval_fusion",
                     "native_candidates": len(native_candidates),
                     "metadata_candidates": len(metadata_candidates),
                     "graph_candidates": len(graph_candidates),
@@ -163,9 +201,10 @@ class RetrievalOrchestrator:
                 }
             )
             observability.record_stage(
-                "retrieval_fusion",
+                "final_fusion",
                 candidate_count=len(fused),
                 latency_ms=timings["final_fusion_ms"],
+                detail={"compat_stage": "retrieval_fusion"},
             )
             reranker_traces: list[dict[str, Any]] = []
             reranked = fused
@@ -708,6 +747,15 @@ def _metadata_only(query_config: dict[str, Any]) -> bool:
     retrieval_mode = str(query_config.get("retrieval_mode") or "").casefold()
     reference_mode = str(query_config.get("reference_query_mode") or "").casefold()
     return retrieval_mode == "metadata" or reference_mode in {"exact", "lexical"}
+
+
+def _vector_candidate_count(candidates: list[EvidenceCandidate]) -> int:
+    return sum(
+        1
+        for candidate in candidates
+        if candidate.retrieval_pass in {"vector_db", "native_vector"}
+        or candidate.tool in {"pgvector", "native"}
+    )
 
 
 def _cache_query_type(query: str, intent: str) -> str:

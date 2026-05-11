@@ -597,7 +597,11 @@ async def test_orchestrator_fuses_native_metadata_and_graph_before_answering():
     assert result.timings["native_stage_ms"] >= 0
     assert result.timings["graph_hydration_ms"] >= 0
     assert any(trace.get("stage") == "planner" for trace in result.chunk_traces)
-    assert any(trace.get("stage") == "retrieval_fusion" for trace in result.chunk_traces)
+    assert any(
+        trace.get("stage") == "final_fusion"
+        or trace.get("compat_stage") == "retrieval_fusion"
+        for trace in result.chunk_traces
+    )
     context_trace = next(
         trace for trace in result.chunk_traces if trace.get("stage") == "context_assembly"
     )
@@ -615,6 +619,39 @@ async def test_orchestrator_fuses_native_metadata_and_graph_before_answering():
     )
     assert graph_evidence.source_location == {"page": 9}
     assert graph_evidence.metadata["graph_hydration"]["status"] == "hydrated"
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_emits_primary_seed_expansion_and_final_fusion_stages():
+    answer_service = FakeAnswerService()
+    orchestrator = RetrievalOrchestrator(
+        chunk_service=FakeChunkSearchService(),
+        answer_service=answer_service,
+        reranker_service=FakeRerankerService(),
+        graph_expansion_service=FakeGraphExpansionService(),
+    )
+
+    result = await orchestrator.query(
+        "how many hadith in bukhari",
+        runtime=FakeRuntimeTool(),
+        profile=type("Profile", (), {"enable_rerank": False, "reranker_provider": "disabled"})(),
+        document_ids=["doc-1"],
+        variant_id="variant-1",
+        query_config={"limit": 8},
+    )
+
+    stages = [trace.get("stage") for trace in result.chunk_traces if isinstance(trace, dict)]
+    assert "primary_retrieval" in stages
+    assert "seed_fusion" in stages
+    assert "graph_expansion" in stages
+    assert "final_fusion" in stages
+    assert any(
+        trace.get("stage") == "final_fusion"
+        and trace.get("compat_stage") == "retrieval_fusion"
+        for trace in result.chunk_traces
+    )
+    assert result.error is None
+    assert answer_service.called is True
 
 
 @pytest.mark.asyncio

@@ -7,14 +7,22 @@ class RetrievalObservability:
     def __init__(self) -> None:
         self.trace: dict[str, Any] = {"stages": [], "cache": [], "final_evidence_ids": []}
 
-    def record_stage(self, stage: str, *, candidate_count: int, latency_ms: float) -> None:
-        self.trace["stages"].append(
-            {
-                "stage": stage,
-                "candidate_count": candidate_count,
-                "latency_ms": latency_ms,
-            }
-        )
+    def record_stage(
+        self,
+        stage: str,
+        *,
+        candidate_count: int,
+        latency_ms: float,
+        detail: dict[str, Any] | None = None,
+    ) -> None:
+        item = {
+            "stage": stage,
+            "candidate_count": candidate_count,
+            "latency_ms": latency_ms,
+        }
+        if detail:
+            item.update(detail)
+        self.trace["stages"].append(item)
 
     def cache_decision(
         self,
