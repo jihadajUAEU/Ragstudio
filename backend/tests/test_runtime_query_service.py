@@ -182,19 +182,38 @@ def _real_chunk_retrieval_orchestrator(session, data_dir) -> RetrievalOrchestrat
 @pytest.mark.asyncio
 async def test_query_service_uses_runtime_orchestrator_path(client):
     app = client._transport.app
+    runtime = FakeRuntime()
     async with app.state.session_factory() as session:
-        document, variant = await _create_runtime_records(session, app)
+        document, variant = await _create_runtime_records(session, app, indexed=False)
+        profile = await RuntimeProfileService(session, app.state.settings).get_active_profile()
+        session.add(
+            IndexRecord(
+                document_id=document.id,
+                runtime_profile_id=profile.id,
+                status=StageStatus.SUCCEEDED.value,
+                index_shape={
+                    **profile.index_shape,
+                    "parser_mode": "mineru_strict",
+                    "canonical_chunk_count": 1,
+                    "runtime_chunk_count": 1,
+                },
+                chunk_count=1,
+            )
+        )
+        await session.commit()
 
-        result = await QueryService(
+        service = QueryService(
             session,
             app.state.settings.data_dir,
             settings=app.state.settings,
-            runtime_factory=FakeFactory(),
+            runtime_factory=FakeFactory(runtime),
             health_service=FakeHealthService(),
             retrieval_orchestrator=_real_retrieval_orchestrator(),
-        ).run_query(
-            QueryIn(query="What happened?", document_ids=[document.id], variant_ids=[variant.id])
         )
+        payload = QueryIn(query="What happened?", document_ids=[document.id], variant_ids=[variant.id])
+
+        await service.preflight_runtime_readiness(payload)
+        result = await service.run_query(payload)
 
     run = result.runs[0]
     assert run.status == StageStatus.SUCCEEDED
@@ -202,6 +221,9 @@ async def test_query_service_uses_runtime_orchestrator_path(client):
     assert run.runtime_profile_id == "default"
     assert run.document_ids == [document.id]
     assert run.query_config["top_k"] == 12
+    assert run.query_config["retrieval_mode"] == "hybrid"
+    assert runtime.query_calls == 1
+    assert "index_degraded" not in run.timings
     assert run.timings["planner_ms"] >= 0
     assert run.timings["metadata_ms"] >= 0
     assert run.timings["answer_ms"] >= 0

@@ -377,7 +377,7 @@ class QueryService:
         ready = {
             record.document_id
             for record in result.scalars().all()
-            if record.index_shape == index_shape
+            if self._index_shape_compatible(record.index_shape, index_shape)
         }
         missing = [document_id for document_id in document_ids if document_id not in ready]
         if missing:
@@ -401,7 +401,8 @@ class QueryService:
         ready = {
             record.document_id
             for record in records
-            if record.status == StageStatus.SUCCEEDED.value and record.index_shape == index_shape
+            if record.status == StageStatus.SUCCEEDED.value
+            and self._index_shape_compatible(record.index_shape, index_shape)
         }
         missing = [document_id for document_id in document_ids if document_id not in ready]
         if not missing:
@@ -417,6 +418,25 @@ class QueryService:
             "index_degraded_reason": reason_by_document.get(missing[0], "runtime index pending"),
             "retrieval_mode": "metadata_fallback",
         }
+
+    @classmethod
+    def _index_shape_compatible(
+        cls,
+        stored_shape: dict[str, Any],
+        required_shape: dict[str, Any],
+    ) -> bool:
+        if not isinstance(stored_shape, dict) or not isinstance(required_shape, dict):
+            return False
+        for key, required_value in required_shape.items():
+            if key not in stored_shape:
+                return False
+            stored_value = stored_shape[key]
+            if isinstance(required_value, dict):
+                if not cls._index_shape_compatible(stored_value, required_value):
+                    return False
+            elif stored_value != required_value:
+                return False
+        return True
 
     async def _variants_by_id(self, variant_ids: list[str]) -> dict[str, Variant]:
         result = await self.session.execute(select(Variant).where(Variant.id.in_(variant_ids)))
