@@ -1,8 +1,12 @@
 import pytest
 from ragstudio.db.models import Chunk, Document, IndexRecord, SettingsProfile, Variant
 from ragstudio.schemas.common import StageStatus
+from ragstudio.schemas.parsing import DomainMetadata, IndexDocumentIn
 from ragstudio.schemas.query import QueryIn
 from ragstudio.schemas.runtime import RuntimeHealthCheck
+from ragstudio.services.adapter import AdapterChunk
+from ragstudio.services.chunk_persistence_service import ChunkPersistenceService
+from ragstudio.services.chunk_service import ChunkService
 from ragstudio.services.query_service import (
     QueryResourceNotFoundError,
     QueryRuntimeReadinessError,
@@ -16,6 +20,7 @@ from ragstudio.services.runtime_types import RuntimeQueryResult
 class FakeRuntime:
     def __init__(self, result: RuntimeQueryResult | None = None):
         self.result = result
+        self.query_calls = 0
 
     def capability_report(self):
         return {"active_backend": "runtime", "raganything_available": True}
@@ -27,6 +32,7 @@ class FakeRuntime:
         return []
 
     async def query(self, query, *, document_ids, query_config):
+        self.query_calls += 1
         if self.result is not None:
             return self.result
         return RuntimeQueryResult(
@@ -164,6 +170,15 @@ def _graph_failing_retrieval_orchestrator() -> RetrievalOrchestrator:
     )
 
 
+def _real_chunk_retrieval_orchestrator(session, data_dir) -> RetrievalOrchestrator:
+    return RetrievalOrchestrator(
+        chunk_service=ChunkService(session, data_dir),
+        answer_service=FakeAnswerService(),
+        reranker_service=FakeRerankerService(),
+        graph_expansion_service=FakeGraphExpansionService(),
+    )
+
+
 @pytest.mark.asyncio
 async def test_query_service_uses_runtime_orchestrator_path(client):
     app = client._transport.app
@@ -271,6 +286,76 @@ async def test_query_service_allows_unscoped_runtime_query_when_no_documents_req
     run = result.runs[0]
     assert run.status == StageStatus.SUCCEEDED
     assert run.answer == "Sahih al-Bukhari contains 7277 hadith."
+
+
+@pytest.mark.asyncio
+async def test_query_service_degrades_pending_runtime_index_to_metadata(client):
+    app = client._transport.app
+    runtime = FakeRuntime()
+    async with app.state.session_factory() as session:
+        document, variant = await _create_runtime_records(session, app, indexed=False)
+        profile = await RuntimeProfileService(session, app.state.settings).get_active_profile()
+        session.add(
+            IndexRecord(
+                document_id=document.id,
+                runtime_profile_id=profile.id,
+                status=StageStatus.FAILED.value,
+                index_shape=profile.index_shape,
+                chunk_count=1,
+                error="embedding dimension mismatch",
+            )
+        )
+        await ChunkPersistenceService(session).persist(
+            document,
+            [
+                AdapterChunk(
+                    text="[19:13] وَحَنَانًا مِّن لَّدُنَّا وَزَكَاةً",
+                    source_location={"page": 312, "reference": "19:13"},
+                    metadata={
+                        "preview_ref": "19:13",
+                        "reference_metadata": {"references": ["19:13"]},
+                        "parser_metadata": {"backend": "mineru"},
+                    },
+                )
+            ],
+            options=IndexDocumentIn(
+                parser_mode="mineru_strict",
+                domain_metadata=DomainMetadata(domain="quran_tafseer", language="arabic"),
+            ),
+            commit=True,
+            runtime_profile_id=profile.id,
+            index_shape=profile.index_shape,
+        )
+        await session.commit()
+
+        result = await QueryService(
+            session,
+            app.state.settings.data_dir,
+            settings=app.state.settings,
+            runtime_factory=FakeFactory(runtime),
+            health_service=FakeHealthService(),
+            retrieval_orchestrator=_real_chunk_retrieval_orchestrator(
+                session,
+                app.state.settings.data_dir,
+            ),
+        ).run_query(
+            QueryIn(
+                query="حنانا",
+                document_ids=[document.id],
+                variant_ids=[variant.id],
+            )
+        )
+
+    run = result.runs[0]
+    assert run.status == StageStatus.SUCCEEDED
+    assert run.answer == "Sahih al-Bukhari contains 7277 hadith."
+    assert run.sources
+    assert run.sources[0]["document_id"] == document.id
+    assert run.sources[0]["source_location"]["reference"] == "19:13"
+    assert runtime.query_calls == 0
+    assert run.timings["index_degraded"] is True
+    assert run.timings["index_degraded_reason"] == "embedding dimension mismatch"
+    assert run.timings["retrieval_mode"] == "metadata_fallback"
 
 
 @pytest.mark.asyncio
@@ -444,7 +529,7 @@ async def test_query_preflight_rejects_blocking_runtime_health(client):
 
 
 @pytest.mark.asyncio
-async def test_query_service_requires_ready_runtime_index(client):
+async def test_query_preflight_requires_ready_runtime_index(client):
     app = client._transport.app
     async with app.state.session_factory() as session:
         document, variant = await _create_runtime_records(session, app, indexed=False)
@@ -456,7 +541,7 @@ async def test_query_service_requires_ready_runtime_index(client):
                 settings=app.state.settings,
                 runtime_factory=FakeFactory(),
                 health_service=FakeHealthService(),
-            ).run_query(
+            ).preflight_runtime_readiness(
                 QueryIn(query="not indexed", document_ids=[document.id], variant_ids=[variant.id])
             )
 
@@ -465,7 +550,7 @@ async def test_query_service_requires_ready_runtime_index(client):
 
 
 @pytest.mark.asyncio
-async def test_query_service_rejects_stale_runtime_index_shape(client):
+async def test_query_preflight_rejects_stale_runtime_index_shape(client):
     app = client._transport.app
     async with app.state.session_factory() as session:
         document, variant = await _create_runtime_records(
@@ -481,7 +566,7 @@ async def test_query_service_rejects_stale_runtime_index_shape(client):
                 settings=app.state.settings,
                 runtime_factory=FakeFactory(),
                 health_service=FakeHealthService(),
-            ).run_query(
+            ).preflight_runtime_readiness(
                 QueryIn(query="stale index", document_ids=[document.id], variant_ids=[variant.id])
             )
 

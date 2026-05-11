@@ -146,7 +146,7 @@ class QueryService:
         blocking = self.health_service.blocking_failures(checks)
         if blocking:
             return await self._failed_runtime_runs(payload, profile.id, blocking)
-        await self._validate_index_readiness(
+        index_degradation = await self._index_degradation(
             payload.document_ids,
             profile.id,
             profile.index_shape,
@@ -158,6 +158,8 @@ class QueryService:
             variant = variants[variant_id]
             started_at = perf_counter()
             query_config = self._query_config(profile, variant, payload.limit)
+            if index_degradation:
+                query_config = {**query_config, "retrieval_mode": "metadata"}
             run = Run(
                 variant_id=variant_id,
                 query=payload.query,
@@ -187,7 +189,11 @@ class QueryService:
                 run.token_metadata = orchestrated.token_metadata
                 run.error = orchestrated.error
                 run.error_type = orchestrated.error_type
-                run.timings = {**orchestrated.timings, "total_ms": self._elapsed_ms(started_at)}
+                run.timings = {
+                    **orchestrated.timings,
+                    **(index_degradation or {}),
+                    "total_ms": self._elapsed_ms(started_at),
+                }
             except Exception as exc:
                 run.status = StageStatus.FAILED.value
                 run.error = str(exc)
@@ -376,6 +382,41 @@ class QueryService:
         missing = [document_id for document_id in document_ids if document_id not in ready]
         if missing:
             raise QueryResourceNotFoundError("Runtime index", missing)
+
+    async def _index_degradation(
+        self,
+        document_ids: list[str],
+        runtime_profile_id: str,
+        index_shape: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        if not document_ids:
+            return None
+        result = await self.session.execute(
+            select(IndexRecord).where(
+                IndexRecord.document_id.in_(document_ids),
+                IndexRecord.runtime_profile_id == runtime_profile_id,
+            )
+        )
+        records = list(result.scalars().all())
+        ready = {
+            record.document_id
+            for record in records
+            if record.status == StageStatus.SUCCEEDED.value and record.index_shape == index_shape
+        }
+        missing = [document_id for document_id in document_ids if document_id not in ready]
+        if not missing:
+            return None
+        reason_by_document = {
+            record.document_id: record.error or record.status
+            for record in records
+            if record.document_id in missing
+        }
+        return {
+            "index_degraded": True,
+            "index_degraded_documents": missing,
+            "index_degraded_reason": reason_by_document.get(missing[0], "runtime index pending"),
+            "retrieval_mode": "metadata_fallback",
+        }
 
     async def _variants_by_id(self, variant_ids: list[str]) -> dict[str, Variant]:
         result = await self.session.execute(select(Variant).where(Variant.id.in_(variant_ids)))
