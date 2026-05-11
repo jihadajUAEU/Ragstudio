@@ -40,16 +40,22 @@ def calculate_retrieval_metrics(
 ) -> RetrievalMetrics:
     top_k = candidates[: max(k, 0)]
     relevant_total = len(relevant_references)
-    relevant_flags = [
-        bool(candidate_references(candidate) & relevant_references)
-        for candidate in top_k
+    candidate_matches = [
+        candidate_references(candidate) & relevant_references for candidate in top_k
     ]
-    relevant_found = sum(1 for flag in relevant_flags if flag)
-    precision = relevant_found / k if k > 0 else 0.0
+    relevant_flags = [bool(matches) for matches in candidate_matches]
+    relevant_candidate_count = sum(1 for flag in relevant_flags if flag)
+    found_references = set().union(*candidate_matches) if candidate_matches else set()
+    relevant_found = len(found_references)
+    precision = relevant_candidate_count / k if k > 0 else 0.0
     recall = relevant_found / relevant_total if relevant_total else 0.0
-    hit_rate = 1.0 if relevant_found else 0.0
+    hit_rate = 1.0 if relevant_candidate_count else 0.0
     mrr = _mrr(relevant_flags)
-    ndcg = _ndcg(relevant_flags, min(k, relevant_total if relevant_total else k))
+    ndcg = _ndcg(
+        candidate_matches,
+        relevant_references,
+        min(k, relevant_total if relevant_total else k),
+    )
     return RetrievalMetrics(
         precision_at_k=round(precision, 6),
         recall_at_k=round(recall, 6),
@@ -91,7 +97,12 @@ def assert_quality_gate(
 
 def candidate_references(candidate: EvidenceCandidate) -> set[str]:
     metadata = candidate.metadata
-    refs = metadata.get("reference_metadata", {}).get("references", [])
+    reference_metadata = metadata.get("reference_metadata", {})
+    refs = (
+        reference_metadata.get("references", [])
+        if isinstance(reference_metadata, dict)
+        else []
+    )
     source_ref = candidate.source_location.get("reference")
     values: set[str] = set()
     if isinstance(refs, list):
@@ -119,13 +130,21 @@ def _mrr(relevant_flags: list[bool]) -> float:
     return 0.0
 
 
-def _ndcg(relevant_flags: list[bool], ideal_relevant_count: int) -> float:
+def _ndcg(
+    candidate_matches: list[set[str]],
+    relevant_references: set[str],
+    ideal_relevant_count: int,
+) -> float:
     if ideal_relevant_count <= 0:
         return 0.0
-    dcg = sum(
-        (1.0 / log2(index + 1))
-        for index, relevant in enumerate(relevant_flags, start=1)
-        if relevant
-    )
+    seen_references: set[str] = set()
+    dcg = 0.0
+    for index, matches in enumerate(candidate_matches, start=1):
+        new_matches = matches - seen_references
+        if new_matches:
+            dcg += 1.0 / log2(index + 1)
+            seen_references.update(new_matches)
+        if seen_references >= relevant_references:
+            break
     ideal = sum(1.0 / log2(index + 1) for index in range(1, ideal_relevant_count + 1))
     return dcg / ideal if ideal else 0.0
