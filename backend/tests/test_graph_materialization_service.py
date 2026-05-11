@@ -103,12 +103,15 @@ async def test_replace_document_graph_deletes_and_rebuilds_projection():
     calls = driver.session_instance.calls
     delete_call = next(call for call in calls if "DETACH DELETE" in call[0])
     node_call = next(call for call in calls if "UNWIND $chunk_nodes AS node" in call[0])
+    reference_call = next(call for call in calls if "UNWIND $reference_nodes AS node" in call[0])
     relationship_calls = [call for call in calls if "UNWIND $relationships AS rel" in call[0]]
     assert delete_call[1]["document_id"] == "doc-1"
     assert node_call[1]["chunk_nodes"][0]["chunk_id"] == "chunk-1"
     assert node_call[1]["chunk_nodes"][0]["id"] == "chunk:doc-1:chunk-1"
     assert node_call[1]["chunk_nodes"][0]["page"] == 10
-    assert node_call[1]["reference_nodes"][0]["id"] == "ref:doc-1:book:53:hadith:17"
+    assert "reference_nodes" not in node_call[1]
+    assert reference_call[1]["reference_nodes"][0]["id"] == "ref:doc-1:book:53:hadith:17"
+    assert "chunk_nodes" not in reference_call[1]
     relationship_types = {
         relationship["type"]
         for _, params in relationship_calls

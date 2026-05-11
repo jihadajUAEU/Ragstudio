@@ -8,6 +8,8 @@ from typing import Any
 
 from ragstudio.schemas.parsing import DomainMetadata, ParserMode
 from ragstudio.services.adapter import AdapterChunk
+from ragstudio.services.chunk_quality_gate import ChunkQualityGate
+from ragstudio.services.parser_normalization import ExpectedContentProfile, MinerUContentNormalizer
 from ragstudio.services.reference_metadata import ReferenceSemantics
 
 
@@ -29,9 +31,16 @@ class SplitPiece:
     preview_ref: str | None
 
 
+@dataclass(frozen=True)
+class ContentListSplitResult:
+    handled: bool
+    pieces: list[SplitPiece]
+
+
 class ChunkSplitter:
     def __init__(self, *, max_words: int = 1500) -> None:
         self.max_words = max_words
+        self.content_normalizer = MinerUContentNormalizer()
 
     def split(
         self,
@@ -43,16 +52,29 @@ class ChunkSplitter:
         del parser_mode
 
         profile = self._profile(domain_metadata)
+        expected_profile = ExpectedContentProfile.from_domain_metadata(domain_metadata)
         output: list[AdapterChunk] = []
         for chunk in chunks:
-            pieces = self._split_chunk(chunk, profile)
+            pieces = self._split_chunk(
+                chunk,
+                profile,
+                expected_profile,
+                domain_metadata,
+            )
             if len(pieces) == 1 and pieces[0].text == chunk.text:
-                if self._should_enrich_unchanged(pieces[0], profile):
+                if self._should_preserve_piece(pieces[0], chunk) or self._should_enrich_unchanged(
+                    pieces[0],
+                    profile,
+                    expected_profile,
+                    domain_metadata,
+                ):
                     output.append(
                         self._with_split_metadata(
                             pieces[0],
                             parent=chunk,
                             profile=profile,
+                            expected_profile=expected_profile,
+                            domain_metadata=domain_metadata,
                             split_index=0,
                             split_count=1,
                         )
@@ -68,6 +90,8 @@ class ChunkSplitter:
                         piece,
                         parent=chunk,
                         profile=profile,
+                        expected_profile=expected_profile,
+                        domain_metadata=domain_metadata,
                         split_index=split_index,
                         split_count=split_count,
                     )
@@ -103,10 +127,21 @@ class ChunkSplitter:
             )
         return ChunkProfile("generic", target_words=1000, hard_max_words=self.max_words)
 
-    def _split_chunk(self, chunk: AdapterChunk, profile: ChunkProfile) -> list[SplitPiece]:
-        content_list_chunks = self._chunks_from_content_list(chunk, profile)
-        if content_list_chunks:
-            return content_list_chunks
+    def _split_chunk(
+        self,
+        chunk: AdapterChunk,
+        profile: ChunkProfile,
+        expected_profile: ExpectedContentProfile,
+        domain_metadata: DomainMetadata,
+    ) -> list[SplitPiece]:
+        content_list_result = self._chunks_from_content_list(
+            chunk,
+            profile,
+            expected_profile,
+            domain_metadata,
+        )
+        if content_list_result is not None:
+            return content_list_result.pieces
 
         sections = self._markdown_sections(chunk.text)
         title_sections, body_sections = self._split_title_sections(sections, chunk, profile)
@@ -124,7 +159,7 @@ class ChunkSplitter:
             content_type=chunk.content_type,
             preview_ref=chunk.preview_ref,
         )
-        reference_units = self._reference_unit_sections(body_chunk, profile)
+        reference_units = self._reference_unit_sections(body_chunk, profile, domain_metadata)
         if reference_units:
             return [*title_pieces, *reference_units]
 
@@ -139,67 +174,139 @@ class ChunkSplitter:
         self,
         chunk: AdapterChunk,
         profile: ChunkProfile,
-    ) -> list[SplitPiece]:
+        expected_profile: ExpectedContentProfile,
+        domain_metadata: DomainMetadata,
+    ) -> ContentListSplitResult | None:
         parser_metadata = self._parser_metadata(chunk)
         extract_dir = parser_metadata.get("artifact_extract_dir")
         content_ref = parser_metadata.get("content_list_ref")
         if not isinstance(extract_dir, str) or not isinstance(content_ref, str):
-            return []
+            return None
 
         root = Path(extract_dir).resolve()
         target = (root / content_ref).resolve()
         if target != root and root not in target.parents:
-            return []
+            return None
 
         try:
             data = json.loads(target.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
-            return []
+            return None
 
         if not isinstance(data, list):
-            return []
+            return None
+
+        normalized_blocks = self.content_normalizer.normalize_content_list(
+            data,
+            domain_metadata=domain_metadata,
+            expected_profile=expected_profile,
+        )
 
         page_parts: dict[int, list[str]] = {}
-        for item in data:
-            if not isinstance(item, dict):
+        page_warnings: dict[int, list[dict[str, Any]]] = {}
+        unpaged_parts: list[str] = []
+        unpaged_warnings: list[dict[str, Any]] = []
+        for block in normalized_blocks:
+            warnings = block.warning_metadata()
+            if block.page is None:
+                if warnings:
+                    unpaged_warnings.extend(warnings)
+                if block.text.strip():
+                    unpaged_parts.append(block.text.strip())
                 continue
-
-            text = item.get("text")
-            if not isinstance(text, str) or not text.strip():
-                text = item.get("content")
-            page_idx = item.get("page_idx")
-            if not isinstance(text, str) or not text.strip() or not isinstance(page_idx, int):
-                continue
-
-            page_parts.setdefault(page_idx + 1, []).append(text.strip())
+            if warnings:
+                page_warnings.setdefault(block.page, []).extend(warnings)
+            if block.text.strip():
+                page_parts.setdefault(block.page, []).append(block.text.strip())
 
         pieces: list[SplitPiece] = []
-        for page in sorted(page_parts):
-            text = "\n\n".join(page_parts[page])
-            source_location = dict(chunk.source_location)
-            source_location["page_start"] = page
-            source_location["page_end"] = page
-            page_chunk = AdapterChunk(
+        if unpaged_parts:
+            text = "\n\n".join(unpaged_parts)
+            metadata = dict(chunk.metadata)
+            if unpaged_warnings:
+                self._merge_parser_warnings(metadata, unpaged_warnings)
+            unpaged_chunk = AdapterChunk(
                 text=text,
-                source_location=source_location,
-                metadata=chunk.metadata,
+                source_location=dict(chunk.source_location),
+                metadata=metadata,
                 runtime_source_id=chunk.runtime_source_id,
                 content_type=chunk.content_type,
                 preview_ref=chunk.preview_ref,
             )
-            reference_units = self._reference_unit_sections(page_chunk, profile)
+            reference_units = self._reference_unit_sections(
+                unpaged_chunk,
+                profile,
+                domain_metadata,
+            )
+            if reference_units:
+                pieces.extend(reference_units)
+            else:
+                for part in self._hard_split_text(text, profile.hard_max_words):
+                    pieces.append(
+                        self._piece_from_parent(
+                            unpaged_chunk,
+                            part,
+                            source_location=dict(chunk.source_location),
+                        )
+                    )
+        elif unpaged_warnings:
+            pieces.append(
+                self._warning_only_piece(
+                    chunk,
+                    unpaged_warnings,
+                    content_ref=content_ref,
+                )
+            )
+        for page in sorted(set(page_parts) | set(page_warnings)):
+            text = "\n\n".join(page_parts.get(page, []))
+            if not text.strip():
+                warnings = page_warnings.get(page, [])
+                if warnings:
+                    pieces.append(
+                        self._warning_only_piece(
+                            chunk,
+                            warnings,
+                            content_ref=content_ref,
+                        )
+                    )
+                continue
+            source_location = dict(chunk.source_location)
+            source_location["page_start"] = page
+            source_location["page_end"] = page
+            metadata = dict(chunk.metadata)
+            warnings = page_warnings.get(page, [])
+            if warnings:
+                self._merge_parser_warnings(metadata, warnings)
+            page_chunk = AdapterChunk(
+                text=text,
+                source_location=source_location,
+                metadata=metadata,
+                runtime_source_id=chunk.runtime_source_id,
+                content_type=chunk.content_type,
+                preview_ref=chunk.preview_ref,
+            )
+            reference_units = self._reference_unit_sections(
+                page_chunk,
+                profile,
+                domain_metadata,
+            )
             if reference_units:
                 pieces.extend(reference_units)
                 continue
             for part in self._hard_split_text(text, profile.hard_max_words):
-                pieces.append(self._piece_from_parent(chunk, part, source_location=source_location))
-        return pieces
+                pieces.append(
+                    self._piece_from_parent(page_chunk, part, source_location=source_location)
+                )
+        return ContentListSplitResult(handled=True, pieces=pieces)
 
     def _reference_unit_sections(
         self,
         chunk: AdapterChunk,
         profile: ChunkProfile,
+        domain_metadata: DomainMetadata,
     ) -> list[SplitPiece]:
+        del domain_metadata
+
         if profile.semantics is None or profile.semantics.chunk_unit not in {
             "hadith",
             "verse",
@@ -284,11 +391,17 @@ class ChunkSplitter:
         *,
         parent: AdapterChunk,
         profile: ChunkProfile,
+        expected_profile: ExpectedContentProfile,
+        domain_metadata: DomainMetadata,
         split_index: int,
         split_count: int,
     ) -> AdapterChunk:
         metadata = dict(piece.metadata)
         self._enrich_metadata(metadata, piece=piece, profile=profile)
+        self._merge_parser_warnings(
+            metadata,
+            ChunkQualityGate(expected_profile, domain_metadata).warnings_for(piece.text),
+        )
         parser_metadata = dict(self._parser_metadata(parent))
         parser_metadata.update(self._parser_metadata(piece))
         parent_parser_metadata = self._parser_metadata(parent)
@@ -338,7 +451,20 @@ class ChunkSplitter:
     def _word_count(self, text: str) -> int:
         return len(text.split())
 
-    def _should_enrich_unchanged(self, piece: SplitPiece, profile: ChunkProfile) -> bool:
+    def _should_preserve_piece(self, piece: SplitPiece, parent: AdapterChunk) -> bool:
+        if piece.source_location != parent.source_location:
+            return True
+        return piece.metadata != parent.metadata
+
+    def _should_enrich_unchanged(
+        self,
+        piece: SplitPiece,
+        profile: ChunkProfile,
+        expected_profile: ExpectedContentProfile,
+        domain_metadata: DomainMetadata,
+    ) -> bool:
+        if ChunkQualityGate(expected_profile, domain_metadata).warnings_for(piece.text):
+            return True
         if profile.semantics is None:
             return False
         if profile.semantics.derive_reference_metadata(piece.text, piece.source_location):
@@ -367,6 +493,73 @@ class ChunkSplitter:
             document_metadata = dict(metadata.get("document_metadata") or {})
             document_metadata["title"] = title
             metadata["document_metadata"] = document_metadata
+
+    def _merge_parser_warnings(
+        self,
+        metadata: dict[str, Any],
+        warnings: list[dict[str, Any]],
+    ) -> None:
+        if not warnings:
+            return
+
+        extraction_quality = metadata.get("extraction_quality")
+        if isinstance(extraction_quality, dict):
+            extraction_quality = dict(extraction_quality)
+        else:
+            extraction_quality = {}
+
+        existing = extraction_quality.get("parser_warnings")
+        parser_warnings = list(existing) if isinstance(existing, list) else []
+        seen = {
+            json.dumps(warning, sort_keys=True, default=str)
+            for warning in parser_warnings
+            if isinstance(warning, dict)
+        }
+        for warning in warnings:
+            key = json.dumps(warning, sort_keys=True, default=str)
+            if key in seen:
+                continue
+            parser_warnings.append(dict(warning))
+            seen.add(key)
+
+        extraction_quality["parser_warnings"] = parser_warnings
+        metadata["extraction_quality"] = extraction_quality
+
+    def _warning_only_piece(
+        self,
+        chunk: AdapterChunk,
+        warnings: list[dict[str, Any]],
+        *,
+        content_ref: str,
+    ) -> SplitPiece:
+        metadata = dict(chunk.metadata)
+        self._merge_parser_warnings(metadata, warnings)
+        parser_metadata = dict(self._parser_metadata(chunk))
+        parser_metadata["parser_quality_only"] = True
+        parser_metadata["content_list_ref"] = content_ref
+        metadata["parser_metadata"] = parser_metadata
+
+        pages = [
+            warning.get("page")
+            for warning in warnings
+            if isinstance(warning.get("page"), int)
+        ]
+        source_location = dict(chunk.source_location)
+        if pages:
+            source_location["page_start"] = min(pages)
+            source_location["page_end"] = max(pages)
+
+        return SplitPiece(
+            text=(
+                "[Parser quality gate quarantined this content-list page; "
+                "no trusted text was extracted.]"
+            ),
+            source_location=source_location,
+            metadata=metadata,
+            runtime_source_id=chunk.runtime_source_id,
+            content_type="parser_quality_warning",
+            preview_ref=chunk.preview_ref,
+        )
 
     def _split_title_sections(
         self,

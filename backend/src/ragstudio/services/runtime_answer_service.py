@@ -53,12 +53,22 @@ class RuntimeAnswerService:
         for index, candidate in enumerate(evidence, start=1):
             label = f"S{index}"
             reasons = ", ".join(candidate.reasons)
-            sections.append(
+            warning_codes = candidate.metadata.get("parser_quality_warning_codes")
+            warnings = (
+                ", ".join(warning_codes)
+                if isinstance(warning_codes, list)
+                and all(isinstance(code, str) for code in warning_codes)
+                else ""
+            )
+            header = (
                 f"[{label}] tool={candidate.tool} rank={candidate.tool_rank} "
                 f"document={candidate.document_id or 'unknown'} "
                 f"chunk={candidate.chunk_id or 'unknown'}"
-                f"{f' reasons={reasons}' if reasons else ''}\n"
-                f"{candidate.text.strip()}"
+                f"{f' reasons={reasons}' if reasons else ''}"
+                f"{f' parser_quality_warnings={warnings}' if warnings else ''}"
+            )
+            sections.append(
+                f"{header}\n{candidate.text.strip()}"
             )
         return "\n\n".join(sections)
 

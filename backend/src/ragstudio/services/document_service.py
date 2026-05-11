@@ -391,6 +391,8 @@ class DocumentService:
                 on_mineru_status=on_mineru_status,
             )
         chunk_count = len(chunks or [])
+        parser_quality = self._parser_quality_summary(chunks or [])
+        parser_warning = self._parser_quality_warning(parser_quality)
         document.status = StageStatus.SUCCEEDED.value
         job.status = StageStatus.SUCCEEDED.value
         job.progress = 100
@@ -399,9 +401,11 @@ class DocumentService:
             "document_id": document.id,
             "chunk_count": chunk_count,
             "graph_materialization": graph_materialization,
+            "parser_quality": parser_quality,
         }
         job.logs = [*job.logs, f"Indexed {chunk_count} chunks."]
-        self._record_graph_materialization_warning(job, graph_materialization)
+        if parser_warning:
+            job.logs = [*job.logs, f"Parser quality warnings: {parser_warning}"]
         if graph_materialization.get("status") == "pending" and self.settings is not None:
             await self.session.commit()
             graph_materialization = await GraphProjectionRunner(
@@ -414,39 +418,104 @@ class DocumentService:
             }
             status = str(graph_materialization.get("status") or "unknown")
             job.logs = [*job.logs, f"Graph projection materialization {status}."]
-            self._record_graph_materialization_warning(job, graph_materialization)
-        warning = self._graph_materialization_warning(graph_materialization)
+        graph_warning = self._graph_materialization_warning(graph_materialization)
+        warning_entries = [item for item in (graph_warning, parser_warning) if item]
+        combined_warning = "; ".join(warning_entries) if warning_entries else None
+        if graph_warning:
+            job.logs = [*(job.logs or []), f"Ready with warnings: {graph_warning}"]
         update_job_stage(
             job,
-            IndexStage.READY_WITH_WARNINGS if warning else IndexStage.READY,
+            IndexStage.READY_WITH_WARNINGS if combined_warning else IndexStage.READY,
             detail=(
                 f"Indexed {chunk_count} chunks with warnings."
-                if warning
+                if combined_warning
                 else f"Indexed {chunk_count} chunks."
             ),
             chunk_count=chunk_count,
-            warning=warning,
+        )
+        self._record_warning_entries(
+            job,
+            warning_entries,
+            stage_warning=combined_warning,
         )
 
-    def _record_graph_materialization_warning(
+    def _record_warning_entries(
         self,
         job: Job,
-        graph_materialization: dict[str, Any],
+        warnings: list[str],
+        *,
+        stage_warning: str | None = None,
     ) -> None:
-        reason = self._graph_materialization_warning(graph_materialization)
-        if not reason:
+        if not warnings and not stage_warning:
             return
-        result = job.result or {}
-        warnings = list(result.get("warnings") or [])
-        if reason not in warnings:
-            warnings.append(reason)
-        job.result = {**result, "warnings": warnings}
-        job.logs = [*(job.logs or []), f"Ready with warnings: {reason}"]
+        result = dict(job.result or {})
+        if stage_warning and isinstance(result.get("indexing_stage"), dict):
+            indexing_stage = dict(result["indexing_stage"])
+            indexing_stage["warning"] = stage_warning
+            result["indexing_stage"] = indexing_stage
+        warning_entries = list(result.get("warnings") or [])
+        for warning in warnings:
+            if warning not in warning_entries:
+                warning_entries.append(warning)
+        if warning_entries:
+            result["warnings"] = warning_entries
+        job.result = result
+
+    def _parser_quality_summary(self, chunks: list[Any]) -> dict[str, Any]:
+        warning_counts: dict[str, int] = {}
+        affected_chunks = 0
+        for chunk in chunks:
+            codes = sorted(set(self._parser_warning_codes(chunk)))
+            if not codes:
+                continue
+            affected_chunks += 1
+            for code in codes:
+                warning_counts[code] = warning_counts.get(code, 0) + 1
+        return {
+            "warning_counts": dict(sorted(warning_counts.items())),
+            "affected_chunks": affected_chunks,
+        }
+
+    def _parser_warning_codes(self, chunk: Any) -> list[str]:
+        extraction_quality = getattr(chunk, "extraction_quality", None)
+        if not isinstance(extraction_quality, dict):
+            metadata = getattr(chunk, "metadata", None)
+            if isinstance(metadata, dict):
+                extraction_quality = metadata.get("extraction_quality")
+        if not isinstance(extraction_quality, dict):
+            return []
+        warnings = extraction_quality.get("parser_warnings")
+        if not isinstance(warnings, list):
+            return []
+        codes: list[str] = []
+        for warning in warnings:
+            if not isinstance(warning, dict):
+                continue
+            code = warning.get("code")
+            if isinstance(code, str) and code:
+                codes.append(code)
+        return codes
+
+    def _parser_quality_warning(self, parser_quality: dict[str, Any]) -> str | None:
+        warning_counts = parser_quality.get("warning_counts")
+        if not isinstance(warning_counts, dict) or not warning_counts:
+            return None
+        return ", ".join(
+            f"{code}={count}"
+            for code, count in warning_counts.items()
+            if isinstance(code, str) and isinstance(count, int)
+        )
 
     def _graph_materialization_warning(self, graph_materialization: dict[str, Any]) -> str | None:
-        if graph_materialization.get("status") != "skipped":
+        status = graph_materialization.get("status")
+        if status not in {"failed", "skipped"}:
             return None
-        return str(graph_materialization.get("reason") or "Graph materialization skipped.")
+        fallback = f"Graph materialization {status}."
+        return str(
+            graph_materialization.get("reason")
+            or graph_materialization.get("error")
+            or fallback
+        )
 
     async def _active_runtime_profile(self) -> RuntimeProfile | None:
         if self.settings is None:

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import threading
 from collections.abc import AsyncIterator
@@ -268,6 +267,7 @@ class NativeRAGAnythingAdapter:
                 doc_id=document_id or generated_doc_id,
                 display_stats=False,
             )
+            await self._raise_for_failed_doc_status(rag, document_id or generated_doc_id)
         return self._mirrored_chunks(content_list, path)
 
     async def index_preparsed_chunks(
@@ -287,6 +287,7 @@ class NativeRAGAnythingAdapter:
                 doc_id=document_id,
                 display_stats=False,
             )
+            await self._raise_for_failed_doc_status(rag, document_id)
         return self._runtime_chunks_from_adapter_chunks(chunks, path)
 
     async def query(
@@ -715,32 +716,13 @@ class NativeRAGAnythingAdapter:
         self,
         chunks: list[AdapterChunk],
     ) -> list[dict[str, Any]]:
-        for chunk in chunks:
-            parser_metadata = chunk.metadata.get("parser_metadata")
-            if not isinstance(parser_metadata, dict):
-                continue
-            extract_dir = parser_metadata.get("artifact_extract_dir")
-            content_ref = parser_metadata.get("content_list_ref")
-            if not isinstance(extract_dir, str) or not isinstance(content_ref, str):
-                continue
-            root = Path(extract_dir).resolve()
-            target = (root / content_ref).resolve()
-            if target != root and root not in target.parents:
-                continue
-            try:
-                data = json.loads(target.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                continue
-            if isinstance(data, list) and data:
-                return [item for item in data if isinstance(item, dict)]
-
         content_list: list[dict[str, Any]] = []
         for chunk in chunks:
             page_idx = chunk.source_location.get("page")
             if not isinstance(page_idx, int):
                 page = chunk.source_location.get("page_start")
                 page_idx = page - 1 if isinstance(page, int) and page > 0 else None
-            item: dict[str, Any] = {"type": chunk.content_type or "text", "text": chunk.text}
+            item: dict[str, Any] = {"type": "text", "text": chunk.text}
             if isinstance(page_idx, int):
                 item["page_idx"] = page_idx
             content_list.append(item)
@@ -752,17 +734,9 @@ class NativeRAGAnythingAdapter:
         path: Path,
     ) -> list[RuntimeChunk]:
         output: list[RuntimeChunk] = []
-        seen_content_lists: set[tuple[str, str]] = set()
         for index, chunk in enumerate(chunks):
             parser_metadata = chunk.metadata.get("parser_metadata")
             metadata = dict(parser_metadata) if isinstance(parser_metadata, dict) else {}
-            extract_dir = metadata.get("artifact_extract_dir")
-            content_ref = metadata.get("content_list_ref")
-            if isinstance(extract_dir, str) and isinstance(content_ref, str):
-                content_key = (extract_dir, content_ref)
-                if content_key in seen_content_lists:
-                    continue
-                seen_content_lists.add(content_key)
             metadata.update(
                 {
                     "backend": metadata.get("backend", "mineru"),
@@ -782,6 +756,27 @@ class NativeRAGAnythingAdapter:
                 )
             )
         return output
+
+    async def _raise_for_failed_doc_status(self, rag: Any, document_id: str | None) -> None:
+        if not document_id:
+            return
+        lightrag = getattr(rag, "lightrag", None)
+        doc_status = getattr(lightrag, "doc_status", None)
+        if doc_status is None or not hasattr(doc_status, "get_by_id"):
+            return
+        try:
+            record = await doc_status.get_by_id(document_id)
+        except Exception:
+            return
+        if not isinstance(record, dict):
+            return
+        status = str(record.get("status") or "").casefold()
+        if status != "failed":
+            return
+        reason = str(record.get("error_msg") or "").strip()
+        if not reason:
+            reason = "LightRAG document processing failed."
+        raise RuntimeError(reason)
 
     def _content_text(self, item: dict[str, Any]) -> str:
         for key in ("text", "content", "table_body", "latex"):

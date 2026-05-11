@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
 QueryIntent = Literal["count", "title", "reference", "comparison", "summary", "semantic"]
@@ -52,7 +53,7 @@ class EvidenceCandidate:
         }
 
     def to_trace(self) -> dict[str, Any]:
-        return {
+        trace = {
             "candidate_id": self.candidate_id,
             "tool": self.tool,
             "tool_rank": self.tool_rank,
@@ -63,6 +64,10 @@ class EvidenceCandidate:
             "final_score": self.final_score,
             "reasons": self.reasons,
         }
+        warning_codes = self.metadata.get("parser_quality_warning_codes")
+        if isinstance(warning_codes, list) and warning_codes:
+            trace["parser_quality_warning_codes"] = warning_codes
+        return trace
 
 
 @dataclass(frozen=True)
@@ -110,8 +115,12 @@ def fuse_candidates(
     for candidate in candidates:
         key = _dedupe_key(candidate)
         existing = deduped.get(key)
-        if existing is None or candidate.base_score > existing.base_score:
+        if existing is None:
             deduped[key] = candidate
+        else:
+            winner = candidate if candidate.base_score > existing.base_score else existing
+            loser = existing if winner is candidate else candidate
+            deduped[key] = _merge_duplicate_candidate(winner, loser)
         tools = deduped_tools.setdefault(key, [])
         if candidate.tool not in tools:
             tools.append(candidate.tool)
@@ -183,6 +192,66 @@ def _dedupe_key(candidate: EvidenceCandidate) -> str:
         return f"runtime:{runtime_source_id}"
     fingerprint = hashlib.sha1(candidate.text.strip().casefold().encode("utf-8")).hexdigest()
     return f"text:{candidate.document_id or 'unknown'}:{fingerprint}"
+
+
+def _merge_duplicate_candidate(
+    primary: EvidenceCandidate,
+    secondary: EvidenceCandidate,
+) -> EvidenceCandidate:
+    return replace(
+        primary,
+        metadata=_merge_candidate_metadata(primary.metadata, secondary.metadata),
+        reasons=_merge_ordered_strings(primary.reasons, secondary.reasons),
+    )
+
+
+def _merge_candidate_metadata(
+    primary: dict[str, Any],
+    secondary: dict[str, Any],
+) -> dict[str, Any]:
+    merged = {**secondary, **primary}
+    extraction_quality = _merge_extraction_quality(
+        secondary.get("extraction_quality"),
+        primary.get("extraction_quality"),
+    )
+    if extraction_quality:
+        merged["extraction_quality"] = extraction_quality
+    return merged
+
+
+def _merge_extraction_quality(
+    secondary: Any,
+    primary: Any,
+) -> dict[str, Any]:
+    secondary_quality = secondary if isinstance(secondary, dict) else {}
+    primary_quality = primary if isinstance(primary, dict) else {}
+    merged = {**secondary_quality, **primary_quality}
+
+    parser_warnings: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for source in (secondary_quality, primary_quality):
+        warnings = source.get("parser_warnings")
+        if not isinstance(warnings, list):
+            continue
+        for warning in warnings:
+            if not isinstance(warning, dict):
+                continue
+            key = json.dumps(warning, sort_keys=True, default=str)
+            if key in seen:
+                continue
+            parser_warnings.append(dict(warning))
+            seen.add(key)
+    if parser_warnings:
+        merged["parser_warnings"] = parser_warnings
+    return merged
+
+
+def _merge_ordered_strings(primary: list[str], secondary: list[str]) -> list[str]:
+    merged: list[str] = []
+    for item in [*primary, *secondary]:
+        if item not in merged:
+            merged.append(item)
+    return merged
 
 
 def _metadata_title(metadata: dict[str, Any]) -> str:

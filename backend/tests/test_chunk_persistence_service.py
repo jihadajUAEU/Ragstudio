@@ -62,6 +62,64 @@ async def test_persist_chunks_materializes_search_fields(tmp_path, database_url)
 
 
 @pytest.mark.asyncio
+async def test_persist_chunks_preserves_parser_warnings_in_quality_fields(
+    tmp_path,
+    database_url,
+):
+    engine = make_engine(database_url)
+    await init_db(engine)
+    factory = make_session_factory(engine)
+
+    parser_warnings = [
+        {
+            "code": "reference_unit_missing_expected_script",
+            "message": "Expected Arabic text in reference unit.",
+            "block_type": "paragraph",
+            "page": 4,
+        }
+    ]
+
+    async with factory() as session:
+        document = Document(
+            id="doc-parser-quality",
+            filename="parser-quality.pdf",
+            content_type="application/pdf",
+            sha256="parser-quality-sha",
+            artifact_path=str(tmp_path / "parser-quality.pdf"),
+            status="running",
+        )
+        session.add(document)
+        await session.commit()
+
+        chunks = await ChunkPersistenceService(session).persist(
+            document,
+            [
+                AdapterChunk(
+                    text="Reference text",
+                    source_location={"page": 4},
+                    metadata={
+                        "parser_metadata": {"backend": "mineru"},
+                        "extraction_quality": {"parser_warnings": parser_warnings},
+                    },
+                )
+            ],
+            IndexDocumentIn(parser_mode="mineru_strict"),
+            commit=True,
+        )
+
+        persisted = await session.get(Chunk, chunks[0].id)
+
+    await engine.dispose()
+
+    assert persisted is not None
+    assert persisted.extraction_quality == {"parser_warnings": parser_warnings}
+    assert persisted.metadata_json["extraction_quality"] == {
+        "parser_warnings": parser_warnings
+    }
+    assert chunks[0].metadata["extraction_quality"] == {"parser_warnings": parser_warnings}
+
+
+@pytest.mark.asyncio
 async def test_persist_chunks_replaces_existing_chunks(tmp_path, database_url):
     engine = make_engine(database_url)
     await init_db(engine)

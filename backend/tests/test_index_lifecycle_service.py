@@ -5,6 +5,7 @@ from ragstudio.db.models import Chunk, Document, GraphProjectionRecord, IndexRec
 from ragstudio.schemas.common import StageStatus
 from ragstudio.schemas.parsing import IndexDocumentIn
 from ragstudio.services.adapter import AdapterChunk
+from ragstudio.services.chunk_persistence_service import ChunkPersistenceService
 from ragstudio.services.graph_materialization_service import GraphMaterializationResult
 from ragstudio.services.graph_projection_runner import (
     GraphProjectionCleanupError,
@@ -544,6 +545,155 @@ async def test_lifecycle_uses_preparsed_mineru_chunks_for_strict_runtime_reindex
     ]
     assert chunks is not None
     assert [chunk.text for chunk in chunks] == ["Remote MinerU chunk"]
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_creates_pending_graph_projection_before_runtime_enrichment(client):
+    app = client._transport.app
+    artifact_path = app.state.settings.data_dir / "pending-before-runtime.pdf"
+    artifact_path.write_text("runtime text", encoding="utf-8")
+
+    class PendingObservingRuntime(PreparsedRuntime):
+        def __init__(self, session_factory):
+            super().__init__()
+            self.session_factory = session_factory
+            self.observed_record_id: str | None = None
+            self.observed_status: str | None = None
+
+        async def index_preparsed_chunks(self, artifact_path, chunks, *, document_id):
+            async with self.session_factory() as observing_session:
+                record = await observing_session.scalar(
+                    select(GraphProjectionRecord).where(
+                        GraphProjectionRecord.document_id == document_id
+                    )
+                )
+                assert record is not None
+                self.observed_record_id = record.id
+                self.observed_status = record.status
+            return await super().index_preparsed_chunks(
+                artifact_path,
+                chunks,
+                document_id=document_id,
+            )
+
+    async with app.state.session_factory() as session:
+        session.add(
+            SettingsProfile(
+                id="default",
+                provider="openai-compatible",
+                llm_model="gpt-4o",
+                llm_base_url="http://llm.test",
+                embedding_model="text-embedding-3-large",
+                embedding_base_url="http://embedding.test",
+                storage_backend="postgres_pgvector_neo4j",
+                runtime_mode="runtime",
+            )
+        )
+        document = Document(
+            filename="pending-before-runtime.pdf",
+            content_type="application/pdf",
+            sha256="pending-before-runtime",
+            artifact_path=str(artifact_path),
+            status=StageStatus.READY.value,
+        )
+        session.add(document)
+        await session.commit()
+
+        runtime = PendingObservingRuntime(app.state.session_factory)
+        result = await IndexLifecycleService(
+            session,
+            app.state.settings,
+            runtime_factory=FakeFactory(runtime),
+            health_service=FakeHealthService(),
+            document_parser=FakeDocumentParser(),
+        ).reindex_document(
+            document.id,
+            options=IndexDocumentIn(parser_mode="mineru_strict"),
+        )
+
+        projection_record = await session.get(
+            GraphProjectionRecord,
+            result.graph_projection_record_id,
+        )
+
+    assert result is not None
+    assert runtime.observed_record_id is not None
+    assert runtime.observed_record_id == result.graph_projection_record_id
+    assert runtime.observed_status == "pending"
+    assert projection_record is not None
+    assert projection_record.status == "pending"
+    assert result.graph_materialization == {
+        "status": "pending",
+        "node_count": 0,
+        "edge_count": 0,
+        "reason": None,
+    }
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_marks_pending_graph_projection_skipped_when_persistence_fails(
+    client,
+    monkeypatch,
+):
+    app = client._transport.app
+    artifact_path = app.state.settings.data_dir / "pending-persist-fails.pdf"
+    artifact_path.write_text("runtime text", encoding="utf-8")
+
+    async def failing_persist(self, *args, **kwargs):
+        raise RuntimeError("canonical chunk write failed")
+
+    monkeypatch.setattr(ChunkPersistenceService, "persist", failing_persist)
+
+    async with app.state.session_factory() as session:
+        session.add(
+            SettingsProfile(
+                id="default",
+                provider="openai-compatible",
+                llm_model="gpt-4o",
+                llm_base_url="http://llm.test",
+                embedding_model="text-embedding-3-large",
+                embedding_base_url="http://embedding.test",
+                storage_backend="postgres_pgvector_neo4j",
+                runtime_mode="runtime",
+            )
+        )
+        document = Document(
+            filename="pending-persist-fails.pdf",
+            content_type="application/pdf",
+            sha256="pending-persist-fails",
+            artifact_path=str(artifact_path),
+            status=StageStatus.READY.value,
+        )
+        session.add(document)
+        await session.commit()
+        document_id = document.id
+
+        with pytest.raises(RuntimeError, match="canonical chunk write failed"):
+            await IndexLifecycleService(
+                session,
+                app.state.settings,
+                runtime_factory=FakeFactory(PreparsedRuntime()),
+                health_service=FakeHealthService(),
+                document_parser=FakeDocumentParser(),
+            ).reindex_document(
+                document_id,
+                options=IndexDocumentIn(parser_mode="mineru_strict"),
+            )
+
+    async with app.state.session_factory() as session:
+        projection_record = await session.scalar(
+            select(GraphProjectionRecord).where(
+                GraphProjectionRecord.document_id == document_id
+            )
+        )
+
+    assert projection_record is not None
+    assert projection_record.status == "skipped"
+    assert projection_record.node_count == 0
+    assert projection_record.edge_count == 0
+    assert "Canonical chunk persistence failed: canonical chunk write failed" in (
+        projection_record.error or ""
+    )
 
 
 @pytest.mark.asyncio

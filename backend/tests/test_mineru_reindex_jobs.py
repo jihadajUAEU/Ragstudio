@@ -9,7 +9,7 @@ from ragstudio.db.models import (
     Job,
     SettingsProfile,
 )
-from ragstudio.schemas.chunks import ChunkSearchIn
+from ragstudio.schemas.chunks import ChunkOut, ChunkSearchIn
 from ragstudio.schemas.common import StageStatus
 from ragstudio.schemas.parsing import IndexDocumentIn
 from ragstudio.schemas.runtime import RuntimeHealthCheck
@@ -262,6 +262,12 @@ async def test_runtime_enrichment_empty_output_marks_index_failed(
             result.graph_projection_record_id,
         )
 
+    async with session_factory() as session:
+        separately_loaded_graph_record = await session.get(
+            GraphProjectionRecord,
+            result.graph_projection_record_id,
+        )
+
     await engine.dispose()
 
     assert result is not None
@@ -276,6 +282,9 @@ async def test_runtime_enrichment_empty_output_marks_index_failed(
     assert graph_record is not None
     assert graph_record.status in {"skipped", "failed"}
     assert "produced 0 chunks for 1 canonical chunks" in graph_record.error
+    assert separately_loaded_graph_record is not None
+    assert separately_loaded_graph_record.status == "skipped"
+    assert "produced 0 chunks for 1 canonical chunks" in separately_loaded_graph_record.error
 
 
 @pytest.mark.asyncio
@@ -609,6 +618,344 @@ async def test_index_document_for_job_records_warning_when_graph_materialization
         "warning": "runtime enrichment unavailable",
     }
     assert "Ready with warnings: runtime enrichment unavailable" in refreshed_job.logs
+
+
+@pytest.mark.asyncio
+async def test_index_document_for_job_records_parser_quality_warning_summary(
+    tmp_path,
+    database_url,
+    monkeypatch,
+):
+    engine = make_engine(database_url)
+    session_factory = make_session_factory(engine)
+    await init_db(engine)
+
+    warning = {
+        "code": "reference_unit_missing_expected_script",
+        "message": "Expected Arabic text in reference unit.",
+        "block_type": "paragraph",
+        "page": 1,
+    }
+
+    class OrmLikeChunk:
+        extraction_quality = {"parser_warnings": [warning]}
+
+    class LifecycleResult:
+        chunks = [
+            ChunkOut(
+                id="chunk-parser-quality",
+                document_id="doc-parser-quality-job",
+                text="Chunk with parser quality warning.",
+                source_location={"page": 1},
+                metadata={"extraction_quality": {"parser_warnings": [warning]}},
+            ),
+            OrmLikeChunk(),
+        ]
+        graph_materialization = {
+            "status": "pending",
+            "node_count": 0,
+            "edge_count": 0,
+            "reason": None,
+        }
+
+    async def fake_reindex_document(
+        self,
+        document_id,
+        *,
+        options=None,
+        on_mineru_status=None,
+        on_stage=None,
+    ):
+        return LifecycleResult()
+
+    async def fake_materialize_pending(self, document_id):
+        return {
+            "status": "succeeded",
+            "node_count": 1,
+            "edge_count": 0,
+            "reason": None,
+        }
+
+    async with session_factory() as session:
+        artifact = tmp_path / "parser-quality.pdf"
+        artifact.write_bytes(b"%PDF-1.4")
+        document = Document(
+            id="doc-parser-quality-job",
+            filename="parser-quality.pdf",
+            content_type="application/pdf",
+            sha256="parser-quality-job-sha",
+            artifact_path=str(artifact),
+            status="ready",
+        )
+        session.add(
+            SettingsProfile(
+                id="default",
+                provider="openai-compatible",
+                llm_model="gpt-4o",
+                llm_base_url="http://127.0.0.1:8004/v1",
+                embedding_model="text-embedding-3-large",
+                embedding_base_url="http://127.0.0.1:8001/v1",
+                storage_backend="postgres_pgvector_neo4j",
+                runtime_mode="runtime",
+            )
+        )
+        session.add(document)
+        await session.flush()
+        job = Job(type="index_document", target_id=document.id, status="ready", progress=0)
+        session.add(job)
+        await session.commit()
+
+        monkeypatch.setattr(
+            IndexLifecycleService,
+            "reindex_document",
+            fake_reindex_document,
+        )
+        monkeypatch.setattr(
+            "ragstudio.services.document_service.GraphProjectionRunner.materialize_pending",
+            fake_materialize_pending,
+        )
+
+        service = DocumentService(session, tmp_path, AppSettings(data_dir=tmp_path))
+        await service._index_document_for_job(
+            document,
+            job,
+            IndexDocumentIn(parser_mode="mineru_strict"),
+        )
+        await session.commit()
+
+        refreshed_job = await session.get(Job, job.id)
+
+    await engine.dispose()
+
+    assert refreshed_job is not None
+    assert refreshed_job.result["parser_quality"] == {
+        "warning_counts": {"reference_unit_missing_expected_script": 2},
+        "affected_chunks": 2,
+    }
+    assert refreshed_job.result["indexing_stage"]["stage"] == "ready_with_warnings"
+    assert refreshed_job.result["indexing_stage"]["warning"] == (
+        "reference_unit_missing_expected_script=2"
+    )
+    assert (
+        "Parser quality warnings: reference_unit_missing_expected_script=2"
+        in refreshed_job.logs
+    )
+
+
+@pytest.mark.asyncio
+async def test_index_document_for_job_keeps_combined_warning_entries_unique(
+    tmp_path,
+    database_url,
+    monkeypatch,
+):
+    engine = make_engine(database_url)
+    session_factory = make_session_factory(engine)
+    await init_db(engine)
+
+    warning = {
+        "code": "reference_unit_missing_expected_script",
+        "message": "Expected Arabic text in reference unit.",
+        "block_type": "paragraph",
+        "page": 1,
+    }
+
+    class LifecycleResult:
+        chunks = [
+            ChunkOut(
+                id="chunk-parser-quality-combined",
+                document_id="doc-parser-quality-combined",
+                text="Chunk with duplicate parser quality warnings.",
+                source_location={"page": 1},
+                metadata={
+                    "extraction_quality": {
+                        "parser_warnings": [
+                            warning,
+                            {**warning, "message": "Same warning code repeated."},
+                        ]
+                    }
+                },
+            )
+        ]
+        graph_materialization = {
+            "status": "skipped",
+            "node_count": 0,
+            "edge_count": 0,
+            "reason": "runtime enrichment unavailable",
+        }
+
+    async def fake_reindex_document(
+        self,
+        document_id,
+        *,
+        options=None,
+        on_mineru_status=None,
+        on_stage=None,
+    ):
+        return LifecycleResult()
+
+    async with session_factory() as session:
+        artifact = tmp_path / "parser-quality-combined.pdf"
+        artifact.write_bytes(b"%PDF-1.4")
+        document = Document(
+            id="doc-parser-quality-combined",
+            filename="parser-quality-combined.pdf",
+            content_type="application/pdf",
+            sha256="parser-quality-combined-sha",
+            artifact_path=str(artifact),
+            status="ready",
+        )
+        session.add(
+            SettingsProfile(
+                id="default",
+                provider="openai-compatible",
+                llm_model="gpt-4o",
+                llm_base_url="http://127.0.0.1:8004/v1",
+                embedding_model="text-embedding-3-large",
+                embedding_base_url="http://127.0.0.1:8001/v1",
+                storage_backend="postgres_pgvector_neo4j",
+                runtime_mode="runtime",
+            )
+        )
+        session.add(document)
+        await session.flush()
+        job = Job(type="index_document", target_id=document.id, status="ready", progress=0)
+        session.add(job)
+        await session.commit()
+
+        monkeypatch.setattr(
+            IndexLifecycleService,
+            "reindex_document",
+            fake_reindex_document,
+        )
+
+        service = DocumentService(session, tmp_path, AppSettings(data_dir=tmp_path))
+        await service._index_document_for_job(
+            document,
+            job,
+            IndexDocumentIn(parser_mode="mineru_strict"),
+        )
+        await session.commit()
+
+        refreshed_job = await session.get(Job, job.id)
+
+    await engine.dispose()
+
+    parser_warning = "reference_unit_missing_expected_script=1"
+    assert refreshed_job is not None
+    assert refreshed_job.result["parser_quality"] == {
+        "warning_counts": {"reference_unit_missing_expected_script": 1},
+        "affected_chunks": 1,
+    }
+    assert refreshed_job.result["warnings"] == [
+        "runtime enrichment unavailable",
+        parser_warning,
+    ]
+    assert refreshed_job.result["indexing_stage"]["warning"] == (
+        f"runtime enrichment unavailable; {parser_warning}"
+    )
+    assert refreshed_job.result["warnings"].count("runtime enrichment unavailable") == 1
+    assert all(";" not in warning for warning in refreshed_job.result["warnings"])
+
+
+@pytest.mark.asyncio
+async def test_index_document_for_job_promotes_failed_graph_materialization_warning(
+    tmp_path,
+    database_url,
+    monkeypatch,
+):
+    engine = make_engine(database_url)
+    session_factory = make_session_factory(engine)
+    await init_db(engine)
+
+    class LifecycleResult:
+        chunks = [object()]
+        graph_materialization = {
+            "status": "pending",
+            "node_count": 0,
+            "edge_count": 0,
+            "reason": None,
+        }
+
+    async def fake_reindex_document(
+        self,
+        document_id,
+        *,
+        options=None,
+        on_mineru_status=None,
+        on_stage=None,
+    ):
+        return LifecycleResult()
+
+    async def fake_materialize_pending(self, document_id):
+        return {
+            "status": "failed",
+            "node_count": 0,
+            "edge_count": 0,
+            "reason": "Neo4j projection failed",
+        }
+
+    async with session_factory() as session:
+        artifact = tmp_path / "graph-failed.pdf"
+        artifact.write_bytes(b"%PDF-1.4")
+        document = Document(
+            id="doc-graph-failed",
+            filename="graph-failed.pdf",
+            content_type="application/pdf",
+            sha256="graph-failed-sha",
+            artifact_path=str(artifact),
+            status="ready",
+        )
+        session.add(
+            SettingsProfile(
+                id="default",
+                provider="openai-compatible",
+                llm_model="gpt-4o",
+                llm_base_url="http://127.0.0.1:8004/v1",
+                embedding_model="text-embedding-3-large",
+                embedding_base_url="http://127.0.0.1:8001/v1",
+                storage_backend="postgres_pgvector_neo4j",
+                runtime_mode="runtime",
+            )
+        )
+        session.add(document)
+        await session.flush()
+        job = Job(type="index_document", target_id=document.id, status="ready", progress=0)
+        session.add(job)
+        await session.commit()
+
+        monkeypatch.setattr(
+            IndexLifecycleService,
+            "reindex_document",
+            fake_reindex_document,
+        )
+        monkeypatch.setattr(
+            "ragstudio.services.document_service.GraphProjectionRunner.materialize_pending",
+            fake_materialize_pending,
+        )
+
+        service = DocumentService(session, tmp_path, AppSettings(data_dir=tmp_path))
+        await service._index_document_for_job(
+            document,
+            job,
+            IndexDocumentIn(parser_mode="mineru_strict"),
+        )
+        await session.commit()
+
+        refreshed_job = await session.get(Job, job.id)
+
+    await engine.dispose()
+
+    assert refreshed_job is not None
+    assert refreshed_job.result["warnings"] == ["Neo4j projection failed"]
+    assert refreshed_job.result["indexing_stage"] == {
+        "stage": "ready_with_warnings",
+        "label": "Ready with warnings",
+        "detail": "Indexed 1 chunks with warnings.",
+        "progress": 100,
+        "chunk_count": 1,
+        "warning": "Neo4j projection failed",
+    }
+    assert "Ready with warnings: Neo4j projection failed" in refreshed_job.logs
 
 
 @pytest.mark.asyncio

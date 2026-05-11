@@ -117,6 +117,44 @@ def test_fusion_dedupes_by_text_and_keeps_best_candidate():
     assert fused[0].metadata["deduped_tools"] == ["native", "metadata"]
 
 
+def test_fusion_merges_parser_warnings_when_native_duplicate_wins():
+    warning = {
+        "code": "reference_unit_missing_expected_script",
+        "message": "Expected Arabic text.",
+        "block_type": "paragraph",
+    }
+    plan = plan_for_query("alpha", document_ids=["doc-1"], limit=3)
+    native = EvidenceCandidate(
+        candidate_id="native:shared",
+        text="Same text",
+        document_id="doc-1",
+        chunk_id="shared",
+        source_location={},
+        metadata={"native_scope": True},
+        tool="native",
+        tool_rank=1,
+        base_score=20.0,
+    )
+    metadata = EvidenceCandidate(
+        candidate_id="metadata:shared",
+        text="Same text",
+        document_id="doc-1",
+        chunk_id="shared",
+        source_location={},
+        metadata={"extraction_quality": {"parser_warnings": [warning]}, "score": 10.0},
+        tool="metadata",
+        tool_rank=1,
+        base_score=10.0,
+    )
+
+    fused = fuse_candidates(plan, [native, metadata])
+
+    assert len(fused) == 1
+    assert fused[0].tool == "native"
+    assert fused[0].metadata["extraction_quality"]["parser_warnings"] == [warning]
+    assert fused[0].metadata["deduped_tools"] == ["native", "metadata"]
+
+
 class FakeChunkSearchService:
     def __init__(self):
         self.calls = 0
@@ -161,6 +199,38 @@ class FakeChunkSearchService:
         ]
 
 
+class ParserWarningChunkSearchService(FakeChunkSearchService):
+    async def search(self, search_in):
+        self.calls += 1
+        return type(
+            "SearchResult",
+            (),
+            {
+                "items": [
+                    ChunkOut(
+                        id="parser-warning-1",
+                        document_id="doc-1",
+                        text="Parser warning evidence remains usable.",
+                        source_location={"page": 4},
+                        metadata={
+                            "score": 10.0,
+                            "extraction_quality": {
+                                "parser_warnings": [
+                                    {
+                                        "code": "reference_unit_missing_expected_script",
+                                        "message": "Expected Arabic text.",
+                                        "block_type": "paragraph",
+                                    }
+                                ]
+                            },
+                        },
+                    )
+                ],
+                "total": 1,
+            },
+        )()
+
+
 class FakeRuntimeTool:
     def __init__(self, *, error_type=None, error=None, timings=None):
         self.error_type = error_type
@@ -182,6 +252,23 @@ class FakeRuntimeTool:
             error=self.error,
             error_type=self.error_type,
             timings=self.timings,
+        )
+
+
+class NativeDuplicateParserWarningRuntimeTool:
+    async def query(self, query, *, document_ids, query_config):
+        return RuntimeQueryResult(
+            answer="native answer ignored",
+            sources=[
+                {
+                    "chunk_id": "parser-warning-1",
+                    "document_id": "doc-1",
+                    "text": "Native parser warning evidence.",
+                    "source_location": {},
+                    "metadata": {"native_scope": True},
+                }
+            ],
+            timings={"runtime_query_ms": 5, "native_scoped_query": True},
         )
 
 
@@ -345,6 +432,80 @@ async def test_orchestrator_fuses_native_metadata_and_graph_before_answering():
     )
     assert graph_evidence.source_location == {"page": 9}
     assert graph_evidence.metadata["graph_hydration"]["status"] == "hydrated"
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_surfaces_parser_quality_warnings_in_evidence_and_traces():
+    answer_service = FakeAnswerService()
+    orchestrator = RetrievalOrchestrator(
+        chunk_service=ParserWarningChunkSearchService(),
+        answer_service=answer_service,
+        reranker_service=FakeRerankerService(),
+        graph_expansion_service=FakeGraphExpansionService(),
+    )
+
+    result = await orchestrator.query(
+        "parser warning",
+        runtime=FakeRuntimeTool(),
+        profile=type("Profile", (), {"enable_rerank": False, "reranker_provider": "disabled"})(),
+        document_ids=["doc-1"],
+        variant_id="variant-1",
+        query_config={"limit": 8, "graph_expansion_enabled": False},
+    )
+
+    assert result.error is None
+    warning_code = "reference_unit_missing_expected_script"
+    source = next(
+        source for source in result.sources if source["chunk_id"] == "parser-warning-1"
+    )
+    assert source["metadata"]["parser_quality_warning_codes"] == [warning_code]
+    assert f"parser_quality_warning:{warning_code}" in source["metadata"]["retrieval_reasons"]
+    assert any(
+        trace.get("stage") == "parser_quality"
+        and trace.get("warning_counts") == {warning_code: 1}
+        and "metadata:parser-warning-1" in trace.get("affected_candidate_ids", [])
+        for trace in result.chunk_traces
+    )
+    evidence = next(
+        candidate
+        for candidate in answer_service.evidence
+        if candidate.chunk_id == "parser-warning-1"
+    )
+    assert evidence.metadata["parser_quality_warning_codes"] == [warning_code]
+    assert f"parser_quality_warning:{warning_code}" in evidence.reasons
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_preserves_parser_warning_when_native_duplicate_wins():
+    answer_service = FakeAnswerService()
+    orchestrator = RetrievalOrchestrator(
+        chunk_service=ParserWarningChunkSearchService(),
+        answer_service=answer_service,
+        reranker_service=FakeRerankerService(),
+        graph_expansion_service=FakeGraphExpansionService(),
+    )
+
+    result = await orchestrator.query(
+        "parser warning",
+        runtime=NativeDuplicateParserWarningRuntimeTool(),
+        profile=type("Profile", (), {"enable_rerank": False, "reranker_provider": "disabled"})(),
+        document_ids=["doc-1"],
+        variant_id="variant-1",
+        query_config={"limit": 8, "graph_expansion_enabled": False},
+    )
+
+    warning_code = "reference_unit_missing_expected_script"
+    source = next(
+        source for source in result.sources if source["chunk_id"] == "parser-warning-1"
+    )
+    assert source["metadata"]["retrieval_tool"] == "native"
+    assert source["metadata"]["parser_quality_warning_codes"] == [warning_code]
+    assert f"parser_quality_warning:{warning_code}" in source["metadata"]["retrieval_reasons"]
+    assert any(
+        trace.get("stage") == "parser_quality"
+        and "native:parser-warning-1" in trace.get("affected_candidate_ids", [])
+        for trace in result.chunk_traces
+    )
 
 
 @pytest.mark.asyncio

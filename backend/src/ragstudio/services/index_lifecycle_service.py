@@ -151,6 +151,13 @@ class IndexLifecycleService:
                 detail=f"Validated {len(adapter_chunks)} chunks from MinerU.",
                 chunk_count=len(adapter_chunks),
             )
+        projection_record = await self._create_pending_graph_projection(document.id, profile)
+        graph_materialization = {
+            "status": "pending",
+            "node_count": 0,
+            "edge_count": 0,
+            "reason": None,
+        }
 
         async def persist_studio_chunks() -> list[ChunkOut]:
             chunks = await ChunkPersistenceService(self.session).persist(
@@ -209,35 +216,33 @@ class IndexLifecycleService:
                 detail="Runtime enrichment is running.",
                 chunk_count=len(adapter_chunks),
             )
-        branch_results = await IndexStageScheduler(max_parallel_branches=2).run(
-            [
-                IndexStageBranch(
-                    studio_branch_name,
-                    persist_studio_chunks,
-                    critical=True,
-                ),
-                IndexStageBranch(
-                    runtime_branch_name,
-                    enrich_runtime,
-                    critical=False,
-                ),
-            ]
-        )
+        try:
+            branch_results = await IndexStageScheduler(max_parallel_branches=2).run(
+                [
+                    IndexStageBranch(
+                        studio_branch_name,
+                        persist_studio_chunks,
+                        critical=True,
+                    ),
+                    IndexStageBranch(
+                        runtime_branch_name,
+                        enrich_runtime,
+                        critical=False,
+                    ),
+                ]
+            )
+        except Exception as exc:
+            reason = f"Canonical chunk persistence failed: {exc}"
+            await self._mark_graph_projection_skipped(projection_record.id, reason)
+            raise
         chunks = branch_results[studio_branch_name].value
 
-        graph_materialization = {
-            "status": "pending",
-            "node_count": 0,
-            "edge_count": 0,
-            "reason": None,
-        }
         runtime_result = branch_results[runtime_branch_name]
         if runtime_result.status == "skipped":
             reason = runtime_result.warning or "Runtime enrichment skipped."
             await self._mark_runtime_index_failed(document.id, profile.id, reason)
-            projection_record = await self._record_skipped_graph_projection(
-                document.id,
-                profile,
+            projection_record = await self._mark_graph_projection_skipped(
+                projection_record.id,
                 reason,
             )
             return IndexLifecycleResult(
@@ -259,9 +264,8 @@ class IndexLifecycleService:
                 f"{canonical_chunk_count} canonical chunks."
             )
             await self._mark_runtime_index_failed(document.id, profile.id, reason)
-            projection_record = await self._record_skipped_graph_projection(
-                document.id,
-                profile,
+            projection_record = await self._mark_graph_projection_skipped(
+                projection_record.id,
                 reason,
             )
             return IndexLifecycleResult(
@@ -282,19 +286,6 @@ class IndexLifecycleService:
                 detail="Graph enrichment is queued.",
                 chunk_count=len(chunks),
             )
-        projection_record = GraphProjectionRecord(
-            document_id=document.id,
-            runtime_profile_id=profile.id,
-            status="pending",
-            graph_workspace_label=workspace_label(profile),
-            graph_storage_uri=profile.neo4j_uri,
-            graph_storage_username=profile.neo4j_username,
-            graph_storage_password=None,
-            node_count=0,
-            edge_count=0,
-        )
-        self.session.add(projection_record)
-        await self.session.flush()
         return IndexLifecycleResult(
             chunks=chunks,
             graph_projection_record_id=projection_record.id,
@@ -401,26 +392,41 @@ class IndexLifecycleService:
             record.error = reason
         await self.session.commit()
 
-    async def _record_skipped_graph_projection(
+    async def _create_pending_graph_projection(
         self,
         document_id: str,
         profile: Any,
-        reason: str,
     ) -> GraphProjectionRecord:
         projection_record = GraphProjectionRecord(
             document_id=document_id,
             runtime_profile_id=profile.id,
-            status="skipped",
+            status="pending",
             graph_workspace_label=workspace_label(profile),
             graph_storage_uri=profile.neo4j_uri,
             graph_storage_username=profile.neo4j_username,
             graph_storage_password=None,
             node_count=0,
             edge_count=0,
-            error=reason,
         )
         self.session.add(projection_record)
         await self.session.flush()
+        await self.session.commit()
+        return projection_record
+
+    async def _mark_graph_projection_skipped(
+        self,
+        projection_record_id: str,
+        reason: str,
+    ) -> GraphProjectionRecord:
+        await self.session.rollback()
+        projection_record = await self.session.get(GraphProjectionRecord, projection_record_id)
+        if projection_record is None:
+            raise RuntimeError("Graph projection record disappeared before skip update.")
+        projection_record.status = "skipped"
+        projection_record.node_count = 0
+        projection_record.edge_count = 0
+        projection_record.error = reason
+        await self.session.commit()
         return projection_record
 
     def _quality_language(self, metadata: DomainMetadata) -> str:

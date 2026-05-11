@@ -276,7 +276,7 @@ class GraphMaterializationService:
         WHERE n.document_id = $document_id
         DETACH DELETE n
         """
-        upsert_nodes_query = f"""
+        upsert_chunk_nodes_query = f"""
         UNWIND $chunk_nodes AS node
         MERGE (chunk:`{workspace_label}` {{id: node.id}})
         SET chunk:Chunk:RagstudioChunk,
@@ -292,7 +292,8 @@ class GraphMaterializationService:
             chunk.end_index = node.end_index,
             chunk.source_location_json = node.source_location_json,
             chunk.references = node.references
-        WITH 1 AS ignored
+        """
+        upsert_reference_nodes_query = f"""
         UNWIND $reference_nodes AS node
         MERGE (ref:`{workspace_label}` {{id: node.id}})
         SET ref:Reference:RagstudioReference,
@@ -303,8 +304,11 @@ class GraphMaterializationService:
         def write_transaction(tx: Any) -> None:
             tx.run(delete_query, document_id=document_id)
             tx.run(
-                upsert_nodes_query,
+                upsert_chunk_nodes_query,
                 chunk_nodes=chunk_nodes,
+            )
+            tx.run(
+                upsert_reference_nodes_query,
                 reference_nodes=reference_nodes,
             )
             for rel_type in sorted({relationship["type"] for relationship in relationships}):

@@ -76,6 +76,7 @@ def profile(**overrides):
 
 class FakeRAGAnything:
     instances = []
+    doc_status_records = {}
 
     def __init__(self, **kwargs):
         self.kwargs = kwargs
@@ -86,7 +87,7 @@ class FakeRAGAnything:
         self.aquery_error = None
         self.aquery_calls = []
         self.query_cache_enabled = []
-        self.lightrag = FakeLightRAG()
+        self.lightrag = FakeLightRAG(dict(FakeRAGAnything.doc_status_records))
         self.deleted = self.lightrag.deleted
         FakeRAGAnything.instances.append(self)
 
@@ -206,9 +207,10 @@ class FailingFilterableChunkVectorStorage(FakeFilterableChunkVectorStorage):
 
 
 class FakeLightRAG:
-    def __init__(self):
+    def __init__(self, doc_status_records=None):
         self.deleted = []
         self.aquery_data_calls = 0
+        self.doc_status = FakeDocStatus(doc_status_records or {})
         self.llm_response_cache = SimpleNamespace(
             global_config={"enable_llm_cache": True}
         )
@@ -232,9 +234,18 @@ class FakeLightRAG:
         raise AssertionError("scoped query should collect sources from rag.aquery")
 
 
+class FakeDocStatus:
+    def __init__(self, records):
+        self.records = records
+
+    async def get_by_id(self, doc_id):
+        return self.records.get(doc_id)
+
+
 @pytest.fixture(autouse=True)
 def fake_upstream(monkeypatch):
     FakeRAGAnything.instances.clear()
+    FakeRAGAnything.doc_status_records = {}
     OPENAI_CALLS.clear()
 
     def fake_import(name):
@@ -408,13 +419,19 @@ async def test_native_adapter_indexes_with_studio_document_id(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_native_adapter_indexes_preparsed_chunks_without_local_parse(tmp_path):
+async def test_native_adapter_indexes_normalized_preparsed_chunks_without_local_parse(
+    tmp_path,
+):
     artifact = tmp_path / "paper.pdf"
     artifact.write_text("pdf", encoding="utf-8")
     extract_dir = tmp_path / "mineru"
     extract_dir.mkdir()
     (extract_dir / "source_content_list.json").write_text(
-        '[{"type": "text", "text": "Remote MinerU text", "page_idx": 2}]',
+        "["
+        '{"type": "text", "text": "Raw MinerU text should not be reinserted", "page_idx": 2},'
+        '{"type": "page_footnote", "text": "Footer should not become multimodal"},'
+        '{"type": "image", "img_path": "images/page.png"}'
+        "]",
         encoding="utf-8",
     )
     adapter = NativeRAGAnythingAdapter(
@@ -452,7 +469,7 @@ async def test_native_adapter_indexes_preparsed_chunks_without_local_parse(tmp_p
 
 
 @pytest.mark.asyncio
-async def test_native_adapter_deduplicates_shared_content_list_mirror_seeds(tmp_path):
+async def test_native_adapter_keeps_all_normalized_chunks_sharing_content_list(tmp_path):
     artifact = tmp_path / "paper.pdf"
     artifact.write_text("pdf", encoding="utf-8")
     extract_dir = tmp_path / "mineru"
@@ -491,11 +508,40 @@ async def test_native_adapter_deduplicates_shared_content_list_mirror_seeds(tmp_
         document_id="studio-doc-id",
     )
 
-    assert len(chunks) == 1
+    assert len(chunks) == 2
     assert FakeRAGAnything.instances[0].inserted_content_list == [
-        {"type": "text", "text": "Page one", "page_idx": 0},
-        {"type": "text", "text": "Page two", "page_idx": 1},
+        {"type": "text", "text": "Markdown artifact one"},
+        {"type": "text", "text": "Markdown artifact two"},
     ]
+
+
+@pytest.mark.asyncio
+async def test_native_adapter_raises_failed_lightrag_doc_status_after_insert(tmp_path):
+    artifact = tmp_path / "paper.pdf"
+    artifact.write_text("pdf", encoding="utf-8")
+    FakeRAGAnything.doc_status_records = {
+        "studio-doc-id": {
+            "status": "failed",
+            "error_msg": "LLM func: Worker execution timeout after 360s",
+        }
+    }
+    adapter = NativeRAGAnythingAdapter(
+        profile(runtime_working_dir=str(tmp_path / "runtime")),
+        AppSettings(database_url="postgresql+asyncpg://user:pass@localhost:5432/ragstudio"),
+    )
+
+    with pytest.raises(RuntimeError, match="Worker execution timeout"):
+        await adapter.index_preparsed_chunks(
+            artifact,
+            [
+                AdapterChunk(
+                    text="Remote MinerU text",
+                    source_location={"page_start": 3, "page_end": 3},
+                    metadata={"parser_metadata": {"backend": "mineru"}},
+                )
+            ],
+            document_id="studio-doc-id",
+        )
 
 
 @pytest.mark.asyncio

@@ -9,6 +9,15 @@ def words(count: int, prefix: str = "word") -> str:
     return " ".join(f"{prefix}{index}" for index in range(count))
 
 
+def parser_warning_codes(chunk: AdapterChunk) -> list[str]:
+    warnings = chunk.metadata.get("extraction_quality", {}).get("parser_warnings", [])
+    return [warning["code"] for warning in warnings]
+
+
+def parser_warnings(chunk: AdapterChunk) -> list[dict[str, str]]:
+    return chunk.metadata.get("extraction_quality", {}).get("parser_warnings", [])
+
+
 def test_chunk_splitter_splits_tafseer_book_markdown_under_hard_cap():
     text = "\n\n".join(
         [
@@ -314,3 +323,358 @@ def test_chunk_splitter_splits_reference_units_when_metadata_requests_verse_chun
     ]
     assert split[0].text.startswith("Surah 1")
     assert split[1].text.startswith("[1:5]")
+
+
+def test_chunk_splitter_uses_explicit_domain_metadata_for_content_list_normalization(
+    tmp_path: Path,
+):
+    content_list = tmp_path / "source_content_list.json"
+    content_list.write_text(
+        """
+        [
+          {"type":"equation","text":"$$ \\\\theta = \\\\alpha \\\\beta $$","page_idx":0},
+          {"type":"text","text":"[1:1] English translation only.","page_idx":0}
+        ]
+        """,
+        encoding="utf-8",
+    )
+    chunk = AdapterChunk(
+        text="fallback markdown should not be used",
+        source_location={"artifact": "source/auto/source.md"},
+        metadata={
+            "parser_metadata": {
+                "backend": "mineru",
+                "artifact_extract_dir": str(tmp_path),
+                "content_list_ref": "source_content_list.json",
+                "chunk_index": 0,
+            }
+        },
+    )
+
+    split = ChunkSplitter(max_words=1500).split(
+        [chunk],
+        domain_metadata=DomainMetadata(
+            domain="religion",
+            tags=["quran"],
+            script="arabic",
+            reference_pattern="surah_number:verse_number",
+        ),
+        parser_mode="mineru_strict",
+    )
+
+    assert "$$" not in split[0].text
+    assert "suspected_text_misclassified_as_equation" in parser_warning_codes(split[0])
+    assert "reference_unit_missing_expected_script" in parser_warning_codes(split[0])
+
+
+def test_chunk_splitter_quarantines_quran_like_equation_from_content_list(tmp_path: Path):
+    content_list = tmp_path / "source_content_list.json"
+    content_list.write_text(
+        """
+        [
+          {"type":"text","text":"[1:2] The Entirely Merciful.","page_idx":0},
+          {"type":"equation","text":"$$ \\\\theta = \\\\alpha \\\\beta $$","page_idx":0}
+        ]
+        """,
+        encoding="utf-8",
+    )
+    chunk = AdapterChunk(
+        text="fallback markdown should not be used",
+        source_location={"artifact": "source/auto/source.md"},
+        metadata={
+            "parser_metadata": {
+                "backend": "mineru",
+                "artifact_extract_dir": str(tmp_path),
+                "content_list_ref": "source_content_list.json",
+            }
+        },
+    )
+
+    split = ChunkSplitter(max_words=1500).split(
+        [chunk],
+        domain_metadata=DomainMetadata(
+            domain="religion",
+            tags=["quran"],
+            script="arabic",
+            reference_pattern="surah_number:verse_number",
+        ),
+        parser_mode="mineru_strict",
+    )
+
+    assert split[0].text == "[1:2] The Entirely Merciful."
+    assert "$$" not in split[0].text
+    assert "suspected_text_misclassified_as_equation" in parser_warning_codes(split[0])
+
+
+def test_chunk_splitter_emits_warning_only_piece_for_quarantined_page(tmp_path: Path):
+    content_list = tmp_path / "source_content_list.json"
+    content_list.write_text(
+        """
+        [
+          {"type":"equation","text":"$$ \\\\theta = \\\\alpha \\\\beta $$","page_idx":0},
+          {"type":"text","text":"[1:2] The Entirely Merciful.","page_idx":1}
+        ]
+        """,
+        encoding="utf-8",
+    )
+    chunk = AdapterChunk(
+        text="fallback markdown should not be used",
+        source_location={"artifact": "source/auto/source.md"},
+        metadata={
+            "parser_metadata": {
+                "backend": "mineru",
+                "artifact_extract_dir": str(tmp_path),
+                "content_list_ref": "source_content_list.json",
+            }
+        },
+    )
+
+    split = ChunkSplitter(max_words=1500).split(
+        [chunk],
+        domain_metadata=DomainMetadata(
+            domain="religion",
+            tags=["quran"],
+            script="arabic",
+            reference_pattern="surah_number:verse_number",
+        ),
+        parser_mode="mineru_strict",
+    )
+
+    assert len(split) == 2
+    assert "Parser quality gate quarantined" in split[0].text
+    assert "$$" not in split[0].text
+    assert "\\theta" not in split[0].text
+    assert split[0].content_type == "parser_quality_warning"
+    assert split[0].source_location["page_start"] == 1
+    assert split[0].source_location["page_end"] == 1
+    assert "suspected_text_misclassified_as_equation" in parser_warning_codes(split[0])
+    assert split[1].text == "[1:2] The Entirely Merciful."
+    assert split[1].source_location["page_start"] == 2
+    assert parser_warning_codes(split[1]) == [
+        "reference_unit_missing_expected_script",
+    ]
+
+
+def test_chunk_splitter_all_quarantined_content_list_does_not_fallback_to_parent_text(
+    tmp_path: Path,
+):
+    content_list = tmp_path / "source_content_list.json"
+    content_list.write_text(
+        """
+        [
+          {"type":"equation","text":"$$ \\\\theta = \\\\alpha \\\\beta $$","page_idx":0}
+        ]
+        """,
+        encoding="utf-8",
+    )
+    chunk = AdapterChunk(
+        text="fallback markdown with $$ \\\\theta = \\\\alpha \\\\beta $$ should not be used",
+        source_location={"artifact": "source/auto/source.md"},
+        metadata={
+            "parser_metadata": {
+                "backend": "mineru",
+                "artifact_extract_dir": str(tmp_path),
+                "content_list_ref": "source_content_list.json",
+            }
+        },
+    )
+
+    split = ChunkSplitter(max_words=1500).split(
+        [chunk],
+        domain_metadata=DomainMetadata(domain="religion", tags=["quran"], script="arabic"),
+        parser_mode="mineru_strict",
+    )
+
+    assert len(split) == 1
+    assert "fallback markdown" not in split[0].text
+    assert "$$" not in split[0].text
+    assert split[0].content_type == "parser_quality_warning"
+    assert split[0].metadata["parser_metadata"]["parser_quality_only"] is True
+    assert "suspected_text_misclassified_as_equation" in parser_warning_codes(split[0])
+
+
+def test_chunk_splitter_inserts_recovered_text_with_parser_warning(tmp_path: Path):
+    content_list = tmp_path / "source_content_list.json"
+    recovered_text = (
+        "[1:3] "
+        "\u0645\u0627\u0644\u0643 "
+        "\u064a\u0648\u0645 "
+        "\u0627\u0644\u062f\u064a\u0646"
+    )
+    content_list.write_text(
+        f"""
+        [
+          {{
+            "type":"equation",
+            "text":"$$ bad mineru equation $$",
+            "recovered_text":"{recovered_text}",
+            "page_idx":0
+          }}
+        ]
+        """,
+        encoding="utf-8",
+    )
+    chunk = AdapterChunk(
+        text="fallback markdown should not be used",
+        source_location={"artifact": "source/auto/source.md"},
+        metadata={
+            "parser_metadata": {
+                "backend": "mineru",
+                "artifact_extract_dir": str(tmp_path),
+                "content_list_ref": "source_content_list.json",
+            }
+        },
+    )
+
+    split = ChunkSplitter(max_words=1500).split(
+        [chunk],
+        domain_metadata=DomainMetadata(domain="religion", tags=["quran"], script="arabic"),
+        parser_mode="mineru_strict",
+    )
+
+    assert split[0].text == recovered_text
+    assert "recovered_text_from_misclassified_block" in parser_warning_codes(split[0])
+
+
+def test_chunk_splitter_preserves_content_list_metadata_when_text_matches_parent(
+    tmp_path: Path,
+):
+    content_list = tmp_path / "source_content_list.json"
+    recovered_text = (
+        "\u0647\u0630\u0627 "
+        "\u0646\u0635 "
+        "\u0639\u0631\u0628\u064a "
+        "\u0645\u0633\u062a\u0639\u0627\u062f"
+    )
+    content_list.write_text(
+        f"""
+        [
+          {{
+            "type":"equation",
+            "text":"$$ bad mineru equation $$",
+            "recovered_text":"{recovered_text}",
+            "page_idx":2
+          }}
+        ]
+        """,
+        encoding="utf-8",
+    )
+    chunk = AdapterChunk(
+        text=recovered_text,
+        source_location={"artifact": "source/auto/source.md"},
+        metadata={
+            "parser_metadata": {
+                "backend": "mineru",
+                "artifact_extract_dir": str(tmp_path),
+                "content_list_ref": "source_content_list.json",
+            }
+        },
+    )
+
+    split = ChunkSplitter(max_words=1500).split(
+        [chunk],
+        domain_metadata=DomainMetadata(domain="religion", tags=["quran"], script="arabic"),
+        parser_mode="mineru_strict",
+    )
+
+    assert split[0].text == recovered_text
+    assert split[0].source_location["page_start"] == 3
+    assert split[0].source_location["page_end"] == 3
+    assert "recovered_text_from_misclassified_block" in parser_warning_codes(split[0])
+
+
+def test_chunk_splitter_flags_hadith_reference_missing_expected_arabic():
+    chunk = AdapterChunk(
+        text="Book 1, Hadith 7\n\nThe Prophet said this in English translation only.",
+        source_location={"page_start": 1, "page_end": 1},
+        metadata={"parser_metadata": {"backend": "mineru", "chunk_index": 0}},
+    )
+
+    split = ChunkSplitter(max_words=1500).split(
+        [chunk],
+        domain_metadata=DomainMetadata(domain="hadith", script="arabic"),
+        parser_mode="mineru_strict",
+    )
+
+    assert "reference_unit_missing_expected_script" in parser_warning_codes(split[0])
+
+
+def test_chunk_splitter_dedupes_existing_quality_gate_warning():
+    warning = {
+        "code": "reference_unit_missing_expected_script",
+        "message": (
+            "Reference-bearing chunk is expected to contain Arabic script, "
+            "but no Arabic letters were detected."
+        ),
+        "expected_script": "arabic",
+    }
+    chunk = AdapterChunk(
+        text="[1:1] English translation only.",
+        source_location={"page_start": 1, "page_end": 1},
+        metadata={
+            "parser_metadata": {"backend": "mineru", "chunk_index": 0},
+            "extraction_quality": {"parser_warnings": [warning]},
+        },
+    )
+
+    split = ChunkSplitter(max_words=1500).split(
+        [chunk],
+        domain_metadata=DomainMetadata(domain="religion", tags=["quran"], script="arabic"),
+        parser_mode="mineru_strict",
+    )
+
+    warnings = parser_warnings(split[0])
+    assert warnings == [warning]
+
+
+def test_chunk_splitter_allows_mixed_arabic_english_reference_chunk():
+    arabic_text = (
+        "\u0625\u064a\u0627\u0643 \u0646\u0639\u0628\u062f "
+        "\u0648\u0625\u064a\u0627\u0643 \u0646\u0633\u062a\u0639\u064a\u0646"
+    )
+    chunk = AdapterChunk(
+        text=f"[1:4]\n\n{arabic_text}\n\nYou alone we worship.",
+        source_location={"page_start": 1, "page_end": 1},
+        metadata={"parser_metadata": {"backend": "mineru", "chunk_index": 0}},
+    )
+
+    split = ChunkSplitter(max_words=1500).split(
+        [chunk],
+        domain_metadata=DomainMetadata(domain="religion", tags=["quran"], script="arabic"),
+        parser_mode="mineru_strict",
+    )
+
+    assert "reference_unit_missing_expected_script" not in parser_warning_codes(split[0])
+
+
+def test_chunk_splitter_preserves_real_math_content_list_equation(tmp_path: Path):
+    content_list = tmp_path / "source_content_list.json"
+    content_list.write_text(
+        """
+        [
+          {"type":"text","text":"Physics derivation","page_idx":0},
+          {"type":"equation","text":"$$ E = mc^2 $$","page_idx":0}
+        ]
+        """,
+        encoding="utf-8",
+    )
+    chunk = AdapterChunk(
+        text="fallback markdown should not be used",
+        source_location={"artifact": "source/auto/source.md"},
+        metadata={
+            "parser_metadata": {
+                "backend": "mineru",
+                "artifact_extract_dir": str(tmp_path),
+                "content_list_ref": "source_content_list.json",
+            }
+        },
+    )
+
+    split = ChunkSplitter(max_words=1500).split(
+        [chunk],
+        domain_metadata=DomainMetadata(domain="science", document_type="paper", tags=["physics"]),
+        parser_mode="mineru_strict",
+    )
+
+    assert split[0].text == "Physics derivation\n\n$$ E = mc^2 $$"
+    assert parser_warning_codes(split[0]) == []

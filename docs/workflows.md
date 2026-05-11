@@ -138,6 +138,33 @@ Domain metadata is applied before parsing. Parser metadata is added after parsin
 
 MinerU output is passed through Ragstudio's shared metadata-driven chunking layer before persistence. Large markdown artifacts are split by metadata profile, headings, pages, verse markers, paragraph boundaries, and a hard word cap so a successful MinerU parse cannot persist as a single oversized retrieval chunk.
 
+### Parser Quality Warnings
+
+Ragstudio treats MinerU block labels as untrusted parser output. Before chunking,
+raw `source_content_list.json` entries pass through a parser-normalization boundary
+that preserves text blocks, quarantines suspicious non-text blocks, and records
+machine-readable warnings.
+
+Parser warnings are stored under `metadata_json.extraction_quality.parser_warnings`
+and copied to `chunks.extraction_quality`. Index jobs summarize warning counts in
+`job.result.parser_quality`, and retrieval traces/sources include warning codes
+when affected chunks are used as evidence.
+
+Common warning codes:
+
+- `suspected_text_misclassified_as_equation`: MinerU emitted an equation-like block
+  where the document profile expects prose/reference text, so raw parser math was
+  excluded from chunk text.
+- `recovered_text_from_misclassified_block`: MinerU supplied recovered text for a
+  suspicious non-text block, and Ragstudio used that recovered text.
+- `reference_unit_missing_expected_script`: a reference-bearing chunk is expected
+  to include the configured script, such as Arabic or Latin, but no matching
+  letters were detected.
+
+These warnings do not automatically discard evidence. They make incomplete parser
+extraction visible to jobs, retrieval traces, source metadata, and answer prompts so
+answers can avoid treating damaged source text as complete evidence.
+
 ## Inspect and Search Chunks
 
 Open **Chunks** to index individual documents again or search indexed chunks.

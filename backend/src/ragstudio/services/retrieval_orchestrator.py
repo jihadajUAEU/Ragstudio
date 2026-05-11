@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from time import perf_counter
 from typing import Any
 
@@ -169,6 +169,9 @@ class RetrievalOrchestrator:
                 rerank_started = perf_counter()
                 reranked, reranker_traces = await self._rerank(query, fused, profile)
                 timings["rerank_ms"] = _elapsed_ms(rerank_started)
+            reranked, parser_quality_trace = _annotate_parser_quality_warnings(reranked)
+            if parser_quality_trace is not None:
+                traces.append(parser_quality_trace)
 
             context_started = perf_counter()
             context_service = self._context_assembly_service(profile)
@@ -760,6 +763,57 @@ def _hydrated_graph_candidate(
         final_score=candidate.final_score,
         reasons=[*candidate.reasons, "graph_hydrated_chunk"],
     )
+
+
+def _annotate_parser_quality_warnings(
+    candidates: list[EvidenceCandidate],
+) -> tuple[list[EvidenceCandidate], dict[str, Any] | None]:
+    annotated: list[EvidenceCandidate] = []
+    warning_counts: dict[str, int] = {}
+    affected_candidate_ids: list[str] = []
+    for candidate in candidates:
+        codes = _parser_warning_codes(candidate.metadata)
+        if not codes:
+            annotated.append(candidate)
+            continue
+        affected_candidate_ids.append(candidate.candidate_id)
+        unique_codes = sorted(set(codes))
+        for code in codes:
+            warning_counts[code] = warning_counts.get(code, 0) + 1
+        metadata = {
+            **candidate.metadata,
+            "parser_quality_warning_codes": unique_codes,
+        }
+        reasons = [
+            *candidate.reasons,
+            *(f"parser_quality_warning:{code}" for code in unique_codes),
+        ]
+        annotated.append(replace(candidate, metadata=metadata, reasons=reasons))
+    if not warning_counts:
+        return annotated, None
+    return annotated, {
+        "stage": "parser_quality",
+        "status": "warnings",
+        "warning_counts": dict(sorted(warning_counts.items())),
+        "affected_candidate_ids": affected_candidate_ids,
+    }
+
+
+def _parser_warning_codes(metadata: dict[str, Any]) -> list[str]:
+    extraction_quality = metadata.get("extraction_quality")
+    if not isinstance(extraction_quality, dict):
+        return []
+    warnings = extraction_quality.get("parser_warnings")
+    if not isinstance(warnings, list):
+        return []
+    codes: list[str] = []
+    for warning in warnings:
+        if not isinstance(warning, dict):
+            continue
+        code = warning.get("code")
+        if isinstance(code, str) and code:
+            codes.append(code)
+    return codes
 
 
 def _elapsed_ms(started_at: float) -> float:
