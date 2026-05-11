@@ -80,7 +80,7 @@ class HybridChunkSearch:
             }:
                 neighbor_match = 30.0
 
-        exact_phrase = 8.0 if query_text and query_text in chunk_text else 0.0
+        exact_phrase = self._exact_phrase_score(query_text, chunk_text)
         query_terms = self._terms(query_text)
         chunk_terms = self._terms(chunk_text)
         if query_terms and chunk_terms:
@@ -97,6 +97,7 @@ class HybridChunkSearch:
             chunk.text,
             metadata,
         )
+        guidance_request = self._guidance_request_boost(query_text, chunk_text)
         breakdown: dict[str, float] = {
             "reference_exact": reference_exact,
             "neighbor_match": neighbor_match,
@@ -106,6 +107,7 @@ class HybridChunkSearch:
             "term_density": density * 2.0,
             "metadata_boost": metadata_boost,
             "answer_bearing_count": answer_bearing_count,
+            "guidance_request": guidance_request,
         }
         explain = build_retrieval_explain(
             query_reference=self._query_reference_label(query_ref),
@@ -163,6 +165,53 @@ class HybridChunkSearch:
         if not any(term in combined for term in ("hadith", "collection", "bukhari")):
             return 0.0
         return 30.0
+
+    def _guidance_request_boost(self, query_text: str, chunk_text: str) -> float:
+        query_terms = self._terms(query_text)
+        asks_for_guidance = (
+            {"ask", "asks", "asking", "request", "requests", "prayer"} & query_terms
+            and {"guidance", "guide", "guides", "guided"} & query_terms
+        )
+        if not asks_for_guidance:
+            return 0.0
+
+        if "straight path" not in query_text or "straight path" not in chunk_text:
+            return 0.0
+        if re.search(r"\bguide\s+us\b", chunk_text):
+            return 40.0
+        return 0.0
+
+    def _exact_phrase_score(self, query_text: str, chunk_text: str) -> float:
+        if query_text and query_text in chunk_text:
+            return 8.0
+
+        for phrase in self._answer_bearing_phrases(query_text):
+            if phrase in chunk_text:
+                return 24.0
+        return 0.0
+
+    def _answer_bearing_phrases(self, query_text: str) -> list[str]:
+        phrases: list[str] = []
+        for match in re.finditer(r'"([^"]{8,160})"', query_text):
+            phrases.append(match.group(1).strip())
+
+        for pattern in (
+            r"\b(?:that|which)\s+says?\s+(.+?)(?:[.?!]|$)",
+            r"\bsays?\s+(.+?)(?:[.?!]|$)",
+            r"\btranslated\s+as\s+(.+?)(?:[.?!]|$)",
+        ):
+            for match in re.finditer(pattern, query_text):
+                phrase = match.group(1).strip()
+                phrase = re.sub(r"^(?:that|which|the verse)\s+", "", phrase)
+                if phrase:
+                    phrases.append(phrase)
+
+        normalized: list[str] = []
+        for phrase in phrases:
+            phrase = re.sub(r"\s+", " ", phrase).strip().casefold()
+            if len(self._terms(phrase)) >= 4 and phrase not in normalized:
+                normalized.append(phrase)
+        return normalized
 
     def _metadata_title(self, metadata: dict[str, Any]) -> str:
         document_metadata = metadata.get("document_metadata")

@@ -304,6 +304,16 @@ class QueryService:
                 parameters.get("vlm_enhanced"),
                 profile.enable_image_processing or "vision" in profile.llm_capabilities,
             ),
+            "retrieval_mode": self._text_param(parameters.get("retrieval_mode"), "hybrid"),
+            "reference_query_mode": self._text_param(
+                parameters.get("reference_query_mode"),
+                "hybrid",
+            ),
+            "native_query_timeout_ms": self._int_param(
+                parameters.get("native_query_timeout_ms"),
+                15_000,
+            ),
+            "answer_style": self._text_param(parameters.get("answer_style"), ""),
             "limit": limit,
         }
 

@@ -299,7 +299,7 @@ async def test_query_service_surfaces_graph_degradation_while_succeeding(client)
 
 
 @pytest.mark.asyncio
-async def test_query_service_persists_runtime_errors(client):
+async def test_query_service_degrades_runtime_errors_to_metadata(client):
     app = client._transport.app
     runtime = FakeRuntime(
         RuntimeQueryResult(
@@ -317,12 +317,17 @@ async def test_query_service_persists_runtime_errors(client):
             settings=app.state.settings,
             runtime_factory=FakeFactory(runtime),
             health_service=FakeHealthService(),
+            retrieval_orchestrator=_real_retrieval_orchestrator(),
         ).run_query(QueryIn(query="boom", document_ids=[document.id], variant_ids=[variant.id]))
 
     run = result.runs[0]
-    assert run.status == StageStatus.FAILED
-    assert run.error == "runtime exploded"
-    assert run.error_type == "runtime_query_error"
+    assert run.status == StageStatus.SUCCEEDED
+    assert run.error is None
+    assert run.error_type is None
+    assert run.answer == "Sahih al-Bukhari contains 7277 hadith."
+    assert run.timings["native_degraded"] is True
+    assert run.timings["native_error"] == "runtime exploded"
+    assert run.timings["native_error_type"] == "runtime_query_error"
 
 
 @pytest.mark.asyncio
