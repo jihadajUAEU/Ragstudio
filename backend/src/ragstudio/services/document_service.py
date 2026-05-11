@@ -358,6 +358,16 @@ class DocumentService:
         graph_materialization: dict[str, Any] = {}
         if profile is not None and profile.runtime_mode != "fallback":
             assert self.settings is not None
+
+            async def on_stage(
+                stage: IndexStage,
+                *,
+                detail: str,
+                chunk_count: int | None = None,
+            ) -> None:
+                update_job_stage(job, stage, detail=detail, chunk_count=chunk_count)
+                await self.session.commit()
+
             lifecycle_result = await IndexLifecycleService(
                 self.session,
                 self.settings,
@@ -365,6 +375,7 @@ class DocumentService:
                 document.id,
                 options=options,
                 on_mineru_status=on_mineru_status,
+                on_stage=on_stage,
             )
             chunks = lifecycle_result.chunks if lifecycle_result is not None else []
             graph_materialization = (

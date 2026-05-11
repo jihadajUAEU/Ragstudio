@@ -42,9 +42,20 @@ class RuntimeProfileService:
 
         storage_backend = normalize_storage_backend(profile.storage_backend)
         runtime_mode = normalize_runtime_mode(profile.runtime_mode, storage_backend)
+        embedding_provider = normalize_embedding_provider(
+            profile.embedding_provider or DEFAULT_EMBEDDING_PROVIDER
+        )
+        pgvector_schema = profile.pgvector_schema or self.settings.pgvector_schema
+        pgvector_table_prefix = (
+            profile.pgvector_table_prefix or self.settings.pgvector_table_prefix
+        )
         index_shape = {
+            "runtime_profile_id": profile.id,
+            "embedding_provider": embedding_provider,
             "embedding_model": profile.embedding_model,
             "embedding_dimensions": profile.embedding_dimensions or 1536,
+            "pgvector_schema": pgvector_schema,
+            "pgvector_table_prefix": pgvector_table_prefix,
             "parser": profile.parser or "mineru",
             "parse_method": profile.parse_method or "auto",
             "chunk_token_size": profile.chunk_token_size or 1200,
@@ -66,9 +77,7 @@ class RuntimeProfileService:
             vision_base_url=profile.vision_base_url,
             vision_api_key=profile.vision_api_key,
             vision_timeout_ms=profile.vision_timeout_ms or 10000,
-            embedding_provider=normalize_embedding_provider(
-                profile.embedding_provider or DEFAULT_EMBEDDING_PROVIDER
-            ),
+            embedding_provider=embedding_provider,
             embedding_model=profile.embedding_model,
             embedding_base_url=profile.embedding_base_url,
             embedding_api_key=profile.embedding_api_key,
@@ -88,10 +97,8 @@ class RuntimeProfileService:
             reranker_api_key=profile.reranker_api_key,
             reranker_timeout_ms=profile.reranker_timeout_ms or 10000,
             storage_backend=storage_backend,
-            pgvector_schema=profile.pgvector_schema or self.settings.pgvector_schema,
-            pgvector_table_prefix=(
-                profile.pgvector_table_prefix or self.settings.pgvector_table_prefix
-            ),
+            pgvector_schema=pgvector_schema,
+            pgvector_table_prefix=pgvector_table_prefix,
             neo4j_uri=profile.neo4j_uri or self.settings.neo4j_uri,
             neo4j_username=profile.neo4j_username or self.settings.neo4j_username,
             neo4j_password=profile.neo4j_password or self.settings.neo4j_password,

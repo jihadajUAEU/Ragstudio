@@ -82,6 +82,7 @@ class IndexLifecycleService:
         *,
         options: IndexDocumentIn | None = None,
         on_mineru_status: MinerUStatusCallback | None = None,
+        on_stage: Callable[..., Awaitable[None]] | None = None,
     ) -> IndexLifecycleResult | None:
         document = await self.session.get(Document, document_id)
         if document is None:
@@ -144,6 +145,12 @@ class IndexLifecycleService:
             adapter_chunks,
             language=self._quality_language(options.domain_metadata),
         )
+        if on_stage is not None:
+            await on_stage(
+                IndexStage.MINERU_VALIDATED,
+                detail=f"Validated {len(adapter_chunks)} chunks from MinerU.",
+                chunk_count=len(adapter_chunks),
+            )
 
         async def persist_studio_chunks() -> list[ChunkOut]:
             chunks = await ChunkPersistenceService(self.session).persist(
@@ -170,6 +177,17 @@ class IndexLifecycleService:
             )
             document.status = StageStatus.SUCCEEDED.value
             await self.session.commit()
+            if on_stage is not None:
+                await on_stage(
+                    IndexStage.CHUNKS_PERSISTED,
+                    detail=f"Persisted {len(chunks)} canonical chunks.",
+                    chunk_count=len(chunks),
+                )
+                await on_stage(
+                    IndexStage.SEARCH_READY,
+                    detail="Lexical and metadata retrieval are ready.",
+                    chunk_count=len(chunks),
+                )
             return chunks
 
         async def enrich_runtime() -> list[Any] | None:
@@ -185,6 +203,12 @@ class IndexLifecycleService:
 
         studio_branch_name = IndexStage.CHUNKS_PERSISTED.value
         runtime_branch_name = IndexStage.RUNTIME_ENRICHING.value
+        if on_stage is not None:
+            await on_stage(
+                IndexStage.RUNTIME_ENRICHING,
+                detail="Runtime enrichment is running.",
+                chunk_count=len(adapter_chunks),
+            )
         branch_results = await IndexStageScheduler(max_parallel_branches=2).run(
             [
                 IndexStageBranch(
@@ -252,6 +276,12 @@ class IndexLifecycleService:
             )
 
         await self._mark_runtime_index_succeeded(document.id, profile.id, len(chunks))
+        if on_stage is not None:
+            await on_stage(
+                IndexStage.GRAPH_ENRICHING,
+                detail="Graph enrichment is queued.",
+                chunk_count=len(chunks),
+            )
         projection_record = GraphProjectionRecord(
             document_id=document.id,
             runtime_profile_id=profile.id,

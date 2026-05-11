@@ -446,13 +446,25 @@ function formatJobType(type: string): string {
 
 function getJobProgress(job: JobOut): number {
   const mineru = getMinerUStatus(job.result);
-  const progress = mineru?.progress ?? job.progress;
+  const stageProgress = getIndexingStageProgress(job.result);
+  const progress =
+    job.status === "running"
+      ? (stageProgress ?? mineru?.progress ?? job.progress)
+      : (job.progress ?? stageProgress ?? mineru?.progress);
   const rounded = Math.max(0, Math.min(Math.round(progress), 100));
 
   if (job.status === "running") {
     return Math.min(rounded, 99);
   }
   return rounded;
+}
+
+function getIndexingStageProgress(result: Record<string, unknown>): number | null {
+  const stage = result.indexing_stage;
+  if (!isRecord(stage) || typeof stage.progress !== "number") {
+    return null;
+  }
+  return stage.progress;
 }
 
 function formatMinerUResult(job: JobOut): string | null {

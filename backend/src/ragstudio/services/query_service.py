@@ -3,7 +3,7 @@ from time import perf_counter
 from typing import Any
 
 from ragstudio.config import AppSettings
-from ragstudio.db.models import Document, IndexRecord, Run, Variant
+from ragstudio.db.models import Document, GraphProjectionRecord, IndexRecord, Run, Variant
 from ragstudio.schemas.common import StageStatus
 from ragstudio.schemas.query import QueryIn, QueryOut
 from ragstudio.schemas.runs import RunOut
@@ -158,6 +158,7 @@ class QueryService:
             profile.id,
             profile.index_shape,
         )
+        graph_degradation = await self._graph_degradation(payload.document_ids, profile.id)
 
         variants = await self._variants_by_id(payload.variant_ids)
         runs: list[Run] = []
@@ -167,6 +168,8 @@ class QueryService:
             query_config = self._query_config(profile, variant, payload.limit)
             if index_degradation:
                 query_config = {**query_config, "retrieval_mode": "metadata"}
+            if graph_degradation:
+                query_config = {**query_config, "graph_expansion_enabled": False}
             run = Run(
                 variant_id=variant_id,
                 query=payload.query,
@@ -199,6 +202,7 @@ class QueryService:
                 run.timings = {
                     **orchestrated.timings,
                     **(index_degradation or {}),
+                    **(graph_degradation or {}),
                     "total_ms": self._elapsed_ms(started_at),
                 }
             except Exception as exc:
@@ -424,6 +428,47 @@ class QueryService:
             "index_degraded_documents": missing,
             "index_degraded_reason": reason_by_document.get(missing[0], "runtime index pending"),
             "retrieval_mode": "metadata_fallback",
+        }
+
+    async def _graph_degradation(
+        self,
+        document_ids: list[str],
+        runtime_profile_id: str,
+    ) -> dict[str, Any] | None:
+        if not document_ids:
+            return None
+        result = await self.session.execute(
+            select(GraphProjectionRecord).where(
+                GraphProjectionRecord.document_id.in_(document_ids),
+                GraphProjectionRecord.runtime_profile_id == runtime_profile_id,
+            )
+        )
+        records_by_document: dict[str, list[GraphProjectionRecord]] = {}
+        for record in result.scalars().all():
+            records_by_document.setdefault(record.document_id, []).append(record)
+
+        degraded_documents: list[str] = []
+        reason_by_document: dict[str, str] = {}
+        for document_id in document_ids:
+            records = records_by_document.get(document_id, [])
+            latest = max(records, key=lambda record: record.created_at) if records else None
+            if latest is None:
+                degraded_documents.append(document_id)
+                reason_by_document[document_id] = "graph projection pending"
+            elif latest.status != StageStatus.SUCCEEDED.value:
+                degraded_documents.append(document_id)
+                reason_by_document[document_id] = latest.error or latest.status
+
+        if not degraded_documents:
+            return None
+        return {
+            "graph_degraded": True,
+            "graph_degraded_documents": degraded_documents,
+            "graph_degraded_reason": reason_by_document.get(
+                degraded_documents[0],
+                "graph projection pending",
+            ),
+            "graph_expansion_mode": "disabled",
         }
 
     async def _variants_by_id(self, variant_ids: list[str]) -> dict[str, Variant]:

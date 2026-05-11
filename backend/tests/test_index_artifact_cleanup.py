@@ -91,7 +91,7 @@ async def test_cleanup_removes_retrieval_artifacts_but_keeps_document_and_jobs(
 
 
 @pytest.mark.asyncio
-async def test_cleanup_preserves_materialized_graph_projection_records(
+async def test_cleanup_marks_materialized_graph_projection_records_stale(
     database_url,
     tmp_path,
 ):
@@ -141,6 +141,7 @@ async def test_cleanup_preserves_materialized_graph_projection_records(
             "doc-materialized-cleanup",
             commit=True,
         )
+        session.expire_all()
 
         chunk_count = (
             await session.execute(
@@ -166,5 +167,7 @@ async def test_cleanup_preserves_materialized_graph_projection_records(
     assert chunk_count == 0
     assert index_count == 0
     assert kept_graph_record is not None
+    assert kept_graph_record.status == "stale"
     assert kept_graph_record.node_count == 3
     assert kept_graph_record.edge_count == 2
+    assert kept_graph_record.error == "Superseded by a newer indexing attempt."

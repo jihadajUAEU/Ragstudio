@@ -1,5 +1,12 @@
 import pytest
-from ragstudio.db.models import Chunk, Document, IndexRecord, SettingsProfile, Variant
+from ragstudio.db.models import (
+    Chunk,
+    Document,
+    GraphProjectionRecord,
+    IndexRecord,
+    SettingsProfile,
+    Variant,
+)
 from ragstudio.schemas.common import StageStatus
 from ragstudio.schemas.parsing import DomainMetadata, IndexDocumentIn
 from ragstudio.schemas.query import QueryIn
@@ -210,7 +217,11 @@ async def test_query_service_uses_runtime_orchestrator_path(client):
             health_service=FakeHealthService(),
             retrieval_orchestrator=_real_retrieval_orchestrator(),
         )
-        payload = QueryIn(query="What happened?", document_ids=[document.id], variant_ids=[variant.id])
+        payload = QueryIn(
+            query="What happened?",
+            document_ids=[document.id],
+            variant_ids=[variant.id],
+        )
 
         await service.preflight_runtime_readiness(payload)
         result = await service.run_query(payload)
@@ -229,6 +240,38 @@ async def test_query_service_uses_runtime_orchestrator_path(client):
     assert run.timings["answer_ms"] >= 0
     assert run.reranker_traces[0]["status"] == "disabled"
     assert run.token_metadata["prompt_tokens"] == 12
+
+
+@pytest.mark.asyncio
+async def test_runtime_index_shape_tracks_provider_and_pgvector_target(client):
+    app = client._transport.app
+    async with app.state.session_factory() as session:
+        session.add(
+            SettingsProfile(
+                id="default",
+                provider="openai-compatible",
+                llm_model="gpt-4o",
+                llm_base_url="http://127.0.0.1:8004/v1",
+                embedding_provider="vllm_openai",
+                embedding_model="text-embedding-3-large",
+                embedding_base_url="http://127.0.0.1:8001/v1",
+                embedding_dimensions=1536,
+                pgvector_schema="rag_custom",
+                pgvector_table_prefix="tenant_a",
+                storage_backend="postgres_pgvector_neo4j",
+                runtime_mode="runtime",
+            )
+        )
+        await session.commit()
+
+        profile = await RuntimeProfileService(session, app.state.settings).get_active_profile()
+
+    assert profile.index_shape["runtime_profile_id"] == "default"
+    assert profile.index_shape["embedding_provider"] == "vllm_openai"
+    assert profile.index_shape["embedding_model"] == "text-embedding-3-large"
+    assert profile.index_shape["embedding_dimensions"] == 1536
+    assert profile.index_shape["pgvector_schema"] == "rag_custom"
+    assert profile.index_shape["pgvector_table_prefix"] == "tenant_a"
 
 
 @pytest.mark.asyncio
@@ -385,6 +428,16 @@ async def test_query_service_surfaces_graph_degradation_while_succeeding(client)
     app = client._transport.app
     async with app.state.session_factory() as session:
         document, variant = await _create_runtime_records(session, app)
+        session.add(
+            GraphProjectionRecord(
+                document_id=document.id,
+                runtime_profile_id="default",
+                status=StageStatus.SUCCEEDED.value,
+                node_count=2,
+                edge_count=1,
+            )
+        )
+        await session.commit()
 
         result = await QueryService(
             session,
@@ -406,6 +459,45 @@ async def test_query_service_surfaces_graph_degradation_while_succeeding(client)
     graph_trace = next(trace for trace in run.chunk_traces if trace["stage"] == "graph_expansion")
     assert graph_trace["status"] == "failed"
     assert graph_trace["reason"] == "RuntimeError"
+
+
+@pytest.mark.asyncio
+async def test_query_service_disables_graph_expansion_when_projection_is_stale(client):
+    app = client._transport.app
+    async with app.state.session_factory() as session:
+        document, variant = await _create_runtime_records(session, app)
+        session.add(
+            GraphProjectionRecord(
+                document_id=document.id,
+                runtime_profile_id="default",
+                status="stale",
+                error="Superseded by a newer indexing attempt.",
+                node_count=7,
+                edge_count=6,
+            )
+        )
+        await session.commit()
+
+        result = await QueryService(
+            session,
+            app.state.settings.data_dir,
+            settings=app.state.settings,
+            runtime_factory=FakeFactory(),
+            health_service=FakeHealthService(),
+            retrieval_orchestrator=_graph_failing_retrieval_orchestrator(),
+        ).run_query(
+            QueryIn(query="What happened?", document_ids=[document.id], variant_ids=[variant.id])
+        )
+
+    run = result.runs[0]
+    assert run.status == StageStatus.SUCCEEDED
+    assert run.timings["graph_degraded"] is True
+    assert run.timings["graph_degraded_reason"] == "Superseded by a newer indexing attempt."
+    assert run.timings["graph_expansion_mode"] == "disabled"
+    assert run.timings["graph_error_type"] == "graph_projection_not_ready"
+    graph_trace = next(trace for trace in run.chunk_traces if trace["stage"] == "graph_expansion")
+    assert graph_trace["status"] == "skipped"
+    assert graph_trace["reason"] == "graph_projection_not_ready"
 
 
 @pytest.mark.asyncio

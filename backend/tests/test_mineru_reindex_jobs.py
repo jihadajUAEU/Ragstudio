@@ -381,7 +381,7 @@ async def test_runtime_enrichment_failure_records_current_skipped_graph_state(
     old_records = [
         record
         for record in graph_records
-        if record.status == "succeeded" and record.node_count == 7 and record.edge_count == 6
+        if record.status == "stale" and record.node_count == 7 and record.edge_count == 6
     ]
     assert result is not None
     assert result.graph_projection_record_id is not None
@@ -389,6 +389,7 @@ async def test_runtime_enrichment_failure_records_current_skipped_graph_state(
     assert len(old_records) == 1
     assert current_graph_record is not None
     assert current_graph_record.id != old_records[0].id
+    assert old_records[0].error == "Superseded by a newer indexing attempt."
     assert current_graph_record.status in {"skipped", "failed"}
     assert current_graph_record.node_count == 0
     assert current_graph_record.edge_count == 0
@@ -543,6 +544,7 @@ async def test_index_document_for_job_records_warning_when_graph_materialization
         *,
         options=None,
         on_mineru_status=None,
+        on_stage=None,
     ):
         return LifecycleResult()
 

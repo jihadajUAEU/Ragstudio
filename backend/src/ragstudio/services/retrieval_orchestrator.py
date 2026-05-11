@@ -130,6 +130,7 @@ class RetrievalOrchestrator:
                 profile=profile,
                 document_ids=document_ids,
                 limit=limit,
+                enabled=bool(query_config.get("graph_expansion_enabled", True)),
                 timings=timings,
             )
             traces.extend(graph_traces)
@@ -384,9 +385,21 @@ class RetrievalOrchestrator:
         profile: Any,
         document_ids: list[str],
         limit: int,
+        enabled: bool,
         timings: dict[str, Any],
     ) -> tuple[list[EvidenceCandidate], list[dict[str, Any]]]:
         graph_started = perf_counter()
+        if not enabled:
+            timings["graph_ms"] = _elapsed_ms(graph_started)
+            timings["graph_degraded"] = True
+            timings["graph_error_type"] = "graph_projection_not_ready"
+            return [], [
+                {
+                    "stage": "graph_expansion",
+                    "status": "skipped",
+                    "reason": "graph_projection_not_ready",
+                }
+            ]
         try:
             graph_candidates, graph_traces = await self.graph_expansion_service.expand(
                 query,

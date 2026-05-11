@@ -133,3 +133,27 @@ async def test_orchestrator_respects_single_branch_parallelism_limit():
     assert result["first"].value == "first"
     assert result["second"].value == "second"
     assert result["third"].value == "third"
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_parallelism_limit_is_shared_across_instances():
+    active = 0
+    peak_active = 0
+
+    async def branch(name: str):
+        nonlocal active, peak_active
+        active += 1
+        peak_active = max(peak_active, active)
+        await asyncio.sleep(0)
+        active -= 1
+        return name
+
+    first = IndexStageScheduler(max_parallel_branches=1)
+    second = IndexStageScheduler(max_parallel_branches=1)
+
+    await asyncio.gather(
+        first.run([IndexStageBranch("first", lambda: branch("first"), critical=True)]),
+        second.run([IndexStageBranch("second", lambda: branch("second"), critical=True)]),
+    )
+
+    assert peak_active == 1

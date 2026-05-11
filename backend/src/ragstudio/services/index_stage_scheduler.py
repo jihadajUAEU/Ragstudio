@@ -21,8 +21,14 @@ class StageBranchResult:
 
 
 class IndexStageScheduler:
+    _global_semaphores: dict[tuple[int, int], asyncio.Semaphore] = {}
+
     def __init__(self, *, max_parallel_branches: int = 2):
-        self._semaphore = asyncio.Semaphore(max_parallel_branches)
+        loop_key = id(asyncio.get_running_loop())
+        self._semaphore = self._global_semaphores.setdefault(
+            (loop_key, max_parallel_branches),
+            asyncio.Semaphore(max_parallel_branches),
+        )
 
     async def run(self, branches: list[IndexStageBranch]) -> dict[str, StageBranchResult]:
         async def run_branch(branch: IndexStageBranch) -> tuple[str, StageBranchResult]:

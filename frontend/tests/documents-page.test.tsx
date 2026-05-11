@@ -418,10 +418,16 @@ describe("DocumentsPage", () => {
           progress: 100,
           logs: ["Indexing completed with warnings"],
           result: {
+            mineru: {
+              status: "ready",
+              progress: 80,
+              detail: "MinerU artifacts ready",
+            },
             indexing_stage: {
               status: "ready_with_warnings",
               label: "Ready with warnings",
               detail: "Vector index ready; graph skipped",
+              progress: 100,
               chunk_count: 1754,
             },
             warnings: [
@@ -443,6 +449,7 @@ describe("DocumentsPage", () => {
     expect(screen.getByText("Graph extraction skipped because Neo4j is unavailable")).toBeVisible();
     expect(screen.getByText("Some chunk metadata could not be normalized")).toBeVisible();
     expect(screen.getByText("Indexing completed with warnings")).toBeVisible();
+    expect(screen.getByText("100%")).toBeVisible();
   });
 
   it("polls jobs and documents while work is active", async () => {
