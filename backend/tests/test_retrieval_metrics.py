@@ -1,5 +1,4 @@
 import pytest
-
 from ragstudio.services.retrieval_evidence import EvidenceCandidate
 from ragstudio.services.retrieval_metrics import (
     RetrievalQualityGate,

@@ -1,5 +1,4 @@
 import pytest
-
 from ragstudio.db.engine import init_db, make_engine, make_session_factory
 from ragstudio.db.models import Document
 from ragstudio.schemas.parsing import DomainMetadata, IndexDocumentIn

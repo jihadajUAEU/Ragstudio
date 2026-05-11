@@ -1,6 +1,4 @@
 import pytest
-from sqlalchemy import func, select
-
 from ragstudio.config import AppSettings
 from ragstudio.db.engine import init_db, make_engine, make_session_factory
 from ragstudio.db.models import Chunk, Document, IndexRecord, Job, SettingsProfile
@@ -10,6 +8,7 @@ from ragstudio.schemas.parsing import IndexDocumentIn
 from ragstudio.services.adapter import AdapterChunk
 from ragstudio.services.chunk_service import ChunkService
 from ragstudio.services.index_lifecycle_service import IndexLifecycleService
+from sqlalchemy import func, select
 
 
 class FakeDocumentParser:
