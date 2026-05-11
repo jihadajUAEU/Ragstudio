@@ -1,6 +1,11 @@
 import pytest
-from ragstudio.db.models import Run
+from ragstudio.db.models import Document, EvaluationSet, Run, SettingsProfile, Variant
+from ragstudio.schemas.common import StageStatus
 from ragstudio.schemas.evaluation import EvaluationCaseIn
+from ragstudio.schemas.experiments import ExperimentIn
+from ragstudio.services.experiment_service import ExperimentService
+from ragstudio.services.query_service import QueryService
+from ragstudio.services.retrieval_evidence import OrchestratedAnswer
 from ragstudio.services.scoring_service import ScoringService
 
 
@@ -102,3 +107,115 @@ async def test_create_experiment_prevalidates_missing_document_without_persistin
     )
 
     assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_create_experiment_allows_degraded_metadata_fallback(client, monkeypatch):
+    app = client._transport.app
+    query_configs: list[dict] = []
+
+    class PassingHealthService:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        async def check(self, profile):
+            return []
+
+        def blocking_failures(self, checks):
+            return []
+
+    class FakeRuntimeFactory:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def build(self, profile):
+            return object()
+
+    class MetadataFallbackOrchestrator:
+        async def query(
+            self,
+            query,
+            *,
+            runtime,
+            profile,
+            document_ids,
+            variant_id,
+            query_config,
+        ):
+            query_configs.append(query_config)
+            return OrchestratedAnswer(
+                answer="alpha beta",
+                sources=[{"document_id": document_ids[0], "text": "alpha beta"}],
+                chunk_traces=[{"stage": "metadata"}],
+                reranker_traces=[],
+                timings={"metadata_ms": 1},
+                token_metadata={"prompt_tokens": 2},
+            )
+
+    monkeypatch.setattr(
+        "ragstudio.services.query_service.RuntimeHealthService",
+        PassingHealthService,
+    )
+    monkeypatch.setattr(
+        "ragstudio.services.query_service.RAGAnythingRuntimeFactory",
+        FakeRuntimeFactory,
+    )
+    monkeypatch.setattr(
+        QueryService,
+        "_retrieval_orchestrator",
+        lambda self: MetadataFallbackOrchestrator(),
+    )
+
+    async with app.state.session_factory() as session:
+        document = Document(
+            filename="degraded.txt",
+            content_type="text/plain",
+            sha256="experiment-degraded-sha",
+            artifact_path=str(app.state.settings.data_dir / "degraded.txt"),
+            status=StageStatus.SUCCEEDED.value,
+        )
+        variant = Variant(name="Runtime", preset="balanced", parameters={})
+        evaluation_set = EvaluationSet(
+            name="Degraded",
+            cases=[
+                {
+                    "id": "case-1",
+                    "query": "alpha?",
+                    "expected_answer": "alpha beta",
+                }
+            ],
+        )
+        session.add(
+            SettingsProfile(
+                id="default",
+                provider="openai-compatible",
+                llm_model="gpt-4o",
+                llm_base_url="http://127.0.0.1:8004/v1",
+                embedding_model="text-embedding-3-large",
+                embedding_base_url="http://127.0.0.1:8001/v1",
+                storage_backend="postgres_pgvector_neo4j",
+                runtime_mode="runtime",
+            )
+        )
+        session.add_all([document, variant, evaluation_set])
+        await session.commit()
+
+        result = await ExperimentService(
+            session,
+            app.state.settings.data_dir,
+            settings=app.state.settings,
+        ).create(
+            ExperimentIn(
+                name="Allows degraded fallback",
+                document_ids=[document.id],
+                evaluation_set_id=evaluation_set.id,
+                variant_ids=[variant.id],
+                objective={},
+            )
+        )
+
+    assert len(result.runs) == 1
+    assert result.runs[0].status == StageStatus.SUCCEEDED
+    assert result.runs[0].timings["index_degraded"] is True
+    assert result.scores[0].total == 100
+    assert query_configs[0]["retrieval_mode"] == "metadata"

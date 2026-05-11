@@ -17,6 +17,7 @@ from ragstudio.schemas.runtime import RuntimeHealthCheck
 from ragstudio.services.document_service import DocumentService
 from ragstudio.services.graph_materialization_service import GraphMaterializationResult
 from ragstudio.services.graph_projection_runner import GraphProjectionCleanupError
+from ragstudio.services.runtime_profile_service import RuntimeProfileService
 from ragstudio.services.runtime_types import RuntimeChunk
 from sqlalchemy import select
 
@@ -1139,6 +1140,57 @@ async def test_delete_document_removes_runtime_index_records(client, tmp_path):
         )
     assert record is None
     assert projection_record is None
+
+
+@pytest.mark.asyncio
+async def test_ready_runtime_index_allows_enriched_index_shape(client, tmp_path):
+    app = client._transport.app
+    async with app.state.session_factory() as session:
+        document = Document(
+            filename="runtime-indexed.txt",
+            content_type="text/plain",
+            sha256="runtime-indexed-enriched-sha",
+            artifact_path=str(tmp_path / "runtime-indexed.txt"),
+            status=StageStatus.SUCCEEDED.value,
+        )
+        session.add(
+            SettingsProfile(
+                id="default",
+                provider="openai-compatible",
+                llm_model="gpt-4o",
+                llm_base_url="http://127.0.0.1:8004/v1",
+                embedding_model="text-embedding-3-large",
+                embedding_base_url="http://127.0.0.1:8001/v1",
+                storage_backend="postgres_pgvector_neo4j",
+                runtime_mode="runtime",
+            )
+        )
+        session.add(document)
+        await session.flush()
+        profile = await RuntimeProfileService(session, app.state.settings).get_active_profile()
+        session.add(
+            IndexRecord(
+                document_id=document.id,
+                runtime_profile_id=profile.id,
+                status=StageStatus.SUCCEEDED.value,
+                index_shape={
+                    **profile.index_shape,
+                    "parser_mode": "mineru_strict",
+                    "canonical_chunk_count": 1,
+                    "runtime_chunk_count": 1,
+                },
+                chunk_count=1,
+            )
+        )
+        await session.commit()
+
+        ready = await DocumentService(
+            session,
+            app.state.settings.data_dir,
+            app.state.settings,
+        )._has_ready_runtime_index(document.id, profile)
+
+    assert ready is True
 
 
 @pytest.mark.asyncio

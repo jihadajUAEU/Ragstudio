@@ -54,7 +54,8 @@ class ExperimentService:
                     query=case.query,
                     document_ids=case.documents or payload.document_ids,
                     variant_ids=payload.variant_ids,
-                )
+                ),
+                validate_index_readiness=False,
             )
 
         experiment = Experiment(**payload.model_dump())

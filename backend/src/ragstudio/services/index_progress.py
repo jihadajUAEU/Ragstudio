@@ -87,8 +87,27 @@ def update_job_stage(
     result["indexing_stage"] = payload
     if warning:
         warnings = list(result.get("warnings") or [])
-        warnings.append(warning)
+        if warning not in warnings:
+            warnings.append(warning)
         result["warnings"] = warnings
     job.result = result
     log_line = f"{payload['label']}: {detail}"
     job.logs = [*(job.logs or []), log_line][-20:]
+
+
+def index_shape_compatible(
+    stored_shape: dict[str, Any],
+    required_shape: dict[str, Any],
+) -> bool:
+    if not isinstance(stored_shape, dict) or not isinstance(required_shape, dict):
+        return False
+    for key, required_value in required_shape.items():
+        if key not in stored_shape:
+            return False
+        stored_value = stored_shape[key]
+        if isinstance(required_value, dict):
+            if not index_shape_compatible(stored_value, required_value):
+                return False
+        elif stored_value != required_value:
+            return False
+    return True

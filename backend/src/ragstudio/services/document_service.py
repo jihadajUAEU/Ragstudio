@@ -18,6 +18,11 @@ from ragstudio.services.index_lifecycle_service import (
     IndexLifecycleService,
     RuntimeHealthBlockedError,
 )
+from ragstudio.services.index_progress import (
+    IndexStage,
+    index_shape_compatible,
+    update_job_stage,
+)
 from ragstudio.services.job_worker import JobWorker
 from ragstudio.services.runtime_factory import RuntimeUnavailableError
 from ragstudio.services.runtime_profile_service import (
@@ -399,19 +404,38 @@ class DocumentService:
             status = str(graph_materialization.get("status") or "unknown")
             job.logs = [*job.logs, f"Graph projection materialization {status}."]
             self._record_graph_materialization_warning(job, graph_materialization)
+        warning = self._graph_materialization_warning(graph_materialization)
+        update_job_stage(
+            job,
+            IndexStage.READY_WITH_WARNINGS if warning else IndexStage.READY,
+            detail=(
+                f"Indexed {chunk_count} chunks with warnings."
+                if warning
+                else f"Indexed {chunk_count} chunks."
+            ),
+            chunk_count=chunk_count,
+            warning=warning,
+        )
 
     def _record_graph_materialization_warning(
         self,
         job: Job,
         graph_materialization: dict[str, Any],
     ) -> None:
-        if graph_materialization.get("status") != "skipped":
+        reason = self._graph_materialization_warning(graph_materialization)
+        if not reason:
             return
-        reason = str(graph_materialization.get("reason") or "Graph materialization skipped.")
         result = job.result or {}
-        warnings = [*(result.get("warnings") or []), reason]
+        warnings = list(result.get("warnings") or [])
+        if reason not in warnings:
+            warnings.append(reason)
         job.result = {**result, "warnings": warnings}
         job.logs = [*(job.logs or []), f"Ready with warnings: {reason}"]
+
+    def _graph_materialization_warning(self, graph_materialization: dict[str, Any]) -> str | None:
+        if graph_materialization.get("status") != "skipped":
+            return None
+        return str(graph_materialization.get("reason") or "Graph materialization skipped.")
 
     async def _active_runtime_profile(self) -> RuntimeProfile | None:
         if self.settings is None:
@@ -437,7 +461,8 @@ class DocumentService:
             )
         )
         return any(
-            record.index_shape == profile.index_shape for record in result.scalars().all()
+            index_shape_compatible(record.index_shape, profile.index_shape)
+            for record in result.scalars().all()
         )
 
     def _should_persist_index_failure(

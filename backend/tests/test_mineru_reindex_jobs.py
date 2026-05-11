@@ -598,7 +598,15 @@ async def test_index_document_for_job_records_warning_when_graph_materialization
     assert refreshed_doc.status == "succeeded"
     assert refreshed_job.status == "succeeded"
     assert refreshed_job.result["warnings"] == ["runtime enrichment unavailable"]
-    assert refreshed_job.logs[-1] == "Ready with warnings: runtime enrichment unavailable"
+    assert refreshed_job.result["indexing_stage"] == {
+        "stage": "ready_with_warnings",
+        "label": "Ready with warnings",
+        "detail": "Indexed 1 chunks with warnings.",
+        "progress": 100,
+        "chunk_count": 1,
+        "warning": "runtime enrichment unavailable",
+    }
+    assert "Ready with warnings: runtime enrichment unavailable" in refreshed_job.logs
 
 
 @pytest.mark.asyncio
@@ -663,6 +671,13 @@ async def test_run_index_job_preserves_mineru_status_on_success(
     assert refreshed_job is not None
     assert refreshed_job.status == "succeeded"
     assert refreshed_job.result["chunk_count"] == 3
+    assert refreshed_job.result["indexing_stage"] == {
+        "stage": "ready",
+        "label": "Ready",
+        "detail": "Indexed 3 chunks.",
+        "progress": 100,
+        "chunk_count": 3,
+    }
     assert refreshed_job.result["mineru"]["job_id"] == "remote-ready"
     assert refreshed_job.result["mineru"]["status"] == "ready"
 
