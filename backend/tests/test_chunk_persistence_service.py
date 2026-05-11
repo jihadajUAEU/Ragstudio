@@ -214,6 +214,7 @@ async def test_persist_chunks_scrubs_nested_absolute_metadata_paths(
                         "chunk_identity": "doc-paths|/tmp/private/page.md|leak|3",
                         "preview_ref": "/tmp/private/preview",
                     },
+                    preview_ref="/tmp/private/direct-preview",
                 )
             ],
             IndexDocumentIn(parser_mode="mineru_strict"),

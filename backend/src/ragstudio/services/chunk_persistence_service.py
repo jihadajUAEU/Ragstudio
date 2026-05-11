@@ -95,10 +95,7 @@ class ChunkPersistenceService:
                 )
             ),
             preview_ref=sanitize_db_value(
-                self._direct_or_metadata(
-                    adapter_chunk.preview_ref,
-                    metadata.get("preview_ref"),
-                )
+                self._preview_ref(adapter_chunk.preview_ref, metadata.get("preview_ref"))
             ),
             indexed_at=indexed_at,
         )
@@ -166,6 +163,12 @@ class ChunkPersistenceService:
         if metadata_value not in (None, ""):
             return metadata_value
         return default
+
+    def _preview_ref(self, direct_value: Any, metadata_value: Any) -> Any:
+        direct_preview = self._scrub_path_metadata(direct_value)
+        if direct_preview is _SCRUBBED_PATH:
+            direct_preview = None
+        return self._direct_or_metadata(direct_preview, metadata_value)
 
     def _chunk_identity(self, document_id: str, metadata: dict[str, Any]) -> str:
         parser_metadata = metadata.get("parser_metadata") or {}
