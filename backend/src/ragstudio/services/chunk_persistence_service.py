@@ -13,6 +13,8 @@ from ragstudio.services.chunk_sanitizer import sanitize_db_text, sanitize_db_val
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
+_SCRUBBED_PATH = object()
+
 
 class ChunkPersistenceService:
     def __init__(self, session: AsyncSession):
@@ -22,8 +24,8 @@ class ChunkPersistenceService:
         self,
         document: Document,
         adapter_chunks: list[AdapterChunk],
-        *,
         options: IndexDocumentIn,
+        *,
         commit: bool = True,
         runtime_profile_id: str | None = None,
         index_shape: dict[str, Any] | None = None,
@@ -78,12 +80,26 @@ class ChunkPersistenceService:
             metadata_json=sanitize_db_value(metadata),
             runtime_profile_id=runtime_profile_id,
             runtime_source_id=sanitize_db_value(
-                adapter_chunk.metadata.get("runtime_source_id")
+                self._direct_or_metadata(
+                    adapter_chunk.runtime_source_id,
+                    adapter_chunk.metadata.get("runtime_source_id"),
+                )
             ),
             content_type=sanitize_db_text(
-                str(adapter_chunk.metadata.get("content_type") or "text")
+                str(
+                    self._direct_or_metadata(
+                        adapter_chunk.content_type,
+                        adapter_chunk.metadata.get("content_type"),
+                        default="text",
+                    )
+                )
             ),
-            preview_ref=sanitize_db_value(adapter_chunk.metadata.get("preview_ref")),
+            preview_ref=sanitize_db_value(
+                self._direct_or_metadata(
+                    adapter_chunk.preview_ref,
+                    adapter_chunk.metadata.get("preview_ref"),
+                )
+            ),
             indexed_at=indexed_at,
         )
 
@@ -95,12 +111,7 @@ class ChunkPersistenceService:
         document_id: str,
         index_shape: dict[str, Any],
     ) -> dict[str, Any]:
-        merged = {
-            key: value
-            for key, value in metadata.items()
-            if key not in {"artifact_path", "path", "file_path"}
-            and not self._is_absolute_path_value(value)
-        }
+        merged = self._scrub_path_metadata(metadata)
         merged["document_id"] = document_id
         merged["domain_metadata"] = domain_metadata.model_dump(exclude_none=True)
         merged["index_shape"] = index_shape
@@ -121,6 +132,40 @@ class ChunkPersistenceService:
         if not isinstance(value, str):
             return False
         return Path(value).is_absolute() or PureWindowsPath(value).is_absolute()
+
+    def _scrub_path_metadata(self, value: Any) -> Any:
+        if isinstance(value, dict):
+            scrubbed: dict[str, Any] = {}
+            for key, item in value.items():
+                if key in {"artifact_path", "path", "file_path"}:
+                    continue
+                scrubbed_item = self._scrub_path_metadata(item)
+                if scrubbed_item is _SCRUBBED_PATH:
+                    continue
+                scrubbed[key] = scrubbed_item
+            return scrubbed
+        if isinstance(value, list):
+            return [
+                scrubbed_item
+                for item in value
+                if (scrubbed_item := self._scrub_path_metadata(item)) is not _SCRUBBED_PATH
+            ]
+        if self._is_absolute_path_value(value):
+            return _SCRUBBED_PATH
+        return value
+
+    def _direct_or_metadata(
+        self,
+        direct_value: Any,
+        metadata_value: Any,
+        *,
+        default: Any = None,
+    ) -> Any:
+        if direct_value not in (None, ""):
+            return direct_value
+        if metadata_value not in (None, ""):
+            return metadata_value
+        return default
 
     def _chunk_identity(self, document_id: str, metadata: dict[str, Any]) -> str:
         parser_metadata = metadata.get("parser_metadata") or {}

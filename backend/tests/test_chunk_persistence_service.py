@@ -40,7 +40,7 @@ async def test_persist_chunks_materializes_search_fields(tmp_path, database_url)
                     },
                 )
             ],
-            options=IndexDocumentIn(
+            IndexDocumentIn(
                 parser_mode="mineru_strict",
                 domain_metadata=DomainMetadata(domain="quran_tafseer", language="arabic"),
             ),
@@ -112,3 +112,115 @@ async def test_persist_chunks_replaces_existing_chunks(tmp_path, database_url):
     assert len(rows) == 1
     assert rows[0]._mapping["text"] == "new chunk"
     assert rows[0]._mapping["metadata_json"]["chunk_identity"].startswith("doc-bukhari|")
+
+
+@pytest.mark.asyncio
+async def test_persist_chunks_prefers_direct_adapter_fields(tmp_path, database_url):
+    engine = make_engine(database_url)
+    await init_db(engine)
+    factory = make_session_factory(engine)
+
+    async with factory() as session:
+        document = Document(
+            id="doc-fields",
+            filename="fields.pdf",
+            content_type="application/pdf",
+            sha256="fields-sha",
+            artifact_path=str(tmp_path / "fields.pdf"),
+            status="running",
+        )
+        session.add(document)
+        await session.commit()
+
+        chunks = await ChunkPersistenceService(session).persist(
+            document,
+            [
+                AdapterChunk(
+                    text="field chunk",
+                    source_location={"page": 2},
+                    metadata={
+                        "parser_metadata": {"backend": "mineru"},
+                        "runtime_source_id": "metadata-source",
+                        "content_type": "metadata/content",
+                        "preview_ref": "metadata-preview",
+                    },
+                    runtime_source_id="direct-source",
+                    content_type="direct/content",
+                    preview_ref="direct-preview",
+                )
+            ],
+            IndexDocumentIn(parser_mode="mineru_strict"),
+            commit=True,
+        )
+
+        persisted = await session.get(Chunk, chunks[0].id)
+
+    await engine.dispose()
+
+    assert persisted is not None
+    assert persisted.runtime_source_id == "direct-source"
+    assert persisted.content_type == "direct/content"
+    assert persisted.preview_ref == "direct-preview"
+    assert chunks[0].runtime_source_id == "direct-source"
+    assert chunks[0].content_type == "direct/content"
+    assert chunks[0].preview_ref == "direct-preview"
+
+
+@pytest.mark.asyncio
+async def test_persist_chunks_scrubs_nested_absolute_metadata_paths(
+    tmp_path,
+    database_url,
+):
+    engine = make_engine(database_url)
+    await init_db(engine)
+    factory = make_session_factory(engine)
+
+    async with factory() as session:
+        document = Document(
+            id="doc-paths",
+            filename="paths.pdf",
+            content_type="application/pdf",
+            sha256="paths-sha",
+            artifact_path=str(tmp_path / "paths.pdf"),
+            status="running",
+        )
+        session.add(document)
+        await session.commit()
+
+        chunks = await ChunkPersistenceService(session).persist(
+            document,
+            [
+                AdapterChunk(
+                    text="path chunk",
+                    source_location={"page": 3},
+                    metadata={
+                        "parser_metadata": {
+                            "backend": "mineru",
+                            "artifact_ref": "paths.pdf",
+                            "artifact_extract_dir": "/tmp/ragstudio/extract",
+                            "nested": {
+                                "keep": "value",
+                                "image_path": "/tmp/ragstudio/page.png",
+                            },
+                        },
+                        "reference_metadata": {
+                            "references": ["1:1"],
+                            "evidence_path": "/tmp/ragstudio/evidence.json",
+                        },
+                    },
+                )
+            ],
+            IndexDocumentIn(parser_mode="mineru_strict"),
+            commit=True,
+        )
+
+        persisted = await session.get(Chunk, chunks[0].id)
+
+    await engine.dispose()
+
+    assert persisted is not None
+    parser_metadata = persisted.metadata_json["parser_metadata"]
+    assert parser_metadata["artifact_ref"] == "paths.pdf"
+    assert parser_metadata["nested"] == {"keep": "value"}
+    assert "artifact_extract_dir" not in parser_metadata
+    assert persisted.metadata_json["reference_metadata"] == {"references": ["1:1"]}
