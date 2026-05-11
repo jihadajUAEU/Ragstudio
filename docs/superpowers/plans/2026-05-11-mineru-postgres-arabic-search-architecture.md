@@ -1043,11 +1043,76 @@ git commit -m "feat: materialize arabic search fields in postgres chunks"
 
 - [ ] **Step 1: Write failing chunk boundary tests**
 
-Create tests that prove:
-- A Quran verse span such as `19:13` is not split across two persisted chunks when MinerU text and metadata expose the verse/reference boundary.
-- Original MinerU text, page, block id, reference metadata, and preview refs survive chunk normalization.
-- Neighbor context is bounded to zero or one adjacent verse/block on each side and never causes unrelated pages to be pulled into the answer context.
-- Very large MinerU blocks are split by sentence/verse-aware boundaries first, then by hard token/character limits only when no safer boundary exists.
+Create `backend/tests/test_document_chunking_policy.py`:
+
+```python
+from ragstudio.services.adapter import AdapterChunk
+from ragstudio.services.document_chunking_policy import DocumentChunkingPolicy
+
+
+def _chunk(text, references=None, page=1, block_id="b1"):
+    return AdapterChunk(
+        text=text,
+        source_location={"page": page, "block_id": block_id},
+        metadata={
+            "parser_metadata": {"backend": "mineru", "parser_mode": "mineru_strict"},
+            "reference_metadata": {"references": references or []},
+            "mineru": {"block_id": block_id},
+        },
+        runtime_source_id=f"source-{block_id}",
+        content_type="text",
+        preview_ref=f"preview-{block_id}",
+    )
+
+
+def test_reference_chunk_is_not_split_when_within_limit():
+    text = "[19:13] وَحَنَانًا مِّن لَّدُنَّا وَزَكَاةً وَكَانَ تَقِيًّا"
+
+    chunks = DocumentChunkingPolicy(max_chars=80).split_mineru_chunks(
+        [_chunk(text, references=["19:13"])],
+        domain_metadata={"domain": "quran", "language": "arabic"},
+    )
+
+    assert len(chunks) == 1
+    assert chunks[0].text == text
+    assert chunks[0].metadata["reference_metadata"]["references"] == ["19:13"]
+    assert chunks[0].source_location["page"] == 1
+    assert chunks[0].preview_ref == "preview-b1"
+
+
+def test_large_quran_block_splits_on_reference_boundaries():
+    text = (
+        "[19:12] يَا يَحْيَى خُذِ الْكِتَابَ بِقُوَّةٍ "
+        "[19:13] وَحَنَانًا مِّن لَّدُنَّا وَزَكَاةً وَكَانَ تَقِيًّا "
+        "[19:14] وَبَرًّا بِوَالِدَيْهِ"
+    )
+
+    chunks = DocumentChunkingPolicy(max_chars=90).split_mineru_chunks(
+        [_chunk(text, references=["19:12", "19:13", "19:14"])],
+        domain_metadata={"domain": "quran", "language": "arabic"},
+    )
+
+    assert [chunk.metadata["reference_metadata"]["references"] for chunk in chunks] == [
+        ["19:12"],
+        ["19:13"],
+        ["19:14"],
+    ]
+    assert "وَحَنَانًا" in chunks[1].text
+
+
+def test_neighbor_context_is_limited_to_adjacent_reference_family():
+    chunks = [
+        _chunk("[19:12] يَا يَحْيَى خُذِ الْكِتَابَ بِقُوَّةٍ", ["19:12"], page=10, block_id="b12"),
+        _chunk("[19:13] وَحَنَانًا مِّن لَّدُنَّا", ["19:13"], page=10, block_id="b13"),
+        _chunk("[20:1] طه", ["20:1"], page=11, block_id="b20"),
+    ]
+
+    policy = DocumentChunkingPolicy(max_chars=120, neighbor_window=1)
+    split = policy.split_mineru_chunks(chunks, domain_metadata={"domain": "quran"})
+    neighbors = policy.neighbor_context(split, target_reference="19:13")
+
+    assert [chunk.metadata["reference_metadata"]["references"][0] for chunk in neighbors] == ["19:12"]
+```
 
 Run:
 
@@ -1059,20 +1124,126 @@ Expected: FAIL until the policy exists.
 
 - [ ] **Step 2: Implement the chunking policy**
 
-Create `DocumentChunkingPolicy` with:
-- `split_mineru_chunks(chunks, domain_metadata) -> list[AdapterChunk]`
-- Reference-aware split points from `reference_metadata.references`.
-- Arabic-aware text limits based on normalized and original text lengths.
-- Metadata merge rules that keep MinerU provenance and source locations.
-- A hard cap that prevents one chunk from dominating context assembly.
+Create `backend/src/ragstudio/services/document_chunking_policy.py`:
 
-Do not place Quran-specific constants deep inside generic split code. Use a small policy table keyed by `domain_metadata.domain` or explicit detected reference metadata.
+```python
+from __future__ import annotations
+
+import re
+from dataclasses import replace
+from typing import Any
+
+from ragstudio.services.adapter import AdapterChunk
+
+REFERENCE_PATTERN = re.compile(r"\[(\d{1,3}:\d{1,3})\]")
+
+
+class DocumentChunkingPolicy:
+    def __init__(self, *, max_chars: int = 1800, neighbor_window: int = 1):
+        self.max_chars = max_chars
+        self.neighbor_window = neighbor_window
+
+    def split_mineru_chunks(
+        self,
+        chunks: list[AdapterChunk],
+        domain_metadata: dict[str, Any] | None = None,
+    ) -> list[AdapterChunk]:
+        domain = (domain_metadata or {}).get("domain")
+        output: list[AdapterChunk] = []
+        for chunk in chunks:
+            if domain == "quran" or self._references(chunk):
+                output.extend(self._split_reference_chunk(chunk))
+            else:
+                output.extend(self._split_plain_chunk(chunk))
+        return output
+
+    def neighbor_context(self, chunks: list[AdapterChunk], *, target_reference: str) -> list[AdapterChunk]:
+        target_surah = target_reference.split(":", 1)[0]
+        selected: list[AdapterChunk] = []
+        for chunk in chunks:
+            refs = self._references(chunk)
+            if not refs:
+                continue
+            ref = refs[0]
+            if ref == target_reference:
+                continue
+            same_surah = ref.split(":", 1)[0] == target_surah
+            if same_surah and abs(_verse_number(ref) - _verse_number(target_reference)) <= self.neighbor_window:
+                selected.append(chunk)
+        return selected
+
+    def _split_reference_chunk(self, chunk: AdapterChunk) -> list[AdapterChunk]:
+        spans = list(REFERENCE_PATTERN.finditer(chunk.text))
+        if len(chunk.text) <= self.max_chars or not spans:
+            return [chunk]
+
+        split_chunks: list[AdapterChunk] = []
+        for index, match in enumerate(spans):
+            start = match.start()
+            end = spans[index + 1].start() if index + 1 < len(spans) else len(chunk.text)
+            text = chunk.text[start:end].strip()
+            if not text:
+                continue
+            reference = match.group(1)
+            metadata = {
+                **chunk.metadata,
+                "reference_metadata": {"references": [reference]},
+                "chunking": {"policy": "reference_boundary", "parent_runtime_source_id": chunk.runtime_source_id},
+            }
+            split_chunks.append(replace(chunk, text=text, metadata=metadata))
+        return split_chunks
+
+    def _split_plain_chunk(self, chunk: AdapterChunk) -> list[AdapterChunk]:
+        if len(chunk.text) <= self.max_chars:
+            return [chunk]
+        parts = [chunk.text[index : index + self.max_chars].strip() for index in range(0, len(chunk.text), self.max_chars)]
+        return [
+            replace(
+                chunk,
+                text=part,
+                metadata={**chunk.metadata, "chunking": {"policy": "hard_char_limit", "part": index}},
+            )
+            for index, part in enumerate(parts)
+            if part
+        ]
+
+    def _references(self, chunk: AdapterChunk) -> list[str]:
+        metadata_refs = chunk.metadata.get("reference_metadata", {}).get("references", [])
+        if metadata_refs:
+            return list(metadata_refs)
+        return [match.group(1) for match in REFERENCE_PATTERN.finditer(chunk.text)]
+
+
+def _verse_number(reference: str) -> int:
+    return int(reference.split(":", 1)[1])
+```
 
 - [ ] **Step 3: Wire the policy before persistence**
 
-Use `DocumentChunkingPolicy` after MinerU extraction validation and before Arabic materialization in both:
-- `ChunkService`
-- `IndexLifecycleService`
+In `backend/src/ragstudio/services/chunk_service.py`, import and apply the policy immediately after parsing:
+
+```python
+from ragstudio.services.document_chunking_policy import DocumentChunkingPolicy
+
+
+chunking_policy = DocumentChunkingPolicy()
+adapter_chunks = chunking_policy.split_mineru_chunks(
+    adapter_chunks,
+    domain_metadata=options.domain_metadata.model_dump() if options.domain_metadata else {},
+)
+```
+
+In `backend/src/ragstudio/services/index_lifecycle_service.py`, apply the same call to runtime-normalized chunks before chunk rows are constructed:
+
+```python
+from ragstudio.services.document_chunking_policy import DocumentChunkingPolicy
+
+
+adapter_chunks = DocumentChunkingPolicy().split_mineru_chunks(
+    adapter_chunks,
+    domain_metadata=domain_metadata.model_dump() if hasattr(domain_metadata, "model_dump") else dict(domain_metadata or {}),
+)
+```
 
 The order must be:
 
@@ -1107,11 +1278,55 @@ git commit -m "feat: add document aware chunking policy"
 
 - [ ] **Step 1: Write failing vector readiness tests**
 
-Create tests that prove:
-- Stored vector dimension must match the active embedding profile dimension.
-- Query embeddings must be generated with the same dimension used at indexing time.
-- Missing `vector` extension or missing PGVector index produces a readiness error before retrieval returns low-quality semantic results.
-- HNSW is preferred when the local Postgres/PGVector version supports it; IVFFlat is allowed only as an explicit compatibility result in the readiness report.
+Create `backend/tests/test_vector_index_policy.py`:
+
+```python
+import pytest
+
+from ragstudio.services.vector_index_policy import (
+    VectorIndexPolicy,
+    VectorReadinessError,
+)
+
+
+def test_query_dimension_must_match_active_profile():
+    policy = VectorIndexPolicy()
+
+    with pytest.raises(VectorReadinessError, match="embedding_dimension_mismatch"):
+        policy.assert_query_dimension([0.1, 0.2, 0.3], expected_dimension=2)
+
+
+def test_query_dimension_passes_when_profile_matches():
+    report = VectorIndexPolicy().assert_query_dimension([0.1, 0.2, 0.3], expected_dimension=3)
+
+    assert report["status"] == "ready"
+    assert report["observed_dimension"] == 3
+
+
+def test_pgvector_readiness_requires_extension_and_index():
+    policy = VectorIndexPolicy()
+
+    with pytest.raises(VectorReadinessError, match="pgvector_index_unavailable"):
+        policy.validate_pgvector_ready(
+            {"extension_available": True, "index_type": None, "hnsw_supported": True}
+        )
+
+
+def test_pgvector_prefers_hnsw_and_marks_ivfflat_compatibility():
+    policy = VectorIndexPolicy()
+
+    hnsw = policy.validate_pgvector_ready(
+        {"extension_available": True, "index_type": "hnsw", "hnsw_supported": True}
+    )
+    ivfflat = policy.validate_pgvector_ready(
+        {"extension_available": True, "index_type": "ivfflat", "hnsw_supported": False}
+    )
+
+    assert hnsw["index_type"] == "hnsw"
+    assert hnsw["status"] == "ready"
+    assert ivfflat["index_type"] == "ivfflat"
+    assert ivfflat["status"] == "compatibility"
+```
 
 Run:
 
@@ -1123,17 +1338,64 @@ Expected: FAIL until the policy exists.
 
 - [ ] **Step 2: Implement vector index policy**
 
-Create `VectorIndexPolicy` with:
-- `validate_embedding_profile(document_id, active_profile)`.
-- `validate_pgvector_ready(connection)`.
-- `assert_query_dimension(query_vector, expected_dimension)`.
-- Readiness report fields: `expected_dimension`, `observed_dimension`, `index_type`, `extension_available`, `profile_id`, and `status`.
+Create `backend/src/ragstudio/services/vector_index_policy.py`:
+
+```python
+from __future__ import annotations
+
+from typing import Any, Sequence
+
+
+class VectorReadinessError(RuntimeError):
+    def __init__(self, reason: str, detail: str):
+        self.reason = reason
+        self.detail = detail
+        super().__init__(f"{reason}: {detail}")
+
+
+class VectorIndexPolicy:
+    def assert_query_dimension(
+        self,
+        query_vector: Sequence[float],
+        *,
+        expected_dimension: int,
+        profile_id: str | None = None,
+    ) -> dict[str, Any]:
+        observed = len(query_vector)
+        if observed != expected_dimension:
+            raise VectorReadinessError(
+                "embedding_dimension_mismatch",
+                f"expected {expected_dimension}, observed {observed}",
+            )
+        return {
+            "status": "ready",
+            "expected_dimension": expected_dimension,
+            "observed_dimension": observed,
+            "profile_id": profile_id,
+        }
+
+    def validate_pgvector_ready(self, state: dict[str, Any]) -> dict[str, Any]:
+        if not state.get("extension_available"):
+            raise VectorReadinessError("pgvector_extension_unavailable", "Postgres vector extension is not installed.")
+        index_type = state.get("index_type")
+        if not index_type:
+            raise VectorReadinessError("pgvector_index_unavailable", "No PGVector index exists for chunk embeddings.")
+        status = "ready" if index_type == "hnsw" else "compatibility"
+        if index_type != "hnsw" and state.get("hnsw_supported", True):
+            raise VectorReadinessError("pgvector_hnsw_missing", "HNSW is supported but the production index is not HNSW.")
+        return {
+            "status": status,
+            "index_type": index_type,
+            "extension_available": True,
+            "hnsw_supported": bool(state.get("hnsw_supported", False)),
+        }
+```
 
 The policy must hard-fail exact document-scoped queries when vector compatibility is broken. It may allow lexical-only Arabic search to continue, but the response trace must say semantic retrieval was skipped due to vector readiness.
 
 - [ ] **Step 3: Add database index initialization**
 
-In `backend/src/ragstudio/db/engine.py`, create the PGVector extension and the production vector index during Postgres initialization/backfill:
+In `backend/src/ragstudio/db/engine.py`, create the PGVector extension and production vector index during Postgres initialization/backfill:
 
 ```sql
 CREATE EXTENSION IF NOT EXISTS vector;
@@ -1141,16 +1403,68 @@ CREATE INDEX IF NOT EXISTS ix_chunks_embedding_hnsw
 ON chunks USING hnsw (embedding vector_cosine_ops);
 ```
 
-If HNSW is unsupported, emit a compatibility report and create the explicit IVFFlat fallback index only in that branch.
+Use a guarded helper so older PGVector installations still start with a clearly marked IVFFlat compatibility index:
+
+```python
+from sqlalchemy import text
+
+
+async def _ensure_pgvector_index(connection) -> dict[str, str]:
+    if connection.dialect.name != "postgresql":
+        return {"status": "skipped", "index_type": "none"}
+    await connection.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+    try:
+        await connection.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_chunks_embedding_hnsw "
+                "ON chunks USING hnsw (embedding vector_cosine_ops)"
+            )
+        )
+        return {"status": "ready", "index_type": "hnsw"}
+    except Exception:
+        await connection.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_chunks_embedding_ivfflat "
+                "ON chunks USING ivfflat (embedding vector_cosine_ops)"
+            )
+        )
+        return {"status": "compatibility", "index_type": "ivfflat"}
+```
 
 - [ ] **Step 4: Gate orchestrator semantic retrieval**
 
-In `retrieval_orchestrator.py`, run `VectorIndexPolicy` before PGVector/native semantic retrieval. Add trace fields:
-- `semantic_retrieval_status`
-- `embedding_expected_dimension`
-- `embedding_observed_dimension`
-- `vector_index_type`
-- `semantic_candidates`
+In `backend/src/ragstudio/services/retrieval_orchestrator.py`, run `VectorIndexPolicy` before PGVector/native semantic retrieval:
+
+```python
+from ragstudio.services.vector_index_policy import VectorIndexPolicy, VectorReadinessError
+
+
+try:
+    vector_report = VectorIndexPolicy().assert_query_dimension(
+        query_embedding,
+        expected_dimension=active_embedding_profile.dimension,
+        profile_id=active_embedding_profile.id,
+    )
+    trace.append(
+        {
+            "stage": "semantic_vector_gate",
+            "semantic_retrieval_status": "ready",
+            "embedding_expected_dimension": vector_report["expected_dimension"],
+            "embedding_observed_dimension": vector_report["observed_dimension"],
+        }
+    )
+except VectorReadinessError as exc:
+    trace.append(
+        {
+            "stage": "semantic_vector_gate",
+            "semantic_retrieval_status": "skipped",
+            "reason": exc.reason,
+            "detail": exc.detail,
+            "semantic_candidates": 0,
+        }
+    )
+    semantic_candidates = []
+```
 
 - [ ] **Step 5: Run vector policy tests**
 
@@ -1710,13 +2024,103 @@ git commit -m "feat: add rag retrieval fusion gates"
 
 - [ ] **Step 1: Write failing context assembly tests**
 
-Create tests that prove:
-- Exact reference candidates and exact Arabic lexical candidates are placed first in answer context.
-- Duplicate chunks from lexical, vector, graph, and reranker passes are included once with merged reasons.
-- Original text is preserved for citations; normalized Arabic is trace metadata only.
-- Token budget drops lower-value semantic candidates before direct evidence.
-- Neighbor context can be included when it shares the same document/reference family and stays inside the configured budget.
-- If no direct evidence survives context assembly, the answer orchestrator must return a grounded "not enough evidence" response instead of guessing.
+Create `backend/tests/test_context_assembly_service.py`:
+
+```python
+from ragstudio.services.context_assembly_service import ContextAssemblyService
+from ragstudio.services.retrieval_evidence import EvidenceCandidate
+
+
+def _candidate(tool, chunk_id, text, rank, features=None, refs=None):
+    return EvidenceCandidate(
+        candidate_id=f"{tool}:{chunk_id}",
+        text=text,
+        document_id="doc-quran",
+        chunk_id=chunk_id,
+        source_location={"page": rank},
+        metadata={"reference_metadata": {"references": refs or []}, "retrieval_passes": [tool]},
+        tool=tool,
+        tool_rank=rank,
+        base_score=1.0,
+        final_score=1.0,
+        match_features=features or {},
+        reasons=["test"],
+    )
+
+
+def test_context_assembly_pins_direct_evidence_before_semantic_context():
+    semantic = _candidate("pgvector", "semantic-1", "general guidance text", 1)
+    direct = _candidate(
+        "arabic_lexical",
+        "quran-19-13",
+        "[19:13] وَحَنَانًا مِّن لَّدُنَّا وَزَكَاةً",
+        2,
+        features={"arabic_exact": True},
+        refs=["19:13"],
+    )
+
+    context = ContextAssemblyService(max_context_tokens=200).assemble([semantic, direct])
+
+    assert context.evidence[0].chunk_id == "quran-19-13"
+    assert context.evidence[0].original_text.startswith("[19:13]")
+    assert context.evidence[0].normalized_text is None
+
+
+def test_context_assembly_dedupes_candidates_and_merges_retrieval_passes():
+    lexical = _candidate("arabic_lexical", "quran-19-13", "[19:13] وَحَنَانًا", 1, refs=["19:13"])
+    vector = _candidate("pgvector", "quran-19-13", "[19:13] وَحَنَانًا", 2, refs=["19:13"])
+
+    context = ContextAssemblyService(max_context_tokens=200).assemble([lexical, vector])
+
+    assert len(context.evidence) == 1
+    assert context.evidence[0].retrieval_passes == ["arabic_lexical", "pgvector"]
+
+
+def test_context_assembly_drops_low_value_semantic_when_budget_is_small():
+    direct = _candidate(
+        "reference_exact",
+        "quran-24-35",
+        "[24:35] Allah is the Light of the heavens and the earth.",
+        1,
+        features={"reference_exact": True},
+        refs=["24:35"],
+    )
+    semantic = _candidate("pgvector", "long-semantic", "word " * 300, 2)
+
+    context = ContextAssemblyService(max_context_tokens=20).assemble([direct, semantic])
+
+    assert [item.chunk_id for item in context.evidence] == ["quran-24-35"]
+    assert context.dropped[0].candidate_id == "pgvector:long-semantic"
+    assert context.dropped[0].drop_reason == "token_budget"
+```
+
+Create `backend/tests/test_retrieval_observability.py`:
+
+```python
+from ragstudio.services.retrieval_observability import RetrievalObservability
+
+
+def test_exact_arabic_queries_bypass_answer_cache():
+    trace = RetrievalObservability().cache_decision(
+        query="وحنانا",
+        document_ids=["doc-quran"],
+        query_type="exact_arabic_token",
+    )
+
+    assert trace["answer_cache"] == "bypass"
+    assert trace["reason"] == "direct_evidence_query"
+
+
+def test_retrieval_trace_records_stage_counts_and_latency():
+    obs = RetrievalObservability()
+
+    obs.record_stage("arabic_lexical", candidate_count=2, latency_ms=12.5)
+    obs.record_stage("fusion", candidate_count=1, latency_ms=1.0)
+
+    assert obs.trace["stages"][0]["stage"] == "arabic_lexical"
+    assert obs.trace["stages"][0]["candidate_count"] == 2
+    assert obs.trace["stages"][1]["latency_ms"] == 1.0
+```
 
 Run:
 
@@ -1728,35 +2132,234 @@ Expected: FAIL until the service exists.
 
 - [ ] **Step 2: Implement context assembly**
 
-Create `ContextAssemblyService` with:
-- `assemble(candidates, query_plan, budget) -> AssembledContext`.
-- Deterministic sorting from fused candidate order.
-- Dedupe by `chunk_id`, then by normalized text hash.
-- Evidence sections with `source_id`, `reference`, `document_id`, `page`, `original_text`, `included_reason`, and `retrieval_passes`.
-- Drop report with `candidate_id`, `drop_reason`, and `estimated_tokens`.
+Create `backend/src/ragstudio/services/context_assembly_service.py`:
 
-The service must never compress or paraphrase direct evidence before the model sees it. Compression can only apply to lower-priority neighbor context.
+```python
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+from ragstudio.services.retrieval_evidence import EvidenceCandidate
+
+
+@dataclass(frozen=True)
+class ContextEvidence:
+    candidate_id: str
+    chunk_id: str | None
+    document_id: str
+    page: int | None
+    reference: str | None
+    original_text: str
+    normalized_text: None = None
+    included_reason: str = "retrieval_fusion"
+    retrieval_passes: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class DroppedContextCandidate:
+    candidate_id: str
+    drop_reason: str
+    estimated_tokens: int
+
+
+@dataclass(frozen=True)
+class AssembledContext:
+    evidence: list[ContextEvidence]
+    dropped: list[DroppedContextCandidate]
+    total_estimated_tokens: int
+    grounding_status: str
+
+
+class ContextAssemblyService:
+    def __init__(self, *, max_context_tokens: int = 2400):
+        self.max_context_tokens = max_context_tokens
+
+    def assemble(self, candidates: list[EvidenceCandidate]) -> AssembledContext:
+        ordered = sorted(candidates, key=_direct_priority, reverse=True)
+        evidence: list[ContextEvidence] = []
+        dropped: list[DroppedContextCandidate] = []
+        seen: dict[str, ContextEvidence] = {}
+        used_tokens = 0
+
+        for candidate in ordered:
+            key = candidate.chunk_id or candidate.text.strip().casefold()
+            passes = list(candidate.metadata.get("retrieval_passes") or [candidate.tool])
+            if key in seen:
+                existing = seen[key]
+                merged = sorted(set(existing.retrieval_passes + passes))
+                index = evidence.index(existing)
+                evidence[index] = ContextEvidence(**{**existing.__dict__, "retrieval_passes": merged})
+                seen[key] = evidence[index]
+                continue
+
+            estimated_tokens = max(1, len(candidate.text.split()))
+            if used_tokens + estimated_tokens > self.max_context_tokens and not _is_direct(candidate):
+                dropped.append(DroppedContextCandidate(candidate.candidate_id, "token_budget", estimated_tokens))
+                continue
+
+            item = ContextEvidence(
+                candidate_id=candidate.candidate_id,
+                chunk_id=candidate.chunk_id,
+                document_id=candidate.document_id,
+                page=candidate.source_location.get("page"),
+                reference=_first_reference(candidate),
+                original_text=candidate.text,
+                included_reason=_included_reason(candidate),
+                retrieval_passes=passes,
+            )
+            evidence.append(item)
+            seen[key] = item
+            used_tokens += estimated_tokens
+
+        grounding_status = "grounded" if any(_is_direct(candidate) for candidate in ordered) else "insufficient_evidence"
+        return AssembledContext(evidence, dropped, used_tokens, grounding_status)
+
+
+def _direct_priority(candidate: EvidenceCandidate) -> int:
+    if candidate.match_features.get("reference_exact"):
+        return 100
+    if candidate.match_features.get("arabic_exact"):
+        return 90
+    return 10
+
+
+def _is_direct(candidate: EvidenceCandidate) -> bool:
+    return bool(candidate.match_features.get("reference_exact") or candidate.match_features.get("arabic_exact"))
+
+
+def _included_reason(candidate: EvidenceCandidate) -> str:
+    if candidate.match_features.get("reference_exact"):
+        return "exact_reference_match"
+    if candidate.match_features.get("arabic_exact"):
+        return "direct_arabic_match"
+    return "semantic_context"
+
+
+def _first_reference(candidate: EvidenceCandidate) -> str | None:
+    refs = candidate.metadata.get("reference_metadata", {}).get("references", [])
+    return refs[0] if refs else None
+```
 
 - [ ] **Step 3: Add retrieval observability**
 
-Create `RetrievalObservability` that records:
-- Query classification: exact Arabic token, reference query, semantic question, mixed query.
-- Per-stage latency: query planning, lexical retrieval, metadata/reference lookup, vector retrieval, graph retrieval, reranking, fusion, context assembly, generation.
-- Candidate counts at each stage.
-- Cache decisions and skipped cache reasons.
-- Final evidence ids and answer grounding status.
+Create `backend/src/ragstudio/services/retrieval_observability.py`:
 
-Write the trace into the existing response trace/debug payload so UI tests can see why `وحنانا` matched or failed.
+```python
+from __future__ import annotations
+
+from typing import Any
+
+
+class RetrievalObservability:
+    def __init__(self):
+        self.trace: dict[str, Any] = {"stages": [], "cache": [], "final_evidence_ids": []}
+
+    def record_stage(self, stage: str, *, candidate_count: int, latency_ms: float) -> None:
+        self.trace["stages"].append(
+            {
+                "stage": stage,
+                "candidate_count": candidate_count,
+                "latency_ms": latency_ms,
+            }
+        )
+
+    def cache_decision(
+        self,
+        *,
+        query: str,
+        document_ids: list[str],
+        query_type: str,
+    ) -> dict[str, Any]:
+        if query_type in {"exact_arabic_token", "exact_reference"}:
+            decision = {
+                "answer_cache": "bypass",
+                "reason": "direct_evidence_query",
+                "query": query,
+                "document_ids": document_ids,
+            }
+        else:
+            decision = {
+                "answer_cache": "eligible",
+                "reason": "semantic_query",
+                "query": query,
+                "document_ids": document_ids,
+            }
+        self.trace["cache"].append(decision)
+        return decision
+
+    def record_final_evidence(self, evidence_ids: list[str], *, grounding_status: str) -> None:
+        self.trace["final_evidence_ids"] = evidence_ids
+        self.trace["grounding_status"] = grounding_status
+```
+
+In `backend/src/ragstudio/services/retrieval_orchestrator.py`, attach the trace to the answer/debug payload:
+
+```python
+observability.record_stage("context_assembly", candidate_count=len(assembled.evidence), latency_ms=context_latency_ms)
+response_trace = {
+    **response_trace,
+    "retrieval_observability": observability.trace,
+    "assembled_context": {
+        "evidence_ids": [item.candidate_id for item in assembled.evidence],
+        "dropped": [item.__dict__ for item in assembled.dropped],
+        "grounding_status": assembled.grounding_status,
+    },
+}
+```
 
 - [ ] **Step 4: Add cache policy gates**
 
-Add explicit cache rules:
-- Cache Arabic normalization and tokenization by raw text hash.
-- Cache document embeddings by document id, chunk id, model id, dimension, and index version.
-- Do not use answer-level semantic cache for exact Arabic token queries or exact Quran reference queries.
-- Any retrieval cache key must include document ids, index version, runtime profile, parser mode, embedding model id, embedding dimension, and reranker state.
+Add cache-key helper code in `backend/src/ragstudio/services/retrieval_observability.py`:
 
-Add tests that exact Arabic and exact reference queries bypass answer cache while still using safe normalization/embedding caches.
+```python
+def retrieval_cache_key(
+    *,
+    query: str,
+    document_ids: list[str],
+    index_version: str,
+    runtime_profile: str,
+    parser_mode: str,
+    embedding_model_id: str,
+    embedding_dimension: int,
+    reranker_enabled: bool,
+) -> str:
+    parts = [
+        query,
+        ",".join(sorted(document_ids)),
+        index_version,
+        runtime_profile,
+        parser_mode,
+        embedding_model_id,
+        str(embedding_dimension),
+        f"reranker={reranker_enabled}",
+    ]
+    return "|".join(parts)
+```
+
+Extend `backend/tests/test_retrieval_observability.py`:
+
+```python
+from ragstudio.services.retrieval_observability import retrieval_cache_key
+
+
+def test_cache_key_includes_index_profile_dimension_and_reranker_state():
+    key = retrieval_cache_key(
+        query="وحنانا",
+        document_ids=["doc-b", "doc-a"],
+        index_version="idx-7",
+        runtime_profile="postgres_pgvector_neo4j",
+        parser_mode="mineru_strict",
+        embedding_model_id="Qwen/Qwen3-Embedding-8B",
+        embedding_dimension=1536,
+        reranker_enabled=False,
+    )
+
+    assert "doc-a,doc-b" in key
+    assert "idx-7" in key
+    assert "mineru_strict" in key
+    assert "1536" in key
+    assert "reranker=False" in key
+```
 
 - [ ] **Step 5: Run context and observability tests**
 
@@ -2332,9 +2935,25 @@ def normalize_storage_backend(value: str | None) -> StorageBackend:
     if value in VALID_STORAGE_BACKENDS:
         return cast(StorageBackend, value)
     return DEFAULT_STORAGE_BACKEND
-```
 
-Apply the same pattern for `fallback`, `local_fallback`, and `mineru_with_fallback`.
+def normalize_runtime_mode(
+    value: str | None,
+    storage_backend: str | None,
+) -> RuntimeMode:
+    if value == "fallback" or storage_backend == "fallback_local":
+        raise ValueError("fallback runtime mode has been removed from product runtime")
+    if value in VALID_RUNTIME_MODES:
+        return cast(RuntimeMode, value)
+    return DEFAULT_RUNTIME_MODE
+
+
+def normalize_parser_mode(value: str | None) -> ParserMode:
+    if value in {"local_fallback", "mineru_with_fallback"}:
+        raise ValueError(f"{value} has been removed from product parsing")
+    if value in VALID_PARSER_MODES:
+        return cast(ParserMode, value)
+    return DEFAULT_PARSER_MODE
+```
 
 - [ ] **Step 4: Shrink public schemas**
 
@@ -2487,3 +3106,12 @@ Expected:
   - `VectorIndexPolicy` verifies active embedding profile dimensions before semantic retrieval.
   - `MinerUExtractionValidator.validate()` returns `MinerUExtractionReport`.
   - `IndexQualityGate.validate_adapter_chunks()` returns a dict report or raises `IndexQualityGateError`.
+
+## Execution Handoff
+
+Plan complete and saved to `docs/superpowers/plans/2026-05-11-mineru-postgres-arabic-search-architecture.md`. Two execution options:
+
+1. **Subagent-Driven (recommended)** - Dispatch a fresh subagent per task, review between tasks, and iterate quickly.
+2. **Inline Execution** - Execute tasks in this session using `superpowers:executing-plans`, with checkpoints for review.
+
+Which approach?
