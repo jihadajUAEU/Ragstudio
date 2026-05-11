@@ -403,6 +403,60 @@ async def test_scoped_vector_proxy_filters_pgvector_storage_by_full_doc_id():
 
 
 @pytest.mark.asyncio
+async def test_native_adapter_preflight_without_scope_reports_filter_not_required(tmp_path):
+    adapter = NativeRAGAnythingAdapter(
+        profile(runtime_working_dir=str(tmp_path / "runtime")),
+        AppSettings(database_url="postgresql+asyncpg://user:pass@localhost:5432/ragstudio"),
+    )
+
+    report = await adapter.preflight_scoped_retrieval([])
+
+    assert report == {
+        "status": "ok",
+        "storage_filter": "not_required",
+        "embedding_dimensions": 1536,
+        "send_dimensions": True,
+        "scoped_cache_policy": "not_required",
+    }
+
+
+@pytest.mark.asyncio
+async def test_native_adapter_preflight_reports_storage_filter_and_embedding_shape(tmp_path):
+    adapter = NativeRAGAnythingAdapter(
+        profile(runtime_working_dir=str(tmp_path / "runtime")),
+        AppSettings(database_url="postgresql+asyncpg://user:pass@localhost:5432/ragstudio"),
+    )
+
+    report = await adapter.preflight_scoped_retrieval(["doc-1"])
+
+    assert report["status"] == "ok"
+    assert report["storage_filter"] == "supported"
+    assert report["embedding_dimensions"] == 1536
+    assert report["send_dimensions"] is True
+    assert report["scoped_cache_policy"] == "disabled_for_query"
+
+
+@pytest.mark.asyncio
+async def test_native_adapter_preflight_blocks_unfilterable_storage(tmp_path):
+    rag = FakeRAGAnything()
+    rag.lightrag.chunks_vdb = FakeChunkVectorStorage([])
+    adapter = NativeRAGAnythingAdapter(
+        profile(runtime_working_dir=str(tmp_path / "runtime")),
+        AppSettings(database_url="postgresql+asyncpg://user:pass@localhost:5432/ragstudio"),
+    )
+    adapter._rag = rag
+
+    report = await adapter.preflight_scoped_retrieval(["doc-1"])
+
+    assert report["status"] == "degraded"
+    assert report["error_type"] == "native_document_scope_unsupported"
+    assert "full_doc_id filtering" in report["detail"]
+    assert report["embedding_dimensions"] == 1536
+    assert report["send_dimensions"] is True
+    assert report["scoped_cache_policy"] == "disabled_for_query"
+
+
+@pytest.mark.asyncio
 async def test_native_adapter_indexes_with_studio_document_id(tmp_path):
     artifact = tmp_path / "paper.txt"
     artifact.write_text("hello", encoding="utf-8")

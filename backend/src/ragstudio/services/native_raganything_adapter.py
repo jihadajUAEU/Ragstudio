@@ -297,6 +297,54 @@ class NativeRAGAnythingAdapter:
             document_id=document_id,
         )
 
+    async def preflight_scoped_retrieval(self, document_ids: list[str]) -> dict[str, Any]:
+        if not document_ids:
+            return {
+                "status": "ok",
+                "storage_filter": "not_required",
+                "embedding_dimensions": self.profile.embedding_dimensions,
+                "send_dimensions": True,
+                "scoped_cache_policy": "not_required",
+            }
+
+        rag = self._raganything()
+        async with self._storage_env():
+            try:
+                await self._ensure_lightrag(rag)
+                lightrag = getattr(rag, "lightrag", None)
+                chunks_vdb = getattr(lightrag, "chunks_vdb", None)
+                if chunks_vdb is None:
+                    raise NativeScopedStorageUnsupported(
+                        "LightRAG chunks vector storage is not initialized."
+                    )
+                proxy = ScopedVectorStorageProxy(
+                    chunks_vdb,
+                    document_ids,
+                    require_storage_filter=True,
+                )
+                if not proxy.supports_storage_filter():
+                    raise NativeScopedStorageUnsupported(
+                        "LightRAG vector storage does not support storage-level "
+                        "full_doc_id filtering."
+                    )
+            except NativeScopedStorageUnsupported as exc:
+                return {
+                    "status": "degraded",
+                    "error_type": "native_document_scope_unsupported",
+                    "detail": str(exc),
+                    "embedding_dimensions": self.profile.embedding_dimensions,
+                    "send_dimensions": True,
+                    "scoped_cache_policy": "disabled_for_query",
+                }
+
+        return {
+            "status": "ok",
+            "storage_filter": "supported",
+            "embedding_dimensions": self.profile.embedding_dimensions,
+            "send_dimensions": True,
+            "scoped_cache_policy": "disabled_for_query",
+        }
+
     async def query(
         self,
         query: str,

@@ -499,6 +499,19 @@ class RetrievalOrchestrator:
         timeout_ms = int(query_config.get("native_query_timeout_ms") or 15_000)
         native_timings = {"native_stage_ms": _elapsed_ms(started)}
         try:
+            preflight_fn = getattr(runtime, "preflight_scoped_retrieval", None)
+            if document_ids and callable(preflight_fn):
+                preflight = await preflight_fn(document_ids)
+                native_timings["native_preflight"] = preflight
+                if preflight.get("status") == "degraded":
+                    raise NativeRuntimeQueryFailed(
+                        str(
+                            preflight.get("detail")
+                            or "Native scoped retrieval preflight failed."
+                        ),
+                        str(preflight.get("error_type") or "native_preflight_failed"),
+                        native_timings,
+                    )
             result = await asyncio.wait_for(
                 runtime.query(query, document_ids=document_ids, query_config=query_config),
                 timeout=max(timeout_ms, 1) / 1000,

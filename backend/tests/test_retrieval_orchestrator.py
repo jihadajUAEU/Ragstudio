@@ -438,6 +438,30 @@ class ExplodingNativeRuntimeTool:
         raise RuntimeError("native query crashed")
 
 
+class DegradedPreflightRuntimeTool:
+    def __init__(self):
+        self.preflight_calls = []
+        self.query_called = False
+
+    async def preflight_scoped_retrieval(self, document_ids):
+        self.preflight_calls.append(list(document_ids))
+        return {
+            "status": "degraded",
+            "error_type": "native_document_scope_unsupported",
+            "detail": (
+                "LightRAG vector storage does not support storage-level "
+                "full_doc_id filtering."
+            ),
+            "embedding_dimensions": 1536,
+            "send_dimensions": True,
+            "scoped_cache_policy": "disabled_for_query",
+        }
+
+    async def query(self, query, *, document_ids, query_config):
+        self.query_called = True
+        raise AssertionError("runtime.query should not run after degraded preflight")
+
+
 class NativeSearchShouldNotRun:
     async def query(self, query, *, document_ids, query_config):
         raise AssertionError("native search should not run")
@@ -1028,6 +1052,39 @@ async def test_orchestrator_degrades_scoped_native_unsupported_after_metadata_se
     assert result.timings["native_error"] == "native scoped unsupported"
     assert "metadata_error_type" not in result.timings
     assert chunk_service.calls == 1
+    assert answer_service.called is True
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_degrades_scoped_native_preflight_before_query():
+    answer_service = FakeAnswerService()
+    runtime = DegradedPreflightRuntimeTool()
+    orchestrator = RetrievalOrchestrator(
+        chunk_service=FakeChunkSearchService(),
+        answer_service=answer_service,
+        reranker_service=FakeRerankerService(),
+        graph_expansion_service=FakeGraphExpansionService(),
+    )
+
+    result = await orchestrator.query(
+        "boom",
+        runtime=runtime,
+        profile=type("Profile", (), {"enable_rerank": False, "reranker_provider": "disabled"})(),
+        document_ids=["doc-1"],
+        variant_id="variant-1",
+        query_config={"limit": 8},
+    )
+
+    assert runtime.preflight_calls == [["doc-1"]]
+    assert runtime.query_called is False
+    assert result.answer == "Sahih al-Bukhari contains 7277 hadith."
+    assert result.error is None
+    assert result.timings["native_degraded"] is True
+    assert result.timings["native_error_type"] == "native_document_scope_unsupported"
+    assert "full_doc_id filtering" in result.timings["native_error"]
+    assert result.timings["native_preflight"]["status"] == "degraded"
+    assert result.timings["native_preflight"]["send_dimensions"] is True
+    assert result.timings["metadata_ms"] >= 0
     assert answer_service.called is True
 
 
