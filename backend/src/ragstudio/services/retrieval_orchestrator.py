@@ -19,7 +19,6 @@ from ragstudio.services.retrieval_evidence import (
     plan_for_query,
 )
 from ragstudio.services.retrieval_fusion import RetrievalFusion
-from ragstudio.services.retrieval_metrics import candidate_references
 from ragstudio.services.retrieval_observability import RetrievalObservability
 from ragstudio.services.runtime_answer_service import RuntimeAnswerService
 
@@ -271,11 +270,7 @@ class RetrievalOrchestrator:
                 profile,
             )
             timings["answer_ms"] = _elapsed_ms(answer_started)
-            expected_references = (
-                set().union(*(candidate_references(candidate) for candidate in final_evidence))
-                if final_evidence
-                else set()
-            )
+            expected_references = _expected_references(plan)
             validation = self.grounding_validator.validate(
                 answer=answer,
                 evidence=final_evidence,
@@ -775,6 +770,14 @@ def _metadata_only(query_config: dict[str, Any]) -> bool:
     retrieval_mode = str(query_config.get("retrieval_mode") or "").casefold()
     reference_mode = str(query_config.get("reference_query_mode") or "").casefold()
     return retrieval_mode == "metadata" or reference_mode in {"exact", "lexical"}
+
+
+def _expected_references(plan: Any) -> set[str]:
+    understanding = getattr(plan, "understanding", None)
+    hints = getattr(understanding, "reference_hints", None)
+    if not isinstance(hints, list):
+        return set()
+    return {str(hint) for hint in hints if hint}
 
 
 def _vector_candidate_count(candidates: list[EvidenceCandidate]) -> int:

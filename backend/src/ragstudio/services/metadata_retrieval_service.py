@@ -48,9 +48,10 @@ class MetadataRetrievalService:
             )
             pass_candidates: list[EvidenceCandidate] = []
             for index, chunk in enumerate(search.items, start=1):
-                if chunk.id in seen_chunk_ids:
+                chunk_id = _chunk_id(chunk)
+                if chunk_id in seen_chunk_ids:
                     continue
-                seen_chunk_ids.add(chunk.id)
+                seen_chunk_ids.add(chunk_id)
                 pass_candidates.append(
                     self._candidate_from_chunk(chunk, index, retrieval_pass)
                 )
@@ -83,18 +84,20 @@ class MetadataRetrievalService:
         rank: int,
         retrieval_pass: RetrievalPass,
     ) -> EvidenceCandidate:
-        score = chunk.metadata.get("score")
+        metadata = _chunk_metadata(chunk)
+        score = metadata.get("score")
         base_score = float(score) if isinstance(score, (int, float)) else max(1.0, 20.0 - rank)
-        metadata = dict(chunk.metadata)
-        if chunk.runtime_source_id:
-            metadata.setdefault("runtime_source_id", chunk.runtime_source_id)
-        metadata.setdefault("canonical_chunk_id", chunk.id)
+        runtime_source_id = getattr(chunk, "runtime_source_id", None)
+        if runtime_source_id:
+            metadata.setdefault("runtime_source_id", runtime_source_id)
+        chunk_id = _chunk_id(chunk)
+        metadata.setdefault("canonical_chunk_id", chunk_id)
         return EvidenceCandidate(
-            candidate_id=f"metadata:{chunk.id}",
-            text=chunk.text,
-            document_id=chunk.document_id,
-            chunk_id=chunk.id,
-            source_location=chunk.source_location,
+            candidate_id=f"metadata:{chunk_id}",
+            text=str(getattr(chunk, "text", "")),
+            document_id=getattr(chunk, "document_id", None),
+            chunk_id=chunk_id,
+            source_location=_chunk_source_location(chunk),
             metadata=metadata,
             tool="metadata",
             tool_rank=rank,
@@ -118,10 +121,10 @@ class MetadataRetrievalService:
         return {}
 
     def _first_reference(self, chunk: ChunkOut) -> str | None:
-        source_reference = chunk.source_location.get("reference")
+        source_reference = _chunk_source_location(chunk).get("reference")
         if isinstance(source_reference, str) and source_reference:
             return source_reference
-        reference_metadata = chunk.metadata.get("reference_metadata")
+        reference_metadata = _chunk_metadata(chunk).get("reference_metadata")
         if not isinstance(reference_metadata, dict):
             return None
         references = reference_metadata.get("references")
@@ -130,17 +133,32 @@ class MetadataRetrievalService:
         return None
 
     def _source_quality(self, chunk: ChunkOut) -> dict[str, Any]:
-        extraction_quality = chunk.metadata.get("extraction_quality")
+        metadata = _chunk_metadata(chunk)
+        extraction_quality = metadata.get("extraction_quality")
         parser_warnings: list[Any] = []
         if isinstance(extraction_quality, dict):
             warnings = extraction_quality.get("parser_warnings")
             parser_warnings = warnings if isinstance(warnings, list) else []
-        parser_metadata = chunk.metadata.get("parser_metadata")
+        parser_metadata = metadata.get("parser_metadata")
         parser_metadata = parser_metadata if isinstance(parser_metadata, dict) else {}
         return {
-            "parser": chunk.metadata.get("backend") or parser_metadata.get("backend"),
+            "parser": metadata.get("backend") or parser_metadata.get("backend"),
             "warning_count": len(parser_warnings),
         }
+
+
+def _chunk_id(chunk: Any) -> str:
+    return str(chunk.id)
+
+
+def _chunk_metadata(chunk: Any) -> dict[str, Any]:
+    metadata = getattr(chunk, "metadata", None)
+    return dict(metadata) if isinstance(metadata, dict) else {}
+
+
+def _chunk_source_location(chunk: Any) -> dict[str, Any]:
+    source_location = getattr(chunk, "source_location", None)
+    return dict(source_location) if isinstance(source_location, dict) else {}
 
 
 def _elapsed_ms(started_at: float) -> float:

@@ -109,6 +109,8 @@ def candidate_references(candidate: EvidenceCandidate) -> set[str]:
         values.update(str(ref) for ref in refs if ref)
     if isinstance(source_ref, str) and source_ref:
         values.add(source_ref)
+    if candidate.canonical_reference:
+        values.add(candidate.canonical_reference)
     return values
 
 

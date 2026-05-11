@@ -685,6 +685,31 @@ async def test_orchestrator_records_grounding_validation_trace():
 
 
 @pytest.mark.asyncio
+async def test_orchestrator_uses_query_reference_hints_for_grounding_validation():
+    orchestrator = RetrievalOrchestrator(
+        chunk_service=FakeChunkSearchService(),
+        answer_service=FakeAnswerService(),
+        reranker_service=FakeRerankerService(),
+        graph_expansion_service=FakeGraphExpansionService(),
+    )
+
+    result = await orchestrator.query(
+        "show 19:13",
+        runtime=FakeRuntimeTool(),
+        profile=type("Profile", (), {"enable_rerank": False, "reranker_provider": "disabled"})(),
+        document_ids=["doc-1"],
+        variant_id="variant-1",
+        query_config={"limit": 8},
+    )
+
+    assert result.validation["status"] == "failed"
+    assert {
+        "code": "expected_reference_not_in_sources",
+        "detail": "Expected references missing from sources: 19:13",
+    } in result.validation["failures"]
+
+
+@pytest.mark.asyncio
 async def test_orchestrator_surfaces_parser_quality_warnings_in_evidence_and_traces():
     answer_service = FakeAnswerService()
     orchestrator = RetrievalOrchestrator(

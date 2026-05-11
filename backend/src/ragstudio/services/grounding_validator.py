@@ -48,8 +48,8 @@ class GroundingValidator:
                     {
                         "code": "unknown_source_label",
                         "detail": (
-                            f"Answer cites [{label}], but only "
-                            f"{_format_labels(available_labels)} are available."
+                            f"Answer cites [{label}], but "
+                            f"{_available_label_message(available_labels)}."
                         ),
                     }
                 )
@@ -90,8 +90,16 @@ class GroundingValidator:
         )
 
 
+def _available_label_message(labels: list[str]) -> str:
+    if not labels:
+        return "no source labels are available"
+    if len(labels) == 1:
+        return f"only [{labels[0]}] is available"
+    return f"only {_format_labels(labels)} are available"
+
+
 def _format_labels(labels: list[str]) -> str:
-    return ", ".join(f"[{label}]" for label in labels) or "no source labels"
+    return ", ".join(f"[{label}]" for label in labels)
 
 
 def _is_no_evidence_answer(answer: str) -> bool:
