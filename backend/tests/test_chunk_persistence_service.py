@@ -199,7 +199,8 @@ async def test_persist_chunks_scrubs_nested_absolute_metadata_paths(
                     metadata={
                         "parser_metadata": {
                             "backend": "mineru",
-                            "artifact_ref": "paths.pdf",
+                            "artifact_ref": "/tmp/private/pages/1.md",
+                            "chunk_index": 3,
                             "artifact_extract_dir": "/tmp/ragstudio/extract",
                             "nested": {
                                 "keep": "value",
@@ -210,6 +211,7 @@ async def test_persist_chunks_scrubs_nested_absolute_metadata_paths(
                             "references": ["1:1"],
                             "evidence_path": "/tmp/ragstudio/evidence.json",
                         },
+                        "preview_ref": "/tmp/private/preview",
                     },
                 )
             ],
@@ -223,7 +225,13 @@ async def test_persist_chunks_scrubs_nested_absolute_metadata_paths(
 
     assert persisted is not None
     parser_metadata = persisted.metadata_json["parser_metadata"]
-    assert parser_metadata["artifact_ref"] == "paths.pdf"
     assert parser_metadata["nested"] == {"keep": "value"}
+    assert parser_metadata["chunk_index"] == 3
+    assert "artifact_ref" not in parser_metadata
     assert "artifact_extract_dir" not in parser_metadata
     assert persisted.metadata_json["reference_metadata"] == {"references": ["1:1"]}
+    assert "preview_ref" not in persisted.metadata_json
+    assert "/tmp" not in persisted.metadata_json["chunk_identity"]
+    assert "/private" not in persisted.metadata_json["chunk_identity"]
+    assert "/tmp" not in chunks[0].metadata["chunk_identity"]
+    assert "/private" not in chunks[0].metadata["chunk_identity"]
