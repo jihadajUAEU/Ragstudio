@@ -27,6 +27,8 @@
   - Rejects raw PDF syntax, empty text, insufficient page coverage, missing Arabic text when Arabic is expected, and wrong parser backend.
 - Create `backend/src/ragstudio/services/arabic_text.py`
   - Owns Arabic normalization, tokenization, and query variants.
+- Create `backend/src/ragstudio/services/document_chunking_policy.py`
+  - Owns MinerU-aware chunk boundaries, Quran/reference-aware split rules, overlap limits, and metadata preservation.
 - Modify `backend/src/ragstudio/db/models.py`
   - Add Postgres search columns to `Chunk`: `text_search_ar`, `tokens_ar`, `extraction_quality`.
   - Add Postgres-only indexes through SQLAlchemy with guarded dialect support.
@@ -42,8 +44,14 @@
   - Apply the same MinerU validation, Arabic materialization, and quality gate to runtime-backed indexing.
 - Create `backend/src/ragstudio/services/chunk_lexical_search_repository.py`
   - Uses Postgres filters for Arabic token and normalized text retrieval before Python scoring.
+- Create `backend/src/ragstudio/services/vector_index_policy.py`
+  - Validates embedding dimensions, PGVector extension/index readiness, and profile compatibility before semantic search runs.
 - Create `backend/src/ragstudio/services/retrieval_fusion.py`
   - Combines Arabic lexical, reference metadata, PGVector semantic, reranker, and graph candidates with deterministic priority and Reciprocal Rank Fusion.
+- Create `backend/src/ragstudio/services/context_assembly_service.py`
+  - Builds answer context from fused candidates with direct evidence first, dedupe, source diversity, and token-budget enforcement.
+- Create `backend/src/ragstudio/services/retrieval_observability.py`
+  - Emits per-stage retrieval traces for candidate counts, latency, cache decisions, gates, and final evidence ordering.
 - Modify `backend/src/ragstudio/services/retrieval_orchestrator.py`
   - Treats Arabic single-token queries as exact lexical lookup before semantic retrieval.
   - Adds fusion/eval traces for candidate source, rank, direct-match features, and final ordering.
@@ -68,18 +76,22 @@ flowchart TD
   settings --> mineru["MinerU parse job"]
   mineru --> contract["Extraction contract validator"]
   contract -->|"fail"| fail["Index failed with quality report"]
-  contract -->|"pass"| normalize["Arabic normalization"]
+  contract -->|"pass"| chunking["Document-aware chunking policy"]
+  chunking --> normalize["Arabic normalization"]
   normalize --> chunks["Postgres chunks"]
   chunks --> indexes["GIN + trigram + PGVector + Neo4j"]
-  indexes --> gate["Index quality gate"]
+  indexes --> vectorGate["Embedding dimension + PGVector index gate"]
+  vectorGate --> gate["Index quality gate"]
   gate -->|"fail"| fail
   gate -->|"pass"| ready["Document ready"]
   ready --> query["Query understanding"]
   query --> lexical["Arabic lexical retrieval"]
   query --> vector["PGVector semantic retrieval"]
+  vector --> vectorReady["Vector compatibility gate"]
   lexical --> fusion["Candidate fusion"]
-  vector --> fusion
-  fusion --> answer["Grounded answer orchestrator"]
+  vectorReady --> fusion
+  fusion --> context["Context assembly"]
+  context --> answer["Grounded answer orchestrator"]
 ```
 
 ## Tuned Architecture Corrections
@@ -110,19 +122,34 @@ The first architecture direction was right, but the implementation plan needed t
 8. **RAG retrieval needs deterministic fusion and eval gates.**
    Exact Arabic and reference evidence must outrank broad semantic candidates. The pipeline needs explicit fusion rules, Precision@K/MRR/Recall@K checks, faithfulness gates, and latency traces before browser smoke tests.
 
+9. **Chunking is part of retrieval quality, not parser plumbing.**
+   MinerU extraction can be valid while retrieval still fails because the target word or verse is split away from its reference metadata. Product chunking must be page/reference-aware, preserve MinerU block metadata, avoid splitting inside detected Quran verse spans, and keep a bounded neighbor window for answer context.
+
+10. **PGVector must be compatible before it is trusted.**
+    Semantic retrieval should fail with a clear readiness error when the active embedding provider dimension differs from the stored vector dimension or when the PGVector index is absent/unusable. Prefer HNSW for production Postgres builds; allow IVFFlat only as an explicit compatibility path when HNSW is unavailable.
+
+11. **Context assembly must be deterministic and source-preserving.**
+    The answer orchestrator should not receive an arbitrary concat of chunks. It needs a context builder that deduplicates candidates, pins exact reference/Arabic matches first, keeps original text for citation, adds limited neighbor context, and records which evidence was included or dropped due to token budget.
+
+12. **Caching must never hide exact-match failures.**
+    Cache normalized Arabic text, tokens, embedding vectors, and query-plan traces where useful. Do not serve semantic answer cache hits for exact Arabic tokens or Quran reference queries unless the cache key includes document set, index version, retrieval profile, and direct evidence ids.
+
 ## Revised Implementation Order
 
 Build this in safer order than the first draft:
 
 1. Add Arabic normalization and tests.
 2. Add MinerU extraction and index quality validators.
-3. Materialize Arabic search fields in both `ChunkService` and `IndexLifecycleService`.
-4. Add Postgres lexical prefilter and hybrid scoring.
-5. Add deterministic retrieval fusion and RAG eval gates.
-6. Add product policy gates for upload/reindex/settings.
-7. Remove fallback options from UI/docs.
-8. Add Quran end-to-end gates.
-9. Remove remaining legacy fallback/SQLite compatibility code after migration tests pass.
+3. Add document-aware chunking policy before chunk persistence.
+4. Materialize Arabic search fields in both `ChunkService` and `IndexLifecycleService`.
+5. Add PGVector index and embedding dimension readiness gates.
+6. Add Postgres lexical prefilter and hybrid scoring.
+7. Add deterministic retrieval fusion and RAG eval gates.
+8. Add context assembly, observability, and cache policy gates.
+9. Add product policy gates for upload/reindex/settings.
+10. Remove fallback options from UI/docs.
+11. Add Quran end-to-end gates.
+12. Remove remaining legacy fallback/SQLite compatibility code after migration tests pass.
 
 ## Task 1: Product Policy Gates For Runtime And Parser
 
@@ -1006,6 +1033,142 @@ git add backend/src/ragstudio/db/models.py backend/src/ragstudio/db/engine.py ba
 git commit -m "feat: materialize arabic search fields in postgres chunks"
 ```
 
+## Task 5A: Document-Aware Chunking Policy
+
+**Files:**
+- Create: `backend/src/ragstudio/services/document_chunking_policy.py`
+- Modify: `backend/src/ragstudio/services/chunk_service.py`
+- Modify: `backend/src/ragstudio/services/index_lifecycle_service.py`
+- Test: `backend/tests/test_document_chunking_policy.py`
+
+- [ ] **Step 1: Write failing chunk boundary tests**
+
+Create tests that prove:
+- A Quran verse span such as `19:13` is not split across two persisted chunks when MinerU text and metadata expose the verse/reference boundary.
+- Original MinerU text, page, block id, reference metadata, and preview refs survive chunk normalization.
+- Neighbor context is bounded to zero or one adjacent verse/block on each side and never causes unrelated pages to be pulled into the answer context.
+- Very large MinerU blocks are split by sentence/verse-aware boundaries first, then by hard token/character limits only when no safer boundary exists.
+
+Run:
+
+```bash
+uv run pytest backend/tests/test_document_chunking_policy.py -v
+```
+
+Expected: FAIL until the policy exists.
+
+- [ ] **Step 2: Implement the chunking policy**
+
+Create `DocumentChunkingPolicy` with:
+- `split_mineru_chunks(chunks, domain_metadata) -> list[AdapterChunk]`
+- Reference-aware split points from `reference_metadata.references`.
+- Arabic-aware text limits based on normalized and original text lengths.
+- Metadata merge rules that keep MinerU provenance and source locations.
+- A hard cap that prevents one chunk from dominating context assembly.
+
+Do not place Quran-specific constants deep inside generic split code. Use a small policy table keyed by `domain_metadata.domain` or explicit detected reference metadata.
+
+- [ ] **Step 3: Wire the policy before persistence**
+
+Use `DocumentChunkingPolicy` after MinerU extraction validation and before Arabic materialization in both:
+- `ChunkService`
+- `IndexLifecycleService`
+
+The order must be:
+
+```text
+MinerU output -> extraction validator -> chunking policy -> Arabic materialization -> persistence -> index quality gate
+```
+
+- [ ] **Step 4: Run chunking and Arabic persistence tests**
+
+Run:
+
+```bash
+uv run pytest backend/tests/test_document_chunking_policy.py backend/tests/test_chunk_service_arabic_search.py -v
+```
+
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add backend/src/ragstudio/services/document_chunking_policy.py backend/src/ragstudio/services/chunk_service.py backend/src/ragstudio/services/index_lifecycle_service.py backend/tests/test_document_chunking_policy.py
+git commit -m "feat: add document aware chunking policy"
+```
+
+## Task 5B: PGVector Index And Embedding Dimension Gate
+
+**Files:**
+- Create: `backend/src/ragstudio/services/vector_index_policy.py`
+- Modify: `backend/src/ragstudio/db/engine.py`
+- Modify: `backend/src/ragstudio/services/retrieval_orchestrator.py`
+- Test: `backend/tests/test_vector_index_policy.py`
+
+- [ ] **Step 1: Write failing vector readiness tests**
+
+Create tests that prove:
+- Stored vector dimension must match the active embedding profile dimension.
+- Query embeddings must be generated with the same dimension used at indexing time.
+- Missing `vector` extension or missing PGVector index produces a readiness error before retrieval returns low-quality semantic results.
+- HNSW is preferred when the local Postgres/PGVector version supports it; IVFFlat is allowed only as an explicit compatibility result in the readiness report.
+
+Run:
+
+```bash
+uv run pytest backend/tests/test_vector_index_policy.py -v
+```
+
+Expected: FAIL until the policy exists.
+
+- [ ] **Step 2: Implement vector index policy**
+
+Create `VectorIndexPolicy` with:
+- `validate_embedding_profile(document_id, active_profile)`.
+- `validate_pgvector_ready(connection)`.
+- `assert_query_dimension(query_vector, expected_dimension)`.
+- Readiness report fields: `expected_dimension`, `observed_dimension`, `index_type`, `extension_available`, `profile_id`, and `status`.
+
+The policy must hard-fail exact document-scoped queries when vector compatibility is broken. It may allow lexical-only Arabic search to continue, but the response trace must say semantic retrieval was skipped due to vector readiness.
+
+- [ ] **Step 3: Add database index initialization**
+
+In `backend/src/ragstudio/db/engine.py`, create the PGVector extension and the production vector index during Postgres initialization/backfill:
+
+```sql
+CREATE EXTENSION IF NOT EXISTS vector;
+CREATE INDEX IF NOT EXISTS ix_chunks_embedding_hnsw
+ON chunks USING hnsw (embedding vector_cosine_ops);
+```
+
+If HNSW is unsupported, emit a compatibility report and create the explicit IVFFlat fallback index only in that branch.
+
+- [ ] **Step 4: Gate orchestrator semantic retrieval**
+
+In `retrieval_orchestrator.py`, run `VectorIndexPolicy` before PGVector/native semantic retrieval. Add trace fields:
+- `semantic_retrieval_status`
+- `embedding_expected_dimension`
+- `embedding_observed_dimension`
+- `vector_index_type`
+- `semantic_candidates`
+
+- [ ] **Step 5: Run vector policy tests**
+
+Run:
+
+```bash
+uv run pytest backend/tests/test_vector_index_policy.py backend/tests/test_rag_evaluation_gates.py -v
+```
+
+Expected: PASS.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add backend/src/ragstudio/services/vector_index_policy.py backend/src/ragstudio/db/engine.py backend/src/ragstudio/services/retrieval_orchestrator.py backend/tests/test_vector_index_policy.py
+git commit -m "feat: gate pgvector embedding compatibility"
+```
+
 ## Task 6: Arabic Lexical Search Repository And Scoring
 
 **Files:**
@@ -1534,6 +1697,82 @@ Expected: PASS.
 ```bash
 git add backend/src/ragstudio/services/retrieval_fusion.py backend/src/ragstudio/services/retrieval_evidence.py backend/src/ragstudio/services/retrieval_orchestrator.py backend/tests/test_rag_retrieval_fusion.py backend/tests/test_rag_evaluation_gates.py
 git commit -m "feat: add rag retrieval fusion gates"
+```
+
+## Task 6B: Context Assembly, Observability, And Cache Policy
+
+**Files:**
+- Create: `backend/src/ragstudio/services/context_assembly_service.py`
+- Create: `backend/src/ragstudio/services/retrieval_observability.py`
+- Modify: `backend/src/ragstudio/services/retrieval_orchestrator.py`
+- Test: `backend/tests/test_context_assembly_service.py`
+- Test: `backend/tests/test_retrieval_observability.py`
+
+- [ ] **Step 1: Write failing context assembly tests**
+
+Create tests that prove:
+- Exact reference candidates and exact Arabic lexical candidates are placed first in answer context.
+- Duplicate chunks from lexical, vector, graph, and reranker passes are included once with merged reasons.
+- Original text is preserved for citations; normalized Arabic is trace metadata only.
+- Token budget drops lower-value semantic candidates before direct evidence.
+- Neighbor context can be included when it shares the same document/reference family and stays inside the configured budget.
+- If no direct evidence survives context assembly, the answer orchestrator must return a grounded "not enough evidence" response instead of guessing.
+
+Run:
+
+```bash
+uv run pytest backend/tests/test_context_assembly_service.py -v
+```
+
+Expected: FAIL until the service exists.
+
+- [ ] **Step 2: Implement context assembly**
+
+Create `ContextAssemblyService` with:
+- `assemble(candidates, query_plan, budget) -> AssembledContext`.
+- Deterministic sorting from fused candidate order.
+- Dedupe by `chunk_id`, then by normalized text hash.
+- Evidence sections with `source_id`, `reference`, `document_id`, `page`, `original_text`, `included_reason`, and `retrieval_passes`.
+- Drop report with `candidate_id`, `drop_reason`, and `estimated_tokens`.
+
+The service must never compress or paraphrase direct evidence before the model sees it. Compression can only apply to lower-priority neighbor context.
+
+- [ ] **Step 3: Add retrieval observability**
+
+Create `RetrievalObservability` that records:
+- Query classification: exact Arabic token, reference query, semantic question, mixed query.
+- Per-stage latency: query planning, lexical retrieval, metadata/reference lookup, vector retrieval, graph retrieval, reranking, fusion, context assembly, generation.
+- Candidate counts at each stage.
+- Cache decisions and skipped cache reasons.
+- Final evidence ids and answer grounding status.
+
+Write the trace into the existing response trace/debug payload so UI tests can see why `وحنانا` matched or failed.
+
+- [ ] **Step 4: Add cache policy gates**
+
+Add explicit cache rules:
+- Cache Arabic normalization and tokenization by raw text hash.
+- Cache document embeddings by document id, chunk id, model id, dimension, and index version.
+- Do not use answer-level semantic cache for exact Arabic token queries or exact Quran reference queries.
+- Any retrieval cache key must include document ids, index version, runtime profile, parser mode, embedding model id, embedding dimension, and reranker state.
+
+Add tests that exact Arabic and exact reference queries bypass answer cache while still using safe normalization/embedding caches.
+
+- [ ] **Step 5: Run context and observability tests**
+
+Run:
+
+```bash
+uv run pytest backend/tests/test_context_assembly_service.py backend/tests/test_retrieval_observability.py backend/tests/test_rag_evaluation_gates.py -v
+```
+
+Expected: PASS.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add backend/src/ragstudio/services/context_assembly_service.py backend/src/ragstudio/services/retrieval_observability.py backend/src/ragstudio/services/retrieval_orchestrator.py backend/tests/test_context_assembly_service.py backend/tests/test_retrieval_observability.py backend/tests/test_rag_evaluation_gates.py
+git commit -m "feat: add retrieval context assembly traces"
 ```
 
 ## Task 7: Index Quality Gate
@@ -2230,7 +2469,10 @@ Expected:
   - MinerU-only extraction: Tasks 1-3 and 8.
   - Postgres-only storage with no SQLite product dependency: Tasks 1, 5, 8, 9, 11, and 12.
   - Arabic normalization: Tasks 4-6.
+  - Document-aware chunk boundaries and metadata preservation: Task 5A.
+  - PGVector readiness and embedding dimension compatibility: Task 5B.
   - Hybrid retrieval fusion and RAG eval: Task 6A.
+  - Context assembly, traceability, and cache policy: Task 6B.
   - Search quality gate for `وحنانا`: Tasks 6A, 7, 10, and 12.
   - UI/docs removal of fallback choices: Task 8.
   - Final fallback/SQLite cleanup: Task 9, Task 11, and Task 12 verification.
@@ -2241,5 +2483,7 @@ Expected:
   - Product settings validators accept only `storage_backend="postgres_pgvector_neo4j"` and runtime/degraded runtime modes.
   - `normalize_arabic_text()`, `arabic_tokens()`, and `arabic_query_variants()` are used by chunk persistence and search scoring.
   - `RetrievalFusion.fuse()` receives ranked candidate lists and returns direct-evidence-first fused candidates.
+  - `ContextAssemblyService.assemble()` receives fused candidates and returns source-preserving context plus a drop report.
+  - `VectorIndexPolicy` verifies active embedding profile dimensions before semantic retrieval.
   - `MinerUExtractionValidator.validate()` returns `MinerUExtractionReport`.
   - `IndexQualityGate.validate_adapter_chunks()` returns a dict report or raises `IndexQualityGateError`.
