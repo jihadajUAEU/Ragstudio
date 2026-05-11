@@ -738,13 +738,18 @@ async def test_orchestrator_skips_native_when_metadata_only_requested():
     )
 
     assert result.answer == "Sahih al-Bukhari contains 7277 hadith."
-    assert chunk_service.calls == 1
+    assert chunk_service.calls == 2
     assert "native_stage_ms" not in result.timings
     retrieval_trace = next(
         trace for trace in result.chunk_traces if trace["stage"] == "retrieval"
     )
     assert retrieval_trace["native_status"] == "skipped"
     assert retrieval_trace["metadata_candidates"] == 1
+    assert retrieval_trace["metadata_trace"]["stage"] == "metadata_retrieval"
+    assert [item["name"] for item in retrieval_trace["metadata_trace"]["passes"]] == [
+        "reference_exact",
+        "semantic_metadata",
+    ]
 
 
 @pytest.mark.asyncio

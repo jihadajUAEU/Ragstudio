@@ -5,10 +5,11 @@ from dataclasses import asdict, replace
 from time import perf_counter
 from typing import Any
 
-from ragstudio.schemas.chunks import ChunkOut, ChunkSearchIn
+from ragstudio.schemas.chunks import ChunkOut
 from ragstudio.services.chunk_service import ChunkService
 from ragstudio.services.context_assembly_service import ContextAssemblyService
 from ragstudio.services.graph_expansion_service import GraphExpansionService
+from ragstudio.services.metadata_retrieval_service import MetadataRetrievalService
 from ragstudio.services.reranker_service import RerankerService
 from ragstudio.services.retrieval_evidence import (
     EvidenceCandidate,
@@ -61,6 +62,7 @@ class RetrievalOrchestrator:
         graph_expansion_service: GraphExpansionService | None = None,
         context_assembly_service: ContextAssemblyService | None = None,
         retrieval_fusion: RetrievalFusion | None = None,
+        metadata_retrieval_service: MetadataRetrievalService | None = None,
     ):
         self.chunk_service = chunk_service
         self.answer_service = answer_service or RuntimeAnswerService()
@@ -68,6 +70,9 @@ class RetrievalOrchestrator:
         self.graph_expansion_service = graph_expansion_service or GraphExpansionService()
         self.context_assembly_service = context_assembly_service or ContextAssemblyService()
         self.retrieval_fusion = retrieval_fusion or RetrievalFusion()
+        self.metadata_retrieval_service = (
+            metadata_retrieval_service or MetadataRetrievalService(chunk_service)
+        )
 
     async def query(
         self,
@@ -244,12 +249,14 @@ class RetrievalOrchestrator:
         parallel_started = perf_counter()
         if document_ids:
             if _metadata_only(query_config):
-                metadata_candidates, metadata_ms = await self._timed_metadata_candidates(
+                metadata_result = await self._timed_metadata_candidates(
                     query,
                     document_ids,
                     variant_id,
                     plan.candidate_limit,
+                    plan,
                 )
+                metadata_candidates, metadata_ms, metadata_trace = metadata_result
                 timings["metadata_ms"] = metadata_ms
                 timings["parallel_retrieval_ms"] = _elapsed_ms(parallel_started)
                 return (
@@ -260,6 +267,7 @@ class RetrievalOrchestrator:
                         "native_status": "skipped",
                         "native_candidates": 0,
                         "metadata_candidates": len(metadata_candidates),
+                        "metadata_trace": metadata_trace,
                     },
                 )
             native_task = self._timed_native_candidates(query, runtime, document_ids, query_config)
@@ -283,6 +291,7 @@ class RetrievalOrchestrator:
             document_ids,
             variant_id,
             plan.candidate_limit,
+            plan,
         )
         native_result, metadata_result = await asyncio.gather(
             native_task,
@@ -313,6 +322,7 @@ class RetrievalOrchestrator:
                 document_ids,
                 variant_id,
                 plan.candidate_limit,
+                plan,
             )
         except Exception as exc:
             metadata_result = exc
@@ -349,7 +359,7 @@ class RetrievalOrchestrator:
                     timings=timings,
                 ) from metadata_result
             raise MetadataRetrievalFailed(str(metadata_result), dict(timings)) from metadata_result
-        metadata_candidates, metadata_ms = metadata_result
+        metadata_candidates, metadata_ms, metadata_trace = metadata_result
         timings["metadata_ms"] = metadata_ms
         timings["parallel_retrieval_ms"] = _elapsed_ms(parallel_started)
 
@@ -377,6 +387,7 @@ class RetrievalOrchestrator:
                 "native_status": native_status,
                 "native_candidates": len(native_candidates),
                 "metadata_candidates": len(metadata_candidates),
+                "metadata_trace": metadata_trace,
             },
         )
 
@@ -535,44 +546,24 @@ class RetrievalOrchestrator:
         document_ids: list[str],
         variant_id: str,
         limit: int,
-    ) -> tuple[list[EvidenceCandidate], float]:
+        plan: Any | None = None,
+    ) -> tuple[list[EvidenceCandidate], float, dict[str, Any]]:
         started = perf_counter()
-        search = await self.chunk_service.search(
-            ChunkSearchIn(
-                query=query,
+        understanding = getattr(plan, "understanding", None)
+        if understanding is None:
+            understanding = plan_for_query(
+                query,
                 document_ids=document_ids,
-                variant_id=variant_id,
                 limit=limit,
-                explain=True,
-                include_neighbors=True,
-            )
+            ).understanding
+        candidates, trace = await self.metadata_retrieval_service.retrieve(
+            query,
+            understanding=understanding,
+            document_ids=document_ids,
+            variant_id=variant_id,
+            limit=limit,
         )
-        return (
-            [
-                self._candidate_from_chunk(chunk, index)
-                for index, chunk in enumerate(search.items, start=1)
-            ],
-            _elapsed_ms(started),
-        )
-
-    def _candidate_from_chunk(self, chunk: ChunkOut, rank: int) -> EvidenceCandidate:
-        score = chunk.metadata.get("score")
-        base_score = float(score) if isinstance(score, (int, float)) else max(1.0, 20.0 - rank)
-        metadata = dict(chunk.metadata)
-        if chunk.runtime_source_id:
-            metadata.setdefault("runtime_source_id", chunk.runtime_source_id)
-        metadata.setdefault("canonical_chunk_id", chunk.id)
-        return EvidenceCandidate(
-            candidate_id=f"metadata:{chunk.id}",
-            text=chunk.text,
-            document_id=chunk.document_id,
-            chunk_id=chunk.id,
-            source_location=chunk.source_location,
-            metadata=metadata,
-            tool="metadata",
-            tool_rank=rank,
-            base_score=base_score,
-        )
+        return candidates, _elapsed_ms(started), trace
 
     async def _hydrate_graph_candidates(
         self,
