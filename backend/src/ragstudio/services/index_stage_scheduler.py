@@ -38,5 +38,13 @@ class IndexStageScheduler:
                     )
                 return branch.name, StageBranchResult(status="succeeded", value=value)
 
-        pairs = await asyncio.gather(*(run_branch(branch) for branch in branches))
+        tasks = [asyncio.create_task(run_branch(branch)) for branch in branches]
+        try:
+            pairs = await asyncio.gather(*tasks)
+        except Exception:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
         return dict(pairs)
