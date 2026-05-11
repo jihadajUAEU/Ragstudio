@@ -119,6 +119,7 @@ class OrchestratedAnswer:
     reranker_traces: list[dict[str, Any]]
     timings: dict[str, Any]
     token_metadata: dict[str, Any] = field(default_factory=dict)
+    validation: dict[str, Any] = field(default_factory=dict)
     error: str | None = None
     error_type: str | None = None
 

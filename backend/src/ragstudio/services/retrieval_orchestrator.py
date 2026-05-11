@@ -9,6 +9,7 @@ from ragstudio.schemas.chunks import ChunkOut
 from ragstudio.services.chunk_service import ChunkService
 from ragstudio.services.context_assembly_service import ContextAssemblyService
 from ragstudio.services.graph_expansion_service import GraphExpansionService
+from ragstudio.services.grounding_validator import GroundingValidator
 from ragstudio.services.metadata_retrieval_service import MetadataRetrievalService
 from ragstudio.services.reranker_service import RerankerService
 from ragstudio.services.retrieval_evidence import (
@@ -18,6 +19,7 @@ from ragstudio.services.retrieval_evidence import (
     plan_for_query,
 )
 from ragstudio.services.retrieval_fusion import RetrievalFusion
+from ragstudio.services.retrieval_metrics import candidate_references
 from ragstudio.services.retrieval_observability import RetrievalObservability
 from ragstudio.services.runtime_answer_service import RuntimeAnswerService
 
@@ -63,6 +65,7 @@ class RetrievalOrchestrator:
         context_assembly_service: ContextAssemblyService | None = None,
         retrieval_fusion: RetrievalFusion | None = None,
         metadata_retrieval_service: MetadataRetrievalService | None = None,
+        grounding_validator: GroundingValidator | None = None,
     ):
         self.chunk_service = chunk_service
         self.answer_service = answer_service or RuntimeAnswerService()
@@ -73,6 +76,7 @@ class RetrievalOrchestrator:
         self.metadata_retrieval_service = (
             metadata_retrieval_service or MetadataRetrievalService(chunk_service)
         )
+        self.grounding_validator = grounding_validator or GroundingValidator()
 
     async def query(
         self,
@@ -267,6 +271,18 @@ class RetrievalOrchestrator:
                 profile,
             )
             timings["answer_ms"] = _elapsed_ms(answer_started)
+            expected_references = (
+                set().union(*(candidate_references(candidate) for candidate in final_evidence))
+                if final_evidence
+                else set()
+            )
+            validation = self.grounding_validator.validate(
+                answer=answer,
+                evidence=final_evidence,
+                expected_references=expected_references,
+            )
+            validation_trace = validation.to_trace()
+            traces.append(validation_trace)
             timings["total_ms"] = _elapsed_ms(started)
             return OrchestratedAnswer(
                 answer=answer,
@@ -275,6 +291,7 @@ class RetrievalOrchestrator:
                 reranker_traces=reranker_traces,
                 timings=timings,
                 token_metadata=token_metadata,
+                validation=validation_trace,
             )
         except Exception as exc:
             return self._failed_orchestrated_answer(exc, started, timings)
@@ -533,6 +550,7 @@ class RetrievalOrchestrator:
             chunk_traces=[],
             reranker_traces=[],
             timings=failure_timings,
+            validation={},
             error=error,
             error_type=error_type,
         )

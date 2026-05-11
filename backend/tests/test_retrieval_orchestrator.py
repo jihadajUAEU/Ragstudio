@@ -658,6 +658,33 @@ async def test_orchestrator_emits_primary_seed_expansion_and_final_fusion_stages
 
 
 @pytest.mark.asyncio
+async def test_orchestrator_records_grounding_validation_trace():
+    answer_service = FakeAnswerService()
+    orchestrator = RetrievalOrchestrator(
+        chunk_service=FakeChunkSearchService(),
+        answer_service=answer_service,
+        reranker_service=FakeRerankerService(),
+        graph_expansion_service=FakeGraphExpansionService(),
+    )
+
+    result = await orchestrator.query(
+        "how many hadith in bukhari",
+        runtime=FakeRuntimeTool(),
+        profile=type("Profile", (), {"enable_rerank": False, "reranker_provider": "disabled"})(),
+        document_ids=["doc-1"],
+        variant_id="variant-1",
+        query_config={"limit": 8},
+    )
+
+    validation_trace = next(
+        trace for trace in result.chunk_traces if trace.get("stage") == "grounding_validation"
+    )
+    assert validation_trace["status"] in {"grounded", "failed"}
+    assert "available_labels" in validation_trace
+    assert result.validation == validation_trace
+
+
+@pytest.mark.asyncio
 async def test_orchestrator_surfaces_parser_quality_warnings_in_evidence_and_traces():
     answer_service = FakeAnswerService()
     orchestrator = RetrievalOrchestrator(
