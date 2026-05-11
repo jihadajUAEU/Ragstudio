@@ -78,7 +78,7 @@ class ChunkPersistenceService:
             extraction_quality=self._extraction_quality(metadata),
             source_location=sanitize_db_value(adapter_chunk.source_location),
             metadata_json=sanitize_db_value(metadata),
-            runtime_profile_id=runtime_profile_id,
+            runtime_profile_id=sanitize_db_value(runtime_profile_id),
             runtime_source_id=sanitize_db_value(
                 self._direct_or_metadata(
                     adapter_chunk.runtime_source_id,

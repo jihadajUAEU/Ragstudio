@@ -151,6 +151,7 @@ async def test_persist_chunks_prefers_direct_adapter_fields(tmp_path, database_u
             ],
             IndexDocumentIn(parser_mode="mineru_strict"),
             commit=True,
+            runtime_profile_id="profile\x00id",
         )
 
         persisted = await session.get(Chunk, chunks[0].id)
@@ -158,9 +159,11 @@ async def test_persist_chunks_prefers_direct_adapter_fields(tmp_path, database_u
     await engine.dispose()
 
     assert persisted is not None
+    assert persisted.runtime_profile_id == "profileid"
     assert persisted.runtime_source_id == "direct-source"
     assert persisted.content_type == "direct/content"
     assert persisted.preview_ref == "direct-preview"
+    assert chunks[0].runtime_profile_id == "profileid"
     assert chunks[0].runtime_source_id == "direct-source"
     assert chunks[0].content_type == "direct/content"
     assert chunks[0].preview_ref == "direct-preview"
