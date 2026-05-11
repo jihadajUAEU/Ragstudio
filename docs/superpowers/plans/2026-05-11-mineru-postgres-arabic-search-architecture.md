@@ -4,7 +4,7 @@
 
 **Goal:** Make Ragstudio's production document workflow MinerU-only, Postgres-only, and Arabic-searchable so words such as `وحنانا` retrieve validated Quran evidence instead of returning zero results.
 
-**Architecture:** Product indexing must fail closed unless MinerU returns validated extracted text. Postgres stores canonical chunks plus Arabic-normalized search material, while PGVector and Neo4j remain the semantic and graph stores. SQLite and local parser fallback are removed from product workflows at the API, UI, and job policy boundaries; legacy values may remain as migration/test compatibility types until each call site is converted and covered.
+**Architecture:** Product indexing must fail closed unless MinerU returns validated extracted text. Postgres stores canonical chunks plus Arabic-normalized search material, while PGVector and Neo4j remain the semantic and graph stores. SQLite and local parser fallback are not product dependencies and must not be used by runtime indexing, query execution, upload, reindex, settings, or UI flows. Temporary compatibility code may exist only for one-way migration cleanup and isolated tests, with explicit removal tasks.
 
 **Tech Stack:** FastAPI backend, SQLAlchemy async, Postgres with JSONB/GIN/pg_trgm/PGVector, MinerU sidecar API, Neo4j, pytest/pytest-asyncio, React/Vite.
 
@@ -14,11 +14,11 @@
 
 - Modify `backend/src/ragstudio/services/runtime_policy.py`
   - Product policy: only `postgres_pgvector_neo4j` storage and `mineru_strict` parser are valid for user-triggered indexing and query execution.
-  - Legacy fallback values are classified as `legacy_test_only` instead of silently normalized into product settings.
+  - Legacy fallback values are rejected at product boundaries and are not normalized into product settings.
 - Modify `backend/src/ragstudio/schemas/parsing.py`
   - Keep the broad parser literal temporarily for backwards-compatible request validation, but add product validators that reject non-`mineru_strict` modes on upload/reindex routes.
 - Modify `backend/src/ragstudio/schemas/runtime.py`
-  - Keep legacy enum values temporarily for persisted old rows, but product settings writes reject `fallback_local` and `fallback`.
+  - Remove product use of `fallback_local` and `fallback`; keep any legacy value handling inside migration-only code until cleanup is complete.
 - Modify `backend/src/ragstudio/services/document_parser_service.py`
   - Remove production fallback parsing path from `parse()`.
   - Keep the existing local parser only where tests construct it directly.
@@ -42,8 +42,17 @@
   - Apply the same MinerU validation, Arabic materialization, and quality gate to runtime-backed indexing.
 - Create `backend/src/ragstudio/services/chunk_lexical_search_repository.py`
   - Uses Postgres filters for Arabic token and normalized text retrieval before Python scoring.
+- Create `backend/src/ragstudio/services/retrieval_fusion.py`
+  - Combines Arabic lexical, reference metadata, PGVector semantic, reranker, and graph candidates with deterministic priority and Reciprocal Rank Fusion.
+- Modify `backend/src/ragstudio/services/retrieval_orchestrator.py`
+  - Treats Arabic single-token queries as exact lexical lookup before semantic retrieval.
+  - Adds fusion/eval traces for candidate source, rank, direct-match features, and final ordering.
 - Create `backend/src/ragstudio/services/index_quality_gate.py`
   - Probes persisted chunks for searchability and rejects failed indexes.
+- Create `backend/tests/test_rag_retrieval_fusion.py`
+  - Gates exact Arabic/reference candidates outranking broad semantic candidates.
+- Create `backend/tests/test_rag_evaluation_gates.py`
+  - Gates Precision@K, MRR, Recall@K, faithfulness, and latency traces for Quran cases.
 - Modify `backend/src/ragstudio/services/hybrid_chunk_search.py`
   - Score Arabic normalized exact token and phrase matches.
 - Modify `frontend/src/api/generated.ts`, `frontend/src/features/settings/settings-page.tsx`, and `frontend/src/features/documents/documents-page.tsx`
@@ -77,8 +86,8 @@ flowchart TD
 
 The first architecture direction was right, but the implementation plan needed tighter boundaries. These corrections are mandatory:
 
-1. **Do not remove legacy enum values in the first task.**
-   Existing rows, tests, generated frontend types, and migration helpers still mention `fallback`, `fallback_local`, `local_fallback`, and `mineru_with_fallback`. Removing the literals first creates a broad validation break before product behavior is safer. Instead, reject legacy values at product entry points first, then shrink types after tests and persisted rows are migrated.
+1. **Remove product fallback while preserving one-way migration safety.**
+   Existing rows, tests, generated frontend types, and migration helpers still mention `fallback`, `fallback_local`, `local_fallback`, and `mineru_with_fallback`. Runtime behavior must reject these immediately at product entry points. Any remaining references must be limited to migration cleanup or isolated tests and removed in the final cleanup task.
 
 2. **Enforce product policy at boundaries, not only in helpers.**
    The real gates are upload, reindex, runtime profile save, index lifecycle, and query readiness. `normalize_*()` helpers should not be the only line of defense.
@@ -89,14 +98,17 @@ The first architecture direction was right, but the implementation plan needed t
 4. **Postgres indexes must be used by search.**
    Adding columns and indexes is not enough if `ChunkService.search()` still loads every chunk and scores in Python. Add a small repository that runs a bounded Postgres lexical prefilter for Arabic exact/token queries, then apply existing scoring and fusion.
 
-5. **SQLite removal means no product dependency, not no test doubles.**
-   `make_engine()` already rejects non-Postgres metadata URLs. The tuned plan should remove SQLite from app/runtime docs and default flows, but tests can still use direct SQLAlchemy fixtures or fake repositories where they are not exercising product runtime configuration.
+5. **SQLite removal means no runtime dependency.**
+   `make_engine()` already rejects non-Postgres metadata URLs. The tuned plan removes SQLite from app/runtime docs, settings, upload, query, and index paths. Tests should use Postgres fixtures for storage behavior; fake repositories are acceptable only for unit tests that do not exercise database runtime behavior.
 
 6. **MinerU validation has two gates.**
    Extraction contract validation runs immediately after MinerU artifact normalization. Index quality validation runs after splitting/relationship annotation, before persistence and before the document becomes ready.
 
 7. **Arabic search must preserve original text.**
    Normalized fields are search aids only. Citations and UI must show original MinerU text, including diacritics, page/source metadata, and reference metadata.
+
+8. **RAG retrieval needs deterministic fusion and eval gates.**
+   Exact Arabic and reference evidence must outrank broad semantic candidates. The pipeline needs explicit fusion rules, Precision@K/MRR/Recall@K checks, faithfulness gates, and latency traces before browser smoke tests.
 
 ## Revised Implementation Order
 
@@ -106,10 +118,11 @@ Build this in safer order than the first draft:
 2. Add MinerU extraction and index quality validators.
 3. Materialize Arabic search fields in both `ChunkService` and `IndexLifecycleService`.
 4. Add Postgres lexical prefilter and hybrid scoring.
-5. Add product policy gates for upload/reindex/settings.
-6. Remove fallback options from UI/docs.
-7. Add Quran end-to-end gates.
-8. Only after the above passes, shrink public type unions and clean legacy rows.
+5. Add deterministic retrieval fusion and RAG eval gates.
+6. Add product policy gates for upload/reindex/settings.
+7. Remove fallback options from UI/docs.
+8. Add Quran end-to-end gates.
+9. Remove remaining legacy fallback/SQLite compatibility code after migration tests pass.
 
 ## Task 1: Product Policy Gates For Runtime And Parser
 
@@ -1212,6 +1225,317 @@ git add backend/src/ragstudio/services/chunk_lexical_search_repository.py backen
 git commit -m "feat: score arabic normalized lexical matches"
 ```
 
+## Task 6A: Hybrid Retrieval Fusion And RAG Evaluation Gates
+
+**Files:**
+- Create: `backend/src/ragstudio/services/retrieval_fusion.py`
+- Modify: `backend/src/ragstudio/services/retrieval_evidence.py`
+- Modify: `backend/src/ragstudio/services/retrieval_orchestrator.py`
+- Test: `backend/tests/test_rag_retrieval_fusion.py`
+- Test: `backend/tests/test_rag_evaluation_gates.py`
+
+- [ ] **Step 1: Write failing fusion priority tests**
+
+Create `backend/tests/test_rag_retrieval_fusion.py`:
+
+```python
+from ragstudio.services.retrieval_evidence import EvidenceCandidate
+from ragstudio.services.retrieval_fusion import RetrievalFusion
+
+
+def _candidate(tool, chunk_id, text, score, features=None, references=None):
+    return EvidenceCandidate(
+        candidate_id=f"{tool}:{chunk_id}",
+        text=text,
+        document_id="doc-quran",
+        chunk_id=chunk_id,
+        source_location={"page": 1},
+        metadata={"reference_metadata": {"references": references or []}},
+        tool=tool,
+        tool_rank=1,
+        base_score=score,
+        match_features=features or {},
+    )
+
+
+def test_exact_arabic_token_outranks_broad_semantic_match():
+    semantic = _candidate(
+        "pgvector",
+        "semantic-1",
+        "Allah guides people in many passages.",
+        0.91,
+    )
+    lexical = _candidate(
+        "arabic_lexical",
+        "quran-19-13",
+        "[19:13] وَحَنَانًا مِّن لَّدُنَّا وَزَكَاةً",
+        0.5,
+        features={"arabic_exact": True, "arabic_token": "وحنانا"},
+        references=["19:13"],
+    )
+
+    fused = RetrievalFusion().fuse([[semantic], [lexical]], limit=5)
+
+    assert fused[0].chunk_id == "quran-19-13"
+    assert "direct_arabic_match" in fused[0].reasons
+
+
+def test_exact_reference_outranks_exact_arabic_when_reference_requested():
+    reference = _candidate(
+        "reference_exact",
+        "quran-24-35",
+        "[24:35] Allah is the Light of the heavens and the earth.",
+        0.4,
+        features={"reference_exact": True},
+        references=["24:35"],
+    )
+    lexical = _candidate(
+        "arabic_lexical",
+        "quran-19-13",
+        "[19:13] وَحَنَانًا مِّن لَّدُنَّا",
+        0.8,
+        features={"arabic_exact": True},
+        references=["19:13"],
+    )
+
+    fused = RetrievalFusion().fuse([[lexical], [reference]], limit=5)
+
+    assert fused[0].chunk_id == "quran-24-35"
+    assert "exact_reference_match" in fused[0].reasons
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run:
+
+```bash
+uv run pytest backend/tests/test_rag_retrieval_fusion.py -v
+```
+
+Expected: FAIL with missing `ragstudio.services.retrieval_fusion`.
+
+- [ ] **Step 3: Implement deterministic fusion**
+
+Create `backend/src/ragstudio/services/retrieval_fusion.py`:
+
+```python
+from __future__ import annotations
+
+from dataclasses import replace
+
+from ragstudio.services.retrieval_evidence import EvidenceCandidate
+
+
+class RetrievalFusion:
+    def fuse(
+        self,
+        ranked_lists: list[list[EvidenceCandidate]],
+        *,
+        limit: int,
+    ) -> list[EvidenceCandidate]:
+        by_key: dict[str, EvidenceCandidate] = {}
+        scores: dict[str, float] = {}
+        tools: dict[str, list[str]] = {}
+
+        for ranked in ranked_lists:
+            for rank, candidate in enumerate(ranked, start=1):
+                key = _candidate_key(candidate)
+                if key not in by_key or _direct_priority(candidate) > _direct_priority(by_key[key]):
+                    by_key[key] = candidate
+                scores[key] = scores.get(key, 0.0) + 1.0 / (60 + rank)
+                tool_list = tools.setdefault(key, [])
+                if candidate.tool not in tool_list:
+                    tool_list.append(candidate.tool)
+
+        fused: list[EvidenceCandidate] = []
+        for key, candidate in by_key.items():
+            direct_boost, reason = _direct_boost(candidate)
+            metadata = {**candidate.metadata, "retrieval_passes": tools[key]}
+            reasons = [*candidate.reasons]
+            if reason:
+                reasons.append(reason)
+            fused.append(
+                replace(
+                    candidate,
+                    metadata=metadata,
+                    boost_score=candidate.boost_score + direct_boost,
+                    final_score=scores[key] + direct_boost + candidate.base_score,
+                    reasons=reasons,
+                )
+            )
+
+        return sorted(
+            fused,
+            key=lambda candidate: (
+                _direct_priority(candidate),
+                candidate.final_score,
+                -candidate.tool_rank,
+            ),
+            reverse=True,
+        )[:limit]
+
+
+def _candidate_key(candidate: EvidenceCandidate) -> str:
+    if candidate.chunk_id:
+        return f"chunk:{candidate.chunk_id}"
+    return f"text:{candidate.document_id}:{candidate.text.strip().casefold()}"
+
+
+def _direct_priority(candidate: EvidenceCandidate) -> int:
+    if candidate.match_features.get("reference_exact"):
+        return 100
+    if candidate.match_features.get("arabic_exact"):
+        return 90
+    if candidate.match_features.get("target_phrase"):
+        return 80
+    if candidate.tool == "pgvector":
+        return 20
+    return 10
+
+
+def _direct_boost(candidate: EvidenceCandidate) -> tuple[float, str | None]:
+    if candidate.match_features.get("reference_exact"):
+        return 100.0, "exact_reference_match"
+    if candidate.match_features.get("arabic_exact"):
+        return 90.0, "direct_arabic_match"
+    if candidate.match_features.get("target_phrase"):
+        return 80.0, "target_phrase_match"
+    return 0.0, None
+```
+
+- [ ] **Step 4: Route orchestrator candidate lists through fusion**
+
+In `backend/src/ragstudio/services/retrieval_orchestrator.py`, replace direct list concatenation for final candidate ordering with:
+
+```python
+fused = RetrievalFusion().fuse(
+    [
+        reference_candidates,
+        arabic_lexical_candidates,
+        metadata_candidates,
+        native_candidates,
+        graph_candidates,
+    ],
+    limit=plan.candidate_limit,
+)
+```
+
+If a candidate list does not exist yet in the current implementation, use an empty list and add the trace field anyway:
+
+```python
+{
+    "stage": "retrieval_fusion",
+    "reference_candidates": len(reference_candidates),
+    "arabic_lexical_candidates": len(arabic_lexical_candidates),
+    "metadata_candidates": len(metadata_candidates),
+    "native_candidates": len(native_candidates),
+    "graph_candidates": len(graph_candidates),
+    "fused_candidates": len(fused),
+}
+```
+
+- [ ] **Step 5: Write RAG evaluation gate tests**
+
+Create `backend/tests/test_rag_evaluation_gates.py`:
+
+```python
+from ragstudio.services.retrieval_evidence import EvidenceCandidate
+
+
+def _source(reference, chunk_id, rank):
+    return EvidenceCandidate(
+        candidate_id=f"test:{chunk_id}",
+        text=f"[{reference}] sample text",
+        document_id="doc-quran",
+        chunk_id=chunk_id,
+        source_location={"page": rank},
+        metadata={"reference_metadata": {"references": [reference]}},
+        tool="test",
+        tool_rank=rank,
+        base_score=1.0,
+        final_score=1.0,
+    )
+
+
+def precision_at_k(results, expected_reference, k):
+    top = results[:k]
+    return sum(_has_reference(item, expected_reference) for item in top) / max(len(top), 1)
+
+
+def reciprocal_rank(results, expected_reference):
+    for index, item in enumerate(results, start=1):
+        if _has_reference(item, expected_reference):
+            return 1 / index
+    return 0.0
+
+
+def _has_reference(candidate, expected_reference):
+    refs = candidate.metadata.get("reference_metadata", {}).get("references", [])
+    return expected_reference in refs
+
+
+def test_quran_arabic_word_gate_metrics():
+    results = [
+        _source("19:13", "quran-19-13", 1),
+        _source("19:12", "quran-19-12", 2),
+    ]
+
+    assert precision_at_k(results, "19:13", 5) >= 0.5
+    assert reciprocal_rank(results, "19:13") == 1.0
+
+
+def test_quran_light_reference_gate_metrics():
+    results = [
+        _source("24:35", "quran-24-35", 1),
+        _source("24:36", "quran-24-36", 2),
+    ]
+
+    assert precision_at_k(results, "24:35", 5) >= 0.5
+    assert reciprocal_rank(results, "24:35") == 1.0
+```
+
+- [ ] **Step 6: Add runtime eval expectations**
+
+Add these expected gates to experiment/evaluation docs or fixtures:
+
+```json
+[
+  {
+    "query": "وحنانا",
+    "expected_reference": "19:13",
+    "required_top_k": 5,
+    "preferred_top_1": true,
+    "must_include_original_text": "وَحَنَانًا",
+    "metrics": ["precision_at_5", "mrr"]
+  },
+  {
+    "query": "Find the verse that says Allah is the Light of the heavens and the earth. Summarize the image used",
+    "expected_reference": "24:35",
+    "required_top_k": 5,
+    "preferred_top_1": true,
+    "must_not_answer": "not included in the provided evidence",
+    "metrics": ["precision_at_5", "mrr", "faithfulness"]
+  }
+]
+```
+
+- [ ] **Step 7: Run fusion and eval tests**
+
+Run:
+
+```bash
+uv run pytest backend/tests/test_rag_retrieval_fusion.py backend/tests/test_rag_evaluation_gates.py -v
+```
+
+Expected: PASS.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add backend/src/ragstudio/services/retrieval_fusion.py backend/src/ragstudio/services/retrieval_evidence.py backend/src/ragstudio/services/retrieval_orchestrator.py backend/tests/test_rag_retrieval_fusion.py backend/tests/test_rag_evaluation_gates.py
+git commit -m "feat: add rag retrieval fusion gates"
+```
+
 ## Task 7: Index Quality Gate
 
 **Files:**
@@ -1698,7 +2022,131 @@ git add backend/tests/test_quran_arabic_search_gate.py
 git commit -m "test: gate quran arabic word search"
 ```
 
-## Task 11: Browser Smoke Test
+## Task 11: Remove Legacy SQLite And Fallback Compatibility
+
+**Files:**
+- Modify: `backend/src/ragstudio/services/runtime_policy.py`
+- Modify: `backend/src/ragstudio/schemas/parsing.py`
+- Modify: `backend/src/ragstudio/schemas/runtime.py`
+- Modify: `backend/src/ragstudio/db/engine.py`
+- Modify: `backend/tests/test_runtime_policy.py`
+- Modify: `backend/tests/test_db_engine.py`
+- Test: backend policy and database suites
+
+- [ ] **Step 1: Add final cleanup tests**
+
+Update `backend/tests/test_runtime_policy.py`:
+
+```python
+import pytest
+
+from ragstudio.services.runtime_policy import (
+    normalize_parser_mode,
+    normalize_runtime_mode,
+    normalize_storage_backend,
+)
+
+
+def test_legacy_fallback_values_are_no_longer_accepted_after_migration():
+    with pytest.raises(ValueError, match="fallback_local"):
+        normalize_storage_backend("fallback_local")
+    with pytest.raises(ValueError, match="fallback"):
+        normalize_runtime_mode("fallback", "postgres_pgvector_neo4j")
+    with pytest.raises(ValueError, match="local_fallback"):
+        normalize_parser_mode("local_fallback")
+    with pytest.raises(ValueError, match="mineru_with_fallback"):
+        normalize_parser_mode("mineru_with_fallback")
+```
+
+- [ ] **Step 2: Run cleanup test to verify it fails before type cleanup**
+
+Run:
+
+```bash
+uv run pytest backend/tests/test_runtime_policy.py::test_legacy_fallback_values_are_no_longer_accepted_after_migration -v
+```
+
+Expected: FAIL while compatibility values are still accepted.
+
+- [ ] **Step 3: Shrink runtime policy literals**
+
+In `backend/src/ragstudio/services/runtime_policy.py`, set:
+
+```python
+RuntimeMode = Literal["runtime", "degraded"]
+StorageBackend = Literal["postgres_pgvector_neo4j"]
+ParserMode = Literal["mineru_strict"]
+EmbeddingProvider = Literal["vllm_openai"]
+
+VALID_RUNTIME_MODES = {"runtime", "degraded"}
+VALID_STORAGE_BACKENDS = {"postgres_pgvector_neo4j"}
+VALID_PARSER_MODES = {"mineru_strict"}
+VALID_EMBEDDING_PROVIDERS = {"vllm_openai"}
+```
+
+Change normalizers to raise on removed fallback values:
+
+```python
+def normalize_storage_backend(value: str | None) -> StorageBackend:
+    if value == "fallback_local":
+        raise ValueError("fallback_local has been removed from product runtime")
+    if value in VALID_STORAGE_BACKENDS:
+        return cast(StorageBackend, value)
+    return DEFAULT_STORAGE_BACKEND
+```
+
+Apply the same pattern for `fallback`, `local_fallback`, and `mineru_with_fallback`.
+
+- [ ] **Step 4: Shrink public schemas**
+
+In `backend/src/ragstudio/schemas/parsing.py`:
+
+```python
+ParserMode = Literal["mineru_strict"]
+```
+
+In `backend/src/ragstudio/schemas/runtime.py`:
+
+```python
+RuntimeMode = Literal["runtime", "degraded"]
+RuntimeOverallStatus = Literal["ready", "degraded", "failed"]
+StorageBackend = Literal["postgres_pgvector_neo4j"]
+```
+
+- [ ] **Step 5: Remove fallback normalization from database startup**
+
+In `backend/src/ragstudio/db/engine.py`, remove SQL branches that set:
+
+```text
+storage_backend = 'fallback_local'
+runtime_mode = 'fallback'
+```
+
+Keep only migration SQL that converts old values to product defaults:
+
+```text
+storage_backend = 'postgres_pgvector_neo4j'
+runtime_mode = 'runtime'
+```
+
+- [ ] **Step 6: Run cleanup suites**
+
+Run:
+
+```bash
+uv run pytest backend/tests/test_runtime_policy.py backend/tests/test_db_engine.py backend/tests/test_documents.py backend/tests/test_settings.py -v
+```
+
+Expected: PASS with no product fallback values accepted.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add backend/src/ragstudio/services/runtime_policy.py backend/src/ragstudio/schemas/parsing.py backend/src/ragstudio/schemas/runtime.py backend/src/ragstudio/db/engine.py backend/tests/test_runtime_policy.py backend/tests/test_db_engine.py backend/tests/test_documents.py backend/tests/test_settings.py
+git commit -m "feat: remove legacy fallback runtime compatibility"
+```
+
+## Task 12: Browser Smoke Test
 
 **Files:**
 - No code changes expected.
@@ -1780,15 +2228,18 @@ Expected:
 
 - Spec coverage:
   - MinerU-only extraction: Tasks 1-3 and 8.
-  - Postgres-only storage: Tasks 1, 5, 8, 9, and 11.
+  - Postgres-only storage with no SQLite product dependency: Tasks 1, 5, 8, 9, 11, and 12.
   - Arabic normalization: Tasks 4-6.
-  - Search quality gate for `وحنانا`: Tasks 7, 10, and 11.
+  - Hybrid retrieval fusion and RAG eval: Task 6A.
+  - Search quality gate for `وحنانا`: Tasks 6A, 7, 10, and 12.
   - UI/docs removal of fallback choices: Task 8.
+  - Final fallback/SQLite cleanup: Task 9, Task 11, and Task 12 verification.
 - Marker scan:
   - No unresolved task markers or cross-task shorthand remain.
 - Type consistency:
-  - `ParserMode` is `Literal["mineru_strict"]`.
-  - `StorageBackend` is `Literal["postgres_pgvector_neo4j"]`.
+  - Product route validators accept only `parser_mode="mineru_strict"`.
+  - Product settings validators accept only `storage_backend="postgres_pgvector_neo4j"` and runtime/degraded runtime modes.
   - `normalize_arabic_text()`, `arabic_tokens()`, and `arabic_query_variants()` are used by chunk persistence and search scoring.
+  - `RetrievalFusion.fuse()` receives ranked candidate lists and returns direct-evidence-first fused candidates.
   - `MinerUExtractionValidator.validate()` returns `MinerUExtractionReport`.
   - `IndexQualityGate.validate_adapter_chunks()` returns a dict report or raises `IndexQualityGateError`.
