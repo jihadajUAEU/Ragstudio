@@ -190,15 +190,25 @@ class RetrievalOrchestrator:
             )
             fused = self.retrieval_fusion.fuse([legacy_fused], limit=plan.candidate_limit)
             timings["final_fusion_ms"] = _elapsed_ms(refusion_started)
-            traces.append(
-                {
-                    "stage": "final_fusion",
-                    "compat_stage": "retrieval_fusion",
-                    "native_candidates": len(native_candidates),
-                    "metadata_candidates": len(metadata_candidates),
-                    "graph_candidates": len(graph_candidates),
-                    "fused_candidates": len(fused),
-                }
+            final_fusion_detail = {
+                "native_candidates": len(native_candidates),
+                "metadata_candidates": len(metadata_candidates),
+                "graph_candidates": len(graph_candidates),
+                "fused_candidates": len(fused),
+            }
+            traces.extend(
+                [
+                    {
+                        "stage": "final_fusion",
+                        "compat_stage": "retrieval_fusion",
+                        **final_fusion_detail,
+                    },
+                    {
+                        "stage": "retrieval_fusion",
+                        "canonical_stage": "final_fusion",
+                        **final_fusion_detail,
+                    },
+                ]
             )
             observability.record_stage(
                 "final_fusion",

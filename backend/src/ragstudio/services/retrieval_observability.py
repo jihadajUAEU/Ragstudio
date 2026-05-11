@@ -21,7 +21,19 @@ class RetrievalObservability:
             "latency_ms": latency_ms,
         }
         if detail:
-            item.update(detail)
+            reserved_keys = set(item)
+            item.update(
+                {
+                    key: value
+                    for key, value in detail.items()
+                    if key not in reserved_keys
+                }
+            )
+            reserved_detail = {
+                key: value for key, value in detail.items() if key in reserved_keys
+            }
+            if reserved_detail:
+                item["reserved_detail_conflicts"] = reserved_detail
         self.trace["stages"].append(item)
 
     def cache_decision(

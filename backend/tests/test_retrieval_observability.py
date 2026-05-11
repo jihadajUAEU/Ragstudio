@@ -29,6 +29,33 @@ def test_retrieval_trace_records_stage_counts_and_latency():
     assert obs.trace["stages"][1]["compat_stage"] == "retrieval_fusion"
 
 
+def test_record_stage_detail_cannot_overwrite_required_keys():
+    obs = RetrievalObservability()
+
+    obs.record_stage(
+        "final_fusion",
+        candidate_count=3,
+        latency_ms=4.5,
+        detail={
+            "stage": "retrieval_fusion",
+            "candidate_count": 999,
+            "latency_ms": 0,
+            "compat_stage": "retrieval_fusion",
+        },
+    )
+
+    stage = obs.trace["stages"][0]
+    assert stage["stage"] == "final_fusion"
+    assert stage["candidate_count"] == 3
+    assert stage["latency_ms"] == 4.5
+    assert stage["compat_stage"] == "retrieval_fusion"
+    assert stage["reserved_detail_conflicts"] == {
+        "stage": "retrieval_fusion",
+        "candidate_count": 999,
+        "latency_ms": 0,
+    }
+
+
 def test_cache_key_includes_index_profile_dimension_and_reranker_state():
     key = retrieval_cache_key(
         query="وحنانا",

@@ -597,11 +597,8 @@ async def test_orchestrator_fuses_native_metadata_and_graph_before_answering():
     assert result.timings["native_stage_ms"] >= 0
     assert result.timings["graph_hydration_ms"] >= 0
     assert any(trace.get("stage") == "planner" for trace in result.chunk_traces)
-    assert any(
-        trace.get("stage") == "final_fusion"
-        or trace.get("compat_stage") == "retrieval_fusion"
-        for trace in result.chunk_traces
-    )
+    assert any(trace.get("stage") == "final_fusion" for trace in result.chunk_traces)
+    assert any(trace.get("stage") == "retrieval_fusion" for trace in result.chunk_traces)
     context_trace = next(
         trace for trace in result.chunk_traces if trace.get("stage") == "context_assembly"
     )
@@ -645,9 +642,15 @@ async def test_orchestrator_emits_primary_seed_expansion_and_final_fusion_stages
     assert "seed_fusion" in stages
     assert "graph_expansion" in stages
     assert "final_fusion" in stages
+    assert "retrieval_fusion" in stages
     assert any(
         trace.get("stage") == "final_fusion"
         and trace.get("compat_stage") == "retrieval_fusion"
+        for trace in result.chunk_traces
+    )
+    assert any(
+        trace.get("stage") == "retrieval_fusion"
+        and trace.get("canonical_stage") == "final_fusion"
         for trace in result.chunk_traces
     )
     assert result.error is None
