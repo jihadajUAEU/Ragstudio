@@ -211,9 +211,38 @@ class IndexLifecycleService:
         if runtime_result.status == "skipped":
             reason = runtime_result.warning or "Runtime enrichment skipped."
             await self._mark_runtime_index_failed(document.id, profile.id, reason)
+            projection_record = await self._record_skipped_graph_projection(
+                document.id,
+                profile,
+                reason,
+            )
             return IndexLifecycleResult(
                 chunks=chunks,
-                graph_projection_record_id=None,
+                graph_projection_record_id=projection_record.id,
+                graph_materialization={
+                    "status": "skipped",
+                    "node_count": 0,
+                    "edge_count": 0,
+                    "reason": reason,
+                },
+            )
+
+        runtime_chunk_count = len(runtime_result.value or [])
+        canonical_chunk_count = len(chunks)
+        if runtime_chunk_count != canonical_chunk_count:
+            reason = (
+                f"Runtime enrichment produced {runtime_chunk_count} chunks for "
+                f"{canonical_chunk_count} canonical chunks."
+            )
+            await self._mark_runtime_index_failed(document.id, profile.id, reason)
+            projection_record = await self._record_skipped_graph_projection(
+                document.id,
+                profile,
+                reason,
+            )
+            return IndexLifecycleResult(
+                chunks=chunks,
+                graph_projection_record_id=projection_record.id,
                 graph_materialization={
                     "status": "skipped",
                     "node_count": 0,
@@ -341,6 +370,28 @@ class IndexLifecycleService:
             record.status = StageStatus.FAILED.value
             record.error = reason
         await self.session.commit()
+
+    async def _record_skipped_graph_projection(
+        self,
+        document_id: str,
+        profile: Any,
+        reason: str,
+    ) -> GraphProjectionRecord:
+        projection_record = GraphProjectionRecord(
+            document_id=document_id,
+            runtime_profile_id=profile.id,
+            status="skipped",
+            graph_workspace_label=workspace_label(profile),
+            graph_storage_uri=profile.neo4j_uri,
+            graph_storage_username=profile.neo4j_username,
+            graph_storage_password=None,
+            node_count=0,
+            edge_count=0,
+            error=reason,
+        )
+        self.session.add(projection_record)
+        await self.session.flush()
+        return projection_record
 
     def _quality_language(self, metadata: DomainMetadata) -> str:
         values = [
