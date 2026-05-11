@@ -1,0 +1,42 @@
+from __future__ import annotations
+
+import asyncio
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
+from typing import Any
+
+
+@dataclass(frozen=True)
+class IndexStageBranch:
+    name: str
+    run: Callable[[], Awaitable[Any]]
+    critical: bool
+
+
+@dataclass(frozen=True)
+class StageBranchResult:
+    status: str
+    value: Any = None
+    warning: str | None = None
+
+
+class IndexStageScheduler:
+    def __init__(self, *, max_parallel_branches: int = 2):
+        self._semaphore = asyncio.Semaphore(max_parallel_branches)
+
+    async def run(self, branches: list[IndexStageBranch]) -> dict[str, StageBranchResult]:
+        async def run_branch(branch: IndexStageBranch) -> tuple[str, StageBranchResult]:
+            async with self._semaphore:
+                try:
+                    value = await branch.run()
+                except Exception as exc:
+                    if branch.critical:
+                        raise
+                    return branch.name, StageBranchResult(
+                        status="skipped",
+                        warning=str(exc),
+                    )
+                return branch.name, StageBranchResult(status="succeeded", value=value)
+
+        pairs = await asyncio.gather(*(run_branch(branch) for branch in branches))
+        return dict(pairs)
