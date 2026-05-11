@@ -1,11 +1,10 @@
 import asyncio
 
 import pytest
-
 from ragstudio.services.index_stage_scheduler import (
-    StageBranchResult,
     IndexStageBranch,
     IndexStageScheduler,
+    StageBranchResult,
 )
 
 
