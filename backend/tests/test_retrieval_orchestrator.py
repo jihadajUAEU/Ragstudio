@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 from ragstudio.schemas.chunks import ChunkOut
 from ragstudio.services.retrieval_evidence import (
@@ -194,9 +196,20 @@ class FailingRuntimeTool:
         )
 
 
+class SlowRuntimeTool:
+    async def query(self, query, *, document_ids, query_config):
+        await asyncio.sleep(1)
+        return RuntimeQueryResult(answer="late", sources=[])
+
+
 class ExplodingNativeRuntimeTool:
     async def query(self, query, *, document_ids, query_config):
         raise RuntimeError("native query crashed")
+
+
+class NativeSearchShouldNotRun:
+    async def query(self, query, *, document_ids, query_config):
+        raise AssertionError("native search should not run")
 
 
 class ExplodingChunkSearchService:
@@ -328,7 +341,7 @@ async def test_orchestrator_fuses_native_metadata_and_graph_before_answering():
 
 
 @pytest.mark.asyncio
-async def test_orchestrator_preserves_runtime_query_errors():
+async def test_orchestrator_degrades_runtime_query_errors_to_metadata():
     answer_service = FakeAnswerService()
     orchestrator = RetrievalOrchestrator(
         chunk_service=FakeChunkSearchService(),
@@ -346,13 +359,105 @@ async def test_orchestrator_preserves_runtime_query_errors():
         query_config={"limit": 8},
     )
 
-    assert result.answer == ""
-    assert result.error == "runtime exploded"
-    assert result.error_type == "runtime_query_error"
-    assert result.sources == []
+    assert result.answer == "Sahih al-Bukhari contains 7277 hadith."
+    assert result.error is None
+    assert any(source["metadata"]["retrieval_tool"] == "metadata" for source in result.sources)
     assert result.timings["runtime_query_ms"] == 4
+    assert result.timings["native_degraded"] is True
+    assert result.timings["native_error_type"] == "runtime_query_error"
+    assert result.timings["native_error"] == "runtime exploded"
     assert result.timings["metadata_ms"] >= 0
-    assert answer_service.called is False
+    retrieval_trace = next(
+        trace for trace in result.chunk_traces if trace["stage"] == "retrieval"
+    )
+    assert retrieval_trace["native_status"] == "degraded"
+    assert answer_service.called is True
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_skips_native_when_metadata_only_requested():
+    answer_service = FakeAnswerService()
+    chunk_service = FakeChunkSearchService()
+    orchestrator = RetrievalOrchestrator(
+        chunk_service=chunk_service,
+        answer_service=answer_service,
+        reranker_service=FakeRerankerService(),
+        graph_expansion_service=FakeGraphExpansionService(),
+    )
+
+    result = await orchestrator.query(
+        "show Quran 1:5",
+        runtime=NativeSearchShouldNotRun(),
+        profile=type("Profile", (), {"enable_rerank": False, "reranker_provider": "disabled"})(),
+        document_ids=["doc-1"],
+        variant_id="variant-1",
+        query_config={"limit": 8, "reference_query_mode": "exact"},
+    )
+
+    assert result.answer == "Sahih al-Bukhari contains 7277 hadith."
+    assert chunk_service.calls == 1
+    assert "native_stage_ms" not in result.timings
+    retrieval_trace = next(
+        trace for trace in result.chunk_traces if trace["stage"] == "retrieval"
+    )
+    assert retrieval_trace["native_status"] == "skipped"
+    assert retrieval_trace["metadata_candidates"] == 1
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_degrades_native_timeout_to_metadata():
+    answer_service = FakeAnswerService()
+    orchestrator = RetrievalOrchestrator(
+        chunk_service=FakeChunkSearchService(),
+        answer_service=answer_service,
+        reranker_service=FakeRerankerService(),
+        graph_expansion_service=FakeGraphExpansionService(),
+    )
+
+    result = await orchestrator.query(
+        "how many hadith in bukhari",
+        runtime=SlowRuntimeTool(),
+        profile=type("Profile", (), {"enable_rerank": False, "reranker_provider": "disabled"})(),
+        document_ids=["doc-1"],
+        variant_id="variant-1",
+        query_config={"limit": 8, "native_query_timeout_ms": 1},
+    )
+
+    assert result.answer == "Sahih al-Bukhari contains 7277 hadith."
+    assert result.error is None
+    assert result.timings["native_degraded"] is True
+    assert result.timings["native_error_type"] == "native_query_timeout"
+    assert "timed out" in result.timings["native_error"]
+    assert result.timings["metadata_ms"] >= 0
+    assert answer_service.called is True
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_degrades_thrown_native_exception_to_metadata():
+    answer_service = FakeAnswerService()
+    orchestrator = RetrievalOrchestrator(
+        chunk_service=FakeChunkSearchService(),
+        answer_service=answer_service,
+        reranker_service=FakeRerankerService(),
+        graph_expansion_service=FakeGraphExpansionService(),
+    )
+
+    result = await orchestrator.query(
+        "how many hadith in bukhari",
+        runtime=ExplodingNativeRuntimeTool(),
+        profile=type("Profile", (), {"enable_rerank": False, "reranker_provider": "disabled"})(),
+        document_ids=["doc-1"],
+        variant_id="variant-1",
+        query_config={"limit": 8},
+    )
+
+    assert result.answer == "Sahih al-Bukhari contains 7277 hadith."
+    assert result.error is None
+    assert result.timings["native_degraded"] is True
+    assert result.timings["native_error_type"] == "RuntimeError"
+    assert result.timings["native_error"] == "native query crashed"
+    assert result.timings["metadata_ms"] >= 0
+    assert answer_service.called is True
 
 
 @pytest.mark.asyncio
@@ -541,7 +646,7 @@ async def test_orchestrator_preserves_native_context_when_both_retrieval_paths_f
 
 
 @pytest.mark.asyncio
-async def test_orchestrator_preserves_scoped_native_unsupported_when_metadata_cannot_degrade():
+async def test_orchestrator_degrades_scoped_native_unsupported_after_metadata_search():
     answer_service = FakeAnswerService()
     chunk_service = FakeChunkSearchService()
     orchestrator = RetrievalOrchestrator(
@@ -564,16 +669,18 @@ async def test_orchestrator_preserves_scoped_native_unsupported_when_metadata_ca
         query_config={"limit": 8},
     )
 
-    assert result.answer == ""
-    assert result.error_type == "native_document_scope_unsupported"
-    assert result.error == "native scoped unsupported"
+    assert result.answer == "Sahih al-Bukhari contains 7277 hadith."
+    assert result.error is None
     assert result.timings["runtime_query_ms"] == 7
     assert result.timings["native_scoped_query"] is True
     assert result.timings["native_stage_ms"] >= 0
     assert result.timings["metadata_ms"] >= 0
+    assert result.timings["native_degraded"] is True
+    assert result.timings["native_error_type"] == "native_document_scope_unsupported"
+    assert result.timings["native_error"] == "native scoped unsupported"
     assert "metadata_error_type" not in result.timings
     assert chunk_service.calls == 1
-    assert answer_service.called is False
+    assert answer_service.called is True
 
 
 @pytest.mark.asyncio

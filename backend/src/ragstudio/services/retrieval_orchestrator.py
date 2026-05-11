@@ -5,7 +5,6 @@ from time import perf_counter
 from typing import Any
 
 from ragstudio.schemas.chunks import ChunkOut, ChunkSearchIn
-from ragstudio.services.arabic_text import arabic_tokens
 from ragstudio.services.chunk_service import ChunkService
 from ragstudio.services.graph_expansion_service import GraphExpansionService
 from ragstudio.services.reranker_service import RerankerService
@@ -172,8 +171,27 @@ class RetrievalOrchestrator:
         timings: dict[str, Any],
     ) -> tuple[list[EvidenceCandidate], list[EvidenceCandidate], dict[str, Any]]:
         parallel_started = perf_counter()
-        native_task = self._timed_native_candidates(query, runtime, document_ids, query_config)
         if document_ids:
+            if _metadata_only(query_config):
+                metadata_candidates, metadata_ms = await self._timed_metadata_candidates(
+                    query,
+                    document_ids,
+                    variant_id,
+                    plan.candidate_limit,
+                )
+                timings["metadata_ms"] = metadata_ms
+                timings["parallel_retrieval_ms"] = _elapsed_ms(parallel_started)
+                return (
+                    [],
+                    metadata_candidates,
+                    {
+                        "stage": "retrieval",
+                        "native_status": "skipped",
+                        "native_candidates": 0,
+                        "metadata_candidates": len(metadata_candidates),
+                    },
+                )
+            native_task = self._timed_native_candidates(query, runtime, document_ids, query_config)
             try:
                 native_result = await native_task
             except Exception as exc:
@@ -188,6 +206,7 @@ class RetrievalOrchestrator:
                 native_result,
             )
 
+        native_task = self._timed_native_candidates(query, runtime, document_ids, query_config)
         metadata_task = self._timed_metadata_candidates(
             query,
             document_ids,
@@ -266,24 +285,16 @@ class RetrievalOrchestrator:
         native_candidates: list[EvidenceCandidate] = []
         native_status = "ok"
         if isinstance(native_result, Exception):
-            if self._can_degrade_native_failure(plan, metadata_candidates):
-                native_status = "failed_degraded"
-                timings["native_degraded"] = True
-                timings["native_error_type"] = getattr(
-                    native_result,
-                    "error_type",
-                    native_result.__class__.__name__,
-                )
-                if isinstance(native_result, NativeRuntimeQueryFailed):
-                    timings.update(native_result.timings)
-            elif isinstance(native_result, NativeRuntimeQueryFailed):
-                raise NativeRuntimeQueryFailed(
-                    native_result.error,
-                    native_result.error_type,
-                    {**timings, **native_result.timings},
-                ) from native_result
+            native_status = "degraded"
+            if isinstance(native_result, NativeRuntimeQueryFailed):
+                timings.update(native_result.timings)
+                timings["native_error_type"] = native_result.error_type
+                timings["native_error"] = native_result.error
             else:
-                raise native_result
+                timings["native_error_type"] = native_result.__class__.__name__
+                timings["native_error"] = str(native_result)
+            timings["native_degraded"] = True
+            native_candidates = []
         else:
             native_candidates, _native_timings = native_result
 
@@ -297,17 +308,6 @@ class RetrievalOrchestrator:
                 "metadata_candidates": len(metadata_candidates),
             },
         )
-
-    def _can_degrade_native_failure(
-        self,
-        plan: Any,
-        metadata_candidates: list[EvidenceCandidate],
-    ) -> bool:
-        if not metadata_candidates:
-            return False
-        if getattr(plan, "intent", None) == "reference":
-            return True
-        return bool(arabic_tokens(getattr(plan, "query", "")))
 
     async def _safe_graph_expansion(
         self,
@@ -402,8 +402,20 @@ class RetrievalOrchestrator:
         query_config: dict[str, Any],
     ) -> tuple[list[EvidenceCandidate], dict[str, Any]]:
         started = perf_counter()
-        result = await runtime.query(query, document_ids=document_ids, query_config=query_config)
+        timeout_ms = int(query_config.get("native_query_timeout_ms") or 15_000)
         native_timings = {"native_stage_ms": _elapsed_ms(started)}
+        try:
+            result = await asyncio.wait_for(
+                runtime.query(query, document_ids=document_ids, query_config=query_config),
+                timeout=max(timeout_ms, 1) / 1000,
+            )
+        except TimeoutError as exc:
+            native_timings["native_stage_ms"] = _elapsed_ms(started)
+            raise NativeRuntimeQueryFailed(
+                f"Native query timed out after {timeout_ms} ms.",
+                "native_query_timeout",
+                native_timings,
+            ) from exc
         result_timings = getattr(result, "timings", None)
         if isinstance(result_timings, dict):
             native_timings.update(result_timings)
@@ -591,6 +603,12 @@ class RetrievalOrchestrator:
 
 def _dict_or_empty(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
+
+
+def _metadata_only(query_config: dict[str, Any]) -> bool:
+    retrieval_mode = str(query_config.get("retrieval_mode") or "").casefold()
+    reference_mode = str(query_config.get("reference_query_mode") or "").casefold()
+    return retrieval_mode == "metadata" or reference_mode in {"exact", "lexical"}
 
 
 def _str_or_none(value: Any) -> str | None:

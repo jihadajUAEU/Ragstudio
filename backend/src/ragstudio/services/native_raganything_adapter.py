@@ -391,16 +391,21 @@ class NativeRAGAnythingAdapter:
         openai_module = import_module("lightrag.llm.openai")
         utils_module = import_module("lightrag.utils")
 
-        llm_func = partial(
-            openai_module.openai_complete_if_cache,
-            model=self.profile.llm_model,
-            base_url=self.profile.llm_base_url,
-            api_key=self._openai_client_api_key(
-                self.profile.llm_api_key,
-                self.profile.llm_base_url,
-            ),
-            timeout=self.profile.llm_timeout_ms / 1000,
-        )
+        async def llm_func(prompt: str, *args: Any, **kwargs: Any) -> str:
+            kwargs.pop("model", None)
+            return await openai_module.openai_complete_if_cache(
+                self.profile.llm_model,
+                prompt,
+                *args,
+                base_url=self.profile.llm_base_url,
+                api_key=self._openai_client_api_key(
+                    self.profile.llm_api_key,
+                    self.profile.llm_base_url,
+                ),
+                timeout=self.profile.llm_timeout_ms / 1000,
+                **kwargs,
+            )
+
         embedding_impl = getattr(openai_module.openai_embed, "func", openai_module.openai_embed)
         embedding_func = utils_module.EmbeddingFunc(
             embedding_dim=self.profile.embedding_dimensions,
@@ -418,16 +423,20 @@ class NativeRAGAnythingAdapter:
         )
         vision_func = None
         if self.profile.vision_base_url or "vision" in self.profile.llm_capabilities:
-            vision_func = partial(
-                openai_module.openai_complete_if_cache,
-                model=self.profile.vision_model or self.profile.llm_model,
-                base_url=self.profile.vision_base_url or self.profile.llm_base_url,
-                api_key=self._openai_client_api_key(
-                    self.profile.vision_api_key or self.profile.llm_api_key,
-                    self.profile.vision_base_url or self.profile.llm_base_url,
-                ),
-                timeout=self.profile.vision_timeout_ms / 1000,
-            )
+            async def vision_func(prompt: str, *args: Any, **kwargs: Any) -> str:
+                kwargs.pop("model", None)
+                return await openai_module.openai_complete_if_cache(
+                    self.profile.vision_model or self.profile.llm_model,
+                    prompt,
+                    *args,
+                    base_url=self.profile.vision_base_url or self.profile.llm_base_url,
+                    api_key=self._openai_client_api_key(
+                        self.profile.vision_api_key or self.profile.llm_api_key,
+                        self.profile.vision_base_url or self.profile.llm_base_url,
+                    ),
+                    timeout=self.profile.vision_timeout_ms / 1000,
+                    **kwargs,
+                )
 
         config = rag_config_module.RAGAnythingConfig(
             working_dir=str(self.profile.runtime_working_dir),

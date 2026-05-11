@@ -11,6 +11,8 @@ from ragstudio.services.native_raganything_adapter import (
     ScopedVectorStorageProxy,
 )
 
+OPENAI_CALLS: list[dict] = []
+
 
 def profile(**overrides):
     data = {
@@ -233,6 +235,7 @@ class FakeLightRAG:
 @pytest.fixture(autouse=True)
 def fake_upstream(monkeypatch):
     FakeRAGAnything.instances.clear()
+    OPENAI_CALLS.clear()
 
     def fake_import(name):
         if name == "raganything":
@@ -241,6 +244,7 @@ def fake_upstream(monkeypatch):
             return SimpleNamespace(RAGAnythingConfig=FakeConfig)
         if name == "lightrag.llm.openai":
             async def fake_call(*args, **kwargs):
+                OPENAI_CALLS.append({"args": args, "kwargs": kwargs})
                 return "ok"
 
             return SimpleNamespace(
@@ -550,7 +554,8 @@ def test_native_adapter_reports_scoped_query_capability(tmp_path):
     )
 
 
-def test_native_adapter_supplies_placeholder_api_key_for_local_openai_compatible_endpoints(
+@pytest.mark.asyncio
+async def test_native_adapter_supplies_placeholder_api_key_for_local_openai_compatible_endpoints(
     tmp_path,
 ):
     runtime_profile = profile(
@@ -571,10 +576,17 @@ def test_native_adapter_supplies_placeholder_api_key_for_local_openai_compatible
     embedding_wrapper = rag.kwargs["embedding_func"]
     embedding_func = embedding_wrapper.kwargs["func"]
     vision_func = rag.kwargs["vision_model_func"]
-    assert llm_func.keywords["api_key"] == "unused"
+
+    assert await llm_func("hello", model="runtime-overrides-are-ignored") == "ok"
+    assert await vision_func("look", model="runtime-overrides-are-ignored") == "ok"
+    assert OPENAI_CALLS[0]["args"][:2] == ("gpt-4o", "hello")
+    assert OPENAI_CALLS[0]["kwargs"]["api_key"] == "unused"
+    assert "model" not in OPENAI_CALLS[0]["kwargs"]
     assert embedding_func.keywords["api_key"] == "unused"
     assert embedding_wrapper.kwargs["send_dimensions"] is True
-    assert vision_func.keywords["api_key"] == "unused"
+    assert OPENAI_CALLS[1]["args"][:2] == ("gpt-4o", "look")
+    assert OPENAI_CALLS[1]["kwargs"]["api_key"] == "unused"
+    assert "model" not in OPENAI_CALLS[1]["kwargs"]
 
 
 @pytest.mark.asyncio

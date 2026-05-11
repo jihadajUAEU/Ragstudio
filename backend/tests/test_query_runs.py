@@ -1,5 +1,5 @@
 import pytest
-from ragstudio.db.models import Document, IndexRecord, SettingsProfile, Variant
+from ragstudio.db.models import Chunk, Document, IndexRecord, SettingsProfile, Variant
 from ragstudio.schemas.common import StageStatus
 from ragstudio.schemas.runtime import RuntimeHealthCheck
 from ragstudio.services.runtime_profile_service import RuntimeProfileService
@@ -174,7 +174,7 @@ async def test_query_route_uses_runtime_profile_when_configured(client, monkeypa
 
 
 @pytest.mark.asyncio
-async def test_query_route_fails_unsupported_scoped_native_query(client, monkeypatch):
+async def test_query_route_degrades_unsupported_scoped_native_query(client, monkeypatch):
     runtime_result = RuntimeQueryResult(
         answer="",
         sources=[],
@@ -200,6 +200,10 @@ async def test_query_route_fails_unsupported_scoped_native_query(client, monkeyp
     monkeypatch.setattr(
         "ragstudio.services.query_service.RuntimeHealthService",
         PassingHealthService,
+    )
+    monkeypatch.setattr(
+        "ragstudio.services.retrieval_orchestrator.RuntimeAnswerService",
+        FakeRuntimeAnswerService,
     )
     app = client._transport.app
     async with app.state.session_factory() as session:
@@ -239,31 +243,43 @@ async def test_query_route_fails_unsupported_scoped_native_query(client, monkeyp
                 chunk_count=1,
             )
         )
+        session.add(
+            Chunk(
+                document_id=document.id,
+                text="Sahih al-Bukhari 7277 Hadith Collection",
+                source_location={"page": 1},
+                metadata_json={"runtime_profile_id": "default"},
+                runtime_profile_id="default",
+            )
+        )
         await session.commit()
         document_id = document.id
         variant_id = variant.id
 
     response = await client.post(
         "/api/query",
-        json={
-            "query": "scoped runtime?",
-            "document_ids": [document_id],
-            "variant_ids": [variant_id],
-        },
+            json={
+                "query": "how many hadith in bukhari",
+                "document_ids": [document_id],
+                "variant_ids": [variant_id],
+            },
     )
 
     assert response.status_code == 200
     run = response.json()["runs"][0]
-    assert run["status"] == "failed"
-    assert run["error_type"] == "native_document_scope_unsupported"
-    assert "full_doc_id filtering" in run["error"]
-    assert run["answer"] == ""
-    assert run["sources"] == []
-    assert run["chunk_traces"] == []
+    assert run["status"] == "succeeded"
+    assert run["error_type"] is None
+    assert run["error"] is None
+    assert run["answer"] == "runtime route: how many hadith in bukhari"
+    assert run["sources"]
+    assert run["chunk_traces"]
     assert run["timings"]["runtime_query_ms"] == 7
     assert run["timings"]["native_scoped_query"] is True
     assert run["timings"]["native_stage_ms"] >= 0
     assert run["timings"]["metadata_ms"] >= 0
+    assert run["timings"]["native_degraded"] is True
+    assert run["timings"]["native_error_type"] == "native_document_scope_unsupported"
+    assert "full_doc_id filtering" in run["timings"]["native_error"]
     removed_timing_key = "scoped_runtime" + "_fallback"
     assert removed_timing_key not in run["timings"]
 

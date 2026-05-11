@@ -195,7 +195,7 @@ async def test_query_service_uses_runtime_orchestrator_path(client):
 
 
 @pytest.mark.asyncio
-async def test_query_service_records_native_scope_limitation_as_failed_run(client):
+async def test_query_service_degrades_native_scope_limitation_to_metadata(client):
     app = client._transport.app
     runtime = FakeRuntime(
         RuntimeQueryResult(
@@ -238,16 +238,19 @@ async def test_query_service_records_native_scope_limitation_as_failed_run(clien
         )
 
     run = result.runs[0]
-    assert run.status == StageStatus.FAILED
-    assert run.error_type == "native_document_scope_unsupported"
-    assert "full_doc_id filtering" in (run.error or "")
-    assert run.answer == ""
-    assert run.sources == []
+    assert run.status == StageStatus.SUCCEEDED
+    assert run.error_type is None
+    assert run.error is None
+    assert run.answer == "Sahih al-Bukhari contains 7277 hadith."
+    assert run.sources
     assert run.timings["runtime_query_ms"] == 7
     assert run.timings["native_scoped_query"] is True
     assert run.timings["native_stage_ms"] >= 0
     assert run.timings["metadata_ms"] >= 0
-    assert run.chunk_traces == []
+    assert run.timings["native_degraded"] is True
+    assert run.timings["native_error_type"] == "native_document_scope_unsupported"
+    assert "full_doc_id filtering" in run.timings["native_error"]
+    assert run.chunk_traces
 
 
 @pytest.mark.asyncio
@@ -299,7 +302,7 @@ async def test_query_service_surfaces_graph_degradation_while_succeeding(client)
 
 
 @pytest.mark.asyncio
-async def test_query_service_persists_runtime_errors(client):
+async def test_query_service_degrades_runtime_errors_to_metadata(client):
     app = client._transport.app
     runtime = FakeRuntime(
         RuntimeQueryResult(
@@ -317,12 +320,17 @@ async def test_query_service_persists_runtime_errors(client):
             settings=app.state.settings,
             runtime_factory=FakeFactory(runtime),
             health_service=FakeHealthService(),
+            retrieval_orchestrator=_real_retrieval_orchestrator(),
         ).run_query(QueryIn(query="boom", document_ids=[document.id], variant_ids=[variant.id]))
 
     run = result.runs[0]
-    assert run.status == StageStatus.FAILED
-    assert run.error == "runtime exploded"
-    assert run.error_type == "runtime_query_error"
+    assert run.status == StageStatus.SUCCEEDED
+    assert run.error is None
+    assert run.error_type is None
+    assert run.answer == "Sahih al-Bukhari contains 7277 hadith."
+    assert run.timings["native_degraded"] is True
+    assert run.timings["native_error"] == "runtime exploded"
+    assert run.timings["native_error_type"] == "runtime_query_error"
 
 
 @pytest.mark.asyncio
