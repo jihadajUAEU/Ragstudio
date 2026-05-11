@@ -31,6 +31,20 @@ def test_plan_for_reference_query_marks_reference_intent():
     assert plan.use_relationships is True
 
 
+def test_plan_for_arabic_token_carries_retrieval_passes():
+    plan = plan_for_query("حنانا", document_ids=["doc-quran"], limit=5)
+
+    assert plan.intent == "reference"
+    assert plan.understanding is not None
+    assert plan.understanding.intent == "arabic_exact_token"
+    assert [item.name for item in plan.understanding.retrieval_passes] == [
+        "arabic_exact_token",
+        "semantic_metadata",
+        "vector_db",
+        "native_vector",
+    ]
+
+
 def test_evidence_candidate_serializes_source_and_trace():
     candidate = EvidenceCandidate(
         candidate_id="metadata:chunk-1",

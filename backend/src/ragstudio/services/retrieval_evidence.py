@@ -6,6 +6,8 @@ import re
 from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
+from ragstudio.services.query_understanding import QueryUnderstanding, understand_query
+
 QueryIntent = Literal["count", "title", "reference", "comparison", "summary", "semantic"]
 
 
@@ -19,6 +21,7 @@ class RetrievalPlan:
     use_metadata: bool = True
     use_relationships: bool = True
     candidate_limit: int = 20
+    understanding: QueryUnderstanding | None = None
 
 
 @dataclass(frozen=True)
@@ -83,6 +86,7 @@ class OrchestratedAnswer:
 
 
 def plan_for_query(query: str, *, document_ids: list[str], limit: int) -> RetrievalPlan:
+    understanding = understand_query(query)
     normalized = query.casefold()
     intent: QueryIntent = "semantic"
     if re.search(r"\b(how many|count|number of|total)\b", normalized):
@@ -96,12 +100,20 @@ def plan_for_query(query: str, *, document_ids: list[str], limit: int) -> Retrie
     elif re.search(r"\b(summary|summarize|overview)\b", normalized):
         intent = "summary"
 
+    if understanding.intent in {"reference", "arabic_exact_token", "phrase_lookup"}:
+        intent = "reference"
+    elif understanding.intent == "count":
+        intent = "count"
+    elif understanding.intent == "summary":
+        intent = "summary"
+
     return RetrievalPlan(
         query=query,
         document_ids=list(document_ids),
         limit=limit,
         intent=intent,
         candidate_limit=max(limit * 2, 20),
+        understanding=understanding,
     )
 
 
