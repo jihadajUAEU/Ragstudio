@@ -558,13 +558,17 @@ class RetrievalOrchestrator:
     def _candidate_from_chunk(self, chunk: ChunkOut, rank: int) -> EvidenceCandidate:
         score = chunk.metadata.get("score")
         base_score = float(score) if isinstance(score, (int, float)) else max(1.0, 20.0 - rank)
+        metadata = dict(chunk.metadata)
+        if chunk.runtime_source_id:
+            metadata.setdefault("runtime_source_id", chunk.runtime_source_id)
+        metadata.setdefault("canonical_chunk_id", chunk.id)
         return EvidenceCandidate(
             candidate_id=f"metadata:{chunk.id}",
             text=chunk.text,
             document_id=chunk.document_id,
             chunk_id=chunk.id,
             source_location=chunk.source_location,
-            metadata=chunk.metadata,
+            metadata=metadata,
             tool="metadata",
             tool_rank=rank,
             base_score=base_score,

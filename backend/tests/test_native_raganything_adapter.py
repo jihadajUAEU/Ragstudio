@@ -462,10 +462,18 @@ async def test_native_adapter_indexes_normalized_preparsed_chunks_without_local_
     assert rag.parse_called is False
     assert rag.inserted_doc_id == "studio-doc-id"
     assert rag.inserted_content_list == [
-        {"type": "text", "text": "Remote MinerU text", "page_idx": 2}
+        {
+            "id": "studio-doc-id|page.md|None|0",
+            "chunk_identity": "studio-doc-id|page.md|None|0",
+            "type": "text",
+            "text": "Remote MinerU text",
+            "page_idx": 2,
+        }
     ]
     assert chunks[0].text == "Remote MinerU text"
     assert chunks[0].metadata["backend"] == "mineru"
+    assert chunks[0].metadata["chunk_identity"] == "studio-doc-id|page.md|None|0"
+    assert chunks[0].runtime_source_id == "studio-doc-id|page.md|None|0"
 
 
 @pytest.mark.asyncio
@@ -510,8 +518,18 @@ async def test_native_adapter_keeps_all_normalized_chunks_sharing_content_list(t
 
     assert len(chunks) == 2
     assert FakeRAGAnything.instances[0].inserted_content_list == [
-        {"type": "text", "text": "Markdown artifact one"},
-        {"type": "text", "text": "Markdown artifact two"},
+        {
+            "id": "studio-doc-id|one.md|None|0",
+            "chunk_identity": "studio-doc-id|one.md|None|0",
+            "type": "text",
+            "text": "Markdown artifact one",
+        },
+        {
+            "id": "studio-doc-id|two.md|None|1",
+            "chunk_identity": "studio-doc-id|two.md|None|1",
+            "type": "text",
+            "text": "Markdown artifact two",
+        },
     ]
 
 
@@ -658,7 +676,9 @@ async def test_native_adapter_queries_selected_documents_with_scoped_lightrag(tm
             "text": "Sahih al-Bukhari 7277 Hadith Collection",
             "source_location": {"file_path": "bukhari.pdf"},
             "metadata": {
+                "chunk_identity": "chunk-1",
                 "full_doc_id": "doc-1",
+                "runtime_source_id": "chunk-1",
                 "score": 0.91,
                 "native_scope": True,
                 "source_role": "retrieved_candidate",

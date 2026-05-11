@@ -159,6 +159,7 @@ def fuse_candidates(
     plan: RetrievalPlan,
     candidates: list[EvidenceCandidate],
 ) -> list[EvidenceCandidate]:
+    candidates = _hydrate_parser_warning_metadata(candidates)
     deduped: dict[str, EvidenceCandidate] = {}
     deduped_tools: dict[str, list[str]] = {}
 
@@ -243,13 +244,69 @@ def _score_candidate(
 
 
 def _dedupe_key(candidate: EvidenceCandidate) -> str:
-    runtime_source_id = candidate.metadata.get("runtime_source_id")
+    chunk_identity = candidate.metadata.get("chunk_identity")
+    if isinstance(chunk_identity, str) and chunk_identity:
+        return f"chunk-identity:{chunk_identity}"
     if candidate.chunk_id:
         return f"chunk:{candidate.chunk_id}"
+    canonical_chunk_id = candidate.metadata.get("canonical_chunk_id")
+    if isinstance(canonical_chunk_id, str) and canonical_chunk_id:
+        return f"canonical-chunk:{canonical_chunk_id}"
+    runtime_source_id = candidate.metadata.get("runtime_source_id")
     if isinstance(runtime_source_id, str) and runtime_source_id:
         return f"runtime:{runtime_source_id}"
     fingerprint = hashlib.sha1(candidate.text.strip().casefold().encode("utf-8")).hexdigest()
     return f"text:{candidate.document_id or 'unknown'}:{fingerprint}"
+
+
+def _hydrate_parser_warning_metadata(
+    candidates: list[EvidenceCandidate],
+) -> list[EvidenceCandidate]:
+    warnings_by_key: dict[str, dict[str, Any]] = {}
+    for candidate in candidates:
+        extraction_quality = candidate.metadata.get("extraction_quality")
+        if not isinstance(extraction_quality, dict):
+            continue
+        warnings = extraction_quality.get("parser_warnings")
+        if not isinstance(warnings, list) or not warnings:
+            continue
+        key = _text_identity_key(candidate)
+        warnings_by_key[key] = _merge_extraction_quality(
+            warnings_by_key.get(key),
+            extraction_quality,
+        )
+
+    if not warnings_by_key:
+        return candidates
+
+    hydrated: list[EvidenceCandidate] = []
+    for candidate in candidates:
+        if _parser_warnings(candidate.metadata):
+            hydrated.append(candidate)
+            continue
+        extraction_quality = warnings_by_key.get(_text_identity_key(candidate))
+        if not extraction_quality:
+            hydrated.append(candidate)
+            continue
+        merged_quality = _merge_extraction_quality(
+            candidate.metadata.get("extraction_quality"),
+            extraction_quality,
+        )
+        hydrated.append(
+            replace(
+                candidate,
+                metadata={
+                    **candidate.metadata,
+                    "extraction_quality": merged_quality,
+                },
+            )
+        )
+    return hydrated
+
+
+def _text_identity_key(candidate: EvidenceCandidate) -> str:
+    fingerprint = hashlib.sha1(candidate.text.strip().casefold().encode("utf-8")).hexdigest()
+    return f"{candidate.document_id or 'unknown'}:{fingerprint}"
 
 
 def _merge_duplicate_candidate(
@@ -302,6 +359,16 @@ def _merge_extraction_quality(
     if parser_warnings:
         merged["parser_warnings"] = parser_warnings
     return merged
+
+
+def _parser_warnings(metadata: dict[str, Any]) -> list[dict[str, Any]]:
+    extraction_quality = metadata.get("extraction_quality")
+    if not isinstance(extraction_quality, dict):
+        return []
+    warnings = extraction_quality.get("parser_warnings")
+    if not isinstance(warnings, list):
+        return []
+    return [warning for warning in warnings if isinstance(warning, dict)]
 
 
 def _merge_ordered_strings(primary: list[str], secondary: list[str]) -> list[str]:

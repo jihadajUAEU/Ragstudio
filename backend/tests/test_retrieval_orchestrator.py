@@ -202,6 +202,43 @@ def test_fusion_merges_parser_warnings_when_native_duplicate_wins():
     assert fused[0].metadata["deduped_tools"] == ["native", "metadata"]
 
 
+def test_fusion_hydrates_parser_warnings_when_native_row_id_differs():
+    warning = {
+        "code": "reference_unit_missing_expected_script",
+        "message": "Expected Arabic text.",
+        "block_type": "paragraph",
+    }
+    plan = plan_for_query("alpha", document_ids=["doc-1"], limit=3)
+    native = EvidenceCandidate(
+        candidate_id="native:lightrag-row-7",
+        text="Same parser-warning text",
+        document_id="doc-1",
+        chunk_id="lightrag-row-7",
+        source_location={},
+        metadata={"native_scope": True},
+        tool="native",
+        tool_rank=1,
+        base_score=20.0,
+    )
+    metadata = EvidenceCandidate(
+        candidate_id="metadata:studio-chunk-1",
+        text="Same parser-warning text",
+        document_id="doc-1",
+        chunk_id="studio-chunk-1",
+        source_location={},
+        metadata={"extraction_quality": {"parser_warnings": [warning]}, "score": 10.0},
+        tool="metadata",
+        tool_rank=1,
+        base_score=10.0,
+    )
+
+    fused = fuse_candidates(plan, [native, metadata])
+
+    native_result = next(candidate for candidate in fused if candidate.tool == "native")
+    assert native_result.chunk_id == "lightrag-row-7"
+    assert native_result.metadata["extraction_quality"]["parser_warnings"] == [warning]
+
+
 class FakeChunkSearchService:
     def __init__(self):
         self.calls = 0
@@ -311,6 +348,23 @@ class NativeDuplicateParserWarningRuntimeTool:
                     "chunk_id": "parser-warning-1",
                     "document_id": "doc-1",
                     "text": "Native parser warning evidence.",
+                    "source_location": {},
+                    "metadata": {"native_scope": True},
+                }
+            ],
+            timings={"runtime_query_ms": 5, "native_scoped_query": True},
+        )
+
+
+class NativeMismatchedParserWarningRuntimeTool:
+    async def query(self, query, *, document_ids, query_config):
+        return RuntimeQueryResult(
+            answer="native answer ignored",
+            sources=[
+                {
+                    "chunk_id": "lightrag-row-7",
+                    "document_id": "doc-1",
+                    "text": "Parser warning evidence remains usable.",
                     "source_location": {},
                     "metadata": {"native_scope": True},
                 }
@@ -551,6 +605,37 @@ async def test_orchestrator_preserves_parser_warning_when_native_duplicate_wins(
     assert any(
         trace.get("stage") == "parser_quality"
         and "native:parser-warning-1" in trace.get("affected_candidate_ids", [])
+        for trace in result.chunk_traces
+    )
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_preserves_parser_warning_when_native_id_differs():
+    answer_service = FakeAnswerService()
+    orchestrator = RetrievalOrchestrator(
+        chunk_service=ParserWarningChunkSearchService(),
+        answer_service=answer_service,
+        reranker_service=FakeRerankerService(),
+        graph_expansion_service=FakeGraphExpansionService(),
+    )
+
+    result = await orchestrator.query(
+        "parser warning",
+        runtime=NativeMismatchedParserWarningRuntimeTool(),
+        profile=type("Profile", (), {"enable_rerank": False, "reranker_provider": "disabled"})(),
+        document_ids=["doc-1"],
+        variant_id="variant-1",
+        query_config={"limit": 8, "graph_expansion_enabled": False},
+    )
+
+    warning_code = "reference_unit_missing_expected_script"
+    source = next(source for source in result.sources if source["chunk_id"] == "lightrag-row-7")
+    assert source["metadata"]["retrieval_tool"] == "native"
+    assert source["metadata"]["parser_quality_warning_codes"] == [warning_code]
+    assert f"parser_quality_warning:{warning_code}" in source["metadata"]["retrieval_reasons"]
+    assert any(
+        trace.get("stage") == "parser_quality"
+        and "native:lightrag-row-7" in trace.get("affected_candidate_ids", [])
         for trace in result.chunk_traces
     )
 

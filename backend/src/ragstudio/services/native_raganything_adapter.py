@@ -278,7 +278,10 @@ class NativeRAGAnythingAdapter:
         document_id: str,
     ) -> list[RuntimeChunk]:
         path = Path(artifact_path)
-        content_list = self._content_list_from_preparsed_chunks(chunks)
+        content_list = self._content_list_from_preparsed_chunks(
+            chunks,
+            document_id=document_id,
+        )
         rag = self._raganything()
         async with self._storage_env():
             await rag.insert_content_list(
@@ -288,7 +291,11 @@ class NativeRAGAnythingAdapter:
                 display_stats=False,
             )
             await self._raise_for_failed_doc_status(rag, document_id)
-        return self._runtime_chunks_from_adapter_chunks(chunks, path)
+        return self._runtime_chunks_from_adapter_chunks(
+            chunks,
+            path,
+            document_id=document_id,
+        )
 
     async def query(
         self,
@@ -593,13 +600,21 @@ class NativeRAGAnythingAdapter:
             chunk_id = str(row.get("id") or "")
             if not chunk_id or chunk_id in deduped:
                 continue
+            chunk_identity = str(
+                row.get("chunk_identity")
+                or row.get("canonical_chunk_id")
+                or row.get("runtime_source_id")
+                or chunk_id
+            )
             deduped[chunk_id] = {
                 "chunk_id": chunk_id,
                 "document_id": document_id,
                 "text": str(row.get("content") or ""),
                 "source_location": {"file_path": row.get("file_path")},
                 "metadata": {
+                    "chunk_identity": chunk_identity,
                     "full_doc_id": document_id,
+                    "runtime_source_id": chunk_identity,
                     "score": row.get("score"),
                     "native_scope": True,
                     "source_role": "retrieved_candidate",
@@ -715,14 +730,26 @@ class NativeRAGAnythingAdapter:
     def _content_list_from_preparsed_chunks(
         self,
         chunks: list[AdapterChunk],
+        *,
+        document_id: str,
     ) -> list[dict[str, Any]]:
         content_list: list[dict[str, Any]] = []
-        for chunk in chunks:
+        for index, chunk in enumerate(chunks):
             page_idx = chunk.source_location.get("page")
             if not isinstance(page_idx, int):
                 page = chunk.source_location.get("page_start")
                 page_idx = page - 1 if isinstance(page, int) and page > 0 else None
-            item: dict[str, Any] = {"type": "text", "text": chunk.text}
+            chunk_identity = self._preparsed_chunk_identity(
+                chunk,
+                index,
+                document_id=document_id,
+            )
+            item: dict[str, Any] = {
+                "id": chunk_identity,
+                "chunk_identity": chunk_identity,
+                "type": "text",
+                "text": chunk.text,
+            }
             if isinstance(page_idx, int):
                 item["page_idx"] = page_idx
             content_list.append(item)
@@ -732,16 +759,24 @@ class NativeRAGAnythingAdapter:
         self,
         chunks: list[AdapterChunk],
         path: Path,
+        *,
+        document_id: str,
     ) -> list[RuntimeChunk]:
         output: list[RuntimeChunk] = []
         for index, chunk in enumerate(chunks):
             parser_metadata = chunk.metadata.get("parser_metadata")
             metadata = dict(parser_metadata) if isinstance(parser_metadata, dict) else {}
+            chunk_identity = self._preparsed_chunk_identity(
+                chunk,
+                index,
+                document_id=document_id,
+            )
             metadata.update(
                 {
                     "backend": metadata.get("backend", "mineru"),
                     "artifact_ref": metadata.get("artifact_ref", path.name),
                     "chunk_index": metadata.get("chunk_index", index),
+                    "chunk_identity": chunk_identity,
                     "source_type": metadata.get("content_type", chunk.content_type),
                 }
             )
@@ -750,12 +785,41 @@ class NativeRAGAnythingAdapter:
                     text=chunk.text,
                     source_location=chunk.source_location,
                     metadata=metadata,
-                    runtime_source_id=str(metadata.get("artifact_ref") or index),
+                    runtime_source_id=chunk_identity,
                     content_type=chunk.content_type,
                     preview_ref=chunk.preview_ref,
                 )
             )
         return output
+
+    def _preparsed_chunk_identity(
+        self,
+        chunk: AdapterChunk,
+        index: int,
+        *,
+        document_id: str,
+    ) -> str:
+        metadata_identity = chunk.metadata.get("chunk_identity")
+        if isinstance(metadata_identity, str) and metadata_identity.strip():
+            return metadata_identity
+
+        if isinstance(chunk.runtime_source_id, str) and chunk.runtime_source_id.strip():
+            return chunk.runtime_source_id
+
+        parser_metadata = chunk.metadata.get("parser_metadata")
+        parser_metadata = dict(parser_metadata) if isinstance(parser_metadata, dict) else {}
+        artifact_ref = parser_metadata.get("artifact_ref") or chunk.source_location.get("artifact")
+        chunk_index = parser_metadata.get("chunk_index", index)
+        preview_ref = chunk.preview_ref or chunk.metadata.get("preview_ref")
+        return "|".join(
+            str(part)
+            for part in (
+                document_id,
+                artifact_ref,
+                preview_ref,
+                chunk_index,
+            )
+        )
 
     async def _raise_for_failed_doc_status(self, rag: Any, document_id: str | None) -> None:
         if not document_id:
