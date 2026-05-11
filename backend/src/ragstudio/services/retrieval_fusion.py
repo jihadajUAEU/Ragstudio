@@ -98,5 +98,7 @@ def _direct_boost(candidate: EvidenceCandidate) -> tuple[float, str | None]:
 
 
 def _features(candidate: EvidenceCandidate) -> dict[str, Any]:
+    if candidate.match_features:
+        return candidate.match_features
     value = candidate.metadata.get("match_features")
     return value if isinstance(value, dict) else {}

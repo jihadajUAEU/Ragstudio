@@ -67,6 +67,39 @@ def test_evidence_candidate_serializes_source_and_trace():
     assert candidate.to_trace()["reasons"] == ["title_count_match"]
 
 
+def test_evidence_candidate_serializes_retrieval_pass_and_match_features():
+    candidate = EvidenceCandidate(
+        candidate_id="arabic:chunk-19-13",
+        text="[19:13] وَحَنَانًا مِّن لَّدُنَّا",
+        document_id="doc-quran",
+        chunk_id="chunk-19-13",
+        source_location={"page": 312, "reference": "19:13"},
+        metadata={},
+        tool="arabic_lexical",
+        tool_rank=1,
+        base_score=10.0,
+        retrieval_pass="arabic_exact_token",
+        match_features={"arabic_exact": True, "arabic_token": "حنانا"},
+        canonical_reference="19:13",
+        scope_status="in_scope",
+        source_quality={"parser": "mineru", "warnings": 0},
+        risk_flags=[],
+    )
+
+    source = candidate.to_source()
+    trace = candidate.to_trace()
+
+    assert source["metadata"]["retrieval_pass"] == "arabic_exact_token"
+    assert source["metadata"]["match_features"] == {
+        "arabic_exact": True,
+        "arabic_token": "حنانا",
+    }
+    assert source["metadata"]["canonical_reference"] == "19:13"
+    assert source["metadata"]["scope_status"] == "in_scope"
+    assert trace["retrieval_pass"] == "arabic_exact_token"
+    assert trace["match_features"]["arabic_exact"] is True
+
+
 def test_fusion_boosts_title_count_chunk_for_count_query():
     plan = plan_for_query("how many hadith in bukhari", document_ids=["doc-1"], limit=3)
     weak_native = EvidenceCandidate(

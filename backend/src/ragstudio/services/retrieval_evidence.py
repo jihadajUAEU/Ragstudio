@@ -38,10 +38,38 @@ class EvidenceCandidate:
     boost_score: float = 0.0
     final_score: float = 0.0
     reasons: list[str] = field(default_factory=list)
+    retrieval_pass: str | None = None
+    match_features: dict[str, Any] = field(default_factory=dict)
+    canonical_reference: str | None = None
+    embedding_profile: dict[str, Any] = field(default_factory=dict)
+    index_shape: dict[str, Any] = field(default_factory=dict)
+    scope_status: str | None = None
+    source_quality: dict[str, Any] = field(default_factory=dict)
+    risk_flags: list[str] = field(default_factory=list)
+
+    def normalized_metadata(self) -> dict[str, Any]:
+        metadata = dict(self.metadata)
+        if self.retrieval_pass:
+            metadata["retrieval_pass"] = self.retrieval_pass
+        if self.match_features:
+            metadata["match_features"] = self.match_features
+        if self.canonical_reference:
+            metadata["canonical_reference"] = self.canonical_reference
+        if self.embedding_profile:
+            metadata["embedding_profile"] = self.embedding_profile
+        if self.index_shape:
+            metadata["index_shape"] = self.index_shape
+        if self.scope_status:
+            metadata["scope_status"] = self.scope_status
+        if self.source_quality:
+            metadata["source_quality"] = self.source_quality
+        if self.risk_flags:
+            metadata["risk_flags"] = self.risk_flags
+        return metadata
 
     def to_source(self) -> dict[str, Any]:
         metadata = {
-            **self.metadata,
+            **self.normalized_metadata(),
             "retrieval_tool": self.tool,
             "retrieval_rank": self.tool_rank,
             "retrieval_score": self.final_score,
@@ -70,6 +98,16 @@ class EvidenceCandidate:
         warning_codes = self.metadata.get("parser_quality_warning_codes")
         if isinstance(warning_codes, list) and warning_codes:
             trace["parser_quality_warning_codes"] = warning_codes
+        if self.retrieval_pass:
+            trace["retrieval_pass"] = self.retrieval_pass
+        if self.match_features:
+            trace["match_features"] = self.match_features
+        if self.canonical_reference:
+            trace["canonical_reference"] = self.canonical_reference
+        if self.scope_status:
+            trace["scope_status"] = self.scope_status
+        if self.risk_flags:
+            trace["risk_flags"] = self.risk_flags
         return trace
 
 
@@ -193,6 +231,14 @@ def _score_candidate(
         boost_score=boost,
         final_score=candidate.base_score + boost,
         reasons=[*candidate.reasons, *reasons],
+        retrieval_pass=candidate.retrieval_pass,
+        match_features=candidate.match_features,
+        canonical_reference=candidate.canonical_reference,
+        embedding_profile=candidate.embedding_profile,
+        index_shape=candidate.index_shape,
+        scope_status=candidate.scope_status,
+        source_quality=candidate.source_quality,
+        risk_flags=candidate.risk_flags,
     )
 
 

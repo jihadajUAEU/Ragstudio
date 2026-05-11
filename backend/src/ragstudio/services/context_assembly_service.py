@@ -96,6 +96,8 @@ def _candidate_key(candidate: EvidenceCandidate) -> str:
 
 
 def _features(candidate: EvidenceCandidate) -> dict[str, Any]:
+    if candidate.match_features:
+        return candidate.match_features
     value = candidate.metadata.get("match_features")
     return value if isinstance(value, dict) else {}
 
@@ -132,6 +134,8 @@ def _retrieval_passes(candidate: EvidenceCandidate) -> list[str]:
     passes = candidate.metadata.get("retrieval_passes")
     if isinstance(passes, list) and passes:
         return [str(item) for item in passes]
+    if candidate.retrieval_pass:
+        return [candidate.retrieval_pass]
     return [candidate.tool]
 
 
