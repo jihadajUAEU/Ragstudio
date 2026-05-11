@@ -8,14 +8,15 @@ from ragstudio.schemas.parsing import DomainMetadata, IndexDocumentIn, ParserMod
 from ragstudio.services.adapter import AdapterChunk, RAGAnythingAdapter
 from ragstudio.services.arabic_text import arabic_tokens, normalize_arabic_text
 from ragstudio.services.chunk_lexical_search_repository import ChunkLexicalSearchRepository
-from ragstudio.services.chunk_sanitizer import sanitize_db_text, sanitize_db_value
+from ragstudio.services.chunk_persistence_service import ChunkPersistenceService
+from ragstudio.services.chunk_sanitizer import sanitize_db_value
 from ragstudio.services.chunk_splitter import ChunkSplitter
 from ragstudio.services.document_parser_service import DocumentParserService
 from ragstudio.services.hybrid_chunk_search import ChunkScore, HybridChunkSearch
 from ragstudio.services.index_quality_gate import IndexQualityGate
 from ragstudio.services.mineru_client import MinerUClient
 from ragstudio.services.mineru_relationship_builder import MinerURelationshipBuilder
-from sqlalchemy import delete, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 MinerUStatusCallback = Callable[[dict[str, Any]], Awaitable[None]]
@@ -84,36 +85,13 @@ class ChunkService:
             adapter_chunks,
             language=self._quality_language(options.domain_metadata),
         )
-        await self.session.execute(delete(Chunk).where(Chunk.document_id == document.id))
-
-        chunks = []
-        for adapter_chunk in adapter_chunks:
-            text = sanitize_db_text(adapter_chunk.text)
-            metadata = self._merge_metadata(
-                adapter_chunk.metadata,
-                options.domain_metadata,
-                options.parser_mode,
-            )
-            chunks.append(
-                Chunk(
-                    document_id=document.id,
-                    text=text,
-                    text_search_ar=normalize_arabic_text(text),
-                    tokens_ar=arabic_tokens(text),
-                    extraction_quality=self._extraction_quality(metadata),
-                    source_location=sanitize_db_value(adapter_chunk.source_location),
-                    metadata_json=self._safe_metadata(metadata, document.id),
-                )
-            )
-        self.session.add_all(chunks)
-        if commit:
-            await self.session.commit()
-        else:
-            await self.session.flush()
-
-        for chunk in chunks:
-            await self.session.refresh(chunk)
-        return [ChunkOut.model_validate(chunk) for chunk in chunks]
+        chunks = await ChunkPersistenceService(self.session).persist(
+            document,
+            adapter_chunks,
+            options=options,
+            commit=commit,
+        )
+        return [self._chunk_out_with_materialized_metadata(chunk) for chunk in chunks]
 
     async def _adapter_chunks(
         self,
@@ -201,12 +179,7 @@ class ChunkService:
             "score": score.score,
             "score_breakdown": breakdown,
         }
-        if not metadata.get("text_search_ar"):
-            metadata["text_search_ar"] = chunk.text_search_ar or normalize_arabic_text(output.text)
-        if not metadata.get("tokens_ar"):
-            metadata["tokens_ar"] = chunk.tokens_ar or arabic_tokens(output.text)
-        if not metadata.get("extraction_quality"):
-            metadata["extraction_quality"] = chunk.extraction_quality or {}
+        self._materialize_search_metadata(output, metadata, chunk)
         if explain and isinstance(retrieval_explain, dict):
             metadata["retrieval_explain"] = retrieval_explain
             output.retrieval_explain = retrieval_explain
@@ -219,6 +192,30 @@ class ChunkService:
                 }
         output.metadata = metadata
         return output
+
+    def _chunk_out_with_materialized_metadata(self, output: ChunkOut) -> ChunkOut:
+        metadata = dict(output.metadata)
+        self._materialize_search_metadata(output, metadata)
+        output.metadata = metadata
+        return output
+
+    def _materialize_search_metadata(
+        self,
+        output: ChunkOut,
+        metadata: dict[str, Any],
+        chunk: Chunk | None = None,
+    ) -> None:
+        if not metadata.get("text_search_ar"):
+            metadata["text_search_ar"] = (
+                chunk.text_search_ar if chunk is not None else None
+            ) or normalize_arabic_text(output.text)
+        if not metadata.get("tokens_ar"):
+            tokens_ar = chunk.tokens_ar if chunk is not None else None
+            metadata["tokens_ar"] = tokens_ar or arabic_tokens(output.text)
+        if not metadata.get("extraction_quality"):
+            metadata["extraction_quality"] = (
+                chunk.extraction_quality if chunk is not None else None
+            ) or {}
 
     def _safe_metadata(self, metadata: dict[str, Any], document_id: str) -> dict[str, Any]:
         safe = {
