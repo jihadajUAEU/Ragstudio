@@ -164,6 +164,49 @@ def test_fusion_dedupes_by_text_and_keeps_best_candidate():
     assert fused[0].metadata["deduped_tools"] == ["native", "metadata"]
 
 
+def test_fusion_preserves_direct_fields_from_lower_scored_duplicate():
+    plan = plan_for_query("حنانا", document_ids=["doc-quran"], limit=3)
+    semantic = EvidenceCandidate(
+        candidate_id="pgvector:chunk-19-13",
+        text="[19:13] وَحَنَانًا مِّن لَّدُنَّا",
+        document_id="doc-quran",
+        chunk_id="chunk-19-13",
+        source_location={"page": 312, "reference": "19:13"},
+        metadata={},
+        tool="pgvector",
+        tool_rank=1,
+        base_score=20.0,
+        retrieval_pass="vector_db",
+    )
+    arabic = EvidenceCandidate(
+        candidate_id="arabic:chunk-19-13",
+        text="[19:13] وَحَنَانًا مِّن لَّدُنَّا",
+        document_id="doc-quran",
+        chunk_id="chunk-19-13",
+        source_location={"page": 312, "reference": "19:13"},
+        metadata={},
+        tool="arabic_lexical",
+        tool_rank=2,
+        base_score=10.0,
+        retrieval_pass="arabic_exact_token",
+        match_features={"arabic_exact": True, "arabic_token": "حنانا"},
+        canonical_reference="19:13",
+        scope_status="in_scope",
+        risk_flags=["parser_warning"],
+    )
+
+    fused = fuse_candidates(plan, [semantic, arabic])
+
+    assert len(fused) == 1
+    result = fused[0]
+    assert result.tool == "pgvector"
+    assert result.match_features["arabic_exact"] is True
+    assert result.metadata["retrieval_passes"] == ["vector_db", "arabic_exact_token"]
+    assert result.canonical_reference == "19:13"
+    assert result.scope_status == "in_scope"
+    assert result.risk_flags == ["parser_warning"]
+
+
 def test_fusion_merges_parser_warnings_when_native_duplicate_wins():
     warning = {
         "code": "reference_unit_missing_expected_script",

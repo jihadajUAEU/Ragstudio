@@ -313,11 +313,84 @@ def _merge_duplicate_candidate(
     primary: EvidenceCandidate,
     secondary: EvidenceCandidate,
 ) -> EvidenceCandidate:
+    match_features = _merge_dict_fields(primary.match_features, secondary.match_features)
+    embedding_profile = _merge_dict_fields(
+        primary.embedding_profile,
+        secondary.embedding_profile,
+    )
+    index_shape = _merge_dict_fields(primary.index_shape, secondary.index_shape)
+    source_quality = _merge_dict_fields(primary.source_quality, secondary.source_quality)
+    canonical_reference = primary.canonical_reference or secondary.canonical_reference
+    scope_status = primary.scope_status or secondary.scope_status
+    risk_flags = _merge_ordered_strings(primary.risk_flags, secondary.risk_flags)
+    metadata = _merge_candidate_metadata(
+        primary.normalized_metadata(),
+        secondary.normalized_metadata(),
+    )
+    retrieval_passes = _merge_retrieval_passes(primary, secondary)
+    if retrieval_passes:
+        metadata["retrieval_passes"] = retrieval_passes
+    if match_features:
+        metadata["match_features"] = match_features
+    if canonical_reference:
+        metadata["canonical_reference"] = canonical_reference
+    if embedding_profile:
+        metadata["embedding_profile"] = embedding_profile
+    if index_shape:
+        metadata["index_shape"] = index_shape
+    if scope_status:
+        metadata["scope_status"] = scope_status
+    if source_quality:
+        metadata["source_quality"] = source_quality
+    if risk_flags:
+        metadata["risk_flags"] = risk_flags
     return replace(
         primary,
-        metadata=_merge_candidate_metadata(primary.metadata, secondary.metadata),
+        metadata=metadata,
         reasons=_merge_ordered_strings(primary.reasons, secondary.reasons),
+        retrieval_pass=primary.retrieval_pass or secondary.retrieval_pass,
+        match_features=match_features,
+        canonical_reference=canonical_reference,
+        embedding_profile=embedding_profile,
+        index_shape=index_shape,
+        scope_status=scope_status,
+        source_quality=source_quality,
+        risk_flags=risk_flags,
     )
+
+
+def _merge_dict_fields(
+    primary: dict[str, Any],
+    secondary: dict[str, Any],
+) -> dict[str, Any]:
+    merged = {**secondary, **primary}
+    for key, value in secondary.items():
+        if value and not primary.get(key):
+            merged[key] = value
+    return merged
+
+
+def _merge_retrieval_passes(
+    primary: EvidenceCandidate,
+    secondary: EvidenceCandidate,
+) -> list[str]:
+    merged: list[str] = []
+    for candidate in (primary, secondary):
+        passes = candidate.metadata.get("retrieval_passes")
+        if isinstance(passes, list):
+            for item in passes:
+                _append_unique(merged, str(item))
+        metadata_pass = candidate.metadata.get("retrieval_pass")
+        if isinstance(metadata_pass, str):
+            _append_unique(merged, metadata_pass)
+        if candidate.retrieval_pass:
+            _append_unique(merged, candidate.retrieval_pass)
+    return merged
+
+
+def _append_unique(values: list[str], item: str) -> None:
+    if item and item not in values:
+        values.append(item)
 
 
 def _merge_candidate_metadata(
