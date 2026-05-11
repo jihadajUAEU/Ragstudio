@@ -1,12 +1,16 @@
 import pytest
+from ragstudio.config import AppSettings
 from ragstudio.db.engine import init_db, make_engine, make_session_factory
 from ragstudio.db.models import Chunk, Document, Job, SettingsProfile
 from ragstudio.schemas.chunks import ChunkSearchIn
 from ragstudio.schemas.parsing import IndexDocumentIn
 from ragstudio.schemas.runtime import RuntimeHealthCheck
+from ragstudio.services.adapter import AdapterChunk
 from ragstudio.services.chunk_service import ChunkService
 from ragstudio.services.document_service import DocumentService
+from ragstudio.services.index_lifecycle_service import IndexLifecycleService
 from ragstudio.services.mineru_client import MinerUSidecarHealth
+from sqlalchemy import func, select
 
 
 class FailingIndexService(DocumentService):
@@ -35,6 +39,115 @@ class BlockingHealthService:
 
     def blocking_failures(self, checks):
         return checks
+
+
+@pytest.mark.asyncio
+async def test_runtime_enrichment_failure_keeps_persisted_chunks(
+    tmp_path,
+    database_url,
+):
+    engine = make_engine(database_url)
+    session_factory = make_session_factory(engine)
+    await init_db(engine)
+
+    class FakeDocumentParser:
+        async def parse(self, document, options, *, on_mineru_status=None):
+            if on_mineru_status is not None:
+                await on_mineru_status(
+                    {
+                        "jobId": "remote-ready",
+                        "status": "ready",
+                        "progress": 100,
+                        "detail": "MinerU artifacts ready.",
+                        "updatedAt": "2026-05-11T07:18:50Z",
+                    }
+                )
+            return [
+                AdapterChunk(
+                    text="Sahih al-Bukhari contains 7277 hadith.",
+                    source_location={"page": 1},
+                    metadata={
+                        "parser_metadata": {"backend": "mineru"},
+                        "document_metadata": {
+                            "title": "Sahih al-Bukhari 7277 Hadith Collection"
+                        },
+                    },
+                )
+            ]
+
+    class FailingRuntime:
+        async def delete_document_index(self, document_id):
+            return None
+
+        async def index_preparsed_chunks(self, artifact_path, preparsed_chunks, *, document_id):
+            raise RuntimeError("runtime enrichment unavailable")
+
+    class FakeRuntimeFactory:
+        def build(self, profile):
+            return FailingRuntime()
+
+    class PassingHealthService:
+        async def check(self, profile):
+            return []
+
+        def blocking_failures(self, checks):
+            return []
+
+    async with session_factory() as session:
+        artifact = tmp_path / "bukhari.pdf"
+        artifact.write_bytes(b"%PDF-1.4")
+        document = Document(
+            id="doc-bukhari-partial",
+            filename="hadith_bukhari.pdf",
+            content_type="application/pdf",
+            sha256="bukhari-partial-sha",
+            artifact_path=str(artifact),
+            status="ready",
+        )
+        session.add(
+            SettingsProfile(
+                id="default",
+                provider="openai-compatible",
+                llm_model="gpt-4o",
+                llm_base_url="http://127.0.0.1:8004/v1",
+                embedding_model="text-embedding-3-large",
+                embedding_base_url="http://127.0.0.1:8001/v1",
+                storage_backend="postgres_pgvector_neo4j",
+                runtime_mode="runtime",
+            )
+        )
+        session.add(document)
+        await session.commit()
+
+        result = await IndexLifecycleService(
+            session,
+            AppSettings(data_dir=tmp_path),
+            runtime_factory=FakeRuntimeFactory(),
+            health_service=PassingHealthService(),
+            document_parser=FakeDocumentParser(),
+        ).reindex_document(
+            "doc-bukhari-partial",
+            options=IndexDocumentIn(parser_mode="mineru_strict"),
+        )
+
+        refreshed_doc = await session.get(Document, "doc-bukhari-partial")
+        chunk_count = (
+            await session.execute(
+                select(func.count())
+                .select_from(Chunk)
+                .where(Chunk.document_id == "doc-bukhari-partial")
+            )
+        ).scalar_one()
+
+    await engine.dispose()
+
+    assert result is not None
+    assert len(result.chunks) == 1
+    assert refreshed_doc is not None
+    assert refreshed_doc.status == "succeeded"
+    assert chunk_count == 1
+    assert result.graph_materialization["status"] == "skipped"
+    assert "runtime enrichment unavailable" in result.graph_materialization["reason"]
 
 
 @pytest.mark.asyncio
