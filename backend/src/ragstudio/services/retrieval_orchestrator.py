@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import asdict
 from time import perf_counter
 from typing import Any
 
 from ragstudio.schemas.chunks import ChunkOut, ChunkSearchIn
 from ragstudio.services.chunk_service import ChunkService
+from ragstudio.services.context_assembly_service import ContextAssemblyService
 from ragstudio.services.graph_expansion_service import GraphExpansionService
 from ragstudio.services.reranker_service import RerankerService
 from ragstudio.services.retrieval_evidence import (
@@ -14,6 +16,8 @@ from ragstudio.services.retrieval_evidence import (
     fuse_candidates,
     plan_for_query,
 )
+from ragstudio.services.retrieval_fusion import RetrievalFusion
+from ragstudio.services.retrieval_observability import RetrievalObservability
 from ragstudio.services.runtime_answer_service import RuntimeAnswerService
 
 
@@ -55,11 +59,15 @@ class RetrievalOrchestrator:
         answer_service: RuntimeAnswerService | None = None,
         reranker_service: RerankerService | None = None,
         graph_expansion_service: GraphExpansionService | None = None,
+        context_assembly_service: ContextAssemblyService | None = None,
+        retrieval_fusion: RetrievalFusion | None = None,
     ):
         self.chunk_service = chunk_service
         self.answer_service = answer_service or RuntimeAnswerService()
         self.reranker_service = reranker_service or RerankerService()
         self.graph_expansion_service = graph_expansion_service or GraphExpansionService()
+        self.context_assembly_service = context_assembly_service or ContextAssemblyService()
+        self.retrieval_fusion = retrieval_fusion or RetrievalFusion()
 
     async def query(
         self,
@@ -75,12 +83,19 @@ class RetrievalOrchestrator:
         limit = int(query_config.get("limit") or 8)
         timings: dict[str, Any] = {"orchestrated_query": True}
         plan = plan_for_query(query, document_ids=document_ids, limit=limit)
+        observability = RetrievalObservability()
+        cache_decision = observability.cache_decision(
+            query=query,
+            document_ids=document_ids,
+            query_type=_cache_query_type(query, plan.intent),
+        )
         traces: list[dict[str, Any]] = [
             {
                 "stage": "planner",
                 "intent": plan.intent,
                 "tools": ["native", "metadata", "graph"],
                 "candidate_limit": plan.candidate_limit,
+                "cache": cache_decision,
             }
         ]
         timings["planner_ms"] = _elapsed_ms(started)
@@ -126,11 +141,26 @@ class RetrievalOrchestrator:
             traces.extend(graph_hydration_traces)
 
             refusion_started = perf_counter()
-            fused = fuse_candidates(
+            legacy_fused = fuse_candidates(
                 plan,
                 [*native_candidates, *metadata_candidates, *graph_candidates],
             )
+            fused = self.retrieval_fusion.fuse([legacy_fused], limit=plan.candidate_limit)
             timings["final_fusion_ms"] = _elapsed_ms(refusion_started)
+            traces.append(
+                {
+                    "stage": "retrieval_fusion",
+                    "native_candidates": len(native_candidates),
+                    "metadata_candidates": len(metadata_candidates),
+                    "graph_candidates": len(graph_candidates),
+                    "fused_candidates": len(fused),
+                }
+            )
+            observability.record_stage(
+                "retrieval_fusion",
+                candidate_count=len(fused),
+                latency_ms=timings["final_fusion_ms"],
+            )
             reranker_traces: list[dict[str, Any]] = []
             reranked = fused
             timings["rerank_ms"] = 0.0
@@ -139,7 +169,38 @@ class RetrievalOrchestrator:
                 reranked, reranker_traces = await self._rerank(query, fused, profile)
                 timings["rerank_ms"] = _elapsed_ms(rerank_started)
 
-            final_evidence = reranked[:limit]
+            context_started = perf_counter()
+            context_service = self._context_assembly_service(profile)
+            assembled_context = context_service.assemble(reranked)
+            timings["context_assembly_ms"] = _elapsed_ms(context_started)
+            final_evidence = _evidence_from_context(reranked, assembled_context)[:limit]
+            if not final_evidence:
+                final_evidence = reranked[:limit]
+            observability.record_stage(
+                "context_assembly",
+                candidate_count=len(final_evidence),
+                latency_ms=timings["context_assembly_ms"],
+            )
+            observability.record_final_evidence(
+                [candidate.candidate_id for candidate in final_evidence],
+                grounding_status=assembled_context.grounding_status,
+            )
+            traces.append(
+                {
+                    "stage": "context_assembly",
+                    "included_candidates": len(assembled_context.evidence),
+                    "dropped_candidates": len(assembled_context.dropped),
+                    "assembled_context": {
+                        "evidence_ids": [
+                            item.candidate_id for item in assembled_context.evidence
+                        ],
+                        "dropped": [asdict(item) for item in assembled_context.dropped],
+                        "total_estimated_tokens": assembled_context.total_estimated_tokens,
+                        "grounding_status": assembled_context.grounding_status,
+                    },
+                    "retrieval_observability": observability.trace,
+                }
+            )
             traces.extend(candidate.to_trace() for candidate in final_evidence)
             answer_started = perf_counter()
             answer, token_metadata = await self.answer_service.answer(
@@ -159,6 +220,12 @@ class RetrievalOrchestrator:
             )
         except Exception as exc:
             return self._failed_orchestrated_answer(exc, started, timings)
+
+    def _context_assembly_service(self, profile: Any) -> ContextAssemblyService:
+        max_context_tokens = getattr(profile, "max_context_tokens", None)
+        if isinstance(max_context_tokens, int) and max_context_tokens > 0:
+            return ContextAssemblyService(max_context_tokens=max_context_tokens)
+        return self.context_assembly_service
 
     async def _parallel_retrieval(
         self,
@@ -609,6 +676,32 @@ def _metadata_only(query_config: dict[str, Any]) -> bool:
     retrieval_mode = str(query_config.get("retrieval_mode") or "").casefold()
     reference_mode = str(query_config.get("reference_query_mode") or "").casefold()
     return retrieval_mode == "metadata" or reference_mode in {"exact", "lexical"}
+
+
+def _cache_query_type(query: str, intent: str) -> str:
+    stripped = query.strip()
+    if intent == "reference":
+        return "exact_reference"
+    if stripped and len(stripped.split()) == 1 and _contains_arabic(stripped):
+        return "exact_arabic_token"
+    return "semantic_query"
+
+
+def _contains_arabic(value: str) -> bool:
+    return any("\u0600" <= character <= "\u06FF" for character in value)
+
+
+def _evidence_from_context(
+    candidates: list[EvidenceCandidate],
+    assembled_context: Any,
+) -> list[EvidenceCandidate]:
+    by_id = {candidate.candidate_id: candidate for candidate in candidates}
+    ordered: list[EvidenceCandidate] = []
+    for item in assembled_context.evidence:
+        candidate = by_id.get(item.candidate_id)
+        if candidate is not None:
+            ordered.append(candidate)
+    return ordered
 
 
 def _str_or_none(value: Any) -> str | None:

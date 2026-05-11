@@ -326,7 +326,14 @@ async def test_orchestrator_fuses_native_metadata_and_graph_before_answering():
     assert result.timings["planner_ms"] >= 0
     assert result.timings["native_stage_ms"] >= 0
     assert result.timings["graph_hydration_ms"] >= 0
-    assert any(trace["stage"] == "planner" for trace in result.chunk_traces)
+    assert any(trace.get("stage") == "planner" for trace in result.chunk_traces)
+    assert any(trace.get("stage") == "retrieval_fusion" for trace in result.chunk_traces)
+    context_trace = next(
+        trace for trace in result.chunk_traces if trace.get("stage") == "context_assembly"
+    )
+    assert context_trace["included_candidates"] >= 1
+    assert context_trace["assembled_context"]["grounding_status"] == "insufficient_evidence"
+    assert "metadata:metadata-1" in context_trace["retrieval_observability"]["final_evidence_ids"]
     assert any(source["metadata"]["retrieval_tool"] == "graph" for source in result.sources)
     assert any(trace["stage"] == "graph_expansion" for trace in result.chunk_traces)
     assert any(trace["stage"] == "graph_hydration" for trace in result.chunk_traces)

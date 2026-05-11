@@ -32,6 +32,9 @@ class RetrievalFusion:
         fused: list[EvidenceCandidate] = []
         for key, candidate in by_key.items():
             direct_boost, reason = _direct_boost(candidate)
+            score_basis = (
+                candidate.final_score if candidate.final_score > 0 else candidate.base_score
+            )
             reasons = [*candidate.reasons]
             if reason and reason not in reasons:
                 reasons.append(reason)
@@ -40,7 +43,7 @@ class RetrievalFusion:
                     candidate,
                     metadata={**candidate.metadata, "retrieval_passes": tools[key]},
                     boost_score=candidate.boost_score + direct_boost,
-                    final_score=scores[key] + direct_boost + candidate.base_score,
+                    final_score=scores[key] + direct_boost + score_basis,
                     reasons=reasons,
                 )
             )
