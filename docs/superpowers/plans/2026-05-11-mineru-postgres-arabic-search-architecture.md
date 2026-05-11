@@ -4,7 +4,7 @@
 
 **Goal:** Make Ragstudio's production document workflow MinerU-only, Postgres-only, and Arabic-searchable so words such as `وحنانا` retrieve validated Quran evidence instead of returning zero results.
 
-**Architecture:** Product indexing must fail closed unless MinerU returns validated extracted text. Postgres stores canonical chunks plus Arabic-normalized search material, while PGVector and Neo4j remain the semantic and graph stores. SQLite and local parser fallback are removed from the product architecture; any remaining local fallback behavior must be isolated to explicit test fixtures or legacy migration code.
+**Architecture:** Product indexing must fail closed unless MinerU returns validated extracted text. Postgres stores canonical chunks plus Arabic-normalized search material, while PGVector and Neo4j remain the semantic and graph stores. SQLite and local parser fallback are removed from product workflows at the API, UI, and job policy boundaries; legacy values may remain as migration/test compatibility types until each call site is converted and covered.
 
 **Tech Stack:** FastAPI backend, SQLAlchemy async, Postgres with JSONB/GIN/pg_trgm/PGVector, MinerU sidecar API, Neo4j, pytest/pytest-asyncio, React/Vite.
 
@@ -13,12 +13,12 @@
 ## File Structure
 
 - Modify `backend/src/ragstudio/services/runtime_policy.py`
-  - Product policy: only `postgres_pgvector_neo4j` storage and `mineru_strict` parser are valid defaults.
-  - Legacy fallback values are no longer accepted by normalizers.
+  - Product policy: only `postgres_pgvector_neo4j` storage and `mineru_strict` parser are valid for user-triggered indexing and query execution.
+  - Legacy fallback values are classified as `legacy_test_only` instead of silently normalized into product settings.
 - Modify `backend/src/ragstudio/schemas/parsing.py`
-  - Public parser mode becomes `Literal["mineru_strict"]`.
+  - Keep the broad parser literal temporarily for backwards-compatible request validation, but add product validators that reject non-`mineru_strict` modes on upload/reindex routes.
 - Modify `backend/src/ragstudio/schemas/runtime.py`
-  - Public storage backend becomes `Literal["postgres_pgvector_neo4j"]`.
+  - Keep legacy enum values temporarily for persisted old rows, but product settings writes reject `fallback_local` and `fallback`.
 - Modify `backend/src/ragstudio/services/document_parser_service.py`
   - Remove production fallback parsing path from `parse()`.
   - Keep the existing local parser only where tests construct it directly.
@@ -29,12 +29,19 @@
   - Owns Arabic normalization, tokenization, and query variants.
 - Modify `backend/src/ragstudio/db/models.py`
   - Add Postgres search columns to `Chunk`: `text_search_ar`, `tokens_ar`, `extraction_quality`.
-  - Remove SQLite-specific product indexes.
+  - Add Postgres-only indexes through SQLAlchemy with guarded dialect support.
   - Add Postgres indexes for Arabic lexical search.
+- Modify `backend/src/ragstudio/db/engine.py`
+  - Create `pg_trgm` and `vector` extensions during Postgres initialization.
+  - Backfill new chunk search columns and stop normalizing settings profiles to fallback runtime values.
 - Modify `backend/src/ragstudio/services/chunk_service.py`
   - Validate MinerU output.
   - Persist Arabic search material.
   - Run index quality gate before marking indexing successful.
+- Modify `backend/src/ragstudio/services/index_lifecycle_service.py`
+  - Apply the same MinerU validation, Arabic materialization, and quality gate to runtime-backed indexing.
+- Create `backend/src/ragstudio/services/chunk_lexical_search_repository.py`
+  - Uses Postgres filters for Arabic token and normalized text retrieval before Python scoring.
 - Create `backend/src/ragstudio/services/index_quality_gate.py`
   - Probes persisted chunks for searchability and rejects failed indexes.
 - Modify `backend/src/ragstudio/services/hybrid_chunk_search.py`
@@ -66,17 +73,57 @@ flowchart TD
   fusion --> answer["Grounded answer orchestrator"]
 ```
 
-## Task 1: Runtime Policy Removes Product Fallbacks
+## Tuned Architecture Corrections
+
+The first architecture direction was right, but the implementation plan needed tighter boundaries. These corrections are mandatory:
+
+1. **Do not remove legacy enum values in the first task.**
+   Existing rows, tests, generated frontend types, and migration helpers still mention `fallback`, `fallback_local`, `local_fallback`, and `mineru_with_fallback`. Removing the literals first creates a broad validation break before product behavior is safer. Instead, reject legacy values at product entry points first, then shrink types after tests and persisted rows are migrated.
+
+2. **Enforce product policy at boundaries, not only in helpers.**
+   The real gates are upload, reindex, runtime profile save, index lifecycle, and query readiness. `normalize_*()` helpers should not be the only line of defense.
+
+3. **Index lifecycle is the primary production path.**
+   The previous draft focused too much on `ChunkService.index_document()`. Production runtime indexing also writes chunks in `IndexLifecycleService.reindex_document()`, so Arabic fields and quality reports must be materialized there too.
+
+4. **Postgres indexes must be used by search.**
+   Adding columns and indexes is not enough if `ChunkService.search()` still loads every chunk and scores in Python. Add a small repository that runs a bounded Postgres lexical prefilter for Arabic exact/token queries, then apply existing scoring and fusion.
+
+5. **SQLite removal means no product dependency, not no test doubles.**
+   `make_engine()` already rejects non-Postgres metadata URLs. The tuned plan should remove SQLite from app/runtime docs and default flows, but tests can still use direct SQLAlchemy fixtures or fake repositories where they are not exercising product runtime configuration.
+
+6. **MinerU validation has two gates.**
+   Extraction contract validation runs immediately after MinerU artifact normalization. Index quality validation runs after splitting/relationship annotation, before persistence and before the document becomes ready.
+
+7. **Arabic search must preserve original text.**
+   Normalized fields are search aids only. Citations and UI must show original MinerU text, including diacritics, page/source metadata, and reference metadata.
+
+## Revised Implementation Order
+
+Build this in safer order than the first draft:
+
+1. Add Arabic normalization and tests.
+2. Add MinerU extraction and index quality validators.
+3. Materialize Arabic search fields in both `ChunkService` and `IndexLifecycleService`.
+4. Add Postgres lexical prefilter and hybrid scoring.
+5. Add product policy gates for upload/reindex/settings.
+6. Remove fallback options from UI/docs.
+7. Add Quran end-to-end gates.
+8. Only after the above passes, shrink public type unions and clean legacy rows.
+
+## Task 1: Product Policy Gates For Runtime And Parser
 
 **Files:**
 - Modify: `backend/src/ragstudio/services/runtime_policy.py`
-- Modify: `backend/src/ragstudio/schemas/parsing.py`
-- Modify: `backend/src/ragstudio/schemas/runtime.py`
+- Modify: `backend/src/ragstudio/routes/documents.py`
+- Modify: `backend/src/ragstudio/routes/settings.py`
 - Test: `backend/tests/test_runtime_policy.py`
+- Test: `backend/tests/test_documents.py`
+- Test: `backend/tests/test_settings.py`
 
-- [ ] **Step 1: Write failing runtime policy tests**
+- [ ] **Step 1: Write failing product policy tests**
 
-Create `backend/tests/test_runtime_policy.py`:
+Create or extend `backend/tests/test_runtime_policy.py`:
 
 ```python
 import pytest
@@ -85,6 +132,9 @@ from ragstudio.services.runtime_policy import (
     DEFAULT_PARSER_MODE,
     DEFAULT_RUNTIME_MODE,
     DEFAULT_STORAGE_BACKEND,
+    ProductPolicyError,
+    enforce_product_index_options,
+    enforce_product_runtime_settings,
     normalize_parser_mode,
     normalize_runtime_mode,
     normalize_storage_backend,
@@ -97,27 +147,36 @@ def test_product_defaults_are_postgres_mineru_runtime():
     assert DEFAULT_PARSER_MODE == "mineru_strict"
 
 
-def test_storage_policy_rejects_fallback_local():
-    with pytest.raises(ValueError, match="fallback_local is not a product storage backend"):
-        normalize_storage_backend("fallback_local")
+def test_legacy_normalizers_still_read_old_values_during_migration():
+    assert normalize_storage_backend("fallback_local") == "fallback_local"
+    assert normalize_runtime_mode("fallback", "fallback_local") == "fallback"
+    assert normalize_parser_mode("local_fallback") == "local_fallback"
 
 
-def test_runtime_policy_rejects_fallback_mode():
-    with pytest.raises(ValueError, match="fallback runtime mode is not supported"):
-        normalize_runtime_mode("fallback", "postgres_pgvector_neo4j")
+def test_product_runtime_settings_reject_fallback_storage_and_runtime():
+    with pytest.raises(ProductPolicyError, match="fallback_local"):
+        enforce_product_runtime_settings(
+            storage_backend="fallback_local",
+            runtime_mode="fallback",
+        )
 
 
-def test_parser_policy_rejects_non_mineru_modes():
-    with pytest.raises(ValueError, match="local_fallback is not a product parser mode"):
-        normalize_parser_mode("local_fallback")
-    with pytest.raises(ValueError, match="mineru_with_fallback is not a product parser mode"):
-        normalize_parser_mode("mineru_with_fallback")
+def test_product_runtime_settings_accept_postgres_runtime():
+    enforce_product_runtime_settings(
+        storage_backend="postgres_pgvector_neo4j",
+        runtime_mode="runtime",
+    )
 
 
-def test_unknown_values_fall_back_to_product_defaults():
-    assert normalize_storage_backend("unknown") == "postgres_pgvector_neo4j"
-    assert normalize_runtime_mode("unknown", "postgres_pgvector_neo4j") == "runtime"
-    assert normalize_parser_mode("unknown") == "mineru_strict"
+def test_product_index_options_reject_non_mineru_strict():
+    with pytest.raises(ProductPolicyError, match="mineru_strict"):
+        enforce_product_index_options(parser_mode="local_fallback")
+    with pytest.raises(ProductPolicyError, match="mineru_strict"):
+        enforce_product_index_options(parser_mode="mineru_with_fallback")
+
+
+def test_product_index_options_accept_mineru_strict():
+    enforce_product_index_options(parser_mode="mineru_strict")
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -128,34 +187,36 @@ Run:
 uv run pytest backend/tests/test_runtime_policy.py -v
 ```
 
-Expected: FAIL because fallback values are still accepted.
+Expected: FAIL because `ProductPolicyError`, `enforce_product_runtime_settings()`, and `enforce_product_index_options()` do not exist yet.
 
-- [ ] **Step 3: Update product runtime policy**
+- [ ] **Step 3: Add explicit product policy gates**
 
-Replace `backend/src/ragstudio/services/runtime_policy.py` with:
+Modify `backend/src/ragstudio/services/runtime_policy.py` without removing legacy literals yet:
 
 ```python
 from typing import Literal, cast
 
-RuntimeMode = Literal["runtime", "degraded"]
-StorageBackend = Literal["postgres_pgvector_neo4j"]
-ParserMode = Literal["mineru_strict"]
-EmbeddingProvider = Literal["vllm_openai"]
+RuntimeMode = Literal["runtime", "fallback", "degraded"]
+StorageBackend = Literal["postgres_pgvector_neo4j", "fallback_local"]
+ParserMode = Literal["local_fallback", "mineru_strict", "mineru_with_fallback"]
+EmbeddingProvider = Literal["fallback", "vllm_openai"]
 
 DEFAULT_RUNTIME_MODE: RuntimeMode = "runtime"
 DEFAULT_STORAGE_BACKEND: StorageBackend = "postgres_pgvector_neo4j"
 DEFAULT_PARSER_MODE: ParserMode = "mineru_strict"
 DEFAULT_EMBEDDING_PROVIDER: EmbeddingProvider = "vllm_openai"
 
-VALID_RUNTIME_MODES = {"runtime", "degraded"}
-VALID_STORAGE_BACKENDS = {"postgres_pgvector_neo4j"}
-VALID_PARSER_MODES = {"mineru_strict"}
-VALID_EMBEDDING_PROVIDERS = {"vllm_openai"}
+VALID_RUNTIME_MODES = {"runtime", "fallback", "degraded"}
+VALID_STORAGE_BACKENDS = {"postgres_pgvector_neo4j", "fallback_local"}
+VALID_PARSER_MODES = {"local_fallback", "mineru_strict", "mineru_with_fallback"}
+VALID_EMBEDDING_PROVIDERS = {"fallback", "vllm_openai"}
+
+
+class ProductPolicyError(ValueError):
+    pass
 
 
 def normalize_storage_backend(value: str | None) -> StorageBackend:
-    if value == "fallback_local":
-        raise ValueError("fallback_local is not a product storage backend")
     if value in VALID_STORAGE_BACKENDS:
         return cast(StorageBackend, value)
     return DEFAULT_STORAGE_BACKEND
@@ -165,19 +226,14 @@ def normalize_runtime_mode(
     value: str | None,
     storage_backend: str | None,
 ) -> RuntimeMode:
-    normalize_storage_backend(storage_backend)
-    if value == "fallback":
-        raise ValueError("fallback runtime mode is not supported")
+    if normalize_storage_backend(storage_backend) == "fallback_local":
+        return "fallback"
     if value in VALID_RUNTIME_MODES:
         return cast(RuntimeMode, value)
     return DEFAULT_RUNTIME_MODE
 
 
 def normalize_parser_mode(value: str | None) -> ParserMode:
-    if value == "local_fallback":
-        raise ValueError("local_fallback is not a product parser mode")
-    if value == "mineru_with_fallback":
-        raise ValueError("mineru_with_fallback is not a product parser mode")
     if value in VALID_PARSER_MODES:
         return cast(ParserMode, value)
     return DEFAULT_PARSER_MODE
@@ -187,37 +243,117 @@ def normalize_embedding_provider(value: str | None) -> EmbeddingProvider:
     if value in VALID_EMBEDDING_PROVIDERS:
         return cast(EmbeddingProvider, value)
     return DEFAULT_EMBEDDING_PROVIDER
+
+
+def enforce_product_runtime_settings(*, storage_backend: str, runtime_mode: str) -> None:
+    if storage_backend != DEFAULT_STORAGE_BACKEND:
+        raise ProductPolicyError(
+            "fallback_local is not allowed in product settings. "
+            "Use postgres_pgvector_neo4j."
+        )
+    if runtime_mode not in {"runtime", "degraded"}:
+        raise ProductPolicyError(
+            "fallback runtime mode is not allowed in product settings. "
+            "Use runtime with Postgres/PGVector/Neo4j."
+        )
+
+
+def enforce_product_index_options(*, parser_mode: str) -> None:
+    if parser_mode != DEFAULT_PARSER_MODE:
+        raise ProductPolicyError(
+            "Production indexing requires parser_mode=mineru_strict. "
+            f"Received {parser_mode!r}."
+        )
 ```
 
-Update `backend/src/ragstudio/schemas/parsing.py`:
+- [ ] **Step 4: Gate upload and reindex routes**
+
+In `backend/src/ragstudio/routes/documents.py`, import:
 
 ```python
-ParserMode = Literal["mineru_strict"]
+from ragstudio.services.runtime_policy import ProductPolicyError, enforce_product_index_options
 ```
 
-Update `backend/src/ragstudio/schemas/runtime.py`:
+After parsing upload/reindex `IndexDocumentIn`, call:
 
 ```python
-RuntimeMode = Literal["runtime", "degraded"]
-RuntimeOverallStatus = Literal["ready", "degraded", "failed"]
-StorageBackend = Literal["postgres_pgvector_neo4j"]
+try:
+    enforce_product_index_options(parser_mode=options.parser_mode)
+except ProductPolicyError as exc:
+    raise HTTPException(status_code=422, detail=str(exc)) from exc
 ```
 
-- [ ] **Step 4: Run runtime policy tests**
+Add route tests in `backend/tests/test_documents.py`:
+
+```python
+async def test_upload_rejects_local_fallback_parser_mode(client):
+    response = await client.post(
+        "/api/documents",
+        files={"file": ("sample.pdf", b"%PDF-1.4", "application/pdf")},
+        data={"parser_mode": "local_fallback", "domain_metadata": "{}"},
+    )
+
+    assert response.status_code == 422
+    assert "mineru_strict" in response.json()["detail"]
+
+
+async def test_reindex_rejects_mineru_with_fallback(client, seeded_document):
+    response = await client.post(
+        f"/api/documents/{seeded_document.id}/index",
+        json={"parser_mode": "mineru_with_fallback", "domain_metadata": {}},
+    )
+
+    assert response.status_code == 422
+    assert "mineru_strict" in response.json()["detail"]
+```
+
+- [ ] **Step 5: Gate settings writes**
+
+In `backend/src/ragstudio/routes/settings.py`, import:
+
+```python
+from ragstudio.services.runtime_policy import ProductPolicyError, enforce_product_runtime_settings
+```
+
+Before saving settings, call:
+
+```python
+try:
+    enforce_product_runtime_settings(
+        storage_backend=payload.storage_backend,
+        runtime_mode=payload.runtime_mode,
+    )
+except ProductPolicyError as exc:
+    raise HTTPException(status_code=422, detail=str(exc)) from exc
+```
+
+Add tests in `backend/tests/test_settings.py`:
+
+```python
+async def test_settings_reject_fallback_local_storage(client, settings_payload):
+    payload = {**settings_payload, "storage_backend": "fallback_local", "runtime_mode": "fallback"}
+
+    response = await client.put("/api/settings/default", json=payload)
+
+    assert response.status_code == 422
+    assert "postgres_pgvector_neo4j" in response.json()["detail"]
+```
+
+- [ ] **Step 6: Run product policy tests**
 
 Run:
 
 ```bash
-uv run pytest backend/tests/test_runtime_policy.py -v
+uv run pytest backend/tests/test_runtime_policy.py backend/tests/test_documents.py::test_upload_rejects_local_fallback_parser_mode backend/tests/test_documents.py::test_reindex_rejects_mineru_with_fallback backend/tests/test_settings.py::test_settings_reject_fallback_local_storage -v
 ```
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add backend/src/ragstudio/services/runtime_policy.py backend/src/ragstudio/schemas/parsing.py backend/src/ragstudio/schemas/runtime.py backend/tests/test_runtime_policy.py
-git commit -m "feat: enforce postgres mineru runtime policy"
+git add backend/src/ragstudio/services/runtime_policy.py backend/src/ragstudio/routes/documents.py backend/src/ragstudio/routes/settings.py backend/tests/test_runtime_policy.py backend/tests/test_documents.py backend/tests/test_settings.py
+git commit -m "feat: enforce product runtime policy gates"
 ```
 
 ## Task 2: MinerU-Only Parser Contract
@@ -676,7 +812,9 @@ git commit -m "feat: add arabic text normalization"
 
 **Files:**
 - Modify: `backend/src/ragstudio/db/models.py`
+- Modify: `backend/src/ragstudio/db/engine.py`
 - Modify: `backend/src/ragstudio/services/chunk_service.py`
+- Modify: `backend/src/ragstudio/services/index_lifecycle_service.py`
 - Test: `backend/tests/test_chunk_service_arabic_search.py`
 
 - [ ] **Step 1: Write failing chunk persistence test**
@@ -759,9 +897,53 @@ __table_args__ = (
 )
 ```
 
-Remove product reliance on SQLite-specific indexes. The active-job uniqueness index in `Job.__table_args__` should keep only `postgresql_where`.
+Keep SQLite-specific test compatibility out of new product indexes. The active-job uniqueness index may keep `sqlite_where` only if existing isolated tests still rely on SQLite fixtures, but product verification must exercise the `postgresql_where` path.
 
-- [ ] **Step 4: Materialize Arabic fields on chunk writes**
+- [ ] **Step 4: Add extension and column backfills**
+
+In `backend/src/ragstudio/db/engine.py`, update `init_db()`:
+
+```python
+if connection.dialect.name == "postgresql":
+    await connection.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+    await connection.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
+```
+
+In `_ensure_runtime_columns()`, add chunk columns:
+
+```python
+"text_search_ar": "TEXT DEFAULT '' NOT NULL",
+"tokens_ar": _json_array_column(connection),
+"extraction_quality": _json_object_column(connection),
+```
+
+After adding columns, backfill existing rows:
+
+```python
+if "chunks" in table_names:
+    _backfill_chunk_search_columns(connection)
+```
+
+Add:
+
+```python
+def _backfill_chunk_search_columns(connection) -> None:
+    connection.execute(
+        text(
+            """
+            UPDATE chunks
+            SET text_search_ar = COALESCE(text_search_ar, ''),
+                tokens_ar = COALESCE(tokens_ar, CAST('[]' AS JSONB)),
+                extraction_quality = COALESCE(extraction_quality, CAST('{}' AS JSONB))
+            WHERE text_search_ar IS NULL
+               OR tokens_ar IS NULL
+               OR extraction_quality IS NULL
+            """
+        )
+    )
+```
+
+- [ ] **Step 5: Materialize Arabic fields on chunk writes**
 
 In `backend/src/ragstudio/services/chunk_service.py`, import:
 
@@ -770,6 +952,14 @@ from ragstudio.services.arabic_text import arabic_tokens, normalize_arabic_text
 ```
 
 When constructing each `Chunk`, add:
+
+```python
+text_search_ar=normalize_arabic_text(adapter_chunk.text),
+tokens_ar=arabic_tokens(adapter_chunk.text),
+extraction_quality=adapter_chunk.metadata.get("extraction_quality", {}),
+```
+
+Apply the same fields in `backend/src/ragstudio/services/index_lifecycle_service.py` when constructing `Chunk` from runtime-normalized chunks:
 
 ```python
 text_search_ar=normalize_arabic_text(adapter_chunk.text),
@@ -786,7 +976,7 @@ if not output.metadata.get("tokens_ar"):
     metadata["tokens_ar"] = arabic_tokens(output.text)
 ```
 
-- [ ] **Step 5: Run Arabic chunk search test**
+- [ ] **Step 6: Run Arabic chunk search test**
 
 Run:
 
@@ -796,17 +986,20 @@ uv run pytest backend/tests/test_chunk_service_arabic_search.py -v
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add backend/src/ragstudio/db/models.py backend/src/ragstudio/services/chunk_service.py backend/tests/test_chunk_service_arabic_search.py
+git add backend/src/ragstudio/db/models.py backend/src/ragstudio/db/engine.py backend/src/ragstudio/services/chunk_service.py backend/src/ragstudio/services/index_lifecycle_service.py backend/tests/test_chunk_service_arabic_search.py
 git commit -m "feat: materialize arabic search fields in postgres chunks"
 ```
 
-## Task 6: Arabic Lexical Search Scoring
+## Task 6: Arabic Lexical Search Repository And Scoring
 
 **Files:**
+- Create: `backend/src/ragstudio/services/chunk_lexical_search_repository.py`
+- Modify: `backend/src/ragstudio/services/chunk_service.py`
 - Modify: `backend/src/ragstudio/services/hybrid_chunk_search.py`
+- Test: `backend/tests/test_chunk_lexical_search_repository.py`
 - Test: `backend/tests/test_hybrid_chunk_search_arabic.py`
 
 - [ ] **Step 1: Write failing Arabic search scoring tests**
@@ -848,17 +1041,115 @@ def test_arabic_query_matches_prefix_stripped_token():
     assert score.breakdown["arabic_token"] >= 20.0
 ```
 
+Create `backend/tests/test_chunk_lexical_search_repository.py`:
+
+```python
+import pytest
+
+from ragstudio.db.models import Chunk, Document
+from ragstudio.services.arabic_text import arabic_tokens, normalize_arabic_text
+from ragstudio.services.chunk_lexical_search_repository import ChunkLexicalSearchRepository
+
+
+@pytest.mark.asyncio
+async def test_repository_prefilters_arabic_token_with_postgres_columns(session, tmp_path):
+    document = Document(
+        id="doc-quran",
+        filename="quran.pdf",
+        content_type="application/pdf",
+        sha256="sha",
+        artifact_path=str(tmp_path / "quran.pdf"),
+        status="ready",
+    )
+    text = "وَحَنَانًا مِّن لَّدُنَّا وَزَكَاةً"
+    session.add(document)
+    session.add(
+        Chunk(
+            id="chunk-19-13",
+            document_id="doc-quran",
+            text=text,
+            text_search_ar=normalize_arabic_text(text),
+            tokens_ar=arabic_tokens(text),
+            source_location={"page": 312},
+            metadata_json={},
+        )
+    )
+    await session.commit()
+
+    chunks = await ChunkLexicalSearchRepository(session).arabic_prefilter(
+        query="وحنانا",
+        document_ids=["doc-quran"],
+        limit=5,
+    )
+
+    assert [chunk.id for chunk in chunks] == ["chunk-19-13"]
+```
+
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run:
 
 ```bash
-uv run pytest backend/tests/test_hybrid_chunk_search_arabic.py -v
+uv run pytest backend/tests/test_hybrid_chunk_search_arabic.py backend/tests/test_chunk_lexical_search_repository.py -v
 ```
 
-Expected: FAIL because Arabic normalized exact scoring is not implemented.
+Expected: FAIL because Arabic normalized exact scoring and the Postgres lexical repository are not implemented.
 
-- [ ] **Step 3: Add Arabic scoring**
+- [ ] **Step 3: Add Postgres lexical repository**
+
+Create `backend/src/ragstudio/services/chunk_lexical_search_repository.py`:
+
+```python
+from __future__ import annotations
+
+from sqlalchemy import or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from ragstudio.db.models import Chunk
+from ragstudio.services.arabic_text import arabic_query_variants
+
+
+class ChunkLexicalSearchRepository:
+    def __init__(self, session: AsyncSession):
+        self.session = session
+
+    async def arabic_prefilter(
+        self,
+        *,
+        query: str,
+        document_ids: list[str],
+        limit: int,
+    ) -> list[Chunk]:
+        variants = arabic_query_variants(query)
+        if not variants:
+            return []
+
+        statement = select(Chunk)
+        if document_ids:
+            statement = statement.where(Chunk.document_id.in_(document_ids))
+
+        token_filters = [Chunk.tokens_ar.contains([variant]) for variant in variants]
+        text_filters = [Chunk.text_search_ar.ilike(f"%{variant}%") for variant in variants]
+        statement = statement.where(or_(*token_filters, *text_filters))
+        statement = statement.order_by(Chunk.created_at.asc(), Chunk.id.asc()).limit(limit)
+
+        result = await self.session.execute(statement)
+        return list(result.scalars().all())
+```
+
+In `backend/src/ragstudio/services/chunk_service.py`, construct the repository and merge prefiltered chunks with the existing full ranking path:
+
+```python
+prefiltered = await ChunkLexicalSearchRepository(self.session).arabic_prefilter(
+    query=search_in.query,
+    document_ids=search_in.document_ids,
+    limit=max(search_in.limit, 20),
+)
+prefiltered_ids = {chunk.id for chunk in prefiltered}
+chunks = [*prefiltered, *[chunk for chunk in chunks if chunk.id not in prefiltered_ids]]
+```
+
+- [ ] **Step 4: Add Arabic scoring**
 
 In `backend/src/ragstudio/services/hybrid_chunk_search.py`, import:
 
@@ -904,20 +1195,20 @@ def _arabic_token_score(self, query: str, chunk: Chunk) -> float:
     return 0.0
 ```
 
-- [ ] **Step 4: Run Arabic search tests**
+- [ ] **Step 5: Run Arabic search tests**
 
 Run:
 
 ```bash
-uv run pytest backend/tests/test_hybrid_chunk_search_arabic.py backend/tests/test_chunk_service_arabic_search.py -v
+uv run pytest backend/tests/test_hybrid_chunk_search_arabic.py backend/tests/test_chunk_lexical_search_repository.py backend/tests/test_chunk_service_arabic_search.py -v
 ```
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
-git add backend/src/ragstudio/services/hybrid_chunk_search.py backend/tests/test_hybrid_chunk_search_arabic.py backend/tests/test_chunk_service_arabic_search.py
+git add backend/src/ragstudio/services/chunk_lexical_search_repository.py backend/src/ragstudio/services/chunk_service.py backend/src/ragstudio/services/hybrid_chunk_search.py backend/tests/test_chunk_lexical_search_repository.py backend/tests/test_hybrid_chunk_search_arabic.py backend/tests/test_chunk_service_arabic_search.py
 git commit -m "feat: score arabic normalized lexical matches"
 ```
 
@@ -926,6 +1217,7 @@ git commit -m "feat: score arabic normalized lexical matches"
 **Files:**
 - Create: `backend/src/ragstudio/services/index_quality_gate.py`
 - Modify: `backend/src/ragstudio/services/chunk_service.py`
+- Modify: `backend/src/ragstudio/services/index_lifecycle_service.py`
 - Test: `backend/tests/test_index_quality_gate.py`
 
 - [ ] **Step 1: Write failing quality gate tests**
@@ -1068,6 +1360,26 @@ adapter_chunks = [
 ]
 ```
 
+Apply the same gate in `backend/src/ragstudio/services/index_lifecycle_service.py` after `ChunkSplitter().split(...)` and `MinerURelationshipBuilder().annotate(...)`, before deleting old chunks:
+
+```python
+quality_report = IndexQualityGate().validate_adapter_chunks(
+    adapter_chunks,
+    language=options.domain_metadata.language,
+)
+adapter_chunks = [
+    AdapterChunk(
+        text=adapter_chunk.text,
+        source_location=adapter_chunk.source_location,
+        metadata={**adapter_chunk.metadata, "index_quality": quality_report},
+        runtime_source_id=adapter_chunk.runtime_source_id,
+        content_type=adapter_chunk.content_type,
+        preview_ref=adapter_chunk.preview_ref,
+    )
+    for adapter_chunk in adapter_chunks
+]
+```
+
 - [ ] **Step 5: Run quality gate tests**
 
 Run:
@@ -1081,7 +1393,7 @@ Expected: PASS.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add backend/src/ragstudio/services/index_quality_gate.py backend/src/ragstudio/services/chunk_service.py backend/tests/test_index_quality_gate.py
+git add backend/src/ragstudio/services/index_quality_gate.py backend/src/ragstudio/services/chunk_service.py backend/src/ragstudio/services/index_lifecycle_service.py backend/tests/test_index_quality_gate.py
 git commit -m "feat: add index quality gate"
 ```
 
@@ -1211,61 +1523,78 @@ git add frontend/src/api/generated.ts frontend/src/features/settings/settings-pa
 git commit -m "feat: remove product fallback options"
 ```
 
-## Task 9: Postgres-Only Verification Gate
+## Task 9: Postgres-Only Product Verification Gate
 
 **Files:**
+- Modify: `backend/src/ragstudio/db/engine.py`
 - Modify: `backend/tests/test_db_engine.py`
 - Modify: `backend/tests/test_mineru_reindex_jobs.py`
 - Test: existing backend suites
 
-- [ ] **Step 1: Add failing tests that reject SQLite product URLs**
+- [ ] **Step 1: Add tests that product engines reject SQLite**
 
 In `backend/tests/test_db_engine.py`, add:
 
 ```python
 import pytest
 
-from ragstudio.config import AppSettings
+from ragstudio.db.engine import make_engine
 
 
-def test_product_settings_reject_sqlite_database_url():
-    with pytest.raises(ValueError, match="SQLite is not supported for product runtime"):
-        AppSettings(database_url="sqlite+aiosqlite:////tmp/ragstudio.sqlite3")
+def test_product_engine_rejects_sqlite_database_url():
+    with pytest.raises(ValueError, match="requires PostgreSQL"):
+        make_engine("sqlite+aiosqlite:////tmp/ragstudio.sqlite3")
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [ ] **Step 2: Run test**
 
 Run:
 
 ```bash
-uv run pytest backend/tests/test_db_engine.py::test_product_settings_reject_sqlite_database_url -v
+uv run pytest backend/tests/test_db_engine.py::test_product_engine_rejects_sqlite_database_url -v
 ```
 
-Expected: FAIL if `AppSettings` still accepts SQLite as product runtime database.
+Expected: PASS if the existing product engine guard is already active. If it fails, add the guard in `make_engine()` rather than blocking `AppSettings`, because tests and migration tooling may still construct settings objects without opening a product database connection.
 
-- [ ] **Step 3: Enforce Postgres database URL in settings**
+- [ ] **Step 3: Stop fallback normalization in Postgres settings rows**
 
-In `backend/src/ragstudio/config.py`, add a model validator:
+In `backend/src/ragstudio/db/engine.py`, update `_normalize_settings_profile_values()` so unknown or legacy values become product defaults, not fallback:
 
 ```python
-from pydantic import model_validator
-
-
-@model_validator(mode="after")
-def require_postgres_database(self):
-    if self.database_url.startswith("sqlite"):
-        raise ValueError("SQLite is not supported for product runtime")
-    return self
+UPDATE settings_profiles
+SET storage_backend = 'postgres_pgvector_neo4j'
+WHERE storage_backend IS NULL
+   OR storage_backend = ''
+   OR storage_backend NOT IN ('postgres_pgvector_neo4j')
 ```
 
-If tests need SQLite for isolated unit speed, create a separate `TestAppSettings` fixture in tests rather than allowing SQLite through product `AppSettings`.
+```python
+UPDATE settings_profiles
+SET runtime_mode = 'runtime'
+WHERE runtime_mode IS NULL
+   OR runtime_mode = ''
+   OR runtime_mode NOT IN ('runtime', 'degraded')
+```
+
+In `backend/tests/test_db_engine.py`, update `test_init_db_backfills_runtime_columns_for_existing_postgres_tables()` so the legacy row still inserts `storage_backend='local'`, but the assertions expect product defaults:
+
+```python
+assert settings_row["runtime_mode"] == "runtime"
+assert settings_row["storage_backend"] == "postgres_pgvector_neo4j"
+assert settings.storage_backend == "postgres_pgvector_neo4j"
+assert settings.runtime_mode == "runtime"
+assert runtime_profile.storage_backend == "postgres_pgvector_neo4j"
+assert runtime_profile.runtime_mode == "runtime"
+```
+
+Remove the local fallback upload/query assertions from this test and replace them with a focused assertion that default settings normalize to production runtime values. Product upload/reindex behavior is covered by Task 1 route tests.
 
 - [ ] **Step 4: Run Postgres policy tests**
 
 Run:
 
 ```bash
-uv run pytest backend/tests/test_runtime_policy.py backend/tests/test_db_engine.py::test_product_settings_reject_sqlite_database_url -v
+uv run pytest backend/tests/test_runtime_policy.py backend/tests/test_db_engine.py::test_product_engine_rejects_sqlite_database_url backend/tests/test_db_engine.py::test_init_db_backfills_runtime_columns_for_existing_postgres_tables -v
 ```
 
 Expected: PASS.
@@ -1273,8 +1602,8 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add backend/src/ragstudio/config.py backend/tests/test_db_engine.py
-git commit -m "feat: reject sqlite product runtime configuration"
+git add backend/src/ragstudio/db/engine.py backend/tests/test_db_engine.py
+git commit -m "feat: verify postgres only product runtime"
 ```
 
 ## Task 10: End-To-End Quran Search Gate
@@ -1463,4 +1792,3 @@ Expected:
   - `normalize_arabic_text()`, `arabic_tokens()`, and `arabic_query_variants()` are used by chunk persistence and search scoring.
   - `MinerUExtractionValidator.validate()` returns `MinerUExtractionReport`.
   - `IndexQualityGate.validate_adapter_chunks()` returns a dict report or raises `IndexQualityGateError`.
-
