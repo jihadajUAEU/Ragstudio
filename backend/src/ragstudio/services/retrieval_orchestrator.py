@@ -5,6 +5,7 @@ from time import perf_counter
 from typing import Any
 
 from ragstudio.schemas.chunks import ChunkOut, ChunkSearchIn
+from ragstudio.services.arabic_text import arabic_tokens
 from ragstudio.services.chunk_service import ChunkService
 from ragstudio.services.graph_expansion_service import GraphExpansionService
 from ragstudio.services.reranker_service import RerankerService
@@ -177,15 +178,6 @@ class RetrievalOrchestrator:
                 native_result = await native_task
             except Exception as exc:
                 native_result = exc
-            if (
-                isinstance(native_result, NativeRuntimeQueryFailed)
-                and native_result.error_type == "native_document_scope_unsupported"
-            ):
-                native_timings = getattr(native_result, "timings", None)
-                if isinstance(native_timings, dict):
-                    timings.update(native_timings)
-                timings["parallel_retrieval_ms"] = _elapsed_ms(parallel_started)
-                raise native_result
             return await self._metadata_after_native_result(
                 query,
                 document_ids,
@@ -210,6 +202,7 @@ class RetrievalOrchestrator:
         return self._resolve_retrieval_results(
             native_result=native_result,
             metadata_result=metadata_result,
+            plan=plan,
             timings=timings,
             parallel_started=parallel_started,
         )
@@ -236,6 +229,7 @@ class RetrievalOrchestrator:
         return self._resolve_retrieval_results(
             native_result=native_result,
             metadata_result=metadata_result,
+            plan=plan,
             timings=timings,
             parallel_started=parallel_started,
         )
@@ -245,6 +239,7 @@ class RetrievalOrchestrator:
         *,
         native_result: Any,
         metadata_result: Any,
+        plan: Any,
         timings: dict[str, Any],
         parallel_started: float,
     ) -> tuple[list[EvidenceCandidate], list[EvidenceCandidate], dict[str, Any]]:
@@ -271,13 +266,24 @@ class RetrievalOrchestrator:
         native_candidates: list[EvidenceCandidate] = []
         native_status = "ok"
         if isinstance(native_result, Exception):
-            if isinstance(native_result, NativeRuntimeQueryFailed):
+            if self._can_degrade_native_failure(plan, metadata_candidates):
+                native_status = "failed_degraded"
+                timings["native_degraded"] = True
+                timings["native_error_type"] = getattr(
+                    native_result,
+                    "error_type",
+                    native_result.__class__.__name__,
+                )
+                if isinstance(native_result, NativeRuntimeQueryFailed):
+                    timings.update(native_result.timings)
+            elif isinstance(native_result, NativeRuntimeQueryFailed):
                 raise NativeRuntimeQueryFailed(
                     native_result.error,
                     native_result.error_type,
                     {**timings, **native_result.timings},
                 ) from native_result
-            raise native_result
+            else:
+                raise native_result
         else:
             native_candidates, _native_timings = native_result
 
@@ -291,6 +297,17 @@ class RetrievalOrchestrator:
                 "metadata_candidates": len(metadata_candidates),
             },
         )
+
+    def _can_degrade_native_failure(
+        self,
+        plan: Any,
+        metadata_candidates: list[EvidenceCandidate],
+    ) -> bool:
+        if not metadata_candidates:
+            return False
+        if getattr(plan, "intent", None) == "reference":
+            return True
+        return bool(arabic_tokens(getattr(plan, "query", "")))
 
     async def _safe_graph_expansion(
         self,

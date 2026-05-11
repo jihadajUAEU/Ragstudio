@@ -1,7 +1,9 @@
+import json
 from collections.abc import AsyncIterator
 
 from ragstudio.config import AppSettings
 from ragstudio.db.base import Base
+from ragstudio.services.arabic_text import arabic_tokens, normalize_arabic_text
 from sqlalchemy import inspect, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import (
@@ -32,6 +34,7 @@ async def init_db(engine: AsyncEngine) -> None:
     async with engine.begin() as connection:
         if connection.dialect.name == "postgresql":
             await connection.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+            await connection.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
         await connection.run_sync(Base.metadata.create_all)
         await connection.run_sync(_ensure_runtime_columns)
 
@@ -50,7 +53,7 @@ def _ensure_runtime_columns(connection) -> None:
                 "llm_api_key": "VARCHAR",
                 "llm_timeout_ms": "INTEGER DEFAULT 10000 NOT NULL",
                 "llm_capabilities": _json_array_column(connection),
-                "embedding_provider": "VARCHAR DEFAULT 'fallback' NOT NULL",
+                "embedding_provider": "VARCHAR DEFAULT 'vllm_openai' NOT NULL",
                 "embedding_base_url": "VARCHAR",
                 "embedding_api_key": "VARCHAR",
                 "embedding_timeout_ms": "INTEGER DEFAULT 10000 NOT NULL",
@@ -62,7 +65,7 @@ def _ensure_runtime_columns(connection) -> None:
                 "mineru_timeout_ms": "INTEGER DEFAULT 14400000 NOT NULL",
                 "mineru_poll_interval_ms": "INTEGER DEFAULT 1000 NOT NULL",
                 "mineru_require_hpc": _bool_column(connection, True),
-                "runtime_mode": "VARCHAR DEFAULT 'fallback' NOT NULL",
+                "runtime_mode": "VARCHAR DEFAULT 'runtime' NOT NULL",
                 "vision_model": "VARCHAR",
                 "vision_base_url": "VARCHAR",
                 "vision_api_key": "VARCHAR",
@@ -117,8 +120,13 @@ def _ensure_runtime_columns(connection) -> None:
                 "content_type": "VARCHAR DEFAULT 'text' NOT NULL",
                 "preview_ref": "VARCHAR",
                 "indexed_at": _datetime_column(connection),
+                "text_search_ar": "TEXT DEFAULT '' NOT NULL",
+                "tokens_ar": _json_array_column(connection),
+                "extraction_quality": _json_object_column(connection),
             },
         )
+        _backfill_chunk_search_columns(connection)
+        _ensure_chunk_search_indexes(connection)
     if "runs" in table_names:
         _ensure_columns(
             connection,
@@ -157,6 +165,78 @@ def _ensure_columns(connection, inspector, table_name: str, additions: dict[str,
     for column, definition in additions.items():
         if column not in existing:
             connection.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {column} {definition}"))
+
+
+def _backfill_chunk_search_columns(connection) -> None:
+    connection.execute(
+        text(
+            """
+            UPDATE chunks
+            SET text_search_ar = COALESCE(text_search_ar, ''),
+                tokens_ar = COALESCE(tokens_ar, CAST('[]' AS JSONB)),
+                extraction_quality = COALESCE(extraction_quality, CAST('{}' AS JSONB))
+            WHERE text_search_ar IS NULL
+               OR tokens_ar IS NULL
+               OR extraction_quality IS NULL
+            """
+        )
+    )
+    rows = (
+        connection.execute(
+            text(
+                """
+                SELECT id, text
+                FROM chunks
+                WHERE COALESCE(text_search_ar, '') = ''
+                   OR tokens_ar IS NULL
+                   OR tokens_ar = CAST('[]' AS JSONB)
+                """
+            )
+        )
+        .mappings()
+        .all()
+        if connection.dialect.name == "postgresql"
+        else []
+    )
+    for row in rows:
+        normalized = normalize_arabic_text(row["text"] or "")
+        tokens = arabic_tokens(row["text"] or "")
+        connection.execute(
+            text(
+                """
+                UPDATE chunks
+                SET text_search_ar = :text_search_ar,
+                    tokens_ar = CAST(:tokens_ar AS JSONB)
+                WHERE id = :id
+                """
+            ),
+            {
+                "id": row["id"],
+                "text_search_ar": normalized,
+                "tokens_ar": json.dumps(tokens, ensure_ascii=False),
+            },
+        )
+
+
+def _ensure_chunk_search_indexes(connection) -> None:
+    if connection.dialect.name != "postgresql":
+        return
+    connection.execute(
+        text(
+            """
+            CREATE INDEX IF NOT EXISTS ix_chunks_text_search_ar_trgm
+            ON chunks USING gin (text_search_ar gin_trgm_ops)
+            """
+        )
+    )
+    connection.execute(
+        text(
+            """
+            CREATE INDEX IF NOT EXISTS ix_chunks_tokens_ar_gin
+            ON chunks USING gin (tokens_ar)
+            """
+        )
+    )
 
 
 def _backfill_graph_projection_targets(connection) -> None:
@@ -217,8 +297,7 @@ def _backfill_graph_projection_targets(connection) -> None:
 def _workspace_label(profile_id: str | None) -> str:
     raw = f"ragstudio_{profile_id or 'default'}"
     safe = "".join(
-        character if character.isalnum() or character in {"_", "-"} else "_"
-        for character in raw
+        character if character.isalnum() or character in {"_", "-"} else "_" for character in raw
     ).strip("_")
     return (safe or "ragstudio_default").replace("`", "``")
 
@@ -247,11 +326,9 @@ def _normalize_settings_profile_values(connection) -> None:
         text(
             """
             UPDATE settings_profiles
-            SET runtime_mode = 'fallback'
+            SET runtime_mode = 'runtime'
             WHERE storage_backend IS NULL
                OR storage_backend = ''
-               OR storage_backend = 'fallback_local'
-               OR storage_backend NOT IN ('postgres_pgvector_neo4j', 'fallback_local')
             """
         )
     )
@@ -259,10 +336,9 @@ def _normalize_settings_profile_values(connection) -> None:
         text(
             """
             UPDATE settings_profiles
-            SET storage_backend = 'fallback_local'
+            SET storage_backend = 'postgres_pgvector_neo4j'
             WHERE storage_backend IS NULL
                OR storage_backend = ''
-               OR storage_backend NOT IN ('postgres_pgvector_neo4j', 'fallback_local')
             """
         )
     )
@@ -270,19 +346,19 @@ def _normalize_settings_profile_values(connection) -> None:
         text(
             """
             UPDATE settings_profiles
-            SET runtime_mode = 'fallback'
-            WHERE storage_backend = 'fallback_local'
-            """
-        )
-    )
-    connection.execute(
-        text(
-            """
-            UPDATE settings_profiles
-            SET runtime_mode = 'fallback'
+            SET runtime_mode = 'runtime'
             WHERE runtime_mode IS NULL
                OR runtime_mode = ''
-               OR runtime_mode NOT IN ('runtime', 'fallback', 'degraded')
+            """
+        )
+    )
+    connection.execute(
+        text(
+            """
+            UPDATE settings_profiles
+            SET embedding_provider = 'vllm_openai'
+            WHERE embedding_provider IS NULL
+               OR embedding_provider = ''
             """
         )
     )

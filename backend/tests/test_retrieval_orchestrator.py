@@ -356,9 +356,9 @@ async def test_orchestrator_preserves_runtime_query_errors():
 
 
 @pytest.mark.asyncio
-async def test_orchestrator_fails_when_native_scoped_query_is_unsupported():
+async def test_orchestrator_degrades_scoped_native_unsupported_for_reference_query():
     answer_service = FakeAnswerService()
-    chunk_service = MetadataSearchShouldNotRun()
+    chunk_service = FakeChunkSearchService()
     orchestrator = RetrievalOrchestrator(
         chunk_service=chunk_service,
         answer_service=answer_service,
@@ -367,7 +367,7 @@ async def test_orchestrator_fails_when_native_scoped_query_is_unsupported():
     )
 
     result = await orchestrator.query(
-        "how many hadith in bukhari",
+        "show Book 64 Hadith 486",
         runtime=FakeRuntimeTool(
             error=(
                 "LightRAG vector storage does not support storage-level "
@@ -382,17 +382,17 @@ async def test_orchestrator_fails_when_native_scoped_query_is_unsupported():
         query_config={"limit": 8},
     )
 
-    assert result.answer == ""
-    assert result.error_type == "native_document_scope_unsupported"
-    assert "full_doc_id filtering" in (result.error or "")
-    assert result.sources == []
+    assert result.error is None
+    assert result.answer == "Sahih al-Bukhari contains 7277 hadith."
+    assert result.sources
     assert result.timings["runtime_query_ms"] == 7
     assert result.timings["native_scoped_query"] is True
     assert result.timings["native_stage_ms"] >= 0
-    assert "metadata_ms" not in result.timings
-    assert result.chunk_traces == []
-    assert chunk_service.calls == 0
-    assert answer_service.called is False
+    assert result.timings["metadata_ms"] >= 0
+    assert result.timings["native_degraded"] is True
+    assert result.timings["native_error_type"] == "native_document_scope_unsupported"
+    assert chunk_service.calls == 1
+    assert answer_service.called is True
 
 
 @pytest.mark.asyncio
@@ -541,9 +541,9 @@ async def test_orchestrator_preserves_native_context_when_both_retrieval_paths_f
 
 
 @pytest.mark.asyncio
-async def test_orchestrator_short_circuits_scoped_native_unsupported_before_metadata():
+async def test_orchestrator_preserves_scoped_native_unsupported_when_metadata_cannot_degrade():
     answer_service = FakeAnswerService()
-    chunk_service = MetadataSearchShouldNotRun()
+    chunk_service = FakeChunkSearchService()
     orchestrator = RetrievalOrchestrator(
         chunk_service=chunk_service,
         answer_service=answer_service,
@@ -570,9 +570,9 @@ async def test_orchestrator_short_circuits_scoped_native_unsupported_before_meta
     assert result.timings["runtime_query_ms"] == 7
     assert result.timings["native_scoped_query"] is True
     assert result.timings["native_stage_ms"] >= 0
-    assert "metadata_ms" not in result.timings
+    assert result.timings["metadata_ms"] >= 0
     assert "metadata_error_type" not in result.timings
-    assert chunk_service.calls == 0
+    assert chunk_service.calls == 1
     assert answer_service.called is False
 
 

@@ -57,13 +57,13 @@ def test_chunk_splitter_hard_splits_single_oversized_paragraph():
     chunk = AdapterChunk(
         text=words(3100),
         source_location={"artifact": "plain.txt"},
-        metadata={"parser_metadata": {"backend": "fallback", "chunk_index": 4}},
+        metadata={"parser_metadata": {"backend": "mineru", "chunk_index": 4}},
     )
 
     split = ChunkSplitter(max_words=1500).split(
         [chunk],
         domain_metadata=DomainMetadata(domain="generic", document_type="document"),
-        parser_mode="local_fallback",
+        parser_mode="mineru_strict",
     )
 
     assert [len(item.text.split()) for item in split] == [1500, 1500, 100]

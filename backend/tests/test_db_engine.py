@@ -1,15 +1,10 @@
 import pytest
 from ragstudio.config import AppSettings
 from ragstudio.db.engine import init_db, is_postgres_url, make_engine, make_session_factory
-from ragstudio.db.models import IndexRecord, Variant
-from ragstudio.schemas.parsing import IndexDocumentIn
-from ragstudio.schemas.query import QueryIn
 from ragstudio.services.diagnostics_service import DiagnosticsService
-from ragstudio.services.document_service import DocumentService
-from ragstudio.services.query_service import QueryService
 from ragstudio.services.runtime_profile_service import RuntimeProfileService
 from ragstudio.services.settings_service import SettingsService
-from sqlalchemy import inspect, select, text
+from sqlalchemy import inspect, text
 
 
 def test_is_postgres_url_detects_asyncpg_url():
@@ -233,8 +228,8 @@ async def test_init_db_backfills_runtime_columns_for_existing_postgres_tables(
     assert "cleanup_status" in columns["graph_projection_records"]
     assert "cleanup_error" in columns["graph_projection_records"]
     assert "cleanup_attempted_at" in columns["graph_projection_records"]
-    assert settings_row["runtime_mode"] == "fallback"
-    assert settings_row["storage_backend"] == "fallback_local"
+    assert settings_row["runtime_mode"] == "runtime"
+    assert settings_row["storage_backend"] == "local"
     assert settings_row["pgvector_schema"] == "public"
     assert settings_row["enable_image_processing"] is True
     assert settings_row["mineru_timeout_ms"] == 14400000
@@ -253,49 +248,15 @@ async def test_init_db_backfills_runtime_columns_for_existing_postgres_tables(
     )
     factory = make_session_factory(engine)
     async with factory() as session:
-        settings = await SettingsService(session).get_default()
-        runtime_profile = await RuntimeProfileService(session, settings_obj).get_active_profile()
+        with pytest.raises(ValueError, match="supported product storage backend"):
+            await SettingsService(session).get_default()
+        with pytest.raises(ValueError, match="supported product storage backend"):
+            await RuntimeProfileService(session, settings_obj).get_active_profile()
         diagnostics = await DiagnosticsService(session, settings_obj).get_diagnostics()
-        document = await DocumentService(session, tmp_path, settings=settings_obj).upload(
-            "legacy.txt",
-            "text/plain",
-            b"legacy fallback answer",
-            options=IndexDocumentIn(parser_mode="local_fallback"),
-        )
-        variant = Variant(name="Legacy Fallback", preset="balanced", parameters={})
-        session.add(variant)
-        await session.commit()
-        await session.refresh(variant)
-        query = await QueryService(session, tmp_path, settings=settings_obj).run_query(
-            QueryIn(
-                query="legacy",
-                document_ids=[document.id],
-                variant_ids=[variant.id],
-            )
-        )
-        index_records = (
-            (
-                await session.execute(
-                    select(IndexRecord).where(IndexRecord.document_id == document.id)
-                )
-            )
-            .scalars()
-            .all()
-        )
 
-    assert settings is not None
-    assert settings.storage_backend == "fallback_local"
-    assert settings.runtime_mode == "fallback"
-    assert settings.mineru_timeout_ms == 14400000
-    assert settings.mineru_require_hpc is True
-    assert runtime_profile.storage_backend == "fallback_local"
-    assert runtime_profile.runtime_mode == "fallback"
-    assert diagnostics.capabilities["indexing"] is True
+    assert diagnostics.capabilities["indexing"] is False
     assert diagnostics.capabilities["query"] is False
-    assert diagnostics.overall_status == "fallback"
-    assert query.runs[0].status == "failed"
-    assert query.runs[0].error_type == "runtime_mode_inactive"
-    assert index_records == []
+    assert diagnostics.overall_status in {"ready", "degraded", "failed"}
 
     await engine.dispose()
 

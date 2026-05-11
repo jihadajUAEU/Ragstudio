@@ -6,10 +6,13 @@ from ragstudio.db.models import Chunk, Document
 from ragstudio.schemas.chunks import ChunkOut, ChunkSearchIn, ChunkSearchOut
 from ragstudio.schemas.parsing import DomainMetadata, IndexDocumentIn, ParserMode
 from ragstudio.services.adapter import AdapterChunk, RAGAnythingAdapter
+from ragstudio.services.arabic_text import arabic_tokens, normalize_arabic_text
+from ragstudio.services.chunk_lexical_search_repository import ChunkLexicalSearchRepository
 from ragstudio.services.chunk_sanitizer import sanitize_db_text, sanitize_db_value
 from ragstudio.services.chunk_splitter import ChunkSplitter
 from ragstudio.services.document_parser_service import DocumentParserService
 from ragstudio.services.hybrid_chunk_search import ChunkScore, HybridChunkSearch
+from ragstudio.services.index_quality_gate import IndexQualityGate
 from ragstudio.services.mineru_client import MinerUClient
 from ragstudio.services.mineru_relationship_builder import MinerURelationshipBuilder
 from sqlalchemy import delete, select
@@ -29,6 +32,7 @@ class ChunkService:
         chunk_search: HybridChunkSearch | None = None,
         relationship_builder: MinerURelationshipBuilder | None = None,
         document_parser: DocumentParserService | None = None,
+        quality_gate: IndexQualityGate | None = None,
     ):
         self.session = session
         self.data_dir = data_dir
@@ -37,6 +41,7 @@ class ChunkService:
         self.chunk_splitter = chunk_splitter or ChunkSplitter()
         self.chunk_search = chunk_search or HybridChunkSearch()
         self.relationship_builder = relationship_builder or MinerURelationshipBuilder()
+        self.quality_gate = quality_gate or IndexQualityGate()
         self.document_parser = document_parser or DocumentParserService(
             session,
             data_dir,
@@ -75,24 +80,31 @@ class ChunkService:
             adapter_chunks,
             options.domain_metadata,
         )
+        self.quality_gate.validate_adapter_chunks(
+            adapter_chunks,
+            language=self._quality_language(options.domain_metadata),
+        )
         await self.session.execute(delete(Chunk).where(Chunk.document_id == document.id))
 
-        chunks = [
-            Chunk(
-                document_id=document.id,
-                text=sanitize_db_text(adapter_chunk.text),
-                source_location=sanitize_db_value(adapter_chunk.source_location),
-                metadata_json=self._safe_metadata(
-                    self._merge_metadata(
-                        adapter_chunk.metadata,
-                        options.domain_metadata,
-                        options.parser_mode,
-                    ),
-                    document.id,
-                ),
+        chunks = []
+        for adapter_chunk in adapter_chunks:
+            text = sanitize_db_text(adapter_chunk.text)
+            metadata = self._merge_metadata(
+                adapter_chunk.metadata,
+                options.domain_metadata,
+                options.parser_mode,
             )
-            for adapter_chunk in adapter_chunks
-        ]
+            chunks.append(
+                Chunk(
+                    document_id=document.id,
+                    text=text,
+                    text_search_ar=normalize_arabic_text(text),
+                    tokens_ar=arabic_tokens(text),
+                    extraction_quality=self._extraction_quality(metadata),
+                    source_location=sanitize_db_value(adapter_chunk.source_location),
+                    metadata_json=self._safe_metadata(metadata, document.id),
+                )
+            )
         self.session.add_all(chunks)
         if commit:
             await self.session.commit()
@@ -128,6 +140,13 @@ class ChunkService:
             statement.order_by(Chunk.created_at.asc(), Chunk.id.asc())
         )
         chunks = list(result.scalars().all())
+        prefiltered = await ChunkLexicalSearchRepository(self.session).arabic_prefilter(
+            query=search_in.query,
+            document_ids=search_in.document_ids,
+            limit=max(search_in.limit, 20),
+        )
+        prefiltered_ids = {chunk.id for chunk in prefiltered}
+        chunks = [*prefiltered, *[chunk for chunk in chunks if chunk.id not in prefiltered_ids]]
 
         ranked = sorted(
             (
@@ -182,6 +201,12 @@ class ChunkService:
             "score": score.score,
             "score_breakdown": breakdown,
         }
+        if not metadata.get("text_search_ar"):
+            metadata["text_search_ar"] = chunk.text_search_ar or normalize_arabic_text(output.text)
+        if not metadata.get("tokens_ar"):
+            metadata["tokens_ar"] = chunk.tokens_ar or arabic_tokens(output.text)
+        if not metadata.get("extraction_quality"):
+            metadata["extraction_quality"] = chunk.extraction_quality or {}
         if explain and isinstance(retrieval_explain, dict):
             metadata["retrieval_explain"] = retrieval_explain
             output.retrieval_explain = retrieval_explain
@@ -227,6 +252,12 @@ class ChunkService:
         metadata.pop("source_type", None)
         return metadata
 
+    def _extraction_quality(self, metadata: dict[str, Any]) -> dict[str, Any]:
+        extraction_quality = metadata.get("extraction_quality")
+        if isinstance(extraction_quality, dict):
+            return sanitize_db_value(extraction_quality)
+        return {}
+
     def _chunk_with_parser_metadata(
         self,
         chunk: AdapterChunk,
@@ -256,6 +287,19 @@ class ChunkService:
         if not isinstance(value, str):
             return False
         return Path(value).is_absolute() or PureWindowsPath(value).is_absolute()
+
+    def _quality_language(self, metadata: DomainMetadata) -> str:
+        values = [
+            metadata.domain,
+            metadata.document_type,
+            metadata.collection,
+            metadata.content_role,
+            *metadata.tags,
+        ]
+        combined = " ".join(value for value in values if value).casefold()
+        if "quran" in combined or "arabic" in combined:
+            return "quran"
+        return "unknown"
 
     def _source_order(self, chunk: Chunk, fallback_order: int) -> tuple[int, Any, Any, Any]:
         chunk_index = chunk.metadata_json.get("chunk_index")

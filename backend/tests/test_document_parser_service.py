@@ -24,6 +24,11 @@ class LocalParser:
         ]
 
 
+class LocalParserShouldNotRun:
+    async def index_document(self, artifact_path):
+        raise AssertionError("local parser must not run in product indexing")
+
+
 class FailingMinerUClient:
     def __init__(self, base_url, timeout_ms, poll_interval_ms):
         self.base_url = base_url
@@ -98,7 +103,7 @@ class EventMinerUClient:
 
 
 @pytest.mark.asyncio
-async def test_mineru_with_fallback_uses_local_chunks_and_records_error(
+async def test_mineru_with_fallback_is_rejected_without_running_local_parser(
     tmp_path,
     database_url,
 ):
@@ -130,27 +135,58 @@ async def test_mineru_with_fallback_uses_local_chunks_and_records_error(
         session.add_all([document, settings])
         await session.commit()
 
-        chunks = await DocumentParserService(
+        DocumentParserService(
             session,
             tmp_path,
-            local_parser=LocalParser(),
+            local_parser=LocalParserShouldNotRun(),
             mineru_client_factory=FailingMinerUClient,
-        ).parse(
-            document,
-            IndexDocumentIn(parser_mode="mineru_with_fallback"),
         )
+        with pytest.raises(ValueError, match="mineru_with_fallback"):
+            IndexDocumentIn(parser_mode="mineru_with_fallback")
 
     await engine.dispose()
 
-    assert [chunk.text for chunk in chunks] == ["Local fallback text"]
-    parser_metadata = chunks[0].metadata["parser_metadata"]
-    assert parser_metadata["backend"] == "fallback"
-    assert parser_metadata["parser_mode"] == "mineru_with_fallback"
-    assert parser_metadata["fallback_used"] is True
-    assert parser_metadata["mineru_error"] == "remote MinerU failed"
-    assert chunks[0].runtime_source_id == "local-runtime-1"
-    assert chunks[0].content_type == "application/x-local-preview"
-    assert chunks[0].preview_ref == "preview://local-runtime-1"
+
+@pytest.mark.asyncio
+async def test_mineru_strict_requires_configured_mineru_base_url(tmp_path, database_url):
+    engine = make_engine(database_url)
+    await init_db(engine)
+    factory = make_session_factory(engine)
+
+    async with factory() as session:
+        artifact = tmp_path / "document.pdf"
+        artifact.write_bytes(b"%PDF-1.4")
+        document = Document(
+            filename="document.pdf",
+            content_type="application/pdf",
+            sha256="fallback-sha",
+            artifact_path=str(artifact),
+            status="ready",
+        )
+        settings = SettingsProfile(
+            id="default",
+            provider="openai-compatible",
+            llm_model="gpt-4o",
+            embedding_model="fallback",
+            storage_backend="postgres_pgvector_neo4j",
+            runtime_mode="runtime",
+            mineru_enabled=True,
+            mineru_base_url=None,
+            mineru_require_hpc=True,
+        )
+        session.add_all([document, settings])
+        await session.commit()
+
+        service = DocumentParserService(
+            session,
+            tmp_path,
+            local_parser=LocalParserShouldNotRun(),
+            mineru_client_factory=FailingMinerUClient,
+        )
+        with pytest.raises(RuntimeError, match="MinerU base URL is not configured"):
+            await service.parse(document, IndexDocumentIn(parser_mode="mineru_strict"))
+
+    await engine.dispose()
 
 
 @pytest.mark.asyncio

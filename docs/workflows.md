@@ -30,7 +30,9 @@ The dev script starts FastAPI on `http://127.0.0.1:8000` and Vite on `http://127
 
 The backend targets local Postgres/PGVector and Neo4j runtime stores by default, while uploaded artifacts and runtime working files remain under `.ragstudio/`.
 
-On startup, the backend creates missing tables and backfills the runtime columns added in this release for existing SQLite or Postgres metadata databases. This keeps older Studio databases readable while you move toward the Postgres default. Existing fallback chunks remain fallback chunks; runtime queries require a ready `IndexRecord` whose stored index shape matches the active profile.
+Ragstudio production indexing is MinerU-only. Upload and reindex jobs send documents to the configured MinerU sidecar and fail closed if MinerU is unavailable, returns invalid artifacts, or produces text that fails extraction quality checks. Local fallback parsing is not part of the production workflow.
+
+Postgres is the source of truth for document metadata, chunks, lexical search material, and run records. PGVector stores semantic vectors in Postgres, and Neo4j stores graph state. SQLite is not part of the target architecture.
 
 ## Runtime Foundation vs Fallback
 
@@ -42,14 +44,14 @@ flowchart LR
   deps --> package["raganything[all] and lightrag dependencies"]
   package --> diagnostics["Diagnostics page"]
   diagnostics --> ready["runtime health checks"]
-  diagnostics --> fallback["fallback_active: true"]
+  diagnostics --> readiness["runtime readiness checks"]
 ```
 
-With the fallback adapter active:
+With the production runtime active:
 
-- Document indexing uses a line-splitting fallback and stores one chunk per non-empty line.
-- Query generation returns a simple answer built from selected chunks.
-- Graph responses are placeholder-backed and can return no nodes or edges.
+- Document indexing uses MinerU strict extraction and fails closed on invalid artifacts.
+- Query generation uses Postgres lexical search, PGVector semantic search, graph evidence, and grounded answer orchestration.
+- Graph responses come from Neo4j runtime graph state when graph indexing is ready.
 - Diagnostics reports missing or non-importable runtime dependencies and shows the relevant remediation.
 
 When `runtime_mode` is set to `runtime`, indexing and query routes use the saved runtime profile, runtime health checks, index readiness checks, and mirrored chunk/index records. Until the native RAG-Anything adapter is completed, Diagnostics reports `native_runtime_adapter` as a blocking check rather than silently running fallback behavior under a runtime label.
@@ -85,7 +87,7 @@ Click **Test connection** to validate a vLLM/OpenAI-compatible embeddings endpoi
 
 Click **Save** to persist the default profile through `PUT /api/settings/default`. Saved LLM and embedding API keys are masked in responses. Click **Reload** to refetch the saved profile. If no profile exists yet, the page shows `No default profile saved`.
 
-These defaults are stored as the `default` settings profile. Runtime indexing and query execution use that profile when backend settings are available; direct fallback behavior remains explicit through `runtime_mode="fallback"` or through legacy paths that are called without runtime settings.
+These defaults are stored as the `default` settings profile. Runtime indexing and query execution use that profile when backend settings are available; product flows require `runtime_mode="runtime"` or `runtime_mode="degraded"` with Postgres storage.
 
 On a fresh install, Settings opens with editable defaults even before a profile has been saved. Save the first profile before enabling runtime indexing or runtime query paths.
 

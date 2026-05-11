@@ -131,7 +131,7 @@ Results appear under `Answers and traces`:
 - `Chunk traces`: adapter trace objects, including inclusion status when available.
 - `Timings`: measured `search_ms`, `query_ms`, and `total_ms`, plus adapter timings when provided.
 
-Local fallback parsing remains available as an explicit parser mode for small text-oriented documents. It creates local chunks for inspection and metadata search, but query execution in runtime profiles requires a configured native RAG-Anything runtime.
+Upload and Index actions use `MinerU strict`. The document is sent to MinerU and indexing fails if MinerU fails or returns invalid extracted text. Ragstudio does not silently fall back to local PDF parsing in the production workflow.
 
 ### Evaluation
 
@@ -224,7 +224,7 @@ It shows:
 - `Warnings`: active runtime warnings.
 - `Raw diagnostics`: expandable full JSON payload.
 
-If `raganything` is not installed in the active Python environment, Diagnostics reports a warning and native runtime query execution is unavailable until the dependency is installed. Local fallback parsing can still create chunks for inspection. Run `./scripts/setup.sh` or `python -m pip install -e 'backend[dev]'` to install the backend with its declared dependencies, including `raganything[all]`.
+If `raganything` is not installed in the active Python environment, Diagnostics reports a warning and native runtime query execution is unavailable until the dependency is installed. Run `./scripts/setup.sh` or `python -m pip install -e 'backend[dev]'` to install the backend with its declared dependencies, including `raganything[all]`.
 
 ### Settings
 
@@ -257,7 +257,7 @@ LLM generation fields:
 
 Embeddings fields:
 
-- `Embedding provider`: `Local fallback` or `vLLM / OpenAI-compatible`.
+- `Embedding provider`: `vLLM / OpenAI-compatible`.
 - `Embedding model`: model name sent to the embeddings endpoint.
 - `Base URL`: OpenAI-compatible base URL such as `http://127.0.0.1:8001/v1`.
 - `API key`: optional bearer token. Saved keys are not returned by the API.
@@ -293,13 +293,9 @@ Settings includes a `MinerU parser` section for connecting to an already running
 
 For `MinerU strict`, Ragstudio requires the sidecar health response to report `hpcMineru.enabled=true` and `hpcMineru.mode=coordinator` by default. If the sidecar reports `mode=local`, strict parsing is blocked before a job is queued because large PDFs can appear stuck at `25%` while local MinerU parsing runs inside the sidecar process. Disable `Require HPC MinerU coordinator` only when you intentionally want the sidecar to parse locally and accept the longer single-process runtime.
 
-Upload and Index actions support three parser modes:
+Upload and Index actions use `MinerU strict`. The document is sent to MinerU and indexing fails if MinerU fails or returns invalid extracted text. Ragstudio does not silently fall back to local PDF parsing in the production workflow.
 
-- `Local fallback`: uses Studio's local line splitter.
-- `MinerU strict`: sends the document to MinerU and fails indexing if MinerU fails.
-- `MinerU with fallback`: tries MinerU first, then indexes locally if MinerU fails.
-
-Before parsing, choose or review domain metadata. This metadata is copied onto every resulting chunk, including local fallback chunks. MinerU adds parser metadata such as page numbers, artifact references, content type, and parse job id.
+Before parsing, choose or review domain metadata. This metadata is copied onto every resulting chunk. MinerU adds parser metadata such as page numbers, artifact references, content type, and parse job id.
 
 Document reindexing uses the canonical background job endpoint:
 
@@ -453,9 +449,7 @@ Studio has a safe adapter boundary around the optional `raganything` integration
 
 When `raganything` is available, Diagnostics reports `raganything_available: true` and clears the missing-dependency warning. Runtime profiles execute queries through the native RAG-Anything runtime; missing runtime profiles, inactive runtime modes, and unhealthy runtime dependencies create explicit failed runs instead of simple local answers.
 
-Local fallback parsing remains available as an explicit parser mode for small text-oriented documents. It creates local chunks for inspection and metadata search, but query execution in runtime profiles requires a configured native RAG-Anything runtime.
-
-Local fallback parsing reads uploaded bytes as UTF-8 with replacement for invalid characters, splits content into non-empty lines, and creates one chunk per non-empty line. If the file has no line breaks but has text, it creates one chunk from the stripped content.
+Production document parsing uses MinerU strict extraction. Invalid extraction, missing MinerU health, or unusable artifacts fail the index job with a quality report instead of creating local chunks.
 
 When runtime graph storage is inactive, the Graph page shows relationship metadata derived during parsing when those relationships exist. If no relationship metadata exists, the page reports that no runtime graph or relationship metadata is available.
 
@@ -487,7 +481,7 @@ python -m pip install -e "backend[dev]"
 
 That backend install includes the declared `raganything[all]` dependency.
 
-Local fallback parsing can still create chunks for inspection, but query execution requires a configured native runtime profile.
+Product query execution requires a configured native runtime profile, Postgres/PGVector storage, and indexed MinerU chunks.
 
 ### Settings shows `No default profile saved`
 

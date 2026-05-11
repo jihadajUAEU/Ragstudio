@@ -1,4 +1,5 @@
 import pytest
+from ragstudio.db.models import SettingsProfile
 
 
 @pytest.mark.asyncio
@@ -23,7 +24,7 @@ async def test_settings_profile_round_trip(client):
 
 
 @pytest.mark.asyncio
-async def test_settings_profile_forces_fallback_mode_for_fallback_storage(client):
+async def test_settings_reject_fallback_local_storage(client):
     payload = {
         "provider": "openai",
         "runtime_mode": "runtime",
@@ -34,10 +35,32 @@ async def test_settings_profile_forces_fallback_mode_for_fallback_storage(client
 
     response = await client.put("/api/settings/default", json=payload)
 
-    assert response.status_code == 200
-    body = response.json()
-    assert body["storage_backend"] == "fallback_local"
-    assert body["runtime_mode"] == "fallback"
+    assert response.status_code == 422
+    assert "postgres_pgvector_neo4j" in str(response.json()["detail"])
+
+
+@pytest.mark.asyncio
+async def test_settings_get_default_reports_legacy_profile_without_crashing(client):
+    app = client._transport.app
+    async with app.state.session_factory() as session:
+        session.add(
+            SettingsProfile(
+                id="default",
+                provider="legacy",
+                llm_model="legacy-llm",
+                embedding_model="legacy-embedding",
+                storage_backend="fallback_local",
+                runtime_mode="fallback",
+                embedding_provider="fallback",
+            )
+        )
+        await session.commit()
+
+    response = await client.get("/api/settings/default")
+
+    assert response.status_code == 409
+    assert "legacy values" in response.json()["detail"]
+    assert "postgres_pgvector_neo4j" in response.json()["detail"]
 
 
 @pytest.mark.asyncio

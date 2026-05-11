@@ -37,7 +37,6 @@ class DiagnosticsService:
         session: AsyncSession,
         settings: AppSettings,
     ) -> DiagnosticsOut:
-        report = self.adapter.capability_report()
         profile = None
         warnings = []
         try:
@@ -45,7 +44,7 @@ class DiagnosticsService:
                 session,
                 settings,
             ).get_active_profile()
-        except RuntimeProfileNotConfiguredError as exc:
+        except (RuntimeProfileNotConfiguredError, ValueError) as exc:
             warnings.append(str(exc))
 
         health_service = self.health_service or RuntimeHealthService(
@@ -54,13 +53,9 @@ class DiagnosticsService:
         )
         checks = await health_service.check(profile)
         blocking = health_service.blocking_failures(checks)
-        runtime_mode = profile.runtime_mode if profile else "fallback"
+        runtime_mode = profile.runtime_mode if profile else "runtime"
         overall_status = self._overall_status(runtime_mode, checks, blocking)
-        dependency_report = (
-            self._fallback_dependency_report(report, graph="relationship_metadata")
-            if runtime_mode == "fallback"
-            else self._runtime_dependency_report(checks, blocking)
-        )
+        dependency_report = self._runtime_dependency_report(checks, blocking)
         dependency_report.update(
             await self._graph_projection_report(
                 session,
@@ -74,13 +69,8 @@ class DiagnosticsService:
                 "raganything runtime dependencies are not importable in this Python "
                 "environment; runtime mode cannot execute. Run ./scripts/setup.sh."
             )
-        if runtime_mode == "fallback":
-            warnings.append(
-                "Runtime graph is inactive; Graph uses relationship metadata derived "
-                "during parsing when available."
-            )
         graph_projection = dependency_report.get("graph_projection")
-        if runtime_mode != "fallback" and graph_projection in {"pending", "failed", "skipped"}:
+        if graph_projection in {"pending", "failed", "skipped"}:
             detail = dependency_report.get("graph_projection_detail")
             suffix = f": {detail}" if detail else "."
             if graph_projection in {"failed", "skipped"}:
@@ -91,7 +81,7 @@ class DiagnosticsService:
         return DiagnosticsOut(
             capabilities={
                 "raganything_available": raganything_available,
-                "fallback_active": runtime_mode == "fallback",
+                "fallback_active": False,
                 "indexing": self._capability_available(dependency_report.get("indexing")),
                 "query": self._capability_available(dependency_report.get("query")),
                 "graph": dependency_report.get("graph") in {"neo4j", "relationship_metadata"},
@@ -171,7 +161,9 @@ class DiagnosticsService:
         blocking: list[Any],
     ) -> dict[str, Any]:
         by_name = {item.name: item for item in checks}
-        runtime_available = not blocking
+        runtime_available = bool(checks) and not blocking and not any(
+            item.status == "skipped" for item in checks
+        )
         graph_available = (
             runtime_available
             and by_name.get("neo4j") is not None
@@ -238,7 +230,7 @@ class DiagnosticsService:
         blocking: list[Any],
     ) -> RuntimeOverallStatus:
         if runtime_mode == "fallback":
-            return "fallback"
+            return "failed"
         if blocking:
             return "failed"
         if any(item.status == "warning" for item in checks):

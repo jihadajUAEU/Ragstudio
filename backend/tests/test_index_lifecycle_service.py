@@ -298,7 +298,7 @@ async def test_lifecycle_deletes_existing_chunks_and_mirrors_runtime_chunks(clie
             health_service=FakeHealthService(),
         ).reindex_document(
             document.id,
-            options=IndexDocumentIn(parser_mode="local_fallback"),
+            options=IndexDocumentIn(parser_mode="mineru_strict"),
         )
 
         remaining = await session.execute(select(Chunk).where(Chunk.document_id == document.id))
@@ -435,7 +435,7 @@ async def test_lifecycle_releases_studio_transaction_before_runtime_storage_work
             health_service=FakeHealthService(),
         ).reindex_document(
             document.id,
-            options=IndexDocumentIn(parser_mode="local_fallback"),
+            options=IndexDocumentIn(parser_mode="mineru_strict"),
         )
 
     assert runtime.in_transaction_during_delete is False
@@ -698,7 +698,7 @@ async def test_lifecycle_splits_oversized_runtime_chunks(client):
         ).reindex_document(
             document.id,
             options=IndexDocumentIn(
-                parser_mode="local_fallback",
+                parser_mode="mineru_strict",
                 domain_metadata={"domain": "generic", "document_type": "document"},
             ),
         )
@@ -767,7 +767,7 @@ async def test_lifecycle_strips_null_bytes_from_runtime_chunks(client):
             health_service=FakeHealthService(),
         ).reindex_document(
             document.id,
-            options=IndexDocumentIn(parser_mode="local_fallback"),
+            options=IndexDocumentIn(parser_mode="mineru_strict"),
         )
 
         stored = (

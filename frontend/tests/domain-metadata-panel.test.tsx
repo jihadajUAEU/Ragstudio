@@ -49,7 +49,7 @@ describe("DomainMetadataPanel", () => {
           },
         ]}
         value={{
-          parser_mode: "local_fallback",
+          parser_mode: "mineru_strict",
           domain_metadata: { domain: "generic", document_type: "document", tags: [] },
         }}
         onChange={onChange}
@@ -57,7 +57,7 @@ describe("DomainMetadataPanel", () => {
     );
 
     fireEvent.change(screen.getByLabelText("Parser"), {
-      target: { value: "mineru_with_fallback" },
+      target: { value: "mineru_strict" },
     });
     fireEvent.change(screen.getByLabelText("Domain profile"), {
       target: { value: "hadith" },
@@ -65,7 +65,7 @@ describe("DomainMetadataPanel", () => {
 
     expect(onChange).toHaveBeenCalledWith(
       expect.objectContaining({
-        parser_mode: "mineru_with_fallback",
+        parser_mode: "mineru_strict",
       }),
     );
     expect(onChange).toHaveBeenCalledWith(
@@ -107,7 +107,7 @@ describe("DomainMetadataPanel", () => {
       <DomainMetadataPanel
         profiles={[]}
         value={{
-          parser_mode: "local_fallback",
+          parser_mode: "mineru_strict",
           domain_metadata: { domain: "generic", document_type: "document", tags: [] },
         }}
         onChange={onChange}
@@ -155,7 +155,7 @@ describe("DomainMetadataPanel", () => {
       <DomainMetadataPanel
         profiles={[]}
         value={{
-          parser_mode: "local_fallback",
+          parser_mode: "mineru_strict",
           domain_metadata: { domain: "generic", document_type: "document", tags: [] },
         }}
         onChange={onChange}
@@ -169,7 +169,7 @@ describe("DomainMetadataPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "Reject Domain" }));
 
     expect(onChange).toHaveBeenLastCalledWith({
-      parser_mode: "local_fallback",
+      parser_mode: "mineru_strict",
       domain_metadata: { domain: "generic", document_type: "memo", tags: [] },
     });
     expect(screen.queryByText("generic -> policy")).not.toBeInTheDocument();
@@ -188,7 +188,7 @@ describe("DomainMetadataPanel", () => {
       <DomainMetadataPanel
         profiles={[]}
         value={{
-          parser_mode: "local_fallback",
+          parser_mode: "mineru_strict",
           domain_metadata: { domain: "generic", document_type: "document", tags: [] },
         }}
         onChange={onChange}
@@ -224,7 +224,7 @@ describe("DomainMetadataPanel", () => {
       <DomainMetadataPanel
         profiles={[]}
         value={{
-          parser_mode: "local_fallback",
+          parser_mode: "mineru_strict",
           domain_metadata: {
             domain: "generic",
             document_type: "document",
@@ -243,7 +243,7 @@ describe("DomainMetadataPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "Reject Tags" }));
 
     expect(onChange).toHaveBeenLastCalledWith({
-      parser_mode: "local_fallback",
+      parser_mode: "mineru_strict",
       domain_metadata: {
         domain: "tafseer",
         document_type: "document",
@@ -256,7 +256,7 @@ describe("DomainMetadataPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "Reject Metadata sources" }));
 
     expect(onChange).toHaveBeenLastCalledWith({
-      parser_mode: "local_fallback",
+      parser_mode: "mineru_strict",
       domain_metadata: {
         domain: "tafseer",
         document_type: "document",
@@ -284,7 +284,7 @@ describe("DomainMetadataPanel", () => {
       <DomainMetadataPanel
         profiles={[]}
         value={{
-          parser_mode: "local_fallback",
+          parser_mode: "mineru_strict",
           domain_metadata: {
             domain: "generic",
             document_type: "document",
@@ -311,7 +311,7 @@ describe("DomainMetadataPanel", () => {
     expect(screen.queryByText("Custom JSON must be valid JSON.")).not.toBeInTheDocument();
     expect(onValidityChange).toHaveBeenLastCalledWith(true);
     expect(onChange).toHaveBeenLastCalledWith({
-      parser_mode: "local_fallback",
+      parser_mode: "mineru_strict",
       domain_metadata: {
         domain: "policy",
         document_type: "document",
@@ -343,7 +343,7 @@ describe("DomainMetadataPanel", () => {
       <DomainMetadataPanel
         profiles={[]}
         value={{
-          parser_mode: "local_fallback",
+          parser_mode: "mineru_strict",
           domain_metadata: {
             domain: "generic",
             document_type: "document",
@@ -366,7 +366,7 @@ describe("DomainMetadataPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "Reject Domain" }));
 
     expect(onChange).toHaveBeenLastCalledWith({
-      parser_mode: "local_fallback",
+      parser_mode: "mineru_strict",
       domain_metadata: {
         domain: "generic",
         document_type: "document",
@@ -411,7 +411,7 @@ describe("DomainMetadataPanel", () => {
           },
         ]}
         value={{
-          parser_mode: "local_fallback",
+          parser_mode: "mineru_strict",
           domain_metadata: { domain: "generic", document_type: "document" },
         }}
         onChange={onChange}
@@ -467,7 +467,7 @@ describe("DomainMetadataPanel", () => {
           },
         ]}
         value={{
-          parser_mode: "local_fallback",
+          parser_mode: "mineru_strict",
           domain_metadata: { domain: "generic", document_type: "document", custom_json: {} },
         }}
         onChange={onChange}
@@ -611,7 +611,7 @@ describe("DomainMetadataPanel", () => {
       <DomainMetadataPanel
         profiles={[]}
         value={{
-          parser_mode: "local_fallback",
+          parser_mode: "mineru_strict",
           domain_metadata: { domain: "generic", document_type: "document", tags: [] },
         }}
         onChange={vi.fn()}
@@ -654,7 +654,7 @@ describe("DomainMetadataPanel", () => {
       <DomainMetadataPanel
         profiles={[]}
         value={{
-          parser_mode: "local_fallback",
+          parser_mode: "mineru_strict",
           domain_metadata: { domain: "generic", document_type: "document", tags: [] },
         }}
         onChange={vi.fn()}
@@ -700,7 +700,7 @@ describe("DomainMetadataPanel", () => {
           },
         ]}
         value={{
-          parser_mode: "local_fallback",
+          parser_mode: "mineru_strict",
           domain_metadata: { domain: "generic", document_type: "document", tags: [] },
         }}
         onChange={vi.fn()}
@@ -741,7 +741,7 @@ describe("DomainMetadataPanel", () => {
       <DomainMetadataPanel
         profiles={[]}
         value={{
-          parser_mode: "local_fallback",
+          parser_mode: "mineru_strict",
           domain_metadata: {
             domain: "generic",
             document_type: "document",
@@ -773,7 +773,7 @@ describe("DomainMetadataPanel", () => {
       <DomainMetadataPanel
         profiles={[]}
         value={{
-          parser_mode: "local_fallback",
+          parser_mode: "mineru_strict",
           domain_metadata: { domain: "generic", document_type: "document", custom_json: {} },
         }}
         onChange={vi.fn()}
@@ -815,7 +815,7 @@ describe("DomainMetadataPanel", () => {
       <DomainMetadataPanel
         profiles={[]}
         value={{
-          parser_mode: "local_fallback",
+          parser_mode: "mineru_strict",
           domain_metadata: {
             domain: "generic",
             document_type: "document",

@@ -18,7 +18,7 @@ from ragstudio.services.runtime_policy import (
     normalize_runtime_mode,
 )
 
-EmbeddingProvider = Literal["fallback", "vllm_openai"]
+EmbeddingProvider = Literal["vllm_openai"]
 LlmProvider = Literal["openai_compatible"]
 LlmCapability = Literal["text", "vision", "reasoning"]
 MINERU_DEFAULT_TIMEOUT_MS = 14_400_000

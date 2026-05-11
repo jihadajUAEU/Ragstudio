@@ -40,7 +40,7 @@ const settings: SettingsProfileOut = {
   has_llm_api_key: false,
   embedding_model: "text-embedding-3-large",
   storage_backend: "postgres_pgvector_neo4j",
-  embedding_provider: "fallback",
+  embedding_provider: "vllm_openai",
   embedding_base_url: "",
   embedding_timeout_ms: 10000,
   embedding_dimensions: 1536,
@@ -214,25 +214,17 @@ describe("SettingsPage provider sync", () => {
 
     await screen.findByDisplayValue("gpt-4.1");
     expect(screen.getByRole("option", { name: "Native runtime" })).toBeVisible();
+    expect(screen.queryByRole("option", { name: "Degraded runtime" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "Fallback" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Fallback local")).not.toBeInTheDocument();
+    expect(screen.getByText("Postgres + PGVector + Neo4j")).toBeVisible();
     expect(screen.getByText("Native runtime uses RAG-Anything, PGVector, and Neo4j when dependencies are healthy.")).toBeVisible();
 
     const runtimeMode = screen.getByLabelText("Runtime mode") as HTMLSelectElement;
     const storageBackend = screen.getByLabelText("Storage backend") as HTMLSelectElement;
 
-    fireEvent.change(runtimeMode, { target: { value: "fallback" } });
-    expect(storageBackend.value).toBe("postgres_pgvector_neo4j");
-    expect(
-      screen.queryByText("Native runtime uses RAG-Anything, PGVector, and Neo4j when dependencies are healthy."),
-    ).not.toBeInTheDocument();
-
-    fireEvent.change(storageBackend, { target: { value: "fallback_local" } });
-    expect(runtimeMode.value).toBe("fallback");
-    expect(
-      screen.queryByText("Native runtime uses RAG-Anything, PGVector, and Neo4j when dependencies are healthy."),
-    ).not.toBeInTheDocument();
-
     fireEvent.change(storageBackend, { target: { value: "postgres_pgvector_neo4j" } });
-    expect(runtimeMode.value).toBe("fallback");
+    expect(runtimeMode.value).toBe("runtime");
 
     fireEvent.change(runtimeMode, { target: { value: "runtime" } });
     expect(storageBackend.value).toBe("postgres_pgvector_neo4j");
@@ -327,8 +319,8 @@ describe("SettingsPage provider sync", () => {
     expect(vi.mocked(apiClient.updateDefaultSettings).mock.calls[0][0]).toEqual(
       expect.objectContaining({
         provider: "first-provider",
-        runtime_mode: "fallback",
-        storage_backend: "fallback_local",
+        runtime_mode: "runtime",
+        storage_backend: "postgres_pgvector_neo4j",
       }),
     );
   });

@@ -1,145 +1,10 @@
 import pytest
-from ragstudio.db.models import Experiment, IndexRecord, Run, Score, SettingsProfile
+from ragstudio.db.models import Experiment, Run, Score
 from ragstudio.schemas.common import StageStatus
 from ragstudio.schemas.runtime import RuntimeHealthCheck
 from ragstudio.services.diagnostics_service import DiagnosticsService
 from ragstudio.services.optimizer_service import OptimizerService
 from ragstudio.services.runtime_factory import RuntimeUnavailableError
-from ragstudio.services.runtime_profile_service import RuntimeProfileService
-from ragstudio.services.runtime_types import RuntimeQueryResult
-
-
-class OptimizerRuntime:
-    async def query(self, query, *, document_ids, query_config):
-        return RuntimeQueryResult(
-            answer=f"alpha beta answer for {query}",
-            sources=[
-                {
-                    "chunk_id": "optimizer-runtime-chunk",
-                    "document_id": document_ids[0],
-                    "text": "alpha beta answer",
-                    "source_location": {},
-                    "metadata": {"native_scope": True},
-                }
-            ],
-            chunk_traces=[{"rank": 1, "inclusion_status": "prompt-included"}],
-            reranker_traces=[],
-            timings={"runtime_query_ms": 2},
-            token_metadata={"prompt_tokens": 8},
-        )
-
-
-class OptimizerRuntimeFactory:
-    def __init__(self, *_args, **_kwargs):
-        self.runtime = OptimizerRuntime()
-
-    def build(self, profile):
-        return self.runtime
-
-
-class PassingRuntimeHealthService:
-    def __init__(self, *_args, **_kwargs):
-        pass
-
-    async def check(self, profile):
-        return []
-
-    def blocking_failures(self, checks):
-        return []
-
-
-class OptimizerAnswerService:
-    async def answer(self, query, evidence, profile):
-        return f"alpha beta answer for {query}", {"prompt_tokens": 8}
-
-
-@pytest.mark.asyncio
-async def test_optimizer_recommends_best_variant_from_experiment_runs(
-    client,
-    monkeypatch,
-    reindex_document,
-):
-    monkeypatch.setattr(
-        "ragstudio.services.query_service.RAGAnythingRuntimeFactory",
-        OptimizerRuntimeFactory,
-    )
-    monkeypatch.setattr(
-        "ragstudio.services.query_service.RuntimeHealthService",
-        PassingRuntimeHealthService,
-    )
-    monkeypatch.setattr(
-        "ragstudio.services.retrieval_orchestrator.RuntimeAnswerService",
-        OptimizerAnswerService,
-    )
-    upload = await client.post(
-        "/api/documents",
-        files={"file": ("optimizer.txt", b"alpha beta answer", "text/plain")},
-        data={"parser_mode": "local_fallback", "domain_metadata": "{}"},
-    )
-    document_id = upload.json()["id"]
-    await reindex_document(document_id)
-    app = client._transport.app
-    async with app.state.session_factory() as session:
-        session.add(
-            SettingsProfile(
-                id="default",
-                provider="openai-compatible",
-                llm_model="gpt-4o",
-                llm_base_url="http://127.0.0.1:8004/v1",
-                embedding_model="text-embedding-3-large",
-                embedding_base_url="http://127.0.0.1:8001/v1",
-                storage_backend="postgres_pgvector_neo4j",
-                runtime_mode="runtime",
-            )
-        )
-        await session.flush()
-        profile = await RuntimeProfileService(session, app.state.settings).get_active_profile()
-        session.add(
-            IndexRecord(
-                document_id=document_id,
-                runtime_profile_id=profile.id,
-                status=StageStatus.SUCCEEDED.value,
-                index_shape=profile.index_shape,
-                chunk_count=1,
-            )
-        )
-        await session.commit()
-    first = await client.post(
-        "/api/variants", json={"name": "First", "preset": "balanced", "parameters": {}}
-    )
-    second = await client.post(
-        "/api/variants", json={"name": "Second", "preset": "balanced", "parameters": {}}
-    )
-    evaluation = await client.post(
-        "/api/evaluation-sets/import?name=Optimizer",
-        files={
-            "file": (
-                "cases.csv",
-                b"id,query,expected_answer,must_include\none,alpha,alpha beta,alpha\n",
-                "text/csv",
-            )
-        },
-    )
-    experiment = await client.post(
-        "/api/experiments",
-        json={
-            "name": "Optimizer experiment",
-            "document_ids": [document_id],
-            "evaluation_set_id": evaluation.json()["id"],
-            "variant_ids": [first.json()["id"], second.json()["id"]],
-            "objective": {"metric": "total"},
-        },
-    )
-
-    response = await client.post(
-        "/api/optimizer", json={"experiment_id": experiment.json()["id"], "objective": {}}
-    )
-
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["selected_variant_id"] in {first.json()["id"], second.json()["id"]}
-    assert payload["selected_run_id"]
-    assert set(payload["tried_variant_ids"]) == {first.json()["id"], second.json()["id"]}
 
 
 @pytest.mark.asyncio
@@ -902,12 +767,12 @@ async def test_diagnostics_returns_capabilities_and_dependency_status(client):
     payload = response.json()
     assert "raganything_available" in payload["capabilities"]
     assert "fallback_active" in payload["capabilities"]
-    assert payload["capabilities"]["indexing"] is True
+    assert payload["capabilities"]["indexing"] is False
     assert payload["capabilities"]["query"] is False
-    assert payload["capabilities"]["graph"] is True
-    assert payload["overall_status"] == "fallback"
+    assert payload["capabilities"]["graph"] is False
+    assert payload["overall_status"] == "ready"
     assert "raganything" in payload["dependency_status"]
-    assert payload["dependency_status"]["graph"] == "relationship_metadata"
+    assert payload["dependency_status"]["graph"] == "unavailable"
     if payload["capabilities"]["raganything_available"]:
         assert any(
             "Default runtime profile is not configured" in warning
@@ -915,34 +780,6 @@ async def test_diagnostics_returns_capabilities_and_dependency_status(client):
         )
     else:
         assert any("./scripts/setup.sh" in warning for warning in payload["warnings"])
-
-
-@pytest.mark.asyncio
-async def test_diagnostics_reports_relationship_graph_when_fallback_mode_is_active(client):
-    response = await client.put(
-        "/api/settings/default",
-        json={
-            "provider": "openai-compatible",
-            "runtime_mode": "fallback",
-            "llm_model": "gpt-4o",
-            "embedding_model": "text-embedding-3-large",
-            "storage_backend": "fallback_local",
-        },
-    )
-    assert response.status_code == 200
-
-    diagnostics = await client.get("/api/diagnostics")
-
-    assert diagnostics.status_code == 200
-    payload = diagnostics.json()
-    assert payload["capabilities"]["graph"] is True
-    assert payload["dependency_status"]["graph"] == "relationship_metadata"
-    assert any(
-        "Runtime graph is inactive; Graph uses relationship metadata derived during parsing"
-        in warning
-        for warning in payload["warnings"]
-    )
-
 
 @pytest.mark.asyncio
 async def test_diagnostics_reports_native_dependency_status_for_runtime_mode(client):

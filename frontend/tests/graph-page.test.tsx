@@ -59,10 +59,10 @@ describe("GraphPage", () => {
       capabilities: { graph: false },
       dependency_status: {},
       warnings: [
-        "Graph is unavailable because fallback mode uses the local placeholder adapter.",
+        "Graph is unavailable because the runtime graph is not ready.",
       ],
-      runtime_mode: "fallback",
-      overall_status: "fallback",
+      runtime_mode: "runtime",
+      overall_status: "failed",
       checks: [],
     });
   });
@@ -72,7 +72,7 @@ describe("GraphPage", () => {
 
     expect(await screen.findByText("Graph unavailable")).toBeInTheDocument();
     expect(
-      screen.getByText("Graph is unavailable because fallback mode uses the local placeholder adapter."),
+      screen.getByText("Graph is unavailable because the runtime graph is not ready."),
     ).toBeInTheDocument();
   });
 
@@ -110,8 +110,8 @@ describe("GraphPage", () => {
       capabilities: { graph: true },
       dependency_status: {},
       warnings: [],
-      runtime_mode: "fallback",
-      overall_status: "fallback",
+      runtime_mode: "runtime",
+      overall_status: "failed",
       checks: [],
     });
     vi.mocked(apiClient.graph).mockResolvedValue({

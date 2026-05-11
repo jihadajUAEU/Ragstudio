@@ -4,11 +4,11 @@ from pydantic import Field
 
 from ragstudio.schemas.common import StudioModel
 
-RuntimeMode = Literal["runtime", "fallback", "degraded"]
-RuntimeOverallStatus = Literal["ready", "degraded", "failed", "fallback"]
+RuntimeMode = Literal["runtime"]
+RuntimeOverallStatus = Literal["ready", "degraded", "failed"]
 RuntimeCheckStatus = Literal["ok", "warning", "failed", "skipped"]
 RuntimeCheckSeverity = Literal["info", "warning", "blocking"]
-StorageBackend = Literal["postgres_pgvector_neo4j", "fallback_local"]
+StorageBackend = Literal["postgres_pgvector_neo4j"]
 RerankerProvider = Literal[
     "disabled",
     "cohere_compatible",

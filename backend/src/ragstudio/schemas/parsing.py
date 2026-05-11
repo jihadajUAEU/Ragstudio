@@ -5,7 +5,7 @@ from pydantic import Field
 from ragstudio.schemas.common import StudioModel
 from ragstudio.services.runtime_policy import DEFAULT_PARSER_MODE
 
-ParserMode = Literal["local_fallback", "mineru_strict", "mineru_with_fallback"]
+ParserMode = Literal["mineru_strict"]
 
 
 class DomainMetadata(StudioModel):

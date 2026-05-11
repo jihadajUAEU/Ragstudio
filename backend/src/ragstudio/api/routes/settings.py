@@ -21,6 +21,10 @@ from ragstudio.services.provider_manifest_service import (
     ProviderManifestError,
     ProviderManifestService,
 )
+from ragstudio.services.runtime_policy import (
+    ProductPolicyError,
+    enforce_product_runtime_settings,
+)
 from ragstudio.services.settings_service import SettingsService
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
@@ -28,7 +32,10 @@ router = APIRouter(prefix="/api/settings", tags=["settings"])
 
 @router.get("/default", response_model=SettingsProfileOut)
 async def get_default_settings(session: AsyncSession = Depends(get_session)) -> SettingsProfileOut:
-    profile = await SettingsService(session).get_default()
+    try:
+        profile = await SettingsService(session).get_default()
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=_legacy_profile_detail(exc)) from exc
     if profile is None:
         raise HTTPException(status_code=404, detail="Default settings profile is not configured")
     return profile
@@ -39,6 +46,13 @@ async def put_default_settings(
     payload: SettingsProfileIn,
     session: AsyncSession = Depends(get_session),
 ) -> SettingsProfileOut:
+    try:
+        enforce_product_runtime_settings(
+            storage_backend=payload.storage_backend,
+            runtime_mode=payload.runtime_mode,
+        )
+    except ProductPolicyError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     return await SettingsService(session).upsert_default(payload)
 
 
@@ -48,11 +62,22 @@ async def sync_provider_preview(
     session: AsyncSession = Depends(get_session),
 ) -> ProviderSyncPreviewOut:
     settings_service = SettingsService(session)
-    current = await settings_service.get_default()
+    try:
+        current = await settings_service.get_default()
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=_legacy_profile_detail(exc)) from exc
     try:
         return await ProviderManifestService().preview(payload.manifest_url, current)
     except ProviderManifestError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+def _legacy_profile_detail(exc: ValueError) -> str:
+    return (
+        f"{exc}. The saved runtime profile contains legacy values that are not valid for "
+        "the MinerU/Postgres runtime. Save Settings with storage_backend="
+        "postgres_pgvector_neo4j, runtime_mode=runtime, and embedding_provider=vllm_openai."
+    )
 
 
 @router.post("/default/test-embedding", response_model=EmbeddingConnectionTestOut)

@@ -7,6 +7,7 @@ from ragstudio.db.models import Document, SettingsProfile
 from ragstudio.schemas.parsing import IndexDocumentIn
 from ragstudio.services.adapter import AdapterChunk, RAGAnythingAdapter
 from ragstudio.services.mineru_client import MinerUClient
+from ragstudio.services.mineru_extraction_validator import MinerUExtractionValidator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 MinerUStatusCallback = Callable[[dict[str, Any]], Awaitable[None]]
@@ -20,12 +21,14 @@ class DocumentParserService:
         *,
         local_parser: RAGAnythingAdapter | None = None,
         mineru_client_factory: type[MinerUClient] | None = None,
+        extraction_validator: MinerUExtractionValidator | None = None,
         commit_before_remote_parse: bool = False,
     ):
         self.session = session
         self.data_dir = data_dir
         self.local_parser = local_parser or RAGAnythingAdapter()
         self.mineru_client_factory = mineru_client_factory or MinerUClient
+        self.extraction_validator = extraction_validator or MinerUExtractionValidator()
         self.commit_before_remote_parse = commit_before_remote_parse
 
     async def parse(
@@ -35,18 +38,15 @@ class DocumentParserService:
         *,
         on_mineru_status: MinerUStatusCallback | None = None,
     ) -> list[AdapterChunk]:
-        if options.parser_mode == "local_fallback":
-            return await self.local_parse(document)
-        try:
-            return await self.mineru_parse(
-                document,
-                options,
-                on_mineru_status=on_mineru_status,
+        if options.parser_mode != "mineru_strict":
+            raise RuntimeError(
+                f"Unsupported parser mode for production indexing: {options.parser_mode}"
             )
-        except Exception as exc:
-            if options.parser_mode == "mineru_strict":
-                raise
-            return await self.local_parse_with_mineru_failure(document, options, exc)
+        return await self.mineru_parse(
+            document,
+            options,
+            on_mineru_status=on_mineru_status,
+        )
 
     async def local_parse(self, document: Document) -> list[AdapterChunk]:
         return await self.local_parser.index_document(document.artifact_path)
@@ -80,7 +80,9 @@ class DocumentParserService:
 
     async def validate_strict_mineru_sidecar(self, options: IndexDocumentIn) -> None:
         if options.parser_mode != "mineru_strict":
-            return
+            raise RuntimeError(
+                f"Unsupported parser mode for production indexing: {options.parser_mode}"
+            )
         await self.validated_mineru_client()
 
     async def mineru_parse(
@@ -103,13 +105,38 @@ class DocumentParserService:
             domain_metadata=options.domain_metadata.model_dump(exclude_none=True),
             on_status=on_mineru_status,
         )
-        return client.normalize_artifact_zip(
+        chunks = client.normalize_artifact_zip(
             artifact_zip=job_result.artifact_zip,
             extract_dir=artifact_dir / "extracted",
             document_id=document.id,
             parser_mode=options.parser_mode,
             parse_job_id=job_result.parse_job_id,
         )
+        report = self.extraction_validator.validate(
+            chunks,
+            expected_language=self._expected_language(options),
+        )
+        if on_mineru_status is not None:
+            await on_mineru_status(
+                {
+                    "jobId": job_result.parse_job_id,
+                    "status": "validated",
+                    "chunkCount": report.chunk_count,
+                    "characterCount": report.character_count,
+                    "pageCount": report.page_count,
+                }
+            )
+        return chunks
+
+    def _expected_language(self, options: IndexDocumentIn) -> str:
+        metadata = options.domain_metadata
+        for value in (metadata.language, metadata.script):
+            if value and value.lower() in {"arabic", "ar"}:
+                return "arabic"
+        domain = metadata.domain.lower()
+        if "quran" in domain or "arabic" in domain:
+            return "arabic"
+        return metadata.language
 
     async def validated_mineru_client(self) -> tuple[SettingsProfile, MinerUClient]:
         settings = await self.session.get(SettingsProfile, "default")

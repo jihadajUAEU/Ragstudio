@@ -274,16 +274,12 @@ class DocumentService:
             return None
 
         parser_mode = parser_metadata.get("parser_mode")
-        if parser_mode in {"local_fallback", "mineru_strict", "mineru_with_fallback"}:
+        if parser_mode == "mineru_strict":
             return parser_mode
 
         backend = parser_metadata.get("backend")
         if backend == "mineru":
             return "mineru_strict"
-        if parser_metadata.get("fallback_used") is True:
-            return "mineru_with_fallback"
-        if backend == "fallback":
-            return "local_fallback"
         return None
 
     async def _ensure_queued_index_job(

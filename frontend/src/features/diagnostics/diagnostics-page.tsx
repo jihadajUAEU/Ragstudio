@@ -271,7 +271,7 @@ function Metric({
 
 function OverallStatusBadge({ status }: { status: RuntimeOverallStatus }) {
   const isReady = status === "ready";
-  const isWarning = status === "degraded" || status === "fallback";
+  const isWarning = status === "degraded";
   return (
     <span
       className={

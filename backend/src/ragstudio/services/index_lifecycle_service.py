@@ -8,12 +8,14 @@ from ragstudio.config import AppSettings
 from ragstudio.db.models import Chunk, Document, GraphProjectionRecord, IndexRecord
 from ragstudio.schemas.chunks import ChunkOut
 from ragstudio.schemas.common import StageStatus
-from ragstudio.schemas.parsing import IndexDocumentIn
+from ragstudio.schemas.parsing import DomainMetadata, IndexDocumentIn
 from ragstudio.services.adapter import AdapterChunk
+from ragstudio.services.arabic_text import arabic_tokens, normalize_arabic_text
 from ragstudio.services.chunk_sanitizer import sanitize_db_text, sanitize_db_value
 from ragstudio.services.chunk_splitter import ChunkSplitter
 from ragstudio.services.document_parser_service import DocumentParserService
 from ragstudio.services.graph_workspace import workspace_label
+from ragstudio.services.index_quality_gate import IndexQualityGate
 from ragstudio.services.mineru_relationship_builder import MinerURelationshipBuilder
 from ragstudio.services.runtime_factory import RAGAnythingRuntimeFactory
 from ragstudio.services.runtime_health_service import RuntimeHealthService
@@ -56,6 +58,7 @@ class IndexLifecycleService:
         health_service: RuntimeHealthService | None = None,
         normalizer: TraceNormalizer | None = None,
         document_parser: DocumentParserService | None = None,
+        quality_gate: IndexQualityGate | None = None,
     ):
         self.session = session
         self.settings = settings
@@ -65,6 +68,7 @@ class IndexLifecycleService:
             verify_storage=True,
         )
         self.normalizer = normalizer or TraceNormalizer()
+        self.quality_gate = quality_gate or IndexQualityGate()
         self.document_parser = document_parser or DocumentParserService(
             session,
             settings.data_dir,
@@ -136,16 +140,23 @@ class IndexLifecycleService:
             adapter_chunks,
             options.domain_metadata,
         )
+        self.quality_gate.validate_adapter_chunks(
+            adapter_chunks,
+            language=self._quality_language(options.domain_metadata),
+        )
         chunks: list[Chunk] = []
         for adapter_chunk in adapter_chunks:
+            text = sanitize_db_text(adapter_chunk.text)
+            metadata = self._merge_options_metadata(adapter_chunk.metadata, options)
             chunks.append(
                 Chunk(
                     document_id=document.id,
-                    text=sanitize_db_text(adapter_chunk.text),
+                    text=text,
+                    text_search_ar=normalize_arabic_text(text),
+                    tokens_ar=arabic_tokens(text),
+                    extraction_quality=self._extraction_quality(metadata),
                     source_location=sanitize_db_value(adapter_chunk.source_location),
-                    metadata_json=sanitize_db_value(
-                        self._merge_options_metadata(adapter_chunk.metadata, options)
-                    ),
+                    metadata_json=sanitize_db_value(metadata),
                     runtime_profile_id=profile.id,
                     runtime_source_id=sanitize_db_value(
                         adapter_chunk.metadata.get("runtime_source_id")
@@ -253,3 +264,22 @@ class IndexLifecycleService:
         merged.pop("chunk_index", None)
         merged.pop("source_type", None)
         return merged
+
+    def _extraction_quality(self, metadata: dict[str, Any]) -> dict[str, Any]:
+        extraction_quality = metadata.get("extraction_quality")
+        if isinstance(extraction_quality, dict):
+            return sanitize_db_value(extraction_quality)
+        return {}
+
+    def _quality_language(self, metadata: DomainMetadata) -> str:
+        values = [
+            metadata.domain,
+            metadata.document_type,
+            metadata.collection,
+            metadata.content_role,
+            *metadata.tags,
+        ]
+        combined = " ".join(value for value in values if value).casefold()
+        if "quran" in combined or "arabic" in combined:
+            return "quran"
+        return "unknown"

@@ -31,7 +31,7 @@ describe("DashboardPage", () => {
       capabilities: {},
       dependency_status: {},
       warnings: [],
-      runtime_mode: "fallback",
+      runtime_mode: "runtime",
       overall_status: "ready",
       checks: [],
     });

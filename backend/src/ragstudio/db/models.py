@@ -35,7 +35,7 @@ class SettingsProfile(Base, TimestampMixin):
     )
     embedding_model: Mapped[str] = mapped_column(String)
     storage_backend: Mapped[str] = mapped_column(String)
-    embedding_provider: Mapped[str] = mapped_column(String, default="fallback")
+    embedding_provider: Mapped[str] = mapped_column(String, default="vllm_openai")
     embedding_base_url: Mapped[str | None] = mapped_column(String, nullable=True)
     embedding_api_key: Mapped[str | None] = mapped_column(String, nullable=True)
     embedding_timeout_ms: Mapped[int] = mapped_column(Integer, default=10000)
@@ -47,7 +47,7 @@ class SettingsProfile(Base, TimestampMixin):
     mineru_timeout_ms: Mapped[int] = mapped_column(Integer, default=14_400_000)
     mineru_poll_interval_ms: Mapped[int] = mapped_column(Integer, default=1_000)
     mineru_require_hpc: Mapped[bool] = mapped_column(Boolean, default=True)
-    runtime_mode: Mapped[str] = mapped_column(String, default="fallback")
+    runtime_mode: Mapped[str] = mapped_column(String, default="runtime")
     vision_model: Mapped[str | None] = mapped_column(String, nullable=True)
     vision_base_url: Mapped[str | None] = mapped_column(String, nullable=True)
     vision_api_key: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -106,10 +106,23 @@ class Document(Base, TimestampMixin):
 
 class Chunk(Base, TimestampMixin):
     __tablename__ = "chunks"
+    __table_args__ = (
+        Index("ix_chunks_document_id", "document_id"),
+        Index(
+            "ix_chunks_text_search_ar_trgm",
+            "text_search_ar",
+            postgresql_using="gin",
+            postgresql_ops={"text_search_ar": "gin_trgm_ops"},
+        ),
+        Index("ix_chunks_tokens_ar_gin", "tokens_ar", postgresql_using="gin"),
+    )
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
     document_id: Mapped[str] = mapped_column(ForeignKey("documents.id"))
     text: Mapped[str] = mapped_column(Text)
+    text_search_ar: Mapped[str] = mapped_column(Text, default="")
+    tokens_ar: Mapped[list[str]] = mapped_column(JsonListType, default=list)
+    extraction_quality: Mapped[dict[str, Any]] = mapped_column(JsonDictType, default=dict)
     source_location: Mapped[dict[str, Any]] = mapped_column(
         JsonDictType, default=dict
     )

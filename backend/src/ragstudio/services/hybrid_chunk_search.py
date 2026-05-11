@@ -6,6 +6,11 @@ from typing import Any
 
 from ragstudio.db.models import Chunk
 from ragstudio.schemas.parsing import DomainMetadata
+from ragstudio.services.arabic_text import (
+    arabic_query_variants,
+    arabic_tokens,
+    normalize_arabic_text,
+)
 from ragstudio.services.reference_metadata import ReferenceSemantics
 from ragstudio.services.retrieval_explainer import build_retrieval_explain
 
@@ -45,11 +50,7 @@ class HybridChunkSearch:
                 if isinstance(references, list)
                 else set()
             )
-            if (
-                semantics
-                and semantics.exact_reference_top1
-                and requested_ref in explicit_refs
-            ):
+            if semantics and semantics.exact_reference_top1 and requested_ref in explicit_refs:
                 reference_exact = 100.0
             elif (
                 semantics
@@ -74,10 +75,15 @@ class HybridChunkSearch:
             ):
                 same_chapter = 60.0 if q_verse is None else 5.0
 
-            if semantics and semantics.boost_neighbor_verses and requested_ref in {
-                reference_metadata.get("previous_ref"),
-                reference_metadata.get("next_ref"),
-            }:
+            if (
+                semantics
+                and semantics.boost_neighbor_verses
+                and requested_ref
+                in {
+                    reference_metadata.get("previous_ref"),
+                    reference_metadata.get("next_ref"),
+                }
+            ):
                 neighbor_match = 30.0
 
         exact_phrase = 8.0 if query_text and query_text in chunk_text else 0.0
@@ -91,6 +97,8 @@ class HybridChunkSearch:
             coverage = 0.0
             density = 0.0
 
+        arabic_exact = self._arabic_exact_score(query, chunk)
+        arabic_token = self._arabic_token_score(query, chunk)
         metadata_boost = self._metadata_boost(query_text, metadata)
         answer_bearing_count = self._answer_bearing_count_boost(
             query_text,
@@ -104,6 +112,8 @@ class HybridChunkSearch:
             "exact_phrase": exact_phrase,
             "term_coverage": coverage * 10.0,
             "term_density": density * 2.0,
+            "arabic_exact": arabic_exact,
+            "arabic_token": arabic_token,
             "metadata_boost": metadata_boost,
             "answer_bearing_count": answer_bearing_count,
         }
@@ -148,6 +158,47 @@ class HybridChunkSearch:
                     boost += min(10.0, len(shared_title_terms) * 2.0)
 
         return min(boost, 12.0)
+
+    def _arabic_exact_score(self, query: str, chunk: Chunk) -> float:
+        variants = arabic_query_variants(query)
+        if not variants:
+            return 0.0
+        stored_tokens = getattr(chunk, "tokens_ar", None)
+        token_set = set(
+            stored_tokens
+            if isinstance(stored_tokens, list) and stored_tokens
+            else arabic_tokens(chunk.text)
+        )
+        if variants and token_set and any(variant in token_set for variant in variants):
+            return 40.0
+        searchable = str(getattr(chunk, "text_search_ar", "") or normalize_arabic_text(chunk.text))
+        if any(
+            variant and " " in variant and self._has_arabic_phrase_boundary(searchable, variant)
+            for variant in variants
+        ):
+            return 40.0
+        return 0.0
+
+    def _arabic_token_score(self, query: str, chunk: Chunk) -> float:
+        variants = set(arabic_query_variants(query))
+        if not variants:
+            return 0.0
+        stored_tokens = getattr(chunk, "tokens_ar", None)
+        tokens = set(
+            stored_tokens
+            if isinstance(stored_tokens, list) and stored_tokens
+            else arabic_tokens(chunk.text)
+        )
+        if variants & tokens:
+            return 24.0
+        return 0.0
+
+    def _has_arabic_phrase_boundary(self, searchable: str, variant: str) -> bool:
+        escaped = re.escape(variant)
+        return (
+            re.search(rf"(?<![\u0600-\u06FF]){escaped}(?![\u0600-\u06FF])", searchable)
+            is not None
+        )
 
     def _answer_bearing_count_boost(
         self,

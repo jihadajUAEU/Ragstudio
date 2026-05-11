@@ -96,6 +96,14 @@ describe("DocumentsPage", () => {
     });
   });
 
+  it("uses MinerU strict as the only parser mode", async () => {
+    renderDocumentsPage();
+
+    expect(screen.queryByText("Local fallback")).not.toBeInTheDocument();
+    expect(screen.queryByText("MinerU with fallback")).not.toBeInTheDocument();
+    expect(await screen.findByText("MinerU strict")).toBeVisible();
+  });
+
   it("passes the selected upload file to metadata autosuggest", async () => {
     vi.mocked(apiClient.domainProfiles).mockResolvedValue({
       items: [
@@ -231,9 +239,7 @@ describe("DocumentsPage", () => {
 
     renderDocumentsPage();
 
-    fireEvent.change(await screen.findByLabelText("Parser"), {
-      target: { value: "mineru_with_fallback" },
-    });
+    expect(await screen.findByLabelText("Parser")).toHaveValue("mineru_strict");
     fireEvent.change(screen.getByLabelText("Custom JSON"), {
       target: {
         value: JSON.stringify({
@@ -246,7 +252,7 @@ describe("DocumentsPage", () => {
 
     await waitFor(() => {
       expect(apiClient.createDocumentReindexJob).toHaveBeenCalledWith("doc-1", {
-        parser_mode: "mineru_with_fallback",
+        parser_mode: "mineru_strict",
         domain_metadata: expect.objectContaining({
           domain: "generic",
           document_type: "document",

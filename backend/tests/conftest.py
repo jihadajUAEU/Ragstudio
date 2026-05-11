@@ -108,7 +108,7 @@ def reindex_document(client):
 
         response = await client.post(
             f"/api/documents/{document_id}/reindex",
-            json=options or {"parser_mode": "local_fallback", "domain_metadata": {}},
+            json=options or {"parser_mode": "mineru_strict", "domain_metadata": {}},
         )
         if response.status_code == 409 and "active indexing job" in response.text:
             active_job = await _active_index_job(document_id)

@@ -11,9 +11,7 @@ import type {
 import { Button } from "../../components/ui/button";
 
 const parserOptions: Array<{ value: ParserMode; label: string }> = [
-  { value: "local_fallback", label: "Local fallback" },
   { value: "mineru_strict", label: "MinerU strict" },
-  { value: "mineru_with_fallback", label: "MinerU with fallback" },
 ];
 
 const sampleCustomJson = {

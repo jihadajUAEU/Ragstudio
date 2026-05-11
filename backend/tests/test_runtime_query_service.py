@@ -246,7 +246,7 @@ async def test_query_service_records_native_scope_limitation_as_failed_run(clien
     assert run.timings["runtime_query_ms"] == 7
     assert run.timings["native_scoped_query"] is True
     assert run.timings["native_stage_ms"] >= 0
-    assert "metadata_ms" not in run.timings
+    assert run.timings["metadata_ms"] >= 0
     assert run.chunk_traces == []
 
 
@@ -406,45 +406,6 @@ async def test_query_preflight_rejects_missing_runtime_profile(client):
 
     assert exc_info.value.error_type == "runtime_profile_missing"
     assert "runtime_profile" in str(exc_info.value)
-
-
-@pytest.mark.asyncio
-async def test_query_preflight_rejects_fallback_runtime_mode(client):
-    app = client._transport.app
-    async with app.state.session_factory() as session:
-        session.add(
-            SettingsProfile(
-                id="default",
-                provider="fallback",
-                llm_model="fallback",
-                embedding_model="fallback",
-                storage_backend="fallback_local",
-                runtime_mode="fallback",
-            )
-        )
-        document = Document(
-            filename="preflight-fallback.txt",
-            content_type="text/plain",
-            sha256="preflight-fallback",
-            artifact_path=str(app.state.settings.data_dir / "preflight-fallback.txt"),
-            status=StageStatus.SUCCEEDED.value,
-        )
-        variant = Variant(name="Preflight Fallback", preset="balanced", parameters={})
-        session.add_all([document, variant])
-        await session.commit()
-
-        with pytest.raises(QueryRuntimeReadinessError) as exc_info:
-            await QueryService(
-                session,
-                app.state.settings.data_dir,
-                settings=app.state.settings,
-            ).preflight_runtime_readiness(
-                QueryIn(query="fallback", document_ids=[document.id], variant_ids=[variant.id])
-            )
-
-    assert exc_info.value.error_type == "runtime_mode_inactive"
-    assert "Runtime mode 'fallback'" in str(exc_info.value)
-
 
 @pytest.mark.asyncio
 async def test_query_preflight_rejects_blocking_runtime_health(client):

@@ -36,9 +36,9 @@ const DEFAULT_FORM_VALUES: SettingsProfileIn = {
   llm_base_url: "",
   llm_timeout_ms: 10000,
   llm_capabilities: [],
-  embedding_model: "fallback",
-  storage_backend: "fallback_local",
-  embedding_provider: "fallback",
+  embedding_model: "Qwen/Qwen3-Embedding-8B",
+  storage_backend: "postgres_pgvector_neo4j",
+  embedding_provider: "vllm_openai",
   embedding_base_url: "",
   embedding_timeout_ms: 10000,
   embedding_dimensions: 1536,
@@ -49,7 +49,7 @@ const DEFAULT_FORM_VALUES: SettingsProfileIn = {
   mineru_timeout_ms: DEFAULT_MINERU_TIMEOUT_MS,
   mineru_poll_interval_ms: 1_000,
   mineru_require_hpc: true,
-  runtime_mode: "fallback",
+  runtime_mode: "runtime",
   vision_model: "",
   vision_base_url: "",
   vision_timeout_ms: 10000,
@@ -156,11 +156,7 @@ export function SettingsPage() {
       if (!formValues) {
         return current;
       }
-      const next = { ...formValues, ...current, runtime_mode: value };
-      if (value !== "fallback" && next.storage_backend === "fallback_local") {
-        next.storage_backend = "postgres_pgvector_neo4j";
-      }
-      return next;
+      return { ...formValues, ...current, runtime_mode: value, storage_backend: "postgres_pgvector_neo4j" };
     });
   };
 
@@ -169,11 +165,7 @@ export function SettingsPage() {
       if (!formValues) {
         return current;
       }
-      const next = { ...formValues, ...current, storage_backend: value };
-      if (value === "fallback_local") {
-        next.runtime_mode = "fallback";
-      }
-      return next;
+      return { ...formValues, ...current, storage_backend: value, runtime_mode: "runtime" };
     });
   };
 
@@ -191,12 +183,12 @@ export function SettingsPage() {
       ...formValues,
       llm_provider: formValues.llm_provider ?? "openai_compatible",
       llm_capabilities: formValues.llm_capabilities ?? [],
-      embedding_provider: formValues.embedding_provider ?? "fallback",
+      embedding_provider: formValues.embedding_provider ?? "vllm_openai",
       embedding_tls_verify: formValues.embedding_tls_verify ?? true,
       mineru_enabled: formValues.mineru_enabled ?? false,
       mineru_require_hpc: formValues.mineru_require_hpc ?? true,
-      runtime_mode: formValues.runtime_mode ?? "fallback",
-      storage_backend: formValues.storage_backend ?? "fallback_local",
+      runtime_mode: formValues.runtime_mode ?? "runtime",
+      storage_backend: formValues.storage_backend ?? "postgres_pgvector_neo4j",
       vision_timeout_ms: formValues.vision_timeout_ms ?? 10000,
       reranker_provider: formValues.reranker_provider ?? "disabled",
       reranker_fallback_provider: formValues.reranker_fallback_provider ?? "disabled",
@@ -378,23 +370,21 @@ export function SettingsPage() {
             <SelectField
               label="Runtime mode"
               name="runtime_mode"
-              value={formValues?.runtime_mode ?? "fallback"}
+              value={formValues?.runtime_mode ?? "runtime"}
               disabled={busy}
               onChange={(value) => updateRuntimeMode(value as SettingsProfileIn["runtime_mode"])}
               options={[
-                { value: "fallback", label: "Fallback" },
                 { value: "runtime", label: "Native runtime" },
               ]}
             />
             <SelectField
               label="Storage backend"
               name="storage_backend"
-              value={formValues?.storage_backend ?? "fallback_local"}
+              value={formValues?.storage_backend ?? "postgres_pgvector_neo4j"}
               disabled={busy}
               onChange={(value) => updateStorageBackend(value as SettingsProfileIn["storage_backend"])}
               options={[
-                { value: "fallback_local", label: "Fallback local" },
-                { value: "postgres_pgvector_neo4j", label: "Postgres / PGVector / Neo4j" },
+                { value: "postgres_pgvector_neo4j", label: "Postgres + PGVector + Neo4j" },
               ]}
             />
             <Field
@@ -955,13 +945,12 @@ export function SettingsPage() {
             <SelectField
               label="Embedding provider"
               name="embedding_provider"
-              value={formValues?.embedding_provider ?? "fallback"}
+              value={formValues?.embedding_provider ?? "vllm_openai"}
               disabled={busy}
               onChange={(value) =>
-                updateField("embedding_provider", value as "fallback" | "vllm_openai")
+                updateField("embedding_provider", value as "vllm_openai")
               }
               options={[
-                { value: "fallback", label: "Local fallback" },
                 { value: "vllm_openai", label: "vLLM / OpenAI-compatible" },
               ]}
             />

@@ -16,11 +16,11 @@ export interface HealthOut {
   service: string;
 }
 
-export type RuntimeMode = "runtime" | "fallback" | "degraded";
-export type RuntimeOverallStatus = "ready" | "degraded" | "failed" | "fallback";
+export type RuntimeMode = "runtime";
+export type RuntimeOverallStatus = "ready" | "degraded" | "failed";
 export type RuntimeCheckStatus = "ok" | "warning" | "failed" | "skipped";
 export type RuntimeCheckSeverity = "info" | "warning" | "blocking";
-export type StorageBackend = "postgres_pgvector_neo4j" | "fallback_local";
+export type StorageBackend = "postgres_pgvector_neo4j";
 export type RerankerProvider =
   | "disabled"
   | "cohere_compatible"
@@ -59,7 +59,7 @@ export interface SettingsProfileIn {
   llm_capabilities?: Array<"text" | "vision" | "reasoning">;
   embedding_model: string;
   storage_backend: StorageBackend;
-  embedding_provider?: "fallback" | "vllm_openai";
+  embedding_provider?: "vllm_openai";
   embedding_base_url?: string | null;
   embedding_api_key?: string | null;
   embedding_timeout_ms?: number;
@@ -125,7 +125,7 @@ export interface SettingsProfileOut {
   llm_capabilities: Array<"text" | "vision" | "reasoning">;
   embedding_model: string;
   storage_backend: StorageBackend;
-  embedding_provider: "fallback" | "vllm_openai";
+  embedding_provider: "vllm_openai";
   embedding_base_url: string | null;
   has_embedding_api_key: boolean;
   embedding_timeout_ms: number;
@@ -219,7 +219,7 @@ export interface ProviderSyncPreviewOut {
   detail: string;
 }
 
-export type ParserMode = "local_fallback" | "mineru_strict" | "mineru_with_fallback";
+export type ParserMode = "mineru_strict";
 
 export interface DomainMetadata {
   domain?: string;
