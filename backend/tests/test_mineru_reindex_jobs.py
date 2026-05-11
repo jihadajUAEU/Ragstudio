@@ -25,6 +25,16 @@ class FailingIndexService(DocumentService):
     async def _index_document_for_job(
         self, document, job, options=None, on_mineru_status=None
     ):
+        if on_mineru_status is not None:
+            await on_mineru_status(
+                {
+                    "jobId": "remote-123",
+                    "status": "running",
+                    "progress": 42,
+                    "detail": "MinerU parsing on HPC.",
+                    "updatedAt": "2026-05-11T08:00:00Z",
+                }
+            )
         job.status = "running"
         job.progress = 25
         job.logs = [*job.logs, "MinerU parsing on HPC."]
@@ -447,6 +457,23 @@ async def test_run_index_job_marks_strict_mineru_failure(tmp_path, database_url)
         )
         session.add(document)
         await session.flush()
+        session.add(
+            Chunk(
+                document_id=document.id,
+                text="stale searchable chunk",
+                source_location={"page": 1},
+                metadata_json={},
+            )
+        )
+        session.add(
+            IndexRecord(
+                document_id=document.id,
+                runtime_profile_id="default",
+                status="succeeded",
+                index_shape={"kind": "stale"},
+                chunk_count=1,
+            )
+        )
         job = Job(type="index_document", target_id=document.id, status="ready", progress=0)
         session.add(job)
         await session.commit()
@@ -460,6 +487,18 @@ async def test_run_index_job_marks_strict_mineru_failure(tmp_path, database_url)
 
         refreshed_doc = await session.get(Document, document.id)
         refreshed_job = await session.get(Job, job.id)
+        chunk_count = (
+            await session.execute(
+                select(func.count()).select_from(Chunk).where(Chunk.document_id == document.id)
+            )
+        ).scalar_one()
+        index_count = (
+            await session.execute(
+                select(func.count())
+                .select_from(IndexRecord)
+                .where(IndexRecord.document_id == document.id)
+            )
+        ).scalar_one()
 
     await engine.dispose()
 
@@ -469,6 +508,97 @@ async def test_run_index_job_marks_strict_mineru_failure(tmp_path, database_url)
     assert refreshed_job.status == "failed"
     assert refreshed_job.progress == 100
     assert "MinerU parse timed out" in refreshed_job.logs[-1]
+    assert chunk_count == 0
+    assert index_count == 0
+    assert refreshed_job.result["mineru"]["job_id"] == "remote-123"
+    assert refreshed_job.result["mineru"]["status"] == "running"
+    assert refreshed_job.result["indexing_stage"] == {
+        "stage": "failed",
+        "label": "Failed",
+        "detail": "MinerU parse timed out for job remote-123.",
+        "progress": 100,
+    }
+
+
+@pytest.mark.asyncio
+async def test_index_document_for_job_records_warning_when_graph_materialization_skips(
+    tmp_path,
+    database_url,
+    monkeypatch,
+):
+    engine = make_engine(database_url)
+    session_factory = make_session_factory(engine)
+    await init_db(engine)
+
+    class LifecycleResult:
+        chunks = [object()]
+        graph_materialization = {
+            "status": "skipped",
+            "reason": "runtime enrichment unavailable",
+        }
+
+    async def fake_reindex_document(
+        self,
+        document_id,
+        *,
+        options=None,
+        on_mineru_status=None,
+    ):
+        return LifecycleResult()
+
+    async with session_factory() as session:
+        artifact = tmp_path / "quran.pdf"
+        artifact.write_bytes(b"%PDF-1.4")
+        document = Document(
+            filename="quran_arabic_english.pdf",
+            content_type="application/pdf",
+            sha256="strict-skipped-warning-sha",
+            artifact_path=str(artifact),
+            status="ready",
+        )
+        session.add(
+            SettingsProfile(
+                id="default",
+                provider="openai-compatible",
+                llm_model="gpt-4o",
+                llm_base_url="http://127.0.0.1:8004/v1",
+                embedding_model="text-embedding-3-large",
+                embedding_base_url="http://127.0.0.1:8001/v1",
+                storage_backend="postgres_pgvector_neo4j",
+                runtime_mode="runtime",
+            )
+        )
+        session.add(document)
+        await session.flush()
+        job = Job(type="index_document", target_id=document.id, status="ready", progress=0)
+        session.add(job)
+        await session.commit()
+
+        monkeypatch.setattr(
+            IndexLifecycleService,
+            "reindex_document",
+            fake_reindex_document,
+        )
+
+        service = DocumentService(session, tmp_path, AppSettings(data_dir=tmp_path))
+        await service._index_document_for_job(
+            document,
+            job,
+            IndexDocumentIn(parser_mode="mineru_strict"),
+        )
+        await session.commit()
+
+        refreshed_doc = await session.get(Document, document.id)
+        refreshed_job = await session.get(Job, job.id)
+
+    await engine.dispose()
+
+    assert refreshed_doc is not None
+    assert refreshed_job is not None
+    assert refreshed_doc.status == "succeeded"
+    assert refreshed_job.status == "succeeded"
+    assert refreshed_job.result["warnings"] == ["runtime enrichment unavailable"]
+    assert refreshed_job.logs[-1] == "Ready with warnings: runtime enrichment unavailable"
 
 
 @pytest.mark.asyncio
@@ -535,6 +665,79 @@ async def test_run_index_job_preserves_mineru_status_on_success(
     assert refreshed_job.result["chunk_count"] == 3
     assert refreshed_job.result["mineru"]["job_id"] == "remote-ready"
     assert refreshed_job.result["mineru"]["status"] == "ready"
+
+
+@pytest.mark.asyncio
+async def test_run_index_job_marks_searchable_document_succeeded_when_enrichment_skips(
+    tmp_path,
+    database_url,
+    monkeypatch,
+):
+    engine = make_engine(database_url)
+    session_factory = make_session_factory(engine)
+    await init_db(engine)
+
+    async with session_factory() as session:
+        artifact = tmp_path / "quran.pdf"
+        artifact.write_bytes(b"%PDF-1.4")
+        document = Document(
+            filename="quran_arabic_english.pdf",
+            content_type="application/pdf",
+            sha256="strict-skipped-enrichment-sha",
+            artifact_path=str(artifact),
+            status="ready",
+        )
+        session.add(document)
+        await session.flush()
+        job = Job(type="index_document", target_id=document.id, status="ready", progress=0)
+        session.add(job)
+        await session.commit()
+
+        async def fake_index_document_for_job(
+            self,
+            document,
+            job,
+            options=None,
+            on_mineru_status=None,
+        ):
+            document.status = "succeeded"
+            job.status = "succeeded"
+            job.progress = 100
+            job.result = {
+                **job.result,
+                "document_id": document.id,
+                "chunk_count": 1,
+                "graph_materialization": {
+                    "status": "skipped",
+                    "reason": "runtime enrichment unavailable",
+                },
+            }
+            job.logs = [*job.logs, "Indexed 1 chunks."]
+
+        monkeypatch.setattr(
+            DocumentService,
+            "_index_document_for_job",
+            fake_index_document_for_job,
+        )
+
+        service = DocumentService(session, tmp_path)
+        await service.run_index_job(
+            document.id,
+            job.id,
+            IndexDocumentIn(parser_mode="mineru_strict"),
+        )
+
+        refreshed_doc = await session.get(Document, document.id)
+        refreshed_job = await session.get(Job, job.id)
+
+    await engine.dispose()
+
+    assert refreshed_doc is not None
+    assert refreshed_job is not None
+    assert refreshed_doc.status == "succeeded"
+    assert refreshed_job.status == "succeeded"
+    assert refreshed_job.progress == 100
+    assert refreshed_job.result["graph_materialization"]["status"] == "skipped"
 
 
 @pytest.mark.asyncio

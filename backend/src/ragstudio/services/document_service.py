@@ -13,6 +13,7 @@ from ragstudio.schemas.runtime import RuntimeProfile
 from ragstudio.services.artifact_store import ArtifactStore
 from ragstudio.services.chunk_service import ChunkService
 from ragstudio.services.graph_projection_runner import GraphProjectionRunner
+from ragstudio.services.index_artifact_cleanup import cleanup_document_index_artifacts
 from ragstudio.services.index_lifecycle_service import (
     IndexLifecycleService,
     RuntimeHealthBlockedError,
@@ -80,7 +81,7 @@ class DocumentService:
                 except Exception as exc:
                     if not self._should_persist_index_failure(options, exc):
                         raise
-                    self._mark_index_failed(document, job, exc)
+                    await self._mark_index_failed(document, job, exc)
             else:
                 document.status = StageStatus.RUNNING.value
                 job.logs = [*(job.logs or []), "Indexing queued."]
@@ -334,7 +335,7 @@ class DocumentService:
         except Exception as exc:
             if not self._should_persist_index_failure(options, exc):
                 raise
-            self._mark_index_failed(document, job, exc)
+            await self._mark_index_failed(document, job, exc)
         await self.session.commit()
         await self.session.refresh(document)
 
@@ -384,6 +385,7 @@ class DocumentService:
             "graph_materialization": graph_materialization,
         }
         job.logs = [*job.logs, f"Indexed {chunk_count} chunks."]
+        self._record_graph_materialization_warning(job, graph_materialization)
         if graph_materialization.get("status") == "pending" and self.settings is not None:
             await self.session.commit()
             graph_materialization = await GraphProjectionRunner(
@@ -396,6 +398,20 @@ class DocumentService:
             }
             status = str(graph_materialization.get("status") or "unknown")
             job.logs = [*job.logs, f"Graph projection materialization {status}."]
+            self._record_graph_materialization_warning(job, graph_materialization)
+
+    def _record_graph_materialization_warning(
+        self,
+        job: Job,
+        graph_materialization: dict[str, Any],
+    ) -> None:
+        if graph_materialization.get("status") != "skipped":
+            return
+        reason = str(graph_materialization.get("reason") or "Graph materialization skipped.")
+        result = job.result or {}
+        warnings = [*(result.get("warnings") or []), reason]
+        job.result = {**result, "warnings": warnings}
+        job.logs = [*(job.logs or []), f"Ready with warnings: {reason}"]
 
     async def _active_runtime_profile(self) -> RuntimeProfile | None:
         if self.settings is None:
@@ -438,12 +454,32 @@ class DocumentService:
     def _is_runtime_blocker(self, exc: Exception) -> bool:
         return isinstance(exc, (RuntimeHealthBlockedError, RuntimeUnavailableError))
 
-    def _mark_index_failed(self, document: Document, job: Job, exc: Exception) -> None:
+    async def _mark_index_failed(self, document: Document, job: Job, exc: Exception) -> None:
+        await cleanup_document_index_artifacts(self.session, document.id)
         document.status = StageStatus.FAILED.value
         job.status = StageStatus.FAILED.value
         job.progress = 100
-        job.logs = [*job.logs, str(exc)]
-        job.result = {"document_id": document.id, "error": str(exc)}
+        job.logs = [*(job.logs or []), str(exc)]
+        job.result = self._index_failure_result(document, job, exc)
+
+    def _index_failure_result(
+        self,
+        document: Document,
+        job: Job,
+        exc: Exception,
+    ) -> dict[str, Any]:
+        detail = str(exc)
+        return {
+            **(job.result or {}),
+            "document_id": document.id,
+            "error": detail,
+            "indexing_stage": {
+                "stage": "failed",
+                "label": "Failed",
+                "detail": detail,
+                "progress": 100,
+            },
+        }
 
     async def run_index_job(
         self,
@@ -491,9 +527,10 @@ class DocumentService:
             )
             await self.session.commit()
         except Exception as exc:
+            await cleanup_document_index_artifacts(self.session, document.id)
             document.status = StageStatus.FAILED.value
             job.status = StageStatus.FAILED.value
             job.progress = 100
-            job.logs = [*job.logs, str(exc)]
-            job.result = {**job.result, "document_id": document.id, "error": str(exc)}
+            job.logs = [*(job.logs or []), str(exc)]
+            job.result = self._index_failure_result(document, job, exc)
             await self.session.commit()
