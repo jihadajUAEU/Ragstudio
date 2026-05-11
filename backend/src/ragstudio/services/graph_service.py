@@ -58,13 +58,15 @@ class GraphService:
                 raise RuntimeGraphUnavailableError(
                     f"Runtime graph prerequisites are unavailable: {details}"
                 )
+            projection_detail = await self._latest_projection_detail(
+                runtime_profile_id=profile.id
+            )
+            if await self._latest_projection_blocks_runtime(runtime_profile_id=profile.id):
+                return await self._graph_projection_not_ready(projection_detail)
             graph = await self.runtime_factory.build(profile).graph()
             if graph.get("nodes") or graph.get("edges"):
                 return graph
             fallback = await self._relationship_metadata_graph()
-            projection_detail = await self._latest_projection_detail(
-                runtime_profile_id=profile.id
-            )
             if fallback.get("nodes") or fallback.get("edges"):
                 fallback["detail"] = self._runtime_empty_detail(
                     projection_detail,
@@ -174,11 +176,55 @@ class GraphService:
             detail = "Relationship metadata fallback graph."
         return {"nodes": list(nodes.values()), "edges": list(edges.values()), "detail": detail}
 
+    async def _latest_projection_blocks_runtime(
+        self,
+        *,
+        runtime_profile_id: str,
+    ) -> bool:
+        record = await self._latest_projection_record(runtime_profile_id=runtime_profile_id)
+        return record is not None and record.status != "succeeded"
+
+    async def _graph_projection_not_ready(
+        self,
+        projection_detail: str | None,
+    ) -> dict[str, list[dict[str, Any]] | str | None]:
+        fallback = await self._relationship_metadata_graph()
+        detail = projection_detail or "Latest graph projection is not ready."
+        if fallback.get("nodes") or fallback.get("edges"):
+            fallback["detail"] = (
+                "Graph projection is not ready; showing relationship metadata fallback graph. "
+                f"{detail}"
+            )
+            return fallback
+        return {
+            "nodes": [],
+            "edges": [],
+            "detail": f"Graph projection is not ready. {detail}",
+        }
+
     async def _latest_projection_detail(
         self,
         *,
         runtime_profile_id: str | None = None,
     ) -> str | None:
+        record = await self._latest_projection_record(runtime_profile_id=runtime_profile_id)
+        if record is None:
+            return None
+        if record.status == "succeeded":
+            return (
+                "Latest graph projection succeeded with "
+                f"{record.node_count} nodes and {record.edge_count} edges."
+            )
+        reason = f": {record.error}" if record.error else "."
+        if record.status in {"failed", "skipped", "stale"}:
+            return f"Latest graph projection {record.status}{reason}"
+        return f"Latest graph projection is {record.status}{reason}"
+
+    async def _latest_projection_record(
+        self,
+        *,
+        runtime_profile_id: str | None = None,
+    ) -> GraphProjectionRecord | None:
         if self.session is None:
             return None
         statement = select(GraphProjectionRecord)
@@ -189,17 +235,7 @@ class GraphService:
         record = await self.session.scalar(
             statement.order_by(GraphProjectionRecord.created_at.desc()).limit(1)
         )
-        if record is None:
-            return None
-        if record.status == "succeeded":
-            return (
-                "Latest graph projection succeeded with "
-                f"{record.node_count} nodes and {record.edge_count} edges."
-            )
-        reason = f": {record.error}" if record.error else "."
-        if record.status in {"failed", "skipped"}:
-            return f"Latest graph projection {record.status}{reason}"
-        return f"Latest graph projection is {record.status}{reason}"
+        return record
 
     def _runtime_empty_detail(
         self,

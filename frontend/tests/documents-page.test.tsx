@@ -450,6 +450,8 @@ describe("DocumentsPage", () => {
     expect(screen.getByText("Some chunk metadata could not be normalized")).toBeVisible();
     expect(screen.getByText("Indexing completed with warnings")).toBeVisible();
     expect(screen.getByText("100%")).toBeVisible();
+    expect(screen.queryByText("MinerU: Ready · 80% · MinerU artifacts ready")).not.toBeInTheDocument();
+    expect(screen.getByText("MinerU: Ready · MinerU artifacts ready")).toBeVisible();
   });
 
   it("polls jobs and documents while work is active", async () => {

@@ -478,7 +478,7 @@ function formatMinerUResult(job: JobOut): string | null {
   }
 
   const progress =
-    typeof mineru.progress === "number"
+    job.status === "running" && typeof mineru.progress === "number"
       ? `${Math.min(Math.round(mineru.progress), job.status === "running" ? 99 : 100)}%`
       : null;
 

@@ -585,9 +585,99 @@ async def test_graph_explains_empty_runtime_graph_with_projection_status(
     assert response.status_code == 200
     payload = response.json()
     assert {node["id"] for node in payload["nodes"]} == {"chunk:0", "ref:one"}
-    assert "Neo4j graph is empty" in payload["detail"]
+    assert "Graph projection is not ready" in payload["detail"]
     assert "relationship metadata fallback graph" in payload["detail"]
     assert "Latest graph projection failed: neo4j write failed" in payload["detail"]
+
+
+@pytest.mark.asyncio
+async def test_graph_endpoint_does_not_return_runtime_graph_when_projection_is_stale(
+    client,
+    monkeypatch,
+):
+    from ragstudio.db.models import Document, GraphProjectionRecord
+    from ragstudio.schemas.common import StageStatus
+
+    class ReadyRuntimeHealthService:
+        def __init__(self, session, *, verify_storage):
+            self.session = session
+            self.verify_storage = verify_storage
+
+        async def check(self, profile):
+            return []
+
+        def blocking_failures(self, checks):
+            return []
+
+    class StaleRuntime:
+        async def graph(self):
+            return {
+                "nodes": [{"id": "stale-node", "labels": ["Old"], "properties": {}}],
+                "edges": [],
+            }
+
+    class StaleRuntimeFactory:
+        def __init__(self, settings):
+            self.settings = settings
+
+        def build(self, profile):
+            return StaleRuntime()
+
+    monkeypatch.setattr(
+        "ragstudio.services.graph_service.RAGAnythingRuntimeFactory",
+        StaleRuntimeFactory,
+    )
+    monkeypatch.setattr(
+        "ragstudio.services.graph_service.RuntimeHealthService",
+        ReadyRuntimeHealthService,
+    )
+
+    settings = await client.put(
+        "/api/settings/default",
+        json={
+            "provider": "openai-compatible",
+            "runtime_mode": "runtime",
+            "llm_model": "gpt-4o",
+            "embedding_model": "text-embedding-3-large",
+            "storage_backend": "postgres_pgvector_neo4j",
+        },
+    )
+    assert settings.status_code == 200
+
+    app = client._transport.app
+    async with app.state.session_factory() as session:
+        document = Document(
+            filename="stale-graph.txt",
+            content_type="text/plain",
+            sha256="stale-graph",
+            artifact_path=str(app.state.settings.data_dir / "stale-graph.txt"),
+            status=StageStatus.SUCCEEDED.value,
+        )
+        session.add(document)
+        await session.flush()
+        session.add(
+            GraphProjectionRecord(
+                document_id=document.id,
+                runtime_profile_id="default",
+                status="stale",
+                error="Superseded by a newer indexing attempt.",
+                node_count=7,
+                edge_count=6,
+            )
+        )
+        await session.commit()
+
+    response = await client.get("/api/graph")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["nodes"] == []
+    assert payload["edges"] == []
+    assert "Graph projection is not ready" in payload["detail"]
+    assert "Latest graph projection stale: Superseded by a newer indexing attempt." in payload[
+        "detail"
+    ]
+    assert "stale-node" not in str(payload)
 
 
 @pytest.mark.asyncio
