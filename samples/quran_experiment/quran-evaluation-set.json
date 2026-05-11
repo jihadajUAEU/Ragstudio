@@ -1,0 +1,172 @@
+{
+  "cases": [
+    {
+      "id": "quran-ref-2-255-throne",
+      "query": "What does Quran 2:255 say about Allah's life, sleep, knowledge, and Kursi?",
+      "expected_answer": "Ever-Living Sustainer neither drowsiness nor sleep knowledge Kursi heavens earth Most High Most Great",
+      "expected_sources": ["2:255"],
+      "must_include": ["Ever-Living", "Sustainer", "Kursi", "heavens", "earth"],
+      "must_avoid": ["hadith", "Bible", "commentary without citation"],
+      "expected_structure": {
+        "required_reference": "2:255",
+        "answer_style": "concise summary with verse citation",
+        "source_policy": "uploaded Quran PDF only"
+      },
+      "rubric": {
+        "citation": "Must cite 2:255 or show the retrieved source chunk.",
+        "grounding": "Must stay within the uploaded translation."
+      },
+      "objective": {
+        "intent": "exact_reference",
+        "priority": "citation_precision"
+      },
+      "variant_hints": {
+        "precise": ["Should put 2:255 at or near top source."],
+        "broad": ["May include 2:256 as neighbor context but must not replace 2:255."]
+      }
+    },
+    {
+      "id": "quran-ref-24-35-light",
+      "query": "Find the verse that says Allah is the Light of the heavens and the earth. Summarize the image used.",
+      "expected_answer": "Allah Light heavens earth niche lamp glass olive tree Light upon light",
+      "expected_sources": ["24:35"],
+      "must_include": ["Light of the heavens and the earth", "niche", "lamp", "olive tree"],
+      "must_avoid": ["sun worship", "external tafseer"],
+      "expected_structure": {
+        "required_reference": "24:35",
+        "answer_style": "identify verse then summarize metaphor"
+      },
+      "rubric": {
+        "reference": "The answer should identify 24:35.",
+        "coverage": "The image should include niche, lamp, glass, and olive tree."
+      },
+      "objective": {
+        "intent": "phrase_to_reference",
+        "priority": "semantic_retrieval"
+      },
+      "variant_hints": {
+        "balanced": ["Should balance phrase search with readable answer."],
+        "broad": ["Useful when phrase search needs neighboring context."]
+      }
+    },
+    {
+      "id": "quran-ref-1-5-guidance",
+      "query": "Which verse asks for guidance to the straight path?",
+      "expected_answer": "Guide us to the straight path",
+      "expected_sources": ["1:5"],
+      "must_include": ["Guide us", "straight path", "1:5"],
+      "must_avoid": ["2:2 as the main answer"],
+      "expected_structure": {
+        "required_reference": "1:5",
+        "answer_style": "single verse citation"
+      },
+      "rubric": {
+        "precision": "Should return Surah 1 verse 5, not a general guidance verse."
+      },
+      "objective": {
+        "intent": "short_phrase_lookup",
+        "priority": "top1_precision"
+      }
+    },
+    {
+      "id": "quran-ref-18-10-cave-youths",
+      "query": "What did the youths of the cave ask their Lord for in 18:10?",
+      "expected_answer": "grant us mercy prepare for us right guidance",
+      "expected_sources": ["18:10"],
+      "must_include": ["mercy", "right guidance", "18:10"],
+      "must_avoid": ["names of the youths", "number of sleepers"],
+      "expected_structure": {
+        "required_reference": "18:10",
+        "answer_style": "answer the request in the verse"
+      },
+      "rubric": {
+        "faithfulness": "Should not add details not present in the retrieved verse."
+      },
+      "objective": {
+        "intent": "exact_reference",
+        "priority": "faithfulness"
+      }
+    },
+    {
+      "id": "quran-ref-49-13-peoples-tribes",
+      "query": "According to 49:13, why were peoples and tribes made?",
+      "expected_answer": "peoples tribes know one another most noble righteous",
+      "expected_sources": ["49:13"],
+      "must_include": ["know one another", "most noble", "righteous"],
+      "must_avoid": ["race superiority", "national superiority"],
+      "expected_structure": {
+        "required_reference": "49:13",
+        "answer_style": "ethical summary with citation"
+      },
+      "rubric": {
+        "safety": "Must avoid implying ethnic or national superiority."
+      },
+      "objective": {
+        "intent": "semantic_reference",
+        "priority": "safe_grounded_summary"
+      }
+    },
+    {
+      "id": "quran-ref-55-19-20-two-seas",
+      "query": "Which verses mention the two seas meeting and a barrier between them?",
+      "expected_answer": "two seas meeting barrier neither transgresses",
+      "expected_sources": ["55:19", "55:20"],
+      "must_include": ["55:19", "55:20", "two seas", "barrier"],
+      "must_avoid": ["modern science claim", "miracle proof"],
+      "expected_structure": {
+        "required_references": ["55:19", "55:20"],
+        "answer_style": "two verse citation"
+      },
+      "rubric": {
+        "scope": "Should identify both adjacent verses without adding scientific claims."
+      },
+      "objective": {
+        "intent": "neighbor_reference",
+        "priority": "adjacent_context"
+      },
+      "variant_hints": {
+        "broad": ["Should benefit from neighbor-aware retrieval."],
+        "fast": ["May miss one adjacent verse if top_k is too small."]
+      }
+    },
+    {
+      "id": "quran-ref-3-7-precise-unspecific",
+      "query": "In 3:7, how are the verses of the Book described?",
+      "expected_answer": "verses precise foundation Book others unspecific",
+      "expected_sources": ["3:7"],
+      "must_include": ["precise", "foundation", "unspecific"],
+      "must_avoid": ["legal ruling", "external doctrine"],
+      "expected_structure": {
+        "required_reference": "3:7",
+        "answer_style": "contrast precise and unspecific verses"
+      },
+      "rubric": {
+        "coverage": "Should mention both categories in the verse."
+      },
+      "objective": {
+        "intent": "exact_reference",
+        "priority": "concept_coverage"
+      }
+    },
+    {
+      "id": "quran-ref-2-2-no-doubt",
+      "query": "What does 2:2 say about the Book and guidance?",
+      "expected_answer": "Book no doubt guidance conscious Allah",
+      "expected_sources": ["2:2"],
+      "must_include": ["no doubt", "guidance", "conscious of Allah"],
+      "must_avoid": ["2:255"],
+      "expected_structure": {
+        "required_reference": "2:2",
+        "answer_style": "direct verse summary"
+      },
+      "rubric": {
+        "precision": "Should not drift to other famous verses in Surah 2."
+      },
+      "objective": {
+        "intent": "exact_reference",
+        "priority": "reference_disambiguation"
+      }
+    }
+  ]
+}
+

@@ -1,0 +1,16 @@
+{
+  "metric": "total",
+  "primary_goal": "maximize grounded score across Quran reference and phrase lookup cases",
+  "tie_breakers": [
+    "fewer failed runs",
+    "higher exact-reference precision",
+    "shorter answers with visible citations",
+    "lower total latency"
+  ],
+  "score_interpretation": {
+    "90_100": "ready default for this document",
+    "75_89": "usable but inspect misses",
+    "below_75": "needs retrieval or prompt tuning"
+  }
+}
+

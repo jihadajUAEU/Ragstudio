@@ -1,0 +1,17 @@
+{
+  "metric": "total",
+  "selection_policy": "highest average score, then lowest failed run count, then simplest variant",
+  "required_behavior": [
+    "answers must be grounded in uploaded Quran PDF chunks",
+    "reference questions should cite the requested surah:ayah",
+    "phrase questions should retrieve the verse containing the phrase",
+    "answers should avoid unsupported external tafseer or modern claims"
+  ],
+  "inspect_after_recommendation": [
+    "candidate_summaries.average_score",
+    "candidate_summaries.failed_run_count",
+    "selected_run_id sources",
+    "low-scoring cases in experiment scores"
+  ]
+}
+

@@ -1045,6 +1045,165 @@ async def test_diagnostics_reports_native_dependency_status_for_runtime_mode(cli
 
 
 @pytest.mark.asyncio
+async def test_diagnostics_treats_disabled_reranker_as_available_runtime(client):
+    class ReadyRuntimeHealthService:
+        async def check(self, profile):
+            return [
+                RuntimeHealthCheck(
+                    name="raganything",
+                    status="ok",
+                    detail="RAG-Anything package is importable.",
+                ),
+                RuntimeHealthCheck(
+                    name="lightrag",
+                    status="ok",
+                    detail="LightRAG package is importable.",
+                ),
+                RuntimeHealthCheck(
+                    name="llm",
+                    status="ok",
+                    detail="LLM base URL is configured.",
+                ),
+                RuntimeHealthCheck(
+                    name="embedding",
+                    status="ok",
+                    detail="Embedding base URL is configured.",
+                ),
+                RuntimeHealthCheck(
+                    name="reranker",
+                    status="skipped",
+                    detail="Reranker is disabled for this profile.",
+                ),
+                RuntimeHealthCheck(
+                    name="pgvector",
+                    status="ok",
+                    detail="PGVector extension and schema are reachable.",
+                ),
+                RuntimeHealthCheck(
+                    name="neo4j",
+                    status="ok",
+                    detail="Neo4j connectivity and authentication succeeded.",
+                ),
+                RuntimeHealthCheck(
+                    name="parser",
+                    status="ok",
+                    detail="Parser is configured.",
+                ),
+            ]
+
+        def blocking_failures(self, checks):
+            return []
+
+    settings = await client.put(
+        "/api/settings/default",
+        json={
+            "provider": "openai-compatible",
+            "runtime_mode": "runtime",
+            "llm_model": "gpt-4o",
+            "embedding_model": "text-embedding-3-large",
+            "storage_backend": "postgres_pgvector_neo4j",
+        },
+    )
+    assert settings.status_code == 200
+
+    transport = client._transport
+    async with transport.app.state.session_factory() as session:
+        payload = await DiagnosticsService(
+            session,
+            transport.app.state.settings,
+            health_service=ReadyRuntimeHealthService(),
+        ).get_diagnostics()
+
+    assert payload.overall_status == "ready"
+    assert payload.capabilities["indexing"] is True
+    assert payload.capabilities["query"] is True
+    assert payload.capabilities["graph"] is True
+    assert payload.dependency_status["indexing"] == "raganything"
+    assert payload.dependency_status["query"] == "raganything"
+    assert payload.dependency_status["graph"] == "neo4j"
+    assert payload.dependency_status["scoped_query"] == "requires_storage_verification"
+
+
+@pytest.mark.asyncio
+async def test_diagnostics_treats_required_skipped_check_as_unavailable_runtime(client):
+    class SkippedParserHealthService:
+        async def check(self, profile):
+            return [
+                RuntimeHealthCheck(
+                    name="raganything",
+                    status="ok",
+                    detail="RAG-Anything package is importable.",
+                ),
+                RuntimeHealthCheck(
+                    name="lightrag",
+                    status="ok",
+                    detail="LightRAG package is importable.",
+                ),
+                RuntimeHealthCheck(
+                    name="llm",
+                    status="ok",
+                    detail="LLM base URL is configured.",
+                ),
+                RuntimeHealthCheck(
+                    name="embedding",
+                    status="ok",
+                    detail="Embedding base URL is configured.",
+                ),
+                RuntimeHealthCheck(
+                    name="reranker",
+                    status="skipped",
+                    detail="Reranker is disabled for this profile.",
+                ),
+                RuntimeHealthCheck(
+                    name="pgvector",
+                    status="ok",
+                    detail="PGVector extension and schema are reachable.",
+                ),
+                RuntimeHealthCheck(
+                    name="neo4j",
+                    status="ok",
+                    detail="Neo4j connectivity and authentication succeeded.",
+                ),
+                RuntimeHealthCheck(
+                    name="parser",
+                    status="skipped",
+                    detail="Parser sidecar is not configured.",
+                ),
+            ]
+
+        def blocking_failures(self, checks):
+            return []
+
+    settings = await client.put(
+        "/api/settings/default",
+        json={
+            "provider": "openai-compatible",
+            "runtime_mode": "runtime",
+            "llm_model": "gpt-4o",
+            "embedding_model": "text-embedding-3-large",
+            "storage_backend": "postgres_pgvector_neo4j",
+        },
+    )
+    assert settings.status_code == 200
+
+    transport = client._transport
+    async with transport.app.state.session_factory() as session:
+        payload = await DiagnosticsService(
+            session,
+            transport.app.state.settings,
+            health_service=SkippedParserHealthService(),
+        ).get_diagnostics()
+
+    assert payload.overall_status == "degraded"
+    assert payload.capabilities["indexing"] is False
+    assert payload.capabilities["query"] is False
+    assert payload.capabilities["graph"] is False
+    assert payload.dependency_status["indexing"] == "unavailable"
+    assert payload.dependency_status["query"] == "unavailable"
+    assert payload.dependency_status["graph"] == "unavailable"
+
+
+@pytest.mark.asyncio
 async def test_diagnostics_reports_latest_graph_projection_status(client):
     from ragstudio.db.models import Document, GraphProjectionRecord
 

@@ -1,0 +1,48 @@
+{
+  "domain": "quran_tafseer",
+  "document_type": "scripture_translation",
+  "language": "arabic_english",
+  "tags": ["quran", "arabic", "english", "translation", "religious_text"],
+  "authority": "Quran Arabic text with English translation",
+  "source": "quran_arabic_english.pdf",
+  "collection": "quran_arabic_english",
+  "citation_style": "surah_ayah",
+  "expected_structure": "surah_ayah_sections",
+  "reference_pattern": "surah_number:ayah_number",
+  "script": "arabic_latin",
+  "content_role": "primary_source_translation",
+  "metadata_sources": ["filename", "document_text", "domain_profile"],
+  "custom_json": {
+    "reference_schema": {
+      "type": "chapter_verse",
+      "display": "{chapter}:{verse}",
+      "fields": {
+        "chapter": "surah_number",
+        "verse": "ayah_number"
+      },
+      "reference_regex": "\\[(?P<chapter>\\d{1,3}):(?P<verse>\\d{1,3})\\]"
+    },
+    "relationships": {
+      "previous": ["same_chapter", "verse - 1"],
+      "next": ["same_chapter", "verse + 1"],
+      "chapter": ["same_chapter"]
+    },
+    "chunking": {
+      "unit": "verse",
+      "include_neighbors": 1,
+      "preserve_parallel_text": true
+    },
+    "retrieval": {
+      "exact_reference_top1": true,
+      "boost_same_chapter": true,
+      "boost_neighbor_verses": true
+    },
+    "graph": {
+      "node_types": ["surah", "ayah", "translation", "chunk"],
+      "edge_types": ["contains", "next", "references", "same_surah"],
+      "materialize_from": ["mineru_structure", "reference_metadata"],
+      "confidence_policy": "evidence_required"
+    }
+  }
+}
+

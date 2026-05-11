@@ -13,6 +13,8 @@ from ragstudio.services.runtime_profile_service import (
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+OPTIONAL_SKIPPED_RUNTIME_CHECKS = {"reranker"}
+
 
 class DiagnosticsService:
     def __init__(
@@ -161,9 +163,7 @@ class DiagnosticsService:
         blocking: list[Any],
     ) -> dict[str, Any]:
         by_name = {item.name: item for item in checks}
-        runtime_available = bool(checks) and not blocking and not any(
-            item.status == "skipped" for item in checks
-        )
+        runtime_available = self._runtime_checks_available(checks, blocking)
         graph_available = (
             runtime_available
             and by_name.get("neo4j") is not None
@@ -233,6 +233,19 @@ class DiagnosticsService:
             return "failed"
         if blocking:
             return "failed"
+        if any(
+            item.status == "skipped"
+            and item.name not in OPTIONAL_SKIPPED_RUNTIME_CHECKS
+            and item.name != "runtime_profile"
+            for item in checks
+        ):
+            return "degraded"
         if any(item.status == "warning" for item in checks):
             return "degraded"
         return "ready"
+
+    def _runtime_checks_available(self, checks: list[Any], blocking: list[Any]) -> bool:
+        return bool(checks) and not blocking and all(
+            item.status != "skipped" or item.name in OPTIONAL_SKIPPED_RUNTIME_CHECKS
+            for item in checks
+        )

@@ -1,0 +1,51 @@
+[
+  {
+    "name": "Quran precise reference",
+    "preset": "precise",
+    "parameters": {
+      "top_k": 3,
+      "temperature": 0.0,
+      "enable_rerank": true,
+      "retrieval_mode": "metadata",
+      "reference_query_mode": "exact",
+      "answer_style": "cite-first"
+    }
+  },
+  {
+    "name": "Quran balanced grounded",
+    "preset": "balanced",
+    "parameters": {
+      "top_k": 6,
+      "temperature": 0.2,
+      "enable_rerank": true,
+      "retrieval_mode": "metadata",
+      "native_query_timeout_ms": 5000,
+      "reference_query_mode": "hybrid",
+      "answer_style": "short-summary"
+    }
+  },
+  {
+    "name": "Quran broad neighbor context",
+    "preset": "broad",
+    "parameters": {
+      "top_k": 12,
+      "temperature": 0.2,
+      "enable_rerank": true,
+      "retrieval_mode": "metadata",
+      "native_query_timeout_ms": 5000,
+      "include_neighbors": 1,
+      "reference_query_mode": "hybrid"
+    }
+  },
+  {
+    "name": "Quran fast lexical",
+    "preset": "fast",
+    "parameters": {
+      "top_k": 4,
+      "temperature": 0.0,
+      "enable_rerank": false,
+      "retrieval_mode": "metadata",
+      "reference_query_mode": "lexical"
+    }
+  }
+]
