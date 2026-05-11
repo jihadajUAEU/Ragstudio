@@ -278,8 +278,11 @@ class GraphMaterializationService:
         """
         upsert_chunk_nodes_query = f"""
         UNWIND $chunk_nodes AS node
-        MERGE (chunk:`{workspace_label}` {{id: node.id}})
-        SET chunk:Chunk:RagstudioChunk,
+        MERGE (chunk:RagstudioChunk:RagstudioGraphNode:`{workspace_label}` {{
+            document_id: node.document_id,
+            id: node.id
+        }})
+        SET chunk:Chunk:RagstudioChunk:RagstudioGraphNode,
             chunk.chunk_id = node.chunk_id,
             chunk.document_id = node.document_id,
             chunk.runtime_source_id = node.runtime_source_id,
@@ -295,8 +298,11 @@ class GraphMaterializationService:
         """
         upsert_reference_nodes_query = f"""
         UNWIND $reference_nodes AS node
-        MERGE (ref:`{workspace_label}` {{id: node.id}})
-        SET ref:Reference:RagstudioReference,
+        MERGE (ref:RagstudioReference:RagstudioGraphNode:`{workspace_label}` {{
+            document_id: node.document_id,
+            id: node.id
+        }})
+        SET ref:Reference:RagstudioReference:RagstudioGraphNode,
             ref.reference = node.reference,
             ref.document_id = node.document_id
         """
@@ -320,10 +326,14 @@ class GraphMaterializationService:
                 tx.run(
                     f"""
                     UNWIND $relationships AS rel
-                    MATCH (source:`{workspace_label}` {{id: rel.source}})
-                    WHERE source.document_id = rel.document_id
-                    MATCH (target:`{workspace_label}` {{id: rel.target}})
-                    WHERE target.document_id = rel.document_id
+                    MATCH (source:RagstudioGraphNode:`{workspace_label}` {{
+                        document_id: rel.document_id,
+                        id: rel.source
+                    }})
+                    MATCH (target:RagstudioGraphNode:`{workspace_label}` {{
+                        document_id: rel.document_id,
+                        id: rel.target
+                    }})
                     MERGE (source)-[relationship:`{rel_type}`]->(target)
                     SET relationship.document_id = rel.document_id,
                         relationship.evidence = rel.evidence,
@@ -367,6 +377,13 @@ class GraphMaterializationService:
             """
             CREATE INDEX ragstudio_chunk_projection IF NOT EXISTS
             FOR (n:RagstudioChunk)
+            ON (n.document_id, n.id)
+            """
+        )
+        session.run(
+            """
+            CREATE INDEX ragstudio_graph_projection_node IF NOT EXISTS
+            FOR (n:RagstudioGraphNode)
             ON (n.document_id, n.id)
             """
         )

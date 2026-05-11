@@ -117,6 +117,13 @@ async def test_replace_document_graph_deletes_and_rebuilds_projection():
         for _, params in relationship_calls
         for relationship in params["relationships"]
     }
+    queries = "\n".join(query for query, _ in calls)
+    assert "MERGE (chunk:RagstudioChunk:RagstudioGraphNode:`ragstudio_default`" in queries
+    assert "MERGE (ref:RagstudioReference:RagstudioGraphNode:`ragstudio_default`" in queries
+    assert "SET chunk:Chunk:RagstudioChunk:RagstudioGraphNode" in queries
+    assert "SET ref:Reference:RagstudioReference:RagstudioGraphNode" in queries
+    assert "MATCH (source:RagstudioGraphNode:`ragstudio_default`" in queries
+    assert "MATCH (target:RagstudioGraphNode:`ragstudio_default`" in queries
     assert relationship_types == {"REFERENCES", "NEXT_HADITH"}
     assert result.status == "succeeded"
     assert result.node_count == 3
@@ -349,6 +356,7 @@ async def test_replace_document_graph_creates_projection_indexes_without_apoc():
     queries = "\n".join(query for query, _ in driver.session_instance.calls)
     assert "CREATE INDEX ragstudio_chunk_projection IF NOT EXISTS" in queries
     assert "CREATE INDEX ragstudio_reference_projection IF NOT EXISTS" in queries
+    assert "CREATE INDEX ragstudio_graph_projection_node IF NOT EXISTS" in queries
     assert "apoc." not in queries
 
 
