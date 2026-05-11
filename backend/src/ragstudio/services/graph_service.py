@@ -58,11 +58,14 @@ class GraphService:
                 raise RuntimeGraphUnavailableError(
                     f"Runtime graph prerequisites are unavailable: {details}"
                 )
+            projection_detail = await self._blocking_projection_detail(
+                runtime_profile_id=profile.id
+            )
+            if projection_detail is not None:
+                return await self._graph_projection_not_ready(projection_detail)
             projection_detail = await self._latest_projection_detail(
                 runtime_profile_id=profile.id
             )
-            if await self._latest_projection_blocks_runtime(runtime_profile_id=profile.id):
-                return await self._graph_projection_not_ready(projection_detail)
             graph = await self.runtime_factory.build(profile).graph()
             if graph.get("nodes") or graph.get("edges"):
                 return graph
@@ -176,13 +179,28 @@ class GraphService:
             detail = "Relationship metadata fallback graph."
         return {"nodes": list(nodes.values()), "edges": list(edges.values()), "detail": detail}
 
-    async def _latest_projection_blocks_runtime(
+    async def _blocking_projection_detail(
         self,
         *,
         runtime_profile_id: str,
-    ) -> bool:
-        record = await self._latest_projection_record(runtime_profile_id=runtime_profile_id)
-        return record is not None and record.status != "succeeded"
+    ) -> str | None:
+        if self.session is None:
+            return None
+        result = await self.session.execute(
+            select(GraphProjectionRecord)
+            .where(GraphProjectionRecord.runtime_profile_id == runtime_profile_id)
+            .order_by(GraphProjectionRecord.created_at.asc(), GraphProjectionRecord.id.asc())
+        )
+        latest_by_document: dict[str, GraphProjectionRecord] = {}
+        for record in result.scalars().all():
+            latest_by_document[record.document_id] = record
+        blocking = [
+            record for record in latest_by_document.values() if record.status != "succeeded"
+        ]
+        if not blocking:
+            return None
+        latest_blocking = max(blocking, key=lambda record: record.created_at)
+        return self._projection_detail(latest_blocking)
 
     async def _graph_projection_not_ready(
         self,
@@ -210,6 +228,9 @@ class GraphService:
         record = await self._latest_projection_record(runtime_profile_id=runtime_profile_id)
         if record is None:
             return None
+        return self._projection_detail(record)
+
+    def _projection_detail(self, record: GraphProjectionRecord) -> str:
         if record.status == "succeeded":
             return (
                 "Latest graph projection succeeded with "

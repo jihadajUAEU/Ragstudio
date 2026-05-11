@@ -681,6 +681,118 @@ async def test_graph_endpoint_does_not_return_runtime_graph_when_projection_is_s
 
 
 @pytest.mark.asyncio
+async def test_graph_endpoint_blocks_stale_projection_even_with_newer_success(
+    client,
+    monkeypatch,
+):
+    from datetime import UTC, datetime, timedelta
+
+    from ragstudio.db.models import Document, GraphProjectionRecord
+    from ragstudio.schemas.common import StageStatus
+
+    class ReadyRuntimeHealthService:
+        def __init__(self, session, *, verify_storage):
+            self.session = session
+            self.verify_storage = verify_storage
+
+        async def check(self, profile):
+            return []
+
+        def blocking_failures(self, checks):
+            return []
+
+    class StaleRuntime:
+        async def graph(self):
+            return {
+                "nodes": [{"id": "stale-node", "labels": ["Old"], "properties": {}}],
+                "edges": [],
+            }
+
+    class StaleRuntimeFactory:
+        def __init__(self, settings):
+            self.settings = settings
+
+        def build(self, profile):
+            return StaleRuntime()
+
+    monkeypatch.setattr(
+        "ragstudio.services.graph_service.RAGAnythingRuntimeFactory",
+        StaleRuntimeFactory,
+    )
+    monkeypatch.setattr(
+        "ragstudio.services.graph_service.RuntimeHealthService",
+        ReadyRuntimeHealthService,
+    )
+
+    settings = await client.put(
+        "/api/settings/default",
+        json={
+            "provider": "openai-compatible",
+            "runtime_mode": "runtime",
+            "llm_model": "gpt-4o",
+            "embedding_model": "text-embedding-3-large",
+            "storage_backend": "postgres_pgvector_neo4j",
+        },
+    )
+    assert settings.status_code == 200
+
+    app = client._transport.app
+    now = datetime.now(UTC)
+    async with app.state.session_factory() as session:
+        stale_document = Document(
+            filename="stale-graph-a.txt",
+            content_type="text/plain",
+            sha256="stale-graph-a",
+            artifact_path=str(app.state.settings.data_dir / "stale-graph-a.txt"),
+            status=StageStatus.SUCCEEDED.value,
+        )
+        ready_document = Document(
+            filename="ready-graph-b.txt",
+            content_type="text/plain",
+            sha256="ready-graph-b",
+            artifact_path=str(app.state.settings.data_dir / "ready-graph-b.txt"),
+            status=StageStatus.SUCCEEDED.value,
+        )
+        session.add_all([stale_document, ready_document])
+        await session.flush()
+        session.add_all(
+            [
+                GraphProjectionRecord(
+                    document_id=stale_document.id,
+                    runtime_profile_id="default",
+                    status="stale",
+                    error="Superseded by a newer indexing attempt.",
+                    node_count=7,
+                    edge_count=6,
+                    created_at=now - timedelta(minutes=5),
+                    updated_at=now - timedelta(minutes=5),
+                ),
+                GraphProjectionRecord(
+                    document_id=ready_document.id,
+                    runtime_profile_id="default",
+                    status="succeeded",
+                    node_count=2,
+                    edge_count=1,
+                    created_at=now,
+                    updated_at=now,
+                ),
+            ]
+        )
+        await session.commit()
+
+    response = await client.get("/api/graph")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["nodes"] == []
+    assert "Graph projection is not ready" in payload["detail"]
+    assert "Latest graph projection stale: Superseded by a newer indexing attempt." in payload[
+        "detail"
+    ]
+    assert "stale-node" not in str(payload)
+
+
+@pytest.mark.asyncio
 async def test_graph_returns_conflict_when_native_graph_unavailable(client, monkeypatch):
     class ReadyRuntimeHealthService:
         def __init__(self, session, *, verify_storage):
