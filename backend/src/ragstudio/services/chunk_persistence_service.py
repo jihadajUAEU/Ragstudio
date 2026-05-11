@@ -97,7 +97,7 @@ class ChunkPersistenceService:
             preview_ref=sanitize_db_value(
                 self._direct_or_metadata(
                     adapter_chunk.preview_ref,
-                    adapter_chunk.metadata.get("preview_ref"),
+                    metadata.get("preview_ref"),
                 )
             ),
             indexed_at=indexed_at,
@@ -115,7 +115,7 @@ class ChunkPersistenceService:
         merged["document_id"] = document_id
         merged["domain_metadata"] = domain_metadata.model_dump(exclude_none=True)
         merged["index_shape"] = index_shape
-        merged.setdefault("chunk_identity", self._chunk_identity(document_id, merged))
+        merged["chunk_identity"] = self._chunk_identity(document_id, merged)
         parser_metadata = dict(merged.get("parser_metadata") or {})
         parser_metadata.setdefault("backend", "mineru")
         parser_metadata["parser_mode"] = parser_mode

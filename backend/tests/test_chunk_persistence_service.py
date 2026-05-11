@@ -211,6 +211,7 @@ async def test_persist_chunks_scrubs_nested_absolute_metadata_paths(
                             "references": ["1:1"],
                             "evidence_path": "/tmp/ragstudio/evidence.json",
                         },
+                        "chunk_identity": "doc-paths|/tmp/private/page.md|leak|3",
                         "preview_ref": "/tmp/private/preview",
                     },
                 )
@@ -231,6 +232,8 @@ async def test_persist_chunks_scrubs_nested_absolute_metadata_paths(
     assert "artifact_extract_dir" not in parser_metadata
     assert persisted.metadata_json["reference_metadata"] == {"references": ["1:1"]}
     assert "preview_ref" not in persisted.metadata_json
+    assert persisted.preview_ref is None
+    assert chunks[0].preview_ref is None
     assert "/tmp" not in persisted.metadata_json["chunk_identity"]
     assert "/private" not in persisted.metadata_json["chunk_identity"]
     assert "/tmp" not in chunks[0].metadata["chunk_identity"]
