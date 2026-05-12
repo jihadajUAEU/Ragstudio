@@ -300,6 +300,49 @@ describe("SettingsPage provider sync", () => {
     );
   });
 
+  it("applies backend numeric constraints to number inputs", async () => {
+    renderSettings();
+
+    const llmTimeout = (await screen.findByLabelText("LLM timeout (ms)")) as HTMLInputElement;
+    const mineruTimeout = screen.getByLabelText("MinerU timeout (ms)");
+    const topK = screen.getByLabelText("Top K");
+    const cosineThreshold = screen.getByLabelText("Cosine threshold");
+
+    expect(llmTimeout).toHaveAttribute("min", "100");
+    expect(llmTimeout).toHaveAttribute("max", "1800000");
+    expect(llmTimeout).toHaveAttribute("step", "1");
+    expect(mineruTimeout).toHaveAttribute("min", "100");
+    expect(mineruTimeout).toHaveAttribute("max", "28800000");
+    expect(topK).toHaveAttribute("min", "1");
+    expect(topK).toHaveAttribute("max", "200");
+    expect(cosineThreshold).toHaveAttribute("min", "0");
+    expect(cosineThreshold).toHaveAttribute("max", "1");
+    expect(cosineThreshold).toHaveAttribute("step", "0.01");
+  });
+
+  it("keeps blank numeric drafts blank and blocks save or test payloads", async () => {
+    renderSettings();
+
+    const llmTimeout = (await screen.findByLabelText("LLM timeout (ms)")) as HTMLInputElement;
+    fireEvent.change(llmTimeout, { target: { value: "" } });
+
+    expect(llmTimeout).toHaveValue(null);
+
+    fireEvent.click(screen.getByRole("button", { name: /Test LLM/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^Save$/i }));
+
+    expect(apiClient.testLlmSettings).not.toHaveBeenCalled();
+    expect(apiClient.updateDefaultSettings).not.toHaveBeenCalled();
+
+    fireEvent.change(llmTimeout, { target: { value: "12000" } });
+    fireEvent.click(screen.getByRole("button", { name: /^Save$/i }));
+
+    await waitFor(() => expect(apiClient.updateDefaultSettings).toHaveBeenCalled());
+    expect(vi.mocked(apiClient.updateDefaultSettings).mock.calls[0][0]).toEqual(
+      expect.objectContaining({ llm_timeout_ms: 12000 }),
+    );
+  });
+
   it("allows saving the first profile when settings are missing", async () => {
     vi.mocked(apiClient.defaultSettings).mockRejectedValueOnce(
       new ApiError("No default profile saved", 404, { detail: "No default profile saved" }),
