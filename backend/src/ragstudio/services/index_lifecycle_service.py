@@ -26,7 +26,6 @@ from ragstudio.services.trace_normalizer import TraceNormalizer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-
 logger = logging.getLogger(__name__)
 
 
