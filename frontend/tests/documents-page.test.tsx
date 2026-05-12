@@ -11,6 +11,7 @@ vi.mock("../src/api/client", () => ({
   apiClient: {
     documents: vi.fn(),
     jobs: vi.fn(),
+    jobQualityWarnings: vi.fn(),
     domainProfiles: vi.fn(),
     suggestDomainMetadata: vi.fn(),
     uploadDocument: vi.fn(),
@@ -29,11 +30,34 @@ function renderDocumentsPage() {
   );
 }
 
+const jobDefaults = {
+  worker_id: null,
+  lease_expires_at: null,
+  heartbeat_at: null,
+  attempts: 0,
+  max_attempts: 3,
+  recovery_action: null,
+};
+
 describe("DocumentsPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(apiClient.documents).mockResolvedValue({ items: [], total: 0 });
     vi.mocked(apiClient.jobs).mockResolvedValue({ items: [], total: 0 });
+    vi.mocked(apiClient.jobQualityWarnings).mockResolvedValue({
+      job_id: "job-empty",
+      document_id: null,
+      parser_quality: {},
+      index_quality_report: null,
+      job_warnings: [],
+      warning_counts: {},
+      affected_chunks: 0,
+      total: 0,
+      offset: 0,
+      limit: 5000,
+      truncated: false,
+      items: [],
+    });
     vi.mocked(apiClient.domainProfiles).mockResolvedValue({ items: [], total: 0 });
     vi.mocked(apiClient.suggestDomainMetadata).mockResolvedValue({
       domain_metadata: { domain: "policy", document_type: "admin_document" },
@@ -367,6 +391,7 @@ describe("DocumentsPage", () => {
     vi.mocked(apiClient.jobs).mockResolvedValue({
       items: [
         {
+          ...jobDefaults,
           id: "job-1",
           type: "index_document",
           status: "running",
@@ -411,6 +436,7 @@ describe("DocumentsPage", () => {
     vi.mocked(apiClient.jobs).mockResolvedValue({
       items: [
         {
+          ...jobDefaults,
           id: "job-1",
           type: "index_document",
           status: "succeeded",
@@ -434,6 +460,38 @@ describe("DocumentsPage", () => {
               "Graph extraction skipped because Neo4j is unavailable",
               "Some chunk metadata could not be normalized",
             ],
+            parser_quality_details: {
+              version: 1,
+              sample_limit: 5,
+              groups: [
+                {
+                  code: "reference_unit_missing_expected_script",
+                  chunk_count: 2847,
+                  warning_count: 2847,
+                  message:
+                    "Reference-bearing chunk is expected to contain Arabic script, but no Arabic letters were detected.",
+                  block_types: {},
+                  expected_scripts: { arabic: 2847 },
+                  actions: { quarantine_exact_arabic: 2847 },
+                  pages: [412],
+                  references: ["19:13"],
+                  examples: [
+                    {
+                      chunk_id: "chunk-19-13",
+                      page: 412,
+                      reference: "19:13",
+                      block_type: null,
+                      expected_script: "arabic",
+                      action: "quarantine_exact_arabic",
+                      message:
+                        "Reference-bearing chunk is expected to contain Arabic script, but no Arabic letters were detected.",
+                      text_preview:
+                        "[19:13] And affection from Us and purity, and he was fearing of Allah",
+                    },
+                  ],
+                },
+              ],
+            },
           },
         },
       ],
@@ -448,10 +506,118 @@ describe("DocumentsPage", () => {
     ).toBeVisible();
     expect(screen.getByText("Graph extraction skipped because Neo4j is unavailable")).toBeVisible();
     expect(screen.getByText("Some chunk metadata could not be normalized")).toBeVisible();
+    const parserDetails = screen.getByText("Parser warning details · 1 types · 2847 chunks");
+    expect(parserDetails).toBeVisible();
+    fireEvent.click(parserDetails);
+    expect(
+      screen.getByText("reference_unit_missing_expected_script · 2847 chunks · 2847 warnings"),
+    ).toBeVisible();
+    expect(screen.getByText("Expected scripts: arabic=2847")).toBeVisible();
+    expect(screen.getByText("References: 19:13")).toBeVisible();
+    expect(
+      screen.getByText("[19:13] And affection from Us and purity, and he was fearing of Allah"),
+    ).toBeVisible();
     expect(screen.getByText("Indexing completed with warnings")).toBeVisible();
     expect(screen.getByText("100%")).toBeVisible();
     expect(screen.queryByText("MinerU: Ready · 80% · MinerU artifacts ready")).not.toBeInTheDocument();
     expect(screen.getByText("MinerU: Ready · MinerU artifacts ready")).toBeVisible();
+  });
+
+  it("opens persisted parser quality warning details from a compact job summary", async () => {
+    vi.mocked(apiClient.documents).mockResolvedValue({
+      items: [
+        {
+          id: "doc-1",
+          filename: "quran.pdf",
+          content_type: "application/pdf",
+          status: "succeeded",
+          sha256: "sha-1",
+        },
+      ],
+      total: 1,
+    });
+    vi.mocked(apiClient.jobs).mockResolvedValue({
+      items: [
+        {
+          ...jobDefaults,
+          id: "job-1",
+          type: "index_document",
+          status: "succeeded",
+          target_id: "doc-1",
+          progress: 100,
+          logs: ["Parser quality warnings: disallowed_block_type_quarantined=176"],
+          result: {
+            parser_quality: {
+              warning_counts: { disallowed_block_type_quarantined: 176 },
+              affected_chunks: 176,
+            },
+            warnings: ["Parser quality warnings: disallowed_block_type_quarantined=176"],
+          },
+        },
+      ],
+      total: 1,
+    });
+    vi.mocked(apiClient.jobQualityWarnings).mockResolvedValue({
+      job_id: "job-1",
+      document_id: "doc-1",
+      parser_quality: {
+        warning_counts: { disallowed_block_type_quarantined: 176 },
+        affected_chunks: 176,
+      },
+      index_quality_report: {
+        status: "passed_with_warnings",
+        summary: {
+          reference_units_missing_expected_script: 2,
+          reference_unit_unresolved_count: 1,
+        },
+      },
+      job_warnings: ["Parser quality warnings: disallowed_block_type_quarantined=176"],
+      warning_counts: { disallowed_block_type_quarantined: 176 },
+      affected_chunks: 176,
+      total: 176,
+      offset: 0,
+      limit: 5000,
+      truncated: false,
+      items: [
+        {
+          chunk_id: "chunk-warning-1",
+          chunk_preview: "Recovered body text near the quarantined parser block.",
+          source_location: { page: 12, artifact: "content_list.json" },
+          parser_metadata: { artifact_ref: "content_list.json", chunk_index: 42 },
+          reference_metadata: { references: ["19:13"] },
+          code: "disallowed_block_type_quarantined",
+          message: "Quarantined text-bearing block because the profile disallows it.",
+          block_type: "heading",
+          page: 12,
+          warning: {
+            code: "disallowed_block_type_quarantined",
+            message: "Quarantined text-bearing block because the profile disallows it.",
+            block_type: "heading",
+            page: 12,
+          },
+        },
+      ],
+    });
+
+    renderDocumentsPage();
+
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: /inspect warning details for index quran\.pdf/i,
+      }),
+    );
+
+    await waitFor(() => {
+      expect(apiClient.jobQualityWarnings).toHaveBeenCalledWith("job-1");
+    });
+    expect(await screen.findByText("Warning details")).toBeVisible();
+    expect(screen.getByText("disallowed_block_type_quarantined=176")).toBeVisible();
+    expect(
+      screen.getByText("Index quality: Passed With Warnings · 2 missing expected script · 1 unresolved references"),
+    ).toBeVisible();
+    expect(screen.getByText("Quarantined text-bearing block because the profile disallows it.")).toBeVisible();
+    expect(screen.getByText("Recovered body text near the quarantined parser block.")).toBeVisible();
+    expect(screen.getByText("chunk-warning-1")).toBeVisible();
   });
 
   it("polls jobs and documents while work is active", async () => {
@@ -460,6 +626,7 @@ describe("DocumentsPage", () => {
       .mockResolvedValueOnce({
         items: [
           {
+            ...jobDefaults,
             id: "job-1",
             type: "index_document",
             status: "running",
@@ -474,6 +641,7 @@ describe("DocumentsPage", () => {
       .mockResolvedValue({
         items: [
           {
+            ...jobDefaults,
             id: "job-1",
             type: "index_document",
             status: "succeeded",

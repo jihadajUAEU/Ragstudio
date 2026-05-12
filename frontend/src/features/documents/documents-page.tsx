@@ -1,10 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
-import { AlertCircle, FileUp, Loader2, RefreshCcw, Trash2, Upload } from "lucide-react";
+import { AlertCircle, FileUp, Loader2, RefreshCcw, Trash2, Upload, X } from "lucide-react";
 
 import { apiClient, DEFAULT_PARSER_MODE } from "../../api/client";
-import type { DocumentOut, IndexDocumentIn, JobOut } from "../../api/generated";
+import type {
+  DocumentOut,
+  IndexDocumentIn,
+  JobOut,
+  JobQualityWarningsOut,
+  ParserQualityWarningOut,
+} from "../../api/generated";
 import { DataTable } from "../../components/data-table";
 import { EmptyState } from "../../components/empty-state";
 import { StatusBadge } from "../../components/status-badge";
@@ -24,6 +30,7 @@ export function DocumentsPage() {
   const [file, setFile] = useState<File | null>(null);
   const [deletedFilename, setDeletedFilename] = useState("");
   const [reindexedFilename, setReindexedFilename] = useState("");
+  const [selectedWarningJobId, setSelectedWarningJobId] = useState<string | null>(null);
   const [indexOptions, setIndexOptions] = useState<IndexDocumentIn>({
     parser_mode: DEFAULT_PARSER_MODE,
     domain_metadata: { domain: "generic", document_type: "document", tags: [] },
@@ -34,7 +41,7 @@ export function DocumentsPage() {
     queryFn: apiClient.jobs,
     refetchInterval: (query) => (hasActiveJobs(query.state.data?.items ?? []) ? 2000 : false),
   });
-  const jobs = jobsQuery.data?.items ?? [];
+  const jobs = useMemo(() => jobsQuery.data?.items ?? [], [jobsQuery.data?.items]);
   const activeJobs = hasActiveJobs(jobs);
   const documentsQuery = useQuery({
     queryKey: queryKeys.documents,
@@ -111,6 +118,18 @@ export function DocumentsPage() {
     () => new Map((documentsQuery.data?.items ?? []).map((document) => [document.id, document])),
     [documentsQuery.data?.items],
   );
+  const selectedWarningJob = useMemo(
+    () => jobs.find((job) => job.id === selectedWarningJobId) ?? null,
+    [jobs, selectedWarningJobId],
+  );
+  const selectedWarningDocument = selectedWarningJob?.target_id
+    ? documentsById.get(selectedWarningJob.target_id)
+    : undefined;
+  const warningDetailsQuery = useQuery({
+    queryKey: ["jobs", selectedWarningJobId, "quality-warnings"],
+    queryFn: () => apiClient.jobQualityWarnings(selectedWarningJobId ?? ""),
+    enabled: selectedWarningJobId !== null,
+  });
 
   const refetchDocuments = documentsQuery.refetch;
 
@@ -257,6 +276,8 @@ export function DocumentsPage() {
           const mineruStatus = formatMinerUResult(row.original);
           const stageText = jobStageText(row.original);
           const warnings = jobWarnings(row.original);
+          const parserQualityGroups = jobParserQualityGroups(row.original);
+          const canInspectWarnings = hasInspectableQualityWarnings(row.original);
 
           return (
             <div className="min-w-0 space-y-1 text-xs text-[#62717a]">
@@ -269,7 +290,26 @@ export function DocumentsPage() {
                   {warning}
                 </p>
               ))}
+              {parserQualityGroups.length ? (
+                <ParserQualityDetails groups={parserQualityGroups} />
+              ) : null}
               <p className="line-clamp-2">{row.original.logs.at(-1) ?? "No logs"}</p>
+              {canInspectWarnings ? (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  className="mt-1"
+                  onClick={() => setSelectedWarningJobId(row.original.id)}
+                  aria-label={`Inspect warning details for ${formatJobName(
+                    row.original,
+                    row.original.target_id ? documentsById.get(row.original.target_id) : undefined,
+                  )}`}
+                >
+                  <AlertCircle className="h-4 w-4" aria-hidden="true" />
+                  Inspect warnings
+                </Button>
+              ) : null}
             </div>
           );
         },
@@ -420,6 +460,19 @@ export function DocumentsPage() {
               emptyDescription="Upload and indexing jobs will appear here."
             />
           )}
+          {selectedWarningJobId ? (
+            <QualityWarningsPanel
+              jobName={
+                selectedWarningJob
+                  ? formatJobName(selectedWarningJob, selectedWarningDocument)
+                  : selectedWarningJobId
+              }
+              details={warningDetailsQuery.data}
+              isLoading={warningDetailsQuery.isLoading}
+              error={warningDetailsQuery.error}
+              onClose={() => setSelectedWarningJobId(null)}
+            />
+          ) : null}
         </Panel>
       </section>
     </div>
@@ -509,6 +562,309 @@ function jobWarnings(job: JobOut | undefined): string[] {
   return warnings.filter((warning): warning is string => typeof warning === "string");
 }
 
+function hasInspectableQualityWarnings(job: JobOut): boolean {
+  if (warningCountEntries(parserQualityWarningCounts(job.result)).length > 0) {
+    return true;
+  }
+  if (jobParserQualityGroups(job).length > 0) {
+    return true;
+  }
+  const indexQuality = job.result.index_quality_report;
+  if (isRecord(indexQuality) && typeof indexQuality.status === "string") {
+    const status = indexQuality.status.toLowerCase();
+    if (status.includes("warning") || status.includes("missing") || status.includes("failed")) {
+      return true;
+    }
+  }
+  if (
+    jobWarnings(job).some((warning) => {
+      const normalized = warning.toLowerCase();
+      return normalized.includes("parser") || normalized.includes("quality");
+    })
+  ) {
+    return true;
+  }
+  return job.logs.some((log) => log.toLowerCase().includes("parser quality warnings"));
+}
+
+function parserQualityWarningCounts(result: Record<string, unknown>): Record<string, number> {
+  const parserQuality = result.parser_quality;
+  if (!isRecord(parserQuality)) {
+    return {};
+  }
+  const warningCounts = parserQuality.warning_counts;
+  if (!isRecord(warningCounts)) {
+    return {};
+  }
+  return numericRecord(warningCounts);
+}
+
+function warningCountEntries(counts: Record<string, number>): [string, number][] {
+  return Object.entries(counts).sort(([left], [right]) => left.localeCompare(right));
+}
+
+interface ParserQualityGroup {
+  code: string;
+  chunkCount: number;
+  warningCount: number;
+  message: string | null;
+  blockTypes: Record<string, number>;
+  expectedScripts: Record<string, number>;
+  actions: Record<string, number>;
+  pages: Array<string | number>;
+  references: string[];
+  examples: ParserQualityExample[];
+}
+
+interface ParserQualityExample {
+  chunkId: string | null;
+  page: string | number | null;
+  reference: string | null;
+  blockType: string | null;
+  expectedScript: string | null;
+  action: string | null;
+  message: string | null;
+  textPreview: string;
+}
+
+function ParserQualityDetails({ groups }: { groups: ParserQualityGroup[] }) {
+  const totalChunks = groups.reduce((total, group) => total + group.chunkCount, 0);
+
+  return (
+    <details className="rounded-md border border-[#ead9a7] bg-[#fffaf0] p-2 text-[#5f4600]">
+      <summary className="cursor-pointer font-medium">
+        Parser warning details · {groups.length} types · {totalChunks} chunks
+      </summary>
+      <div className="mt-2 max-h-72 space-y-3 overflow-auto pr-1">
+        {groups.map((group) => (
+          <div key={group.code} className="space-y-1 border-t border-[#ead9a7] pt-2 first:border-t-0 first:pt-0">
+            <p className="font-medium text-[#3a2f12]">
+              {group.code} · {group.chunkCount} chunks · {group.warningCount} warnings
+            </p>
+            {group.message ? <p>{group.message}</p> : null}
+            <ParserQualityBreakdown label="Block types" values={group.blockTypes} />
+            <ParserQualityBreakdown label="Expected scripts" values={group.expectedScripts} />
+            <ParserQualityBreakdown label="Actions" values={group.actions} />
+            {group.pages.length ? <p>Pages: {group.pages.join(", ")}</p> : null}
+            {group.references.length ? <p>References: {group.references.join(", ")}</p> : null}
+            {group.examples.length ? (
+              <div className="space-y-1">
+                {group.examples.map((example, index) => (
+                  <div
+                    key={`${group.code}-${example.chunkId ?? "chunk"}-${index}`}
+                    className="rounded border border-[#ead9a7] bg-white p-2"
+                  >
+                    <p className="font-medium text-[#3a2f12]">
+                      {[example.reference, example.page ? `page ${example.page}` : null]
+                        .filter(Boolean)
+                        .join(" · ") || example.chunkId || "Sample"}
+                    </p>
+                    <p className="break-words">{example.textPreview || example.message}</p>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        ))}
+      </div>
+    </details>
+  );
+}
+
+function ParserQualityBreakdown({
+  label,
+  values,
+}: {
+  label: string;
+  values: Record<string, number>;
+}) {
+  const entries = Object.entries(values);
+  if (!entries.length) {
+    return null;
+  }
+  return (
+    <p>
+      {label}: {entries.map(([name, count]) => `${name}=${count}`).join(", ")}
+    </p>
+  );
+}
+
+function QualityWarningsPanel({
+  jobName,
+  details,
+  isLoading,
+  error,
+  onClose,
+}: {
+  jobName: string;
+  details: JobQualityWarningsOut | undefined;
+  isLoading: boolean;
+  error: Error | null;
+  onClose: () => void;
+}) {
+  const countEntries = warningCountEntries(details?.warning_counts ?? {});
+  const indexQuality = details ? indexQualitySummary(details) : null;
+
+  return (
+    <div className="mt-4 rounded-md border border-[#d6dde1] bg-[#fbfcfd] p-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <h4 className="truncate text-sm font-semibold text-[#1f2933]">Warning details</h4>
+          <p className="truncate text-xs text-[#62717a]">{jobName}</p>
+        </div>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={onClose}
+          aria-label="Close warning details"
+        >
+          <X className="h-4 w-4" aria-hidden="true" />
+          Close
+        </Button>
+      </div>
+
+      {isLoading ? (
+        <p className="mt-4 text-sm text-[#62717a]">Loading warning details.</p>
+      ) : error ? (
+        <p className="mt-4 text-sm text-[#8a1f11]">{error.message}</p>
+      ) : details ? (
+        <div className="mt-4 space-y-4">
+          <div className="flex flex-wrap gap-2 text-xs">
+            {countEntries.length ? (
+              countEntries.map(([code, count]) => (
+                <span
+                  key={code}
+                  className="rounded-md border border-[#e2c46b] bg-[#fff8df] px-2 py-1 text-[#705000]"
+                >
+                  {code}={count}
+                </span>
+              ))
+            ) : (
+              <span className="text-[#62717a]">No parser warning rows found.</span>
+            )}
+            <span className="rounded-md border border-[#d6dde1] bg-white px-2 py-1 text-[#3a4a53]">
+              affected_chunks={details.affected_chunks}
+            </span>
+            {details.truncated ? (
+              <span className="rounded-md border border-[#d6dde1] bg-white px-2 py-1 text-[#3a4a53]">
+                showing={details.items.length}/{details.total}
+              </span>
+            ) : null}
+          </div>
+          {indexQuality ? <p className="text-xs font-medium text-[#3a4a53]">{indexQuality}</p> : null}
+          {details.job_warnings.length ? (
+            <ul className="space-y-1 text-xs text-[#8a5a00]">
+              {details.job_warnings.map((warning) => (
+                <li key={warning}>{warning}</li>
+              ))}
+            </ul>
+          ) : null}
+          {details.items.length ? (
+            <ol className="max-h-96 space-y-2 overflow-auto pr-1">
+              {details.items.map((item, index) => (
+                <QualityWarningItem key={`${item.chunk_id}-${index}`} item={item} />
+              ))}
+            </ol>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function QualityWarningItem({ item }: { item: ParserQualityWarningOut }) {
+  const metadataLine = [
+    item.page != null ? `Page ${item.page}` : null,
+    item.block_type,
+    warningReferences(item),
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
+  return (
+    <li className="rounded-md border border-[#edf1f3] bg-white p-3 text-sm text-[#24313a]">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="rounded-md bg-[#fff8df] px-2 py-1 text-xs font-medium text-[#705000]">
+          {item.code ?? "parser_warning"}
+        </span>
+        {metadataLine ? <span className="text-xs text-[#62717a]">{metadataLine}</span> : null}
+      </div>
+      {item.message ? <p className="mt-2 text-sm text-[#3a4a53]">{item.message}</p> : null}
+      {item.chunk_preview ? (
+        <p className="mt-2 line-clamp-2 text-xs text-[#62717a]">{item.chunk_preview}</p>
+      ) : null}
+      <dl className="mt-2 grid gap-1 text-xs text-[#62717a] md:grid-cols-2">
+        <div className="min-w-0">
+          <dt className="font-medium text-[#3a4a53]">Chunk</dt>
+          <dd className="truncate">{item.chunk_id}</dd>
+        </div>
+        <div className="min-w-0">
+          <dt className="font-medium text-[#3a4a53]">Source</dt>
+          <dd className="truncate">{formatRecord(item.source_location)}</dd>
+        </div>
+        <div className="min-w-0">
+          <dt className="font-medium text-[#3a4a53]">Parser</dt>
+          <dd className="truncate">{formatRecord(item.parser_metadata)}</dd>
+        </div>
+        <div className="min-w-0">
+          <dt className="font-medium text-[#3a4a53]">Warning</dt>
+          <dd className="truncate">{formatRecord(item.warning)}</dd>
+        </div>
+      </dl>
+    </li>
+  );
+}
+
+function jobParserQualityGroups(job: JobOut | undefined): ParserQualityGroup[] {
+  const details = job?.result?.parser_quality_details;
+  if (!isRecord(details) || !Array.isArray(details.groups)) {
+    return [];
+  }
+  return details.groups
+    .map((group): ParserQualityGroup | null => {
+      if (!isRecord(group) || typeof group.code !== "string") {
+        return null;
+      }
+      return {
+        code: group.code,
+        chunkCount: numberValue(group.chunk_count),
+        warningCount: numberValue(group.warning_count),
+        message: stringValue(group.message),
+        blockTypes: numericRecord(group.block_types),
+        expectedScripts: numericRecord(group.expected_scripts),
+        actions: numericRecord(group.actions),
+        pages: stringOrNumberList(group.pages),
+        references: stringList(group.references),
+        examples: parserQualityExamples(group.examples),
+      };
+    })
+    .filter((group): group is ParserQualityGroup => group !== null);
+}
+
+function parserQualityExamples(value: unknown): ParserQualityExample[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((example): ParserQualityExample | null => {
+      if (!isRecord(example)) {
+        return null;
+      }
+      return {
+        chunkId: stringValue(example.chunk_id),
+        page: stringOrNumberValue(example.page),
+        reference: stringValue(example.reference),
+        blockType: stringValue(example.block_type),
+        expectedScript: stringValue(example.expected_script),
+        action: stringValue(example.action),
+        message: stringValue(example.message),
+        textPreview: stringValue(example.text_preview) ?? "",
+      };
+    })
+    .filter((example): example is ParserQualityExample => example !== null);
+}
+
 function getMinerUStatus(result: Record<string, unknown>): {
   status: string | null;
   progress: number | null;
@@ -528,6 +884,88 @@ function getMinerUStatus(result: Record<string, unknown>): {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function numberValue(value: unknown): number {
+  return typeof value === "number" ? value : 0;
+}
+
+function stringValue(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function stringOrNumberValue(value: unknown): string | number | null {
+  return typeof value === "string" || typeof value === "number" ? value : null;
+}
+
+function numericRecord(value: unknown): Record<string, number> {
+  if (!isRecord(value)) {
+    return {};
+  }
+  return Object.fromEntries(
+    Object.entries(value).filter((entry): entry is [string, number] => typeof entry[1] === "number"),
+  );
+}
+
+function stringList(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.filter((item): item is string => typeof item === "string");
+}
+
+function stringOrNumberList(value: unknown): Array<string | number> {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.filter(
+    (item): item is string | number => typeof item === "string" || typeof item === "number",
+  );
+}
+
+function indexQualitySummary(details: JobQualityWarningsOut): string | null {
+  const report = details.index_quality_report;
+  if (!isRecord(report)) {
+    return null;
+  }
+  const summary = isRecord(report.summary) ? report.summary : {};
+  const parts = [
+    typeof report.status === "string"
+      ? `Index quality: ${titleCase(report.status.replaceAll("_", " "))}`
+      : null,
+    numericSummary(summary, "reference_units_missing_expected_script", "missing expected script"),
+    numericSummary(summary, "reference_unit_unresolved_count", "unresolved references"),
+    numericSummary(summary, "materialization_blocked_reference_count", "blocked references"),
+  ].filter(Boolean);
+  return parts.length ? parts.join(" · ") : null;
+}
+
+function numericSummary(
+  summary: Record<string, unknown>,
+  key: string,
+  label: string,
+): string | null {
+  const value = summary[key];
+  if (typeof value !== "number" || value === 0) {
+    return null;
+  }
+  return `${value} ${label}`;
+}
+
+function warningReferences(item: ParserQualityWarningOut): string | null {
+  const references = item.reference_metadata?.references;
+  if (!Array.isArray(references)) {
+    return null;
+  }
+  const values = references.filter((reference): reference is string => typeof reference === "string");
+  return values.length ? values.join(", ") : null;
+}
+
+function formatRecord(record: Record<string, unknown>): string {
+  if (!Object.keys(record).length) {
+    return "None";
+  }
+  return JSON.stringify(record);
 }
 
 function Panel({

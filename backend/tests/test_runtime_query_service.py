@@ -20,6 +20,7 @@ from ragstudio.services.query_service import (
     QueryService,
 )
 from ragstudio.services.retrieval_orchestrator import RetrievalOrchestrator
+from ragstudio.services.runtime_health_service import RuntimeHealthService
 from ragstudio.services.runtime_profile_service import RuntimeProfileService
 from ragstudio.services.runtime_types import RuntimeQueryResult
 
@@ -123,17 +124,20 @@ async def _create_runtime_records(
     *,
     indexed: bool = True,
     index_shape: dict | None = None,
+    settings_overrides: dict | None = None,
 ):
-    settings = SettingsProfile(
-        id="default",
-        provider="openai-compatible",
-        llm_model="gpt-4o",
-        llm_base_url="http://127.0.0.1:8004/v1",
-        embedding_model="text-embedding-3-large",
-        embedding_base_url="http://127.0.0.1:8001/v1",
-        storage_backend="postgres_pgvector_neo4j",
-        runtime_mode="runtime",
-    )
+    settings_values = {
+        "id": "default",
+        "provider": "openai-compatible",
+        "llm_model": "gpt-4o",
+        "llm_base_url": "http://127.0.0.1:8004/v1",
+        "embedding_model": "text-embedding-3-large",
+        "embedding_base_url": "http://127.0.0.1:8001/v1",
+        "storage_backend": "postgres_pgvector_neo4j",
+        "runtime_mode": "runtime",
+    }
+    settings_values.update(settings_overrides or {})
+    settings = SettingsProfile(**settings_values)
     document = Document(
         filename="doc.txt",
         content_type="text/plain",
@@ -640,6 +644,44 @@ async def test_query_preflight_rejects_blocking_runtime_health(client):
 
     assert exc_info.value.error_type == "runtime_health_blocked"
     assert "raganything" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_query_preflight_allows_llm_reranker_without_dedicated_endpoint(
+    client, monkeypatch
+):
+    app = client._transport.app
+
+    def fake_import_module(module_name):
+        if module_name in {"raganything", "lightrag"}:
+            return object()
+        raise ModuleNotFoundError(module_name)
+
+    monkeypatch.setattr(
+        "ragstudio.services.runtime_health_service.import_module",
+        fake_import_module,
+    )
+    async with app.state.session_factory() as session:
+        document, variant = await _create_runtime_records(
+            session,
+            app,
+            indexed=False,
+            settings_overrides={
+                "reranker_provider": "llm",
+                "reranker_base_url": None,
+                "enable_rerank": True,
+            },
+        )
+
+        await QueryService(
+            session,
+            app.state.settings.data_dir,
+            settings=app.state.settings,
+            health_service=RuntimeHealthService(),
+        ).preflight_runtime_readiness(
+            QueryIn(query="llm rerank", document_ids=[document.id], variant_ids=[variant.id]),
+            validate_index_readiness=False,
+        )
 
 
 @pytest.mark.asyncio

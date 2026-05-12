@@ -22,3 +22,19 @@ def test_app_settings_accepts_explicit_database_url():
         settings.resolved_database_url
         == "postgresql+asyncpg://user:password@postgres:5432/ragstudio"
     )
+
+
+def test_app_settings_keeps_private_reranker_hosts_out_of_defaults():
+    settings = AppSettings(data_dir=Path("/tmp/ragstudio-test"))
+
+    assert "10.10.9.193" not in settings.allowed_reranker_hosts
+    assert "127.0.0.1" in settings.allowed_reranker_hosts
+
+
+def test_app_settings_accepts_explicit_private_reranker_hosts():
+    settings = AppSettings(
+        data_dir=Path("/tmp/ragstudio-test"),
+        allowed_reranker_hosts="127.0.0.1,10.10.9.193",
+    )
+
+    assert settings.allowed_reranker_hosts == ["127.0.0.1", "10.10.9.193"]

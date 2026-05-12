@@ -4,6 +4,8 @@ from urllib.parse import urlparse
 import httpx
 from ragstudio.schemas.settings import (
     MINERU_DEFAULT_TIMEOUT_MS,
+    RUNTIME_TIMEOUT_MAX_MS,
+    RUNTIME_TIMEOUT_MIN_MS,
     ProviderSyncPreviewOut,
     SettingsProfileOut,
 )
@@ -75,8 +77,12 @@ class ProviderManifestService:
         if isinstance(reasoning, dict):
             self._validate_optional_str(reasoning, "apiUrl", "reasoning.apiUrl")
             self._validate_optional_str(reasoning, "model", "reasoning.model")
-            self._validate_optional_positive_int(
-                reasoning, "timeoutMs", "reasoning.timeoutMs"
+            self._validate_optional_int_range(
+                reasoning,
+                "timeoutMs",
+                "reasoning.timeoutMs",
+                minimum=RUNTIME_TIMEOUT_MIN_MS,
+                maximum=RUNTIME_TIMEOUT_MAX_MS,
             )
             self._validate_optional_capabilities(reasoning)
 
@@ -87,8 +93,12 @@ class ProviderManifestService:
             self._validate_optional_positive_int(
                 embeddings, "dimensions", "embeddings.dimensions"
             )
-            self._validate_optional_positive_int(
-                embeddings, "timeoutMs", "embeddings.timeoutMs"
+            self._validate_optional_int_range(
+                embeddings,
+                "timeoutMs",
+                "embeddings.timeoutMs",
+                minimum=RUNTIME_TIMEOUT_MIN_MS,
+                maximum=RUNTIME_TIMEOUT_MAX_MS,
             )
 
         mineru = manifest.get("hpcMineru")
@@ -111,8 +121,12 @@ class ProviderManifestService:
             self._validate_optional_str(reranker, "apiUrl", "reranker.apiUrl")
             self._validate_optional_str(reranker, "model", "reranker.model")
             self._validate_optional_str(reranker, "endpoint", "reranker.endpoint")
-            self._validate_optional_positive_int(
-                reranker, "timeoutMs", "reranker.timeoutMs"
+            self._validate_optional_int_range(
+                reranker,
+                "timeoutMs",
+                "reranker.timeoutMs",
+                minimum=RUNTIME_TIMEOUT_MIN_MS,
+                maximum=RUNTIME_TIMEOUT_MAX_MS,
             )
 
     def _validate_optional_str(
@@ -132,6 +146,27 @@ class ProviderManifestService:
         ):
             raise ProviderManifestError(
                 f"Provider manifest field {field_name} must be a positive integer."
+            )
+
+    def _validate_optional_int_range(
+        self,
+        section: dict[str, Any],
+        key: str,
+        field_name: str,
+        *,
+        minimum: int,
+        maximum: int,
+    ) -> None:
+        value = section.get(key)
+        if key not in section:
+            return
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise ProviderManifestError(
+                f"Provider manifest field {field_name} must be an integer."
+            )
+        if value < minimum or value > maximum:
+            raise ProviderManifestError(
+                f"Provider manifest field {field_name} must be between {minimum} and {maximum}."
             )
 
     def _validate_optional_capabilities(self, section: dict[str, Any]) -> None:

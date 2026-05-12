@@ -18,3 +18,36 @@ class JobOut(StudioModel):
     attempts: int
     max_attempts: int
     recovery_action: str | None
+
+
+class JobPage(StudioModel):
+    items: list[JobOut]
+    total: int
+
+
+class ParserQualityWarningOut(StudioModel):
+    chunk_id: str
+    chunk_preview: str
+    source_location: dict[str, Any]
+    parser_metadata: dict[str, Any]
+    reference_metadata: dict[str, Any] | None = None
+    code: str | None = None
+    message: str | None = None
+    block_type: str | None = None
+    page: int | str | None = None
+    warning: dict[str, Any]
+
+
+class JobQualityWarningsOut(StudioModel):
+    job_id: str
+    document_id: str | None
+    parser_quality: dict[str, Any]
+    index_quality_report: dict[str, Any] | None = None
+    job_warnings: list[str]
+    warning_counts: dict[str, int]
+    affected_chunks: int
+    total: int
+    offset: int
+    limit: int
+    truncated: bool
+    items: list[ParserQualityWarningOut]

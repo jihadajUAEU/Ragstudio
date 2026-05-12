@@ -26,7 +26,6 @@ class AppSettings(BaseSettings):
             "localhost",
             "127.0.0.1",
             "::1",
-            "10.10.9.193",
             "api.jina.ai",
             "api.cohere.ai",
         ]

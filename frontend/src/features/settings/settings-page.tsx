@@ -55,10 +55,12 @@ const blankSecretValues = (): SecretValues => ({
 
 const DEFAULT_MANIFEST_URL = "https://updates.jihadaj.com/providers.json";
 const DEFAULT_MINERU_TIMEOUT_MS = 14_400_000;
+const MIN_RUNTIME_TIMEOUT_MS = 100;
+const MAX_RUNTIME_TIMEOUT_MS = 1_800_000;
 const NUMBER_CONSTRAINTS: Record<NumberFieldName, NumberConstraints> = {
-  vision_timeout_ms: { min: 1, max: DEFAULT_MINERU_TIMEOUT_MS },
-  reranker_timeout_ms: { min: 1, max: DEFAULT_MINERU_TIMEOUT_MS },
-  llm_timeout_ms: { min: 1, max: DEFAULT_MINERU_TIMEOUT_MS },
+  vision_timeout_ms: { min: MIN_RUNTIME_TIMEOUT_MS, max: MAX_RUNTIME_TIMEOUT_MS },
+  reranker_timeout_ms: { min: MIN_RUNTIME_TIMEOUT_MS, max: MAX_RUNTIME_TIMEOUT_MS },
+  llm_timeout_ms: { min: MIN_RUNTIME_TIMEOUT_MS, max: MAX_RUNTIME_TIMEOUT_MS },
   mineru_timeout_ms: { min: 1, max: DEFAULT_MINERU_TIMEOUT_MS },
   mineru_poll_interval_ms: { min: 100, max: 60_000 },
   chunk_token_size: { min: 1, max: 128_000 },
@@ -74,7 +76,7 @@ const NUMBER_CONSTRAINTS: Record<NumberFieldName, NumberConstraints> = {
   llm_model_max_async: { min: 1, max: 256 },
   embedding_func_max_async: { min: 1, max: 256 },
   max_parallel_insert: { min: 1, max: 64 },
-  embedding_timeout_ms: { min: 1, max: DEFAULT_MINERU_TIMEOUT_MS },
+  embedding_timeout_ms: { min: MIN_RUNTIME_TIMEOUT_MS, max: MAX_RUNTIME_TIMEOUT_MS },
   embedding_dimensions: { min: 1, max: 1_000_000 },
   embedding_batch_size: { min: 1, max: 10_000 },
 };
@@ -439,12 +441,16 @@ export function SettingsPage() {
       : settingsQuery.data?.has_llm_api_key
         ? "Saved API key present"
         : "";
+  const rerankerUsesLlm =
+    formValues?.reranker_provider === "llm" || formValues?.reranker_fallback_provider === "llm";
   const rerankerTestMessage = testReranker.error
     ? testReranker.error.message
     : testReranker.data
       ? `${testReranker.data.ok ? "Connected" : "Failed"}: ${testReranker.data.detail}`
       : settingsQuery.data?.has_reranker_api_key
         ? "Saved API key present"
+        : rerankerUsesLlm && settingsQuery.data?.has_llm_api_key
+          ? "Saved LLM API key present"
         : "";
   const mineruTestMessage = testMinerU.error
     ? testMinerU.error.message

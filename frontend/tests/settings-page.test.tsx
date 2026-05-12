@@ -352,6 +352,18 @@ describe("SettingsPage provider sync", () => {
     );
   });
 
+  it("shows the saved LLM key status for LLM-backed reranker tests", async () => {
+    vi.mocked(apiClient.defaultSettings).mockResolvedValueOnce({
+      ...settings,
+      has_llm_api_key: true,
+      reranker_provider: "llm",
+      reranker_fallback_provider: "disabled",
+    });
+    renderSettings();
+
+    expect(await screen.findByText("Saved LLM API key present")).toBeVisible();
+  });
+
   it("allows saving the first profile when settings are missing", async () => {
     vi.mocked(apiClient.defaultSettings).mockRejectedValueOnce(
       new ApiError("No default profile saved", 404, { detail: "No default profile saved" }),
@@ -383,12 +395,15 @@ describe("SettingsPage provider sync", () => {
     await screen.findByDisplayValue("gpt-4.1");
     const topK = screen.getByLabelText("Top K") as HTMLInputElement;
     const cosineThreshold = screen.getByLabelText("Cosine threshold") as HTMLInputElement;
+    const rerankerTimeout = screen.getByLabelText("Reranker timeout (ms)") as HTMLInputElement;
 
     expect(topK).toHaveAttribute("min", "1");
     expect(topK).toHaveAttribute("max", "1000");
     expect(cosineThreshold).toHaveAttribute("min", "0");
     expect(cosineThreshold).toHaveAttribute("max", "1");
     expect(cosineThreshold).toHaveAttribute("step", "0.01");
+    expect(rerankerTimeout).toHaveAttribute("min", "100");
+    expect(rerankerTimeout).toHaveAttribute("max", "1800000");
 
     fireEvent.change(topK, { target: { value: "" } });
     expect(topK).toHaveValue(null);
@@ -399,6 +414,10 @@ describe("SettingsPage provider sync", () => {
     fireEvent.blur(cosineThreshold);
     expect(cosineThreshold).toHaveValue(1);
 
+    fireEvent.change(rerankerTimeout, { target: { value: "50" } });
+    fireEvent.blur(rerankerTimeout);
+    expect(rerankerTimeout).toHaveValue(100);
+
     fireEvent.click(screen.getByRole("button", { name: /^Save$/i }));
 
     await waitFor(() => expect(apiClient.updateDefaultSettings).toHaveBeenCalled());
@@ -406,6 +425,7 @@ describe("SettingsPage provider sync", () => {
       expect.objectContaining({
         top_k: 40,
         cosine_better_than_threshold: 1,
+        reranker_timeout_ms: 100,
       }),
     );
   });

@@ -331,7 +331,94 @@ class DomainMetadataQualityGate:
             "affected_chunks": affected_chunks,
         }
 
-    def parser_warning_codes_for_chunk(self, chunk: Any) -> list[str]:
+    def parser_quality_details(
+        self,
+        chunks: list[Any],
+        *,
+        sample_limit: int = 5,
+        value_limit: int = 20,
+    ) -> dict[str, Any]:
+        groups: dict[str, dict[str, Any]] = {}
+        for chunk in chunks:
+            warnings = self.parser_warnings_for_chunk(chunk)
+            if not warnings:
+                continue
+
+            chunk_id = self._chunk_id(chunk)
+            source_location = self._chunk_source_location(chunk)
+            text_preview = self._chunk_text_preview(chunk)
+            seen_codes_for_chunk: set[str] = set()
+            for warning in warnings:
+                code = warning.get("code")
+                if not isinstance(code, str) or not code:
+                    continue
+
+                group = groups.setdefault(
+                    code,
+                    {
+                        "code": code,
+                        "chunk_count": 0,
+                        "warning_count": 0,
+                        "message": "",
+                        "block_types": {},
+                        "expected_scripts": {},
+                        "actions": {},
+                        "pages": [],
+                        "references": [],
+                        "examples": [],
+                    },
+                )
+                group["warning_count"] += 1
+                if code not in seen_codes_for_chunk:
+                    group["chunk_count"] += 1
+                    seen_codes_for_chunk.add(code)
+
+                message = warning.get("message")
+                if isinstance(message, str) and message and not group["message"]:
+                    group["message"] = message
+
+                self._count_warning_value(group["block_types"], warning.get("block_type"))
+                self._count_warning_value(
+                    group["expected_scripts"],
+                    warning.get("expected_script"),
+                )
+                self._count_warning_value(group["actions"], warning.get("action"))
+                self._append_limited_value(
+                    group["pages"],
+                    self._warning_page(warning, source_location),
+                    value_limit,
+                )
+                self._append_limited_value(
+                    group["references"],
+                    self._warning_reference(warning, source_location),
+                    value_limit,
+                )
+
+                examples = group["examples"]
+                if len(examples) < sample_limit:
+                    examples.append(
+                        {
+                            "chunk_id": chunk_id,
+                            "page": self._warning_page(warning, source_location),
+                            "reference": self._warning_reference(warning, source_location),
+                            "block_type": warning.get("block_type"),
+                            "expected_script": warning.get("expected_script"),
+                            "action": warning.get("action"),
+                            "message": message if isinstance(message, str) else None,
+                            "text_preview": text_preview,
+                        }
+                    )
+
+        return {
+            "version": 1,
+            "sample_limit": sample_limit,
+            "groups": sorted(
+                groups.values(),
+                key=lambda group: (-int(group["chunk_count"]), str(group["code"])),
+            ),
+        }
+
+    def parser_warnings_for_chunk(self, chunk: Any) -> list[dict[str, Any]]:
         extraction_quality = getattr(chunk, "extraction_quality", None)
         if not isinstance(extraction_quality, dict):
             metadata = getattr(chunk, "metadata", None)
@@ -339,7 +426,20 @@ class DomainMetadataQualityGate:
                 extraction_quality = metadata.get("extraction_quality")
         if not isinstance(extraction_quality, dict):
             return []
-        return self.parser_warning_codes(extraction_quality)
+        warnings = extraction_quality.get("parser_warnings")
+        if not isinstance(warnings, list):
+            return []
+        return [warning for warning in warnings if isinstance(warning, dict)]
+
+    def parser_warning_codes_for_chunk(self, chunk: Any) -> list[str]:
+        return [
+            code
+            for code in (
+                warning.get("code")
+                for warning in self.parser_warnings_for_chunk(chunk)
+            )
+            if isinstance(code, str) and code
+        ]
 
     def parser_warning_codes(self, metadata_or_extraction_quality: dict[str, Any]) -> list[str]:
         extraction_quality = metadata_or_extraction_quality.get("extraction_quality")
@@ -370,6 +470,58 @@ class DomainMetadataQualityGate:
             "warning_counts": dict(sorted(warning_counts.items())),
             "affected_candidate_ids": affected_candidate_ids,
         }
+
+    def _chunk_id(self, chunk: Any) -> str | None:
+        chunk_id = getattr(chunk, "id", None)
+        return chunk_id if isinstance(chunk_id, str) else None
+
+    def _chunk_source_location(self, chunk: Any) -> dict[str, Any]:
+        source_location = getattr(chunk, "source_location", None)
+        if isinstance(source_location, dict):
+            return source_location
+        metadata = getattr(chunk, "metadata", None)
+        if isinstance(metadata, dict):
+            source_location = metadata.get("source_location")
+            if isinstance(source_location, dict):
+                return source_location
+        return {}
+
+    def _chunk_text_preview(self, chunk: Any, limit: int = 240) -> str:
+        text = getattr(chunk, "text", "")
+        if not isinstance(text, str):
+            return ""
+        collapsed = " ".join(text.split())
+        return collapsed[:limit]
+
+    def _warning_page(
+        self,
+        warning: dict[str, Any],
+        source_location: dict[str, Any],
+    ) -> str | int | None:
+        page = warning.get("page")
+        if page is None:
+            page = source_location.get("page")
+        return page if isinstance(page, str | int) else None
+
+    def _warning_reference(
+        self,
+        warning: dict[str, Any],
+        source_location: dict[str, Any],
+    ) -> str | None:
+        reference = warning.get("reference")
+        if reference is None:
+            reference = source_location.get("reference")
+        return reference if isinstance(reference, str) and reference else None
+
+    def _count_warning_value(self, counter: dict[str, int], value: Any) -> None:
+        if not isinstance(value, str) or not value:
+            return
+        counter[value] = counter.get(value, 0) + 1
+
+    def _append_limited_value(self, values: list[Any], value: Any, limit: int) -> None:
+        if value is None or value in values or len(values) >= limit:
+            return
+        values.append(value)
 
     def _reference_quality_records_for_chunk(
         self,

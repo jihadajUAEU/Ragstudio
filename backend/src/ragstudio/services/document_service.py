@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any, Literal
 
@@ -24,6 +25,7 @@ from ragstudio.services.index_progress import (
     index_shape_compatible,
     update_job_stage,
 )
+from ragstudio.services.job_queue_service import JobLeaseLostError
 from ragstudio.services.job_worker import JobWorker
 from ragstudio.services.runtime_factory import RuntimeUnavailableError
 from ragstudio.services.runtime_profile_service import (
@@ -377,7 +379,12 @@ class DocumentService:
         job: Job,
         options: IndexDocumentIn | None = None,
         on_mineru_status=None,
+        ensure_active_lease: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
+        async def ensure_current_lease() -> None:
+            if ensure_active_lease is not None:
+                await ensure_active_lease()
+
         job.status = StageStatus.RUNNING.value
         job.progress = 50
         job.logs = [*job.logs, "Indexing document chunks."]
@@ -393,6 +400,7 @@ class DocumentService:
                 chunk_count: int | None = None,
             ) -> None:
                 update_job_stage(job, stage, detail=detail, chunk_count=chunk_count)
+                await ensure_current_lease()
                 await self.session.commit()
 
             lifecycle_result = await IndexLifecycleService(
@@ -419,6 +427,7 @@ class DocumentService:
             )
         chunk_count = len(chunks or [])
         parser_quality = self._parser_quality_summary(chunks or [])
+        parser_quality_details = self._parser_quality_details(chunks or [])
         index_quality_report = self._index_quality_report(chunks or [])
         parser_warning = self._parser_quality_warning(parser_quality)
         document.status = StageStatus.SUCCEEDED.value
@@ -430,12 +439,14 @@ class DocumentService:
             "chunk_count": chunk_count,
             "graph_materialization": graph_materialization,
             "parser_quality": parser_quality,
+            "parser_quality_details": parser_quality_details,
             "index_quality_report": index_quality_report,
         }
         job.logs = [*job.logs, f"Indexed {chunk_count} chunks."]
         if parser_warning:
             job.logs = [*job.logs, f"Parser quality warnings: {parser_warning}"]
         if graph_materialization.get("status") == "pending" and self.settings is not None:
+            await ensure_current_lease()
             await self.session.commit()
             graph_materialization = await GraphProjectionRunner(
                 self.session,
@@ -467,6 +478,7 @@ class DocumentService:
             warning_entries,
             stage_warning=combined_warning,
         )
+        await ensure_current_lease()
 
     def _record_warning_entries(
         self,
@@ -492,6 +504,9 @@ class DocumentService:
 
     def _parser_quality_summary(self, chunks: list[Any]) -> dict[str, Any]:
         return DomainMetadataQualityGate().parser_quality_summary(chunks)
+
+    def _parser_quality_details(self, chunks: list[Any]) -> dict[str, Any]:
+        return DomainMetadataQualityGate().parser_quality_details(chunks)
 
     def _index_quality_report(self, chunks: list[Any]) -> dict[str, Any]:
         return DomainMetadataQualityGate().index_quality_report_from_chunks(chunks)
@@ -594,11 +609,16 @@ class DocumentService:
         document_id: str,
         job_id: str,
         options: IndexDocumentIn,
+        ensure_active_lease: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
         document = await self.session.get(Document, document_id)
         job = await self.session.get(Job, job_id)
         if document is None or job is None:
             return
+
+        async def ensure_current_lease() -> None:
+            if ensure_active_lease is not None:
+                await ensure_active_lease()
 
         async def on_mineru_status(payload: dict[str, Any]) -> None:
             result = job.result or {}
@@ -644,6 +664,7 @@ class DocumentService:
             if progress is not None:
                 job.progress = max(1, min(progress, 99))
             job.logs = [*job.logs, f"MinerU {status}: {detail}"][-20:]
+            await ensure_current_lease()
             await self.session.commit()
 
         try:
@@ -651,19 +672,38 @@ class DocumentService:
             job.progress = max(job.progress, 1)
             job.logs = [*job.logs, "Indexing document chunks."]
             document.status = StageStatus.RUNNING.value
+            await ensure_current_lease()
             await self.session.commit()
-            await self._index_document_for_job(
-                document,
-                job,
-                options,
-                on_mineru_status=on_mineru_status,
-            )
+            if ensure_active_lease is None:
+                await self._index_document_for_job(
+                    document,
+                    job,
+                    options,
+                    on_mineru_status=on_mineru_status,
+                )
+            else:
+                await self._index_document_for_job(
+                    document,
+                    job,
+                    options,
+                    on_mineru_status=on_mineru_status,
+                    ensure_active_lease=ensure_active_lease,
+                )
             await self.session.commit()
+        except JobLeaseLostError:
+            await self.session.rollback()
+            raise
         except Exception as exc:
+            try:
+                await ensure_current_lease()
+            except JobLeaseLostError:
+                await self.session.rollback()
+                raise
             await cleanup_document_index_artifacts(self.session, document.id)
             document.status = StageStatus.FAILED.value
             job.status = StageStatus.FAILED.value
             job.progress = 100
             job.logs = [*(job.logs or []), str(exc)]
             job.result = self._index_failure_result(document, job, exc)
+            await ensure_current_lease()
             await self.session.commit()

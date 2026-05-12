@@ -404,12 +404,14 @@ async def test_provider_sync_preview_rejects_invalid_manifest_url(client):
         ({"reasoning": {"capabilities": ["text", 42]}}, "reasoning.capabilities"),
         ({"embeddings": {"dimensions": False}}, "embeddings.dimensions"),
         ({"embeddings": {"timeoutMs": 0}}, "embeddings.timeoutMs"),
+        ({"embeddings": {"timeoutMs": 1800001}}, "embeddings.timeoutMs"),
         ({"hpcMineru": {"enabled": "yes"}}, "hpcMineru.enabled"),
         ({"hpcMineru": {"timeoutMs": -1}}, "hpcMineru.timeoutMs"),
         ({"reranker": {"apiUrl": 42}}, "reranker.apiUrl"),
         ({"reranker": {"model": False}}, "reranker.model"),
         ({"reranker": {"endpoint": 42}}, "reranker.endpoint"),
         ({"reranker": {"timeoutMs": 0}}, "reranker.timeoutMs"),
+        ({"reranker": {"timeoutMs": 1800001}}, "reranker.timeoutMs"),
     ],
 )
 @pytest.mark.asyncio
@@ -940,5 +942,138 @@ async def test_reranker_connection_test_uses_saved_api_key_when_blank(client, mo
                 "Content-Type": "application/json",
                 "Authorization": "Bearer saved-reranker-token",
             }
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_reranker_connection_test_uses_saved_llm_key_for_llm_provider(
+    client, monkeypatch
+):
+    requests = []
+
+    class FakeResponse:
+        status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": '[{"index": 1, "score": 0.98, "reason": "matches"}]'
+                        }
+                    }
+                ]
+            }
+
+    class FakeAsyncClient:
+        def __init__(self, timeout):
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return None
+
+        async def post(self, url, headers, json):
+            requests.append({"url": url, "headers": headers, "json": json})
+            return FakeResponse()
+
+    monkeypatch.setattr(
+        "ragstudio.services.llm_reranker_service.httpx.AsyncClient",
+        FakeAsyncClient,
+    )
+    saved_payload = {
+        "provider": "openai",
+        "llm_provider": "openai_compatible",
+        "llm_model": "gpt-4.1",
+        "llm_base_url": "http://127.0.0.1:8004/v1",
+        "llm_api_key": "saved-llm-token",
+        "embedding_model": "text-embedding-3-large",
+        "storage_backend": "postgres_pgvector_neo4j",
+        "reranker_provider": "llm",
+        "reranker_fallback_provider": "disabled",
+        "enable_rerank": True,
+    }
+    test_payload = {key: value for key, value in saved_payload.items() if key != "llm_api_key"}
+
+    save_response = await client.put("/api/settings/default", json=saved_payload)
+    response = await client.post("/api/settings/default/test-reranker", json=test_payload)
+
+    assert save_response.status_code == 200
+    assert response.status_code == 200
+    assert response.json()["ok"] is True
+    assert requests == [
+        {
+            "url": "http://127.0.0.1:8004/v1/chat/completions",
+            "headers": {
+                "Content-Type": "application/json",
+                "Authorization": "Bearer saved-llm-token",
+            },
+            "json": {
+                "model": "gpt-4.1",
+                "temperature": 0,
+                "messages": requests[0]["json"]["messages"],
+            },
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_reranker_connection_test_does_not_hide_primary_failure_with_fallback(
+    client, monkeypatch
+):
+    calls = []
+
+    async def fake_rerank(self, query, chunks, profile):
+        calls.append({"query": query, "provider": profile.reranker_provider})
+        return chunks, [
+            {
+                "provider": "generic_http",
+                "model": profile.reranker_model,
+                "status": "failed",
+                "detail": "primary reranker unavailable",
+                "fallback_provider": "llm",
+            },
+            {
+                "provider": "llm",
+                "model": profile.llm_model,
+                "rank": 1,
+                "original_rank": 2,
+                "chunk_id": "reranker-test-strong",
+                "score": 0.91,
+            },
+        ]
+
+    monkeypatch.setattr("ragstudio.services.reranker_service.RerankerService.rerank", fake_rerank)
+    payload = {
+        "provider": "openai",
+        "llm_provider": "openai_compatible",
+        "llm_model": "gpt-4.1",
+        "llm_base_url": "http://127.0.0.1:8004/v1",
+        "llm_api_key": "llm-token",
+        "embedding_model": "text-embedding-3-large",
+        "storage_backend": "postgres_pgvector_neo4j",
+        "reranker_provider": "generic_http",
+        "reranker_model": "Qwen/Qwen3-Reranker-8B",
+        "reranker_base_url": "http://127.0.0.1:8005/v1/rerank",
+        "reranker_fallback_provider": "llm",
+        "enable_rerank": True,
+    }
+
+    response = await client.post("/api/settings/default/test-reranker", json=payload)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is False
+    assert body["detail"] == "primary reranker unavailable"
+    assert calls == [
+        {
+            "query": "Which passage is most relevant to Ragstudio reranking?",
+            "provider": "generic_http",
         }
     ]

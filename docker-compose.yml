@@ -32,6 +32,7 @@ services:
       dockerfile: backend/Dockerfile
     container_name: ragstudio-worker
     command: python -m ragstudio.workers.index_worker
+    restart: unless-stopped
     environment:
       RAGSTUDIO_DATABASE_URL: postgresql+asyncpg://ragstudio:ragstudio@postgres:5432/ragstudio
       RAGSTUDIO_NEO4J_URI: bolt://neo4j:7687
@@ -48,6 +49,12 @@ services:
         condition: service_healthy
       neo4j:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -m ragstudio.workers.index_worker --healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
 
   frontend:
     build:

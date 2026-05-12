@@ -275,16 +275,19 @@ async def test_runtime_enrichment_empty_output_marks_index_failed(
     assert refreshed_doc.status == "succeeded"
     assert chunk_count == 1
     assert index_record.status == StageStatus.FAILED.value
-    assert "produced 0 chunks for 1 canonical chunks" in index_record.error
+    assert "produced 0 chunks for 1 quality-approved chunks" in index_record.error
     assert result.graph_materialization["status"] == "skipped"
-    assert "produced 0 chunks for 1 canonical chunks" in result.graph_materialization["reason"]
+    assert (
+        "produced 0 chunks for 1 quality-approved chunks"
+        in result.graph_materialization["reason"]
+    )
     assert result.graph_projection_record_id is not None
     assert graph_record is not None
     assert graph_record.status in {"skipped", "failed"}
-    assert "produced 0 chunks for 1 canonical chunks" in graph_record.error
+    assert "produced 0 chunks for 1 quality-approved chunks" in graph_record.error
     assert separately_loaded_graph_record is not None
     assert separately_loaded_graph_record.status == "skipped"
-    assert "produced 0 chunks for 1 canonical chunks" in separately_loaded_graph_record.error
+    assert "produced 0 chunks for 1 quality-approved chunks" in separately_loaded_graph_record.error
 
 
 @pytest.mark.asyncio
@@ -731,6 +734,21 @@ async def test_index_document_for_job_records_parser_quality_warning_summary(
     assert refreshed_job.result["parser_quality"] == {
         "warning_counts": {"reference_unit_missing_expected_script": 2},
         "affected_chunks": 2,
+    }
+    parser_quality_details = refreshed_job.result["parser_quality_details"]
+    assert parser_quality_details["groups"][0]["code"] == "reference_unit_missing_expected_script"
+    assert parser_quality_details["groups"][0]["chunk_count"] == 2
+    assert parser_quality_details["groups"][0]["warning_count"] == 2
+    assert parser_quality_details["groups"][0]["block_types"] == {"paragraph": 2}
+    assert parser_quality_details["groups"][0]["examples"][0] == {
+        "chunk_id": "chunk-parser-quality",
+        "page": 1,
+        "reference": None,
+        "block_type": "paragraph",
+        "expected_script": None,
+        "action": None,
+        "message": "Expected Arabic text in reference unit.",
+        "text_preview": "Chunk with parser quality warning.",
     }
     assert refreshed_job.result["indexing_stage"]["stage"] == "ready_with_warnings"
     assert refreshed_job.result["indexing_stage"]["warning"] == (

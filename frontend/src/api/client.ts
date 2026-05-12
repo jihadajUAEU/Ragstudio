@@ -11,6 +11,7 @@ import type {
   GraphOut,
   HealthOut,
   JobOut,
+  JobQualityWarningsOut,
   IndexDocumentIn,
   LlmConnectionTestOut,
   MinerUConnectionTestOut,
@@ -125,6 +126,10 @@ export const apiClient = {
       body: JSON.stringify(payload),
     }),
   jobs: () => request<Page<JobOut>>("/api/jobs"),
+  jobQualityWarnings: (jobId: string) =>
+    request<JobQualityWarningsOut>(
+      `/api/jobs/${encodeURIComponent(jobId)}/quality-warnings?limit=5000`,
+    ),
   variants: () => request<Page<VariantOut>>("/api/variants"),
   createVariant: (payload: VariantIn) =>
     request<VariantOut>("/api/variants", {

@@ -168,7 +168,7 @@ async def test_init_db_adds_durable_job_worker_columns(database_url):
     assert failed_job["progress"] == 100
     assert (
         failed_job["result"]["error"]
-        == "Superseded by a newer active indexing job during database initialization."
+        == "Superseded duplicate active indexing job during runtime schema migration."
     )
     assert "CREATE UNIQUE INDEX" in active_index_definition
     assert "uq_active_index_document_job" in active_index_definition

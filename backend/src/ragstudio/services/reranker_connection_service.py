@@ -33,7 +33,7 @@ class RerankerConnectionService:
             settings,
         )
         latency_ms = int((perf_counter() - started) * 1000)
-        ok = any("rank" in trace and "score" in trace for trace in traces)
+        ok = self._primary_returned_ranked_results(settings, traces)
         model = settings.reranker_model
         if settings.reranker_provider == "llm" and not model:
             model = settings.llm_model
@@ -53,6 +53,22 @@ class RerankerConnectionService:
                 if ok
                 else self._failure_detail(traces[0] if traces else {})
             ),
+        )
+
+    def _primary_returned_ranked_results(
+        self,
+        settings: SettingsProfileIn,
+        traces: list[dict[str, object]],
+    ) -> bool:
+        expected_provider = (
+            "llm" if settings.reranker_provider == "llm" else settings.reranker_provider
+        )
+        return any(
+            trace.get("provider") == expected_provider
+            and "fallback_provider" not in trace
+            and "rank" in trace
+            and "score" in trace
+            for trace in traces
         )
 
     def _failure_detail(self, trace: dict[str, object]) -> str:

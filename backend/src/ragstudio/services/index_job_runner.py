@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable, Coroutine
 from contextlib import suppress
+from datetime import timedelta
 from typing import Any
 
 from ragstudio.config import AppSettings
@@ -14,7 +15,7 @@ from ragstudio.services.document_service import DocumentService
 from ragstudio.services.graph_projection_runner import GraphProjectionRunner
 from ragstudio.services.index_progress import IndexStage, update_job_stage
 from ragstudio.services.job_queue_service import JobLeaseLostError, JobQueueService
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
@@ -42,6 +43,7 @@ class IndexJobRunner:
             raise RuntimeError(f"Unsupported job type: {job.type}")
         if job.target_id is None:
             raise RuntimeError(f"Index job {job.id} has no target document.")
+        target_id = job.target_id
 
         if job.recovery_action == "resume_graph_projection":
             await self._run_with_lease(job, lambda: self._resume_graph_projection(job))
@@ -54,7 +56,12 @@ class IndexJobRunner:
                 self.session,
                 self.settings.data_dir,
                 settings=self.settings,
-            ).run_index_job(job.target_id, job.id, options),
+            ).run_index_job(
+                target_id,
+                job.id,
+                options,
+                ensure_active_lease=lambda: self._ensure_current_lease(job.id),
+            ),
         )
         await self._clear_terminal_lease(job.id)
 
@@ -114,7 +121,7 @@ class IndexJobRunner:
     async def _run_with_lease(
         self,
         job: Job,
-        operation: Callable[[], Awaitable[None]],
+        operation: Callable[[], Coroutine[Any, Any, None]],
     ) -> None:
         await self._require_active_lease(job)
         stop_heartbeat = asyncio.Event()
@@ -159,6 +166,36 @@ class IndexJobRunner:
             lease_seconds=self.lease_seconds,
         )
         await self.session.commit()
+
+    async def _ensure_current_lease(self, job_id: str) -> None:
+        timestamp = now_utc()
+        with self.session.no_autoflush:
+            result = await self.session.execute(
+                select(Job.status, Job.worker_id, Job.lease_expires_at)
+                .where(Job.id == job_id)
+                .with_for_update()
+            )
+            row = result.one_or_none()
+        if row is None:
+            raise JobLeaseLostError(f"Job {job_id} no longer exists.")
+        status, worker_id, lease_expires_at = row
+        if (
+            status != StageStatus.RUNNING.value
+            or worker_id != self.worker_id
+            or lease_expires_at is None
+            or lease_expires_at <= timestamp
+        ):
+            raise JobLeaseLostError(f"Job {job_id} lease is no longer held by {self.worker_id}.")
+        await self.session.execute(
+            update(Job)
+            .where(Job.id == job_id)
+            .values(
+                heartbeat_at=timestamp,
+                lease_expires_at=timestamp + timedelta(seconds=self.lease_seconds),
+            )
+            .execution_options(synchronize_session=False)
+        )
+        await self.session.flush()
 
     async def _heartbeat_until_stopped(self, job_id: str, stop_heartbeat: asyncio.Event) -> None:
         engine = make_engine(self.settings.resolved_database_url)

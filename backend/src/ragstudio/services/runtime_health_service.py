@@ -317,11 +317,17 @@ class RuntimeHealthService:
         )
 
     def _reranker_check(self, profile: RuntimeProfile) -> RuntimeHealthCheck:
-        if profile.reranker_provider == "disabled":
+        if not profile.enable_rerank or profile.reranker_provider == "disabled":
             return RuntimeHealthCheck(
                 name="reranker",
                 status="skipped",
                 detail="Reranker is disabled for this profile.",
+            )
+        if profile.reranker_provider == "llm":
+            return RuntimeHealthCheck(
+                name="reranker",
+                status="ok",
+                detail="Reranker uses the configured LLM endpoint.",
             )
         if not profile.reranker_base_url:
             return RuntimeHealthCheck(

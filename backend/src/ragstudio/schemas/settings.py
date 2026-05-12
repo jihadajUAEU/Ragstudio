@@ -22,6 +22,8 @@ EmbeddingProvider = Literal["vllm_openai"]
 LlmProvider = Literal["openai_compatible"]
 LlmCapability = Literal["text", "vision", "reasoning"]
 MINERU_DEFAULT_TIMEOUT_MS = 14_400_000
+RUNTIME_TIMEOUT_MIN_MS = 100
+RUNTIME_TIMEOUT_MAX_MS = 1_800_000
 
 
 class SettingsProfileIn(StudioModel):
@@ -30,14 +32,18 @@ class SettingsProfileIn(StudioModel):
     llm_provider: LlmProvider = "openai_compatible"
     llm_base_url: str | None = None
     llm_api_key: str | None = None
-    llm_timeout_ms: int = Field(default=10000, ge=100, le=1_800_000)
+    llm_timeout_ms: int = Field(
+        default=10000, ge=RUNTIME_TIMEOUT_MIN_MS, le=RUNTIME_TIMEOUT_MAX_MS
+    )
     llm_capabilities: list[LlmCapability] = Field(default_factory=list)
     embedding_model: str
     storage_backend: StorageBackend = DEFAULT_STORAGE_BACKEND
     embedding_provider: EmbeddingProvider = DEFAULT_EMBEDDING_PROVIDER
     embedding_base_url: str | None = None
     embedding_api_key: str | None = None
-    embedding_timeout_ms: int = Field(default=10000, ge=100, le=1_800_000)
+    embedding_timeout_ms: int = Field(
+        default=10000, ge=RUNTIME_TIMEOUT_MIN_MS, le=RUNTIME_TIMEOUT_MAX_MS
+    )
     embedding_dimensions: int = Field(default=1536, ge=1, le=65536)
     embedding_batch_size: int = Field(default=16, ge=1, le=1024)
     embedding_tls_verify: bool = True
@@ -50,13 +56,17 @@ class SettingsProfileIn(StudioModel):
     vision_model: str | None = None
     vision_base_url: str | None = None
     vision_api_key: str | None = None
-    vision_timeout_ms: int = Field(default=10000, ge=100, le=1_800_000)
+    vision_timeout_ms: int = Field(
+        default=10000, ge=RUNTIME_TIMEOUT_MIN_MS, le=RUNTIME_TIMEOUT_MAX_MS
+    )
     reranker_provider: RerankerProvider = "disabled"
     reranker_fallback_provider: RerankerFallbackProvider = "disabled"
     reranker_model: str | None = None
     reranker_base_url: str | None = None
     reranker_api_key: str | None = None
-    reranker_timeout_ms: int = Field(default=10000, ge=100, le=1_800_000)
+    reranker_timeout_ms: int = Field(
+        default=10000, ge=RUNTIME_TIMEOUT_MIN_MS, le=RUNTIME_TIMEOUT_MAX_MS
+    )
     pgvector_schema: str = "public"
     pgvector_table_prefix: str = "ragstudio"
     neo4j_uri: str | None = None

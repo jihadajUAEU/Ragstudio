@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import argparse
 import asyncio
 import logging
 import os
 import socket
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ragstudio.config import AppSettings
@@ -109,8 +111,31 @@ async def run_forever(
         await engine.dispose()
 
 
+async def healthcheck(settings: AppSettings | None = None) -> bool:
+    resolved_settings = settings or AppSettings()
+    engine = make_engine(resolved_settings.resolved_database_url)
+    try:
+        async with engine.connect() as connection:
+            await connection.execute(text("SELECT 1"))
+        return True
+    except Exception:
+        logger.exception("Worker healthcheck failed.")
+        return False
+    finally:
+        await engine.dispose()
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO)
+    parser = argparse.ArgumentParser(description="Run the Ragstudio indexing worker.")
+    parser.add_argument(
+        "--healthcheck",
+        action="store_true",
+        help="Check worker dependencies and exit.",
+    )
+    args = parser.parse_args()
+    if args.healthcheck:
+        raise SystemExit(0 if asyncio.run(healthcheck()) else 1)
     asyncio.run(run_forever())
 
 

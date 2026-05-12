@@ -212,7 +212,7 @@ def _backfill_job_runtime_columns(connection) -> None:
 def _ensure_job_runtime_indexes(connection) -> None:
     if connection.dialect.name != "postgresql":
         return
-    _deduplicate_active_index_document_jobs(connection)
+    _dedupe_active_index_document_jobs(connection)
     connection.execute(
         text(
             """
@@ -242,20 +242,35 @@ def _ensure_job_runtime_indexes(connection) -> None:
     )
 
 
-def _deduplicate_active_index_document_jobs(connection) -> None:
+def _dedupe_active_index_document_jobs(connection) -> None:
     connection.execute(
         text(
             """
             WITH ranked AS (
-                SELECT id,
-                       row_number() OVER (
-                           PARTITION BY target_id
-                           ORDER BY COALESCE(created_at, updated_at, NOW()) DESC, id DESC
-                       ) AS active_rank
+                SELECT
+                    id,
+                    row_number() OVER (
+                        PARTITION BY target_id
+                        ORDER BY
+                            CASE WHEN status = 'running' THEN 0 ELSE 1 END,
+                            COALESCE(
+                                lease_expires_at,
+                                heartbeat_at,
+                                available_at,
+                                updated_at,
+                                created_at
+                            ) DESC NULLS LAST,
+                            id DESC
+                    ) AS active_rank
                 FROM jobs
                 WHERE type = 'index_document'
                   AND status IN ('ready', 'running')
                   AND target_id IS NOT NULL
+            ),
+            duplicates AS (
+                SELECT id
+                FROM ranked
+                WHERE active_rank > 1
             )
             UPDATE jobs
             SET status = 'failed',
@@ -265,19 +280,19 @@ def _deduplicate_active_index_document_jobs(connection) -> None:
                 recovery_action = NULL,
                 logs = COALESCE(logs, CAST('[]' AS JSONB))
                     || jsonb_build_array(
-                        'Superseded by a newer active indexing job '
-                        || 'during database initialization.'
+                        'Superseded duplicate active indexing job '
+                        || 'during runtime schema migration.'
                     ),
                 result = jsonb_set(
                     COALESCE(result, CAST('{}' AS JSONB)),
                     '{error}',
                     to_jsonb(
-                        'Superseded by a newer active indexing job '
-                        || 'during database initialization.'
+                        'Superseded duplicate active indexing job '
+                        || 'during runtime schema migration.'
                     ),
                     true
                 )
-            WHERE id IN (SELECT id FROM ranked WHERE active_rank > 1)
+            WHERE id IN (SELECT id FROM duplicates)
             """
         )
     )

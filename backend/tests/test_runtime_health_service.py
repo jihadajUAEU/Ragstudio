@@ -83,6 +83,45 @@ async def test_runtime_health_skips_disabled_reranker():
 
 
 @pytest.mark.asyncio
+async def test_runtime_health_allows_llm_reranker_without_dedicated_endpoint():
+    checks = await RuntimeHealthService().check(
+        profile(reranker_provider="llm", reranker_base_url=None)
+    )
+
+    reranker = next(item for item in checks if item.name == "reranker")
+    assert reranker.status == "ok"
+    assert reranker.detail == "Reranker uses the configured LLM endpoint."
+    assert RuntimeHealthService().blocking_failures([reranker]) == []
+
+
+@pytest.mark.asyncio
+async def test_runtime_health_blocks_http_reranker_without_endpoint():
+    checks = await RuntimeHealthService().check(
+        profile(reranker_provider="generic_http", reranker_base_url=None)
+    )
+
+    reranker = next(item for item in checks if item.name == "reranker")
+    assert reranker.status == "failed"
+    assert reranker.severity == "blocking"
+    assert reranker.error_type == "configuration"
+
+
+@pytest.mark.asyncio
+async def test_runtime_health_skips_stale_reranker_config_when_rerank_disabled():
+    checks = await RuntimeHealthService().check(
+        profile(
+            enable_rerank=False,
+            reranker_provider="generic_http",
+            reranker_base_url=None,
+        )
+    )
+
+    reranker = next(item for item in checks if item.name == "reranker")
+    assert reranker.status == "skipped"
+    assert RuntimeHealthService().blocking_failures([reranker]) == []
+
+
+@pytest.mark.asyncio
 async def test_runtime_health_uses_dependency_checks_for_native_runtime():
     checks = await RuntimeHealthService().check(profile())
 

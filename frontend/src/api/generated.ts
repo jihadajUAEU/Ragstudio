@@ -267,6 +267,40 @@ export interface JobOut {
   progress: number;
   logs: string[];
   result: Record<string, unknown>;
+  worker_id: string | null;
+  lease_expires_at: string | null;
+  heartbeat_at: string | null;
+  attempts: number;
+  max_attempts: number;
+  recovery_action: string | null;
+}
+
+export interface ParserQualityWarningOut {
+  chunk_id: string;
+  chunk_preview: string;
+  source_location: Record<string, unknown>;
+  parser_metadata: Record<string, unknown>;
+  reference_metadata: Record<string, unknown> | null;
+  code: string | null;
+  message: string | null;
+  block_type: string | null;
+  page: number | string | null;
+  warning: Record<string, unknown>;
+}
+
+export interface JobQualityWarningsOut {
+  job_id: string;
+  document_id: string | null;
+  parser_quality: Record<string, unknown>;
+  index_quality_report: Record<string, unknown> | null;
+  job_warnings: string[];
+  warning_counts: Record<string, number>;
+  affected_chunks: number;
+  total: number;
+  offset: number;
+  limit: number;
+  truncated: boolean;
+  items: ParserQualityWarningOut[];
 }
 
 export type VariantPreset = "balanced" | "precise" | "broad" | "fast";
