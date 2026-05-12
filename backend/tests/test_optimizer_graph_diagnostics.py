@@ -983,6 +983,40 @@ async def test_diagnostics_returns_capabilities_and_dependency_status(client):
     else:
         assert any("./scripts/setup.sh" in warning for warning in payload["warnings"])
 
+
+@pytest.mark.asyncio
+async def test_diagnostics_reports_stale_running_jobs(client):
+    from datetime import timedelta
+
+    from ragstudio.db.models import Job
+    from ragstudio.schemas.common import now_utc
+
+    app = client._transport.app
+    async with app.state.session_factory() as session:
+        session.add(
+            Job(
+                type="index_document",
+                target_id="doc-stale-worker",
+                status=StageStatus.RUNNING.value,
+                progress=75,
+                logs=["Search ready."],
+                result={"indexing_stage": {"stage": "search_ready"}},
+                worker_id="worker-stale",
+                lease_expires_at=now_utc() - timedelta(minutes=5),
+                heartbeat_at=now_utc() - timedelta(minutes=10),
+            )
+        )
+        await session.commit()
+
+    response = await client.get("/api/diagnostics")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["dependency_status"]["stale_running_jobs"] == 1
+    assert payload["dependency_status"]["ready_index_jobs"] == 0
+    assert "1 indexing job has an expired worker lease." in payload["warnings"]
+
+
 @pytest.mark.asyncio
 async def test_diagnostics_reports_native_dependency_status_for_runtime_mode(client):
     class ReadyRuntimeHealthService:

@@ -144,6 +144,7 @@ class IndexLifecycleService:
         self.quality_gate.validate_adapter_chunks(
             adapter_chunks,
             language=self._quality_language(options.domain_metadata),
+            domain_metadata=options.domain_metadata,
         )
         if on_stage is not None:
             await on_stage(

@@ -8,6 +8,7 @@ from typing import Any
 from ragstudio.schemas.chunks import ChunkOut
 from ragstudio.services.chunk_service import ChunkService
 from ragstudio.services.context_assembly_service import ContextAssemblyService
+from ragstudio.services.domain_metadata_quality_gate import DomainMetadataQualityGate
 from ragstudio.services.graph_expansion_service import GraphExpansionService
 from ragstudio.services.grounding_validator import GroundingValidator
 from ragstudio.services.metadata_retrieval_service import MetadataRetrievalService
@@ -866,8 +867,9 @@ def _annotate_parser_quality_warnings(
     annotated: list[EvidenceCandidate] = []
     warning_counts: dict[str, int] = {}
     affected_candidate_ids: list[str] = []
+    quality_gate = DomainMetadataQualityGate()
     for candidate in candidates:
-        codes = _parser_warning_codes(candidate.metadata)
+        codes = quality_gate.parser_warning_codes(candidate.metadata)
         if not codes:
             annotated.append(candidate)
             continue
@@ -884,31 +886,7 @@ def _annotate_parser_quality_warnings(
             *(f"parser_quality_warning:{code}" for code in unique_codes),
         ]
         annotated.append(replace(candidate, metadata=metadata, reasons=reasons))
-    if not warning_counts:
-        return annotated, None
-    return annotated, {
-        "stage": "parser_quality",
-        "status": "warnings",
-        "warning_counts": dict(sorted(warning_counts.items())),
-        "affected_candidate_ids": affected_candidate_ids,
-    }
-
-
-def _parser_warning_codes(metadata: dict[str, Any]) -> list[str]:
-    extraction_quality = metadata.get("extraction_quality")
-    if not isinstance(extraction_quality, dict):
-        return []
-    warnings = extraction_quality.get("parser_warnings")
-    if not isinstance(warnings, list):
-        return []
-    codes: list[str] = []
-    for warning in warnings:
-        if not isinstance(warning, dict):
-            continue
-        code = warning.get("code")
-        if isinstance(code, str) and code:
-            codes.append(code)
-    return codes
+    return annotated, quality_gate.retrieval_trace(warning_counts, affected_candidate_ids)
 
 
 def _elapsed_ms(started_at: float) -> float:

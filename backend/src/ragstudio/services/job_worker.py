@@ -10,7 +10,17 @@ class JobWorker:
         self.session = session
 
     @staticmethod
-    def build(job_type: str, target_id: str | None) -> Job:
+    def build(
+        job_type: str,
+        target_id: str | None,
+        *,
+        options: dict[str, object] | None = None,
+    ) -> Job:
+        result: dict[str, object] = {}
+        job_options: dict[str, object] = {}
+        if options is not None:
+            job_options = dict(options)
+            result["index_options"] = job_options
         return Job(
             id=new_id(),
             type=job_type,
@@ -18,7 +28,8 @@ class JobWorker:
             status=StageStatus.READY.value,
             progress=0,
             logs=[],
-            result={},
+            result=result,
+            job_options=job_options,
         )
 
     async def enqueue(self, job_type: str, target_id: str | None) -> JobOut:

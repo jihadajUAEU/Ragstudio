@@ -84,6 +84,7 @@ class ChunkService:
         self.quality_gate.validate_adapter_chunks(
             adapter_chunks,
             language=self._quality_language(options.domain_metadata),
+            domain_metadata=options.domain_metadata,
         )
         chunks = await ChunkPersistenceService(self.session).persist(
             document,

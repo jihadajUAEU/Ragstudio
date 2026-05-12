@@ -20,6 +20,34 @@ services:
         condition: service_healthy
       neo4j:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8000/api/health >/dev/null || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: ragstudio-worker
+    command: python -m ragstudio.workers.index_worker
+    environment:
+      RAGSTUDIO_DATABASE_URL: postgresql+asyncpg://ragstudio:ragstudio@postgres:5432/ragstudio
+      RAGSTUDIO_NEO4J_URI: bolt://neo4j:7687
+      RAGSTUDIO_NEO4J_USERNAME: neo4j
+      RAGSTUDIO_NEO4J_PASSWORD: ragstudio-password
+      RAGSTUDIO_DATA_DIR: /data
+    volumes:
+      - ./backend/src:/app/backend/src
+      - ragstudio-backend-data:/data
+    depends_on:
+      backend:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
 
   frontend:
     build:
