@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
+from datetime import timedelta
 from typing import Any
 
 from ragstudio.config import AppSettings
@@ -54,7 +55,12 @@ class IndexJobRunner:
                 self.session,
                 self.settings.data_dir,
                 settings=self.settings,
-            ).run_index_job(job.target_id, job.id, options),
+            ).run_index_job(
+                job.target_id,
+                job.id,
+                options,
+                ensure_active_lease=lambda: self._ensure_current_lease(job.id),
+            ),
         )
         await self._clear_terminal_lease(job.id)
 
@@ -159,6 +165,27 @@ class IndexJobRunner:
             lease_seconds=self.lease_seconds,
         )
         await self.session.commit()
+
+    async def _ensure_current_lease(self, job_id: str) -> None:
+        timestamp = now_utc()
+        with self.session.no_autoflush:
+            current = await self.session.scalar(
+                select(Job)
+                .where(Job.id == job_id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+        if (
+            current is None
+            or current.status != StageStatus.RUNNING.value
+            or current.worker_id != self.worker_id
+            or current.lease_expires_at is None
+            or current.lease_expires_at <= timestamp
+        ):
+            raise JobLeaseLostError(f"Job {job_id} lease is no longer held by {self.worker_id}.")
+        current.heartbeat_at = timestamp
+        current.lease_expires_at = timestamp + timedelta(seconds=self.lease_seconds)
+        await self.session.flush()
 
     async def _heartbeat_until_stopped(self, job_id: str, stop_heartbeat: asyncio.Event) -> None:
         engine = make_engine(self.settings.resolved_database_url)
