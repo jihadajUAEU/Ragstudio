@@ -30,3 +30,25 @@ def test_arabic_query_matches_prefix_stripped_token():
 
     assert score.score > 0
     assert score.breakdown["arabic_token"] >= 20.0
+
+
+def test_arabic_query_does_not_match_quarantined_exact_policy():
+    chunk = Chunk(
+        id="chunk-1",
+        document_id="doc-1",
+        text="وَحَنَانًا مِّن لَّدُنَّا وَزَكَاةً",
+        source_location={"page": 1},
+        metadata_json={
+            "quality_action_policy": {
+                "index_vector": False,
+                "index_exact_arabic": False,
+                "project_graph": False,
+                "graph_confidence": "blocked",
+            },
+        },
+    )
+
+    score = HybridChunkSearch().score("وحنانا", chunk)
+
+    assert score.score == 0.0
+    assert score.breakdown["quality_blocked_arabic"] == 1.0

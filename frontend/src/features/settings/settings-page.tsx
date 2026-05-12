@@ -18,6 +18,32 @@ type SecretFieldName =
   | "neo4j_password";
 
 type SecretValues = Record<SecretFieldName, string>;
+type NumberFieldName = Extract<
+  keyof SettingsProfileIn,
+  | "vision_timeout_ms"
+  | "reranker_timeout_ms"
+  | "llm_timeout_ms"
+  | "mineru_timeout_ms"
+  | "mineru_poll_interval_ms"
+  | "chunk_token_size"
+  | "chunk_overlap_token_size"
+  | "context_window"
+  | "max_context_tokens"
+  | "top_k"
+  | "chunk_top_k"
+  | "cosine_better_than_threshold"
+  | "max_total_tokens"
+  | "max_entity_tokens"
+  | "max_relation_tokens"
+  | "llm_model_max_async"
+  | "embedding_func_max_async"
+  | "max_parallel_insert"
+  | "embedding_timeout_ms"
+  | "embedding_dimensions"
+  | "embedding_batch_size"
+>;
+type NumberDrafts = Partial<Record<NumberFieldName, string>>;
+type NumberConstraints = { min: number; max?: number; step?: number | "any" };
 
 const blankSecretValues = (): SecretValues => ({
   embedding_api_key: "",
@@ -29,6 +55,29 @@ const blankSecretValues = (): SecretValues => ({
 
 const DEFAULT_MANIFEST_URL = "https://updates.jihadaj.com/providers.json";
 const DEFAULT_MINERU_TIMEOUT_MS = 14_400_000;
+const NUMBER_CONSTRAINTS: Record<NumberFieldName, NumberConstraints> = {
+  vision_timeout_ms: { min: 1, max: DEFAULT_MINERU_TIMEOUT_MS },
+  reranker_timeout_ms: { min: 1, max: DEFAULT_MINERU_TIMEOUT_MS },
+  llm_timeout_ms: { min: 1, max: DEFAULT_MINERU_TIMEOUT_MS },
+  mineru_timeout_ms: { min: 1, max: DEFAULT_MINERU_TIMEOUT_MS },
+  mineru_poll_interval_ms: { min: 100, max: 60_000 },
+  chunk_token_size: { min: 1, max: 128_000 },
+  chunk_overlap_token_size: { min: 0, max: 128_000 },
+  context_window: { min: 0, max: 100 },
+  max_context_tokens: { min: 1, max: 1_000_000 },
+  top_k: { min: 1, max: 1_000 },
+  chunk_top_k: { min: 1, max: 1_000 },
+  cosine_better_than_threshold: { min: 0, max: 1, step: 0.01 },
+  max_total_tokens: { min: 1, max: 1_000_000 },
+  max_entity_tokens: { min: 1, max: 1_000_000 },
+  max_relation_tokens: { min: 1, max: 1_000_000 },
+  llm_model_max_async: { min: 1, max: 256 },
+  embedding_func_max_async: { min: 1, max: 256 },
+  max_parallel_insert: { min: 1, max: 64 },
+  embedding_timeout_ms: { min: 1, max: DEFAULT_MINERU_TIMEOUT_MS },
+  embedding_dimensions: { min: 1, max: 1_000_000 },
+  embedding_batch_size: { min: 1, max: 10_000 },
+};
 const DEFAULT_FORM_VALUES: SettingsProfileIn = {
   provider: "openai-compatible",
   llm_provider: "openai_compatible",
@@ -93,6 +142,7 @@ export function SettingsPage() {
   const queryClient = useQueryClient();
   const [formOverride, setFormOverride] = useState<SettingsProfileIn | null>(null);
   const [secretValues, setSecretValues] = useState<SecretValues>(() => blankSecretValues());
+  const [numberDrafts, setNumberDrafts] = useState<NumberDrafts>({});
   const [manifestUrl, setManifestUrl] = useState(DEFAULT_MANIFEST_URL);
   const [syncMessage, setSyncMessage] = useState("");
 
@@ -118,6 +168,7 @@ export function SettingsPage() {
       queryClient.setQueryData(queryKeys.settings, settings);
       setFormOverride(settingsToFormValues(settings));
       setSecretValues(blankSecretValues());
+      setNumberDrafts({});
     },
   });
   const syncProvider = useMutation({
@@ -146,6 +197,43 @@ export function SettingsPage() {
   const updateField = <K extends keyof SettingsProfileIn>(key: K, value: SettingsProfileIn[K]) => {
     setFormOverride((current) => (formValues ? { ...formValues, ...current, [key]: value } : current));
   };
+
+  const updateNumberField = (key: NumberFieldName, rawValue: string) => {
+    setNumberDrafts((current) => ({ ...current, [key]: rawValue }));
+    if (rawValue.trim() === "") {
+      return;
+    }
+    const parsed = Number(rawValue);
+    if (!Number.isFinite(parsed)) {
+      return;
+    }
+    setFormOverride((current) =>
+      formValues ? { ...formValues, ...current, [key]: parsed } : current,
+    );
+  };
+
+  const commitNumberField = (key: NumberFieldName, fallback: number) => {
+    const rawValue = numberDrafts[key];
+    if (rawValue == null) {
+      return;
+    }
+    const parsed = Number(rawValue);
+    if (rawValue.trim() === "" || !Number.isFinite(parsed)) {
+      setNumberDrafts((current) => withoutNumberDraft(current, key));
+      return;
+    }
+    const constrained = constrainNumber(parsed, NUMBER_CONSTRAINTS[key]);
+    setFormOverride((current) =>
+      formValues ? { ...formValues, ...current, [key]: constrained } : current,
+    );
+    setNumberDrafts((current) => ({ ...withoutNumberDraft(current, key), [key]: String(constrained) }));
+    if (constrained === (formValues?.[key] ?? fallback)) {
+      setNumberDrafts((current) => withoutNumberDraft(current, key));
+    }
+  };
+
+  const numberValue = (key: NumberFieldName, fallback: number) =>
+    numberDrafts[key] ?? String(formValues?.[key] ?? fallback);
 
   const updateSecretField = (key: SecretFieldName, value: string) => {
     setSecretValues((current) => ({ ...current, [key]: value }));
@@ -183,43 +271,106 @@ export function SettingsPage() {
       ...formValues,
       llm_provider: formValues.llm_provider ?? "openai_compatible",
       llm_capabilities: formValues.llm_capabilities ?? [],
+      llm_timeout_ms: constrainNumber(
+        formValues.llm_timeout_ms ?? 10000,
+        NUMBER_CONSTRAINTS.llm_timeout_ms,
+      ),
       embedding_provider: formValues.embedding_provider ?? "vllm_openai",
+      embedding_timeout_ms: constrainNumber(
+        formValues.embedding_timeout_ms ?? 10000,
+        NUMBER_CONSTRAINTS.embedding_timeout_ms,
+      ),
+      embedding_dimensions: constrainNumber(
+        formValues.embedding_dimensions ?? 1536,
+        NUMBER_CONSTRAINTS.embedding_dimensions,
+      ),
+      embedding_batch_size: constrainNumber(
+        formValues.embedding_batch_size ?? 16,
+        NUMBER_CONSTRAINTS.embedding_batch_size,
+      ),
       embedding_tls_verify: formValues.embedding_tls_verify ?? true,
       mineru_enabled: formValues.mineru_enabled ?? false,
+      mineru_timeout_ms: constrainNumber(
+        formValues.mineru_timeout_ms ?? DEFAULT_MINERU_TIMEOUT_MS,
+        NUMBER_CONSTRAINTS.mineru_timeout_ms,
+      ),
+      mineru_poll_interval_ms: constrainNumber(
+        formValues.mineru_poll_interval_ms ?? 1000,
+        NUMBER_CONSTRAINTS.mineru_poll_interval_ms,
+      ),
       mineru_require_hpc: formValues.mineru_require_hpc ?? true,
       runtime_mode: formValues.runtime_mode ?? "runtime",
       storage_backend: formValues.storage_backend ?? "postgres_pgvector_neo4j",
-      vision_timeout_ms: formValues.vision_timeout_ms ?? 10000,
+      vision_timeout_ms: constrainNumber(
+        formValues.vision_timeout_ms ?? 10000,
+        NUMBER_CONSTRAINTS.vision_timeout_ms,
+      ),
       reranker_provider: formValues.reranker_provider ?? "disabled",
       reranker_fallback_provider: formValues.reranker_fallback_provider ?? "disabled",
-      reranker_timeout_ms: formValues.reranker_timeout_ms ?? 10000,
+      reranker_timeout_ms: constrainNumber(
+        formValues.reranker_timeout_ms ?? 10000,
+        NUMBER_CONSTRAINTS.reranker_timeout_ms,
+      ),
       pgvector_schema: formValues.pgvector_schema ?? "public",
       pgvector_table_prefix: formValues.pgvector_table_prefix ?? "ragstudio",
       parser: formValues.parser ?? "mineru",
       parse_method: formValues.parse_method ?? "auto",
-      chunk_token_size: formValues.chunk_token_size ?? 1200,
-      chunk_overlap_token_size: formValues.chunk_overlap_token_size ?? 100,
+      chunk_token_size: constrainNumber(
+        formValues.chunk_token_size ?? 1200,
+        NUMBER_CONSTRAINTS.chunk_token_size,
+      ),
+      chunk_overlap_token_size: constrainNumber(
+        formValues.chunk_overlap_token_size ?? 100,
+        NUMBER_CONSTRAINTS.chunk_overlap_token_size,
+      ),
       enable_image_processing: formValues.enable_image_processing ?? true,
       enable_table_processing: formValues.enable_table_processing ?? true,
       enable_equation_processing: formValues.enable_equation_processing ?? true,
-      context_window: formValues.context_window ?? 1,
+      context_window: constrainNumber(
+        formValues.context_window ?? 1,
+        NUMBER_CONSTRAINTS.context_window,
+      ),
       context_mode: formValues.context_mode ?? "page",
-      max_context_tokens: formValues.max_context_tokens ?? 2000,
+      max_context_tokens: constrainNumber(
+        formValues.max_context_tokens ?? 2000,
+        NUMBER_CONSTRAINTS.max_context_tokens,
+      ),
       include_headers: formValues.include_headers ?? true,
       include_captions: formValues.include_captions ?? true,
       query_mode: formValues.query_mode ?? "mix",
-      top_k: formValues.top_k ?? 40,
-      chunk_top_k: formValues.chunk_top_k ?? 20,
+      top_k: constrainNumber(formValues.top_k ?? 40, NUMBER_CONSTRAINTS.top_k),
+      chunk_top_k: constrainNumber(formValues.chunk_top_k ?? 20, NUMBER_CONSTRAINTS.chunk_top_k),
       enable_rerank: formValues.enable_rerank ?? true,
-      cosine_better_than_threshold: formValues.cosine_better_than_threshold ?? 0.2,
-      max_total_tokens: formValues.max_total_tokens ?? 30000,
-      max_entity_tokens: formValues.max_entity_tokens ?? 6000,
-      max_relation_tokens: formValues.max_relation_tokens ?? 8000,
+      cosine_better_than_threshold: constrainNumber(
+        formValues.cosine_better_than_threshold ?? 0.2,
+        NUMBER_CONSTRAINTS.cosine_better_than_threshold,
+      ),
+      max_total_tokens: constrainNumber(
+        formValues.max_total_tokens ?? 30000,
+        NUMBER_CONSTRAINTS.max_total_tokens,
+      ),
+      max_entity_tokens: constrainNumber(
+        formValues.max_entity_tokens ?? 6000,
+        NUMBER_CONSTRAINTS.max_entity_tokens,
+      ),
+      max_relation_tokens: constrainNumber(
+        formValues.max_relation_tokens ?? 8000,
+        NUMBER_CONSTRAINTS.max_relation_tokens,
+      ),
       enable_llm_cache: formValues.enable_llm_cache ?? true,
       enable_llm_cache_for_entity_extract: formValues.enable_llm_cache_for_entity_extract ?? true,
-      llm_model_max_async: formValues.llm_model_max_async ?? 4,
-      embedding_func_max_async: formValues.embedding_func_max_async ?? 8,
-      max_parallel_insert: formValues.max_parallel_insert ?? 2,
+      llm_model_max_async: constrainNumber(
+        formValues.llm_model_max_async ?? 4,
+        NUMBER_CONSTRAINTS.llm_model_max_async,
+      ),
+      embedding_func_max_async: constrainNumber(
+        formValues.embedding_func_max_async ?? 8,
+        NUMBER_CONSTRAINTS.embedding_func_max_async,
+      ),
+      max_parallel_insert: constrainNumber(
+        formValues.max_parallel_insert ?? 2,
+        NUMBER_CONSTRAINTS.max_parallel_insert,
+      ),
     };
     if (embeddingApiKey) {
       payload.embedding_api_key = embeddingApiKey;
@@ -241,6 +392,9 @@ export function SettingsPage() {
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (!event.currentTarget.reportValidity()) {
+      return;
+    }
     const payload = buildPayload(event.currentTarget);
     if (payload) {
       updateSettings.mutate(payload);
@@ -476,11 +630,13 @@ export function SettingsPage() {
             <Field
               label="Vision timeout (ms)"
               name="vision_timeout_ms"
-              value={String(formValues?.vision_timeout_ms ?? 10000)}
+              value={numberValue("vision_timeout_ms", 10000)}
               placeholder="10000"
               disabled={busy}
               type="number"
-              onChange={(value) => updateField("vision_timeout_ms", Number(value))}
+              {...NUMBER_CONSTRAINTS.vision_timeout_ms}
+              onChange={(value) => updateNumberField("vision_timeout_ms", value)}
+              onBlur={() => commitNumberField("vision_timeout_ms", 10000)}
             />
             <SelectField
               label="Reranker provider"
@@ -543,11 +699,13 @@ export function SettingsPage() {
             <Field
               label="Reranker timeout (ms)"
               name="reranker_timeout_ms"
-              value={String(formValues?.reranker_timeout_ms ?? 10000)}
+              value={numberValue("reranker_timeout_ms", 10000)}
               placeholder="10000"
               disabled={busy}
               type="number"
-              onChange={(value) => updateField("reranker_timeout_ms", Number(value))}
+              {...NUMBER_CONSTRAINTS.reranker_timeout_ms}
+              onChange={(value) => updateNumberField("reranker_timeout_ms", value)}
+              onBlur={() => commitNumberField("reranker_timeout_ms", 10000)}
             />
           </div>
         </section>
@@ -596,11 +754,13 @@ export function SettingsPage() {
             <Field
               label="LLM timeout (ms)"
               name="llm_timeout_ms"
-              value={String(formValues?.llm_timeout_ms ?? 10000)}
+              value={numberValue("llm_timeout_ms", 10000)}
               placeholder="10000"
               disabled={busy}
               type="number"
-              onChange={(value) => updateField("llm_timeout_ms", Number(value))}
+              {...NUMBER_CONSTRAINTS.llm_timeout_ms}
+              onChange={(value) => updateNumberField("llm_timeout_ms", value)}
+              onBlur={() => commitNumberField("llm_timeout_ms", 10000)}
             />
             <div className="min-w-0 text-sm font-medium text-[#3a4a53]">
               <span className="mb-1.5 block truncate">Capabilities</span>
@@ -664,20 +824,24 @@ export function SettingsPage() {
             <Field
               label="MinerU timeout (ms)"
               name="mineru_timeout_ms"
-              value={String(formValues?.mineru_timeout_ms ?? DEFAULT_MINERU_TIMEOUT_MS)}
+              value={numberValue("mineru_timeout_ms", DEFAULT_MINERU_TIMEOUT_MS)}
               placeholder={String(DEFAULT_MINERU_TIMEOUT_MS)}
               disabled={busy}
               type="number"
-              onChange={(value) => updateField("mineru_timeout_ms", Number(value))}
+              {...NUMBER_CONSTRAINTS.mineru_timeout_ms}
+              onChange={(value) => updateNumberField("mineru_timeout_ms", value)}
+              onBlur={() => commitNumberField("mineru_timeout_ms", DEFAULT_MINERU_TIMEOUT_MS)}
             />
             <Field
               label="MinerU poll interval (ms)"
               name="mineru_poll_interval_ms"
-              value={String(formValues?.mineru_poll_interval_ms ?? 1000)}
+              value={numberValue("mineru_poll_interval_ms", 1000)}
               placeholder="1000"
               disabled={busy}
               type="number"
-              onChange={(value) => updateField("mineru_poll_interval_ms", Number(value))}
+              {...NUMBER_CONSTRAINTS.mineru_poll_interval_ms}
+              onChange={(value) => updateNumberField("mineru_poll_interval_ms", value)}
+              onBlur={() => commitNumberField("mineru_poll_interval_ms", 1000)}
             />
             <CheckboxField
               label="Require HPC MinerU coordinator"
@@ -732,20 +896,24 @@ export function SettingsPage() {
             <Field
               label="Chunk token size"
               name="chunk_token_size"
-              value={String(formValues?.chunk_token_size ?? 1200)}
+              value={numberValue("chunk_token_size", 1200)}
               placeholder="1200"
               disabled={busy}
               type="number"
-              onChange={(value) => updateField("chunk_token_size", Number(value))}
+              {...NUMBER_CONSTRAINTS.chunk_token_size}
+              onChange={(value) => updateNumberField("chunk_token_size", value)}
+              onBlur={() => commitNumberField("chunk_token_size", 1200)}
             />
             <Field
               label="Chunk overlap tokens"
               name="chunk_overlap_token_size"
-              value={String(formValues?.chunk_overlap_token_size ?? 100)}
+              value={numberValue("chunk_overlap_token_size", 100)}
               placeholder="100"
               disabled={busy}
               type="number"
-              onChange={(value) => updateField("chunk_overlap_token_size", Number(value))}
+              {...NUMBER_CONSTRAINTS.chunk_overlap_token_size}
+              onChange={(value) => updateNumberField("chunk_overlap_token_size", value)}
+              onBlur={() => commitNumberField("chunk_overlap_token_size", 100)}
             />
             <CheckboxField
               label="Process images"
@@ -785,11 +953,13 @@ export function SettingsPage() {
             <Field
               label="Context window"
               name="context_window"
-              value={String(formValues?.context_window ?? 1)}
+              value={numberValue("context_window", 1)}
               placeholder="1"
               disabled={busy}
               type="number"
-              onChange={(value) => updateField("context_window", Number(value))}
+              {...NUMBER_CONSTRAINTS.context_window}
+              onChange={(value) => updateNumberField("context_window", value)}
+              onBlur={() => commitNumberField("context_window", 1)}
             />
             <Field
               label="Context mode"
@@ -802,11 +972,13 @@ export function SettingsPage() {
             <Field
               label="Max context tokens"
               name="max_context_tokens"
-              value={String(formValues?.max_context_tokens ?? 2000)}
+              value={numberValue("max_context_tokens", 2000)}
               placeholder="2000"
               disabled={busy}
               type="number"
-              onChange={(value) => updateField("max_context_tokens", Number(value))}
+              {...NUMBER_CONSTRAINTS.max_context_tokens}
+              onChange={(value) => updateNumberField("max_context_tokens", value)}
+              onBlur={() => commitNumberField("max_context_tokens", 2000)}
             />
           </div>
         </section>
@@ -834,56 +1006,68 @@ export function SettingsPage() {
             <Field
               label="Top K"
               name="top_k"
-              value={String(formValues?.top_k ?? 40)}
+              value={numberValue("top_k", 40)}
               placeholder="40"
               disabled={busy}
               type="number"
-              onChange={(value) => updateField("top_k", Number(value))}
+              {...NUMBER_CONSTRAINTS.top_k}
+              onChange={(value) => updateNumberField("top_k", value)}
+              onBlur={() => commitNumberField("top_k", 40)}
             />
             <Field
               label="Chunk top K"
               name="chunk_top_k"
-              value={String(formValues?.chunk_top_k ?? 20)}
+              value={numberValue("chunk_top_k", 20)}
               placeholder="20"
               disabled={busy}
               type="number"
-              onChange={(value) => updateField("chunk_top_k", Number(value))}
+              {...NUMBER_CONSTRAINTS.chunk_top_k}
+              onChange={(value) => updateNumberField("chunk_top_k", value)}
+              onBlur={() => commitNumberField("chunk_top_k", 20)}
             />
             <Field
               label="Cosine threshold"
               name="cosine_better_than_threshold"
-              value={String(formValues?.cosine_better_than_threshold ?? 0.2)}
+              value={numberValue("cosine_better_than_threshold", 0.2)}
               placeholder="0.2"
               disabled={busy}
               type="number"
-              onChange={(value) => updateField("cosine_better_than_threshold", Number(value))}
+              {...NUMBER_CONSTRAINTS.cosine_better_than_threshold}
+              onChange={(value) => updateNumberField("cosine_better_than_threshold", value)}
+              onBlur={() => commitNumberField("cosine_better_than_threshold", 0.2)}
             />
             <Field
               label="Max total tokens"
               name="max_total_tokens"
-              value={String(formValues?.max_total_tokens ?? 30000)}
+              value={numberValue("max_total_tokens", 30000)}
               placeholder="30000"
               disabled={busy}
               type="number"
-              onChange={(value) => updateField("max_total_tokens", Number(value))}
+              {...NUMBER_CONSTRAINTS.max_total_tokens}
+              onChange={(value) => updateNumberField("max_total_tokens", value)}
+              onBlur={() => commitNumberField("max_total_tokens", 30000)}
             />
             <Field
               label="Max entity tokens"
               name="max_entity_tokens"
-              value={String(formValues?.max_entity_tokens ?? 6000)}
+              value={numberValue("max_entity_tokens", 6000)}
               placeholder="6000"
               disabled={busy}
               type="number"
-              onChange={(value) => updateField("max_entity_tokens", Number(value))}
+              {...NUMBER_CONSTRAINTS.max_entity_tokens}
+              onChange={(value) => updateNumberField("max_entity_tokens", value)}
+              onBlur={() => commitNumberField("max_entity_tokens", 6000)}
             />
             <Field
               label="Max relation tokens"
               name="max_relation_tokens"
-              value={String(formValues?.max_relation_tokens ?? 8000)}
+              value={numberValue("max_relation_tokens", 8000)}
               placeholder="8000"
               disabled={busy}
               type="number"
-              onChange={(value) => updateField("max_relation_tokens", Number(value))}
+              {...NUMBER_CONSTRAINTS.max_relation_tokens}
+              onChange={(value) => updateNumberField("max_relation_tokens", value)}
+              onBlur={() => commitNumberField("max_relation_tokens", 8000)}
             />
             <CheckboxField
               label="Enable rerank"
@@ -909,29 +1093,35 @@ export function SettingsPage() {
             <Field
               label="LLM max async"
               name="llm_model_max_async"
-              value={String(formValues?.llm_model_max_async ?? 4)}
+              value={numberValue("llm_model_max_async", 4)}
               placeholder="4"
               disabled={busy}
               type="number"
-              onChange={(value) => updateField("llm_model_max_async", Number(value))}
+              {...NUMBER_CONSTRAINTS.llm_model_max_async}
+              onChange={(value) => updateNumberField("llm_model_max_async", value)}
+              onBlur={() => commitNumberField("llm_model_max_async", 4)}
             />
             <Field
               label="Embedding max async"
               name="embedding_func_max_async"
-              value={String(formValues?.embedding_func_max_async ?? 8)}
+              value={numberValue("embedding_func_max_async", 8)}
               placeholder="8"
               disabled={busy}
               type="number"
-              onChange={(value) => updateField("embedding_func_max_async", Number(value))}
+              {...NUMBER_CONSTRAINTS.embedding_func_max_async}
+              onChange={(value) => updateNumberField("embedding_func_max_async", value)}
+              onBlur={() => commitNumberField("embedding_func_max_async", 8)}
             />
             <Field
               label="Max parallel insert"
               name="max_parallel_insert"
-              value={String(formValues?.max_parallel_insert ?? 2)}
+              value={numberValue("max_parallel_insert", 2)}
               placeholder="2"
               disabled={busy}
               type="number"
-              onChange={(value) => updateField("max_parallel_insert", Number(value))}
+              {...NUMBER_CONSTRAINTS.max_parallel_insert}
+              onChange={(value) => updateNumberField("max_parallel_insert", value)}
+              onBlur={() => commitNumberField("max_parallel_insert", 2)}
             />
           </div>
         </section>
@@ -984,29 +1174,35 @@ export function SettingsPage() {
             <Field
               label="Timeout (ms)"
               name="embedding_timeout_ms"
-              value={String(formValues?.embedding_timeout_ms ?? 10000)}
+              value={numberValue("embedding_timeout_ms", 10000)}
               placeholder="10000"
               disabled={busy}
               type="number"
-              onChange={(value) => updateField("embedding_timeout_ms", Number(value))}
+              {...NUMBER_CONSTRAINTS.embedding_timeout_ms}
+              onChange={(value) => updateNumberField("embedding_timeout_ms", value)}
+              onBlur={() => commitNumberField("embedding_timeout_ms", 10000)}
             />
             <Field
               label="Dimensions"
               name="embedding_dimensions"
-              value={String(formValues?.embedding_dimensions ?? 1536)}
+              value={numberValue("embedding_dimensions", 1536)}
               placeholder="1536"
               disabled={busy}
               type="number"
-              onChange={(value) => updateField("embedding_dimensions", Number(value))}
+              {...NUMBER_CONSTRAINTS.embedding_dimensions}
+              onChange={(value) => updateNumberField("embedding_dimensions", value)}
+              onBlur={() => commitNumberField("embedding_dimensions", 1536)}
             />
             <Field
               label="Batch size"
               name="embedding_batch_size"
-              value={String(formValues?.embedding_batch_size ?? 16)}
+              value={numberValue("embedding_batch_size", 16)}
               placeholder="16"
               disabled={busy}
               type="number"
-              onChange={(value) => updateField("embedding_batch_size", Number(value))}
+              {...NUMBER_CONSTRAINTS.embedding_batch_size}
+              onChange={(value) => updateNumberField("embedding_batch_size", value)}
+              onBlur={() => commitNumberField("embedding_batch_size", 16)}
             />
             <label className="flex h-10 items-center gap-2 self-end rounded-md border border-[#cfd8dd] px-3 text-sm font-medium text-[#3a4a53]">
               <input
@@ -1050,6 +1246,7 @@ export function SettingsPage() {
               onClick={() => {
                 setFormOverride(null);
                 setSecretValues(blankSecretValues());
+                setNumberDrafts({});
               }}
               disabled={busy}
             >
@@ -1079,6 +1276,10 @@ function Field({
   required = true,
   type = "text",
   onChange,
+  onBlur,
+  min,
+  max,
+  step,
 }: {
   label: string;
   name: keyof SettingsProfileIn;
@@ -1088,6 +1289,10 @@ function Field({
   required?: boolean;
   type?: string;
   onChange?: (value: string) => void;
+  onBlur?: () => void;
+  min?: number;
+  max?: number;
+  step?: number | "any";
 }) {
   const valueProps = onChange
     ? {
@@ -1107,6 +1312,10 @@ function Field({
         placeholder={placeholder}
         disabled={disabled}
         required={required}
+        min={min}
+        max={max}
+        step={step}
+        onBlur={onBlur}
       />
     </label>
   );
@@ -1252,4 +1461,15 @@ function getMessage(settingsError: Error | null, mutationError: Error | null) {
     return settingsError.message;
   }
   return "";
+}
+
+function constrainNumber(value: number, constraints: NumberConstraints): number {
+  const minConstrained = Math.max(value, constraints.min);
+  return constraints.max == null ? minConstrained : Math.min(minConstrained, constraints.max);
+}
+
+function withoutNumberDraft(drafts: NumberDrafts, key: NumberFieldName): NumberDrafts {
+  const next = { ...drafts };
+  delete next[key];
+  return next;
 }

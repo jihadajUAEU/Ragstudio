@@ -72,6 +72,14 @@ export function DashboardPage() {
     runsQuery.isFetching ||
     diagnosticsQuery.isFetching ||
     graphQuery.isFetching;
+  const apiServiceValue = healthQuery.isLoading
+    ? "Checking"
+    : healthQuery.data?.status === "ok"
+      ? "Online"
+      : healthQuery.isError
+        ? "Unavailable"
+        : "Unknown";
+  const apiServiceTone = healthQuery.data?.status === "ok" ? "good" : "muted";
 
   const refresh = () => {
     void healthQuery.refetch();
@@ -221,9 +229,9 @@ export function DashboardPage() {
         <MetricCard
           icon={Server}
           label="API service"
-          value={healthQuery.data?.status === "ok" ? "Online" : "Unavailable"}
-          detail={healthQuery.data?.service ?? "Waiting for backend"}
-          tone={healthQuery.data?.status === "ok" ? "good" : "muted"}
+          value={apiServiceValue}
+          detail={healthQuery.data?.service ?? (healthQuery.isLoading ? "Checking backend" : "Waiting for backend")}
+          tone={apiServiceTone}
         />
         <MetricCard
           icon={FileText}
@@ -265,41 +273,57 @@ export function DashboardPage() {
 
       <section className="grid gap-4 xl:grid-cols-[minmax(0,1.25fr)_minmax(360px,0.75fr)]">
         <Panel title="Documents" icon={FileText}>
-          <DataTable
-            columns={documentColumns}
-            data={documentsQuery.data?.items ?? []}
-            emptyTitle="No documents indexed"
-            emptyDescription="Uploaded files and their ingestion status will appear here."
-          />
+          <QueryTable
+            isLoading={documentsQuery.isLoading}
+            isError={documentsQuery.isError}
+            error={documentsQuery.error}
+          >
+            <DataTable
+              columns={documentColumns}
+              data={documentsQuery.data?.items ?? []}
+              emptyTitle="No documents indexed"
+              emptyDescription="Uploaded files and their ingestion status will appear here."
+            />
+          </QueryTable>
         </Panel>
 
         <Panel title="Jobs" icon={Database}>
-          <DataTable
-            columns={jobColumns}
-            data={jobsQuery.data?.items ?? []}
-            emptyTitle="No jobs running"
-            emptyDescription="Ingestion and indexing jobs will be listed as work starts."
-          />
+          <QueryTable isLoading={jobsQuery.isLoading} isError={jobsQuery.isError} error={jobsQuery.error}>
+            <DataTable
+              columns={jobColumns}
+              data={jobsQuery.data?.items ?? []}
+              emptyTitle="No jobs running"
+              emptyDescription="Ingestion and indexing jobs will be listed as work starts."
+            />
+          </QueryTable>
         </Panel>
       </section>
 
       <section className="grid gap-4 xl:grid-cols-2">
         <Panel title="Variants" icon={SlidersHorizontal}>
-          <DataTable
-            columns={variantColumns}
-            data={variantsQuery.data?.items ?? []}
-            emptyTitle="No variants configured"
-            emptyDescription="Retrieval and generation variants will appear after they are created."
-          />
+          <QueryTable
+            isLoading={variantsQuery.isLoading}
+            isError={variantsQuery.isError}
+            error={variantsQuery.error}
+          >
+            <DataTable
+              columns={variantColumns}
+              data={variantsQuery.data?.items ?? []}
+              emptyTitle="No variants configured"
+              emptyDescription="Retrieval and generation variants will appear after they are created."
+            />
+          </QueryTable>
         </Panel>
 
         <Panel title="Recent Runs" icon={PlayCircle}>
-          <DataTable
-            columns={runColumns}
-            data={runsQuery.data?.items ?? []}
-            emptyTitle="No query runs"
-            emptyDescription="Queries executed through the studio will be shown here."
-          />
+          <QueryTable isLoading={runsQuery.isLoading} isError={runsQuery.isError} error={runsQuery.error}>
+            <DataTable
+              columns={runColumns}
+              data={runsQuery.data?.items ?? []}
+              emptyTitle="No query runs"
+              emptyDescription="Queries executed through the studio will be shown here."
+            />
+          </QueryTable>
         </Panel>
       </section>
 
@@ -371,4 +395,30 @@ function Panel({
       {children}
     </section>
   );
+}
+
+function QueryTable({
+  isLoading,
+  isError,
+  error,
+  children,
+}: {
+  isLoading: boolean;
+  isError: boolean;
+  error: Error | null;
+  children: ReactNode;
+}) {
+  if (isLoading) {
+    return <EmptyState icon={Loader2} title="Loading" description="Fetching live studio state." />;
+  }
+  if (isError) {
+    return (
+      <EmptyState
+        icon={AlertTriangle}
+        title="Data unavailable"
+        description={error?.message ?? "This dashboard section could not be loaded."}
+      />
+    );
+  }
+  return children;
 }

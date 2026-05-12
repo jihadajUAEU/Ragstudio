@@ -1,9 +1,11 @@
 import pytest
 from ragstudio.db.engine import init_db, make_engine, make_session_factory
 from ragstudio.db.models import Chunk, Document
+from ragstudio.schemas.chunks import ChunkOut
 from ragstudio.schemas.parsing import DomainMetadata, IndexDocumentIn
 from ragstudio.services.adapter import AdapterChunk
 from ragstudio.services.chunk_persistence_service import ChunkPersistenceService
+from ragstudio.services.chunk_service import ChunkService
 
 
 @pytest.mark.asyncio
@@ -175,6 +177,37 @@ async def test_persist_chunks_blocks_exact_arabic_for_quarantined_reference(
     assert persisted.text_search_ar == ""
     assert persisted.tokens_ar == []
     assert persisted.metadata_json["quality_action_policy"]["index_exact_arabic"] is False
+
+
+def test_chunk_output_does_not_rehydrate_blocked_exact_arabic_metadata():
+    chunk = Chunk(
+        id="chunk-blocked",
+        document_id="doc-blocked",
+        text="[19:13] \u0648\u062d\u0646\u0627\u0646\u0627",
+        source_location={"page": 312},
+        metadata_json={
+            "quality_action_policy": {
+                "persist_chunk": True,
+                "index_vector": False,
+                "index_exact_arabic": False,
+                "project_graph": False,
+            },
+            "reference_metadata": {"references": ["19:13"]},
+        },
+        text_search_ar="[19:13] \u0648\u062d\u0646\u0627\u0646\u0627",
+        tokens_ar=["\u0648\u062d\u0646\u0627\u0646\u0627"],
+    )
+    output = ChunkOut.model_validate(chunk)
+    metadata = dict(output.metadata)
+
+    ChunkService.__new__(ChunkService)._materialize_search_metadata(
+        output,
+        metadata,
+        chunk,
+    )
+
+    assert metadata["text_search_ar"] == ""
+    assert metadata["tokens_ar"] == []
 
 
 @pytest.mark.asyncio

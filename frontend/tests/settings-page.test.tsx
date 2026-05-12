@@ -324,4 +324,37 @@ describe("SettingsPage provider sync", () => {
       }),
     );
   });
+
+  it("keeps numeric fields bounded and does not coerce blanks to zero", async () => {
+    renderSettings();
+
+    await screen.findByDisplayValue("gpt-4.1");
+    const topK = screen.getByLabelText("Top K") as HTMLInputElement;
+    const cosineThreshold = screen.getByLabelText("Cosine threshold") as HTMLInputElement;
+
+    expect(topK).toHaveAttribute("min", "1");
+    expect(topK).toHaveAttribute("max", "1000");
+    expect(cosineThreshold).toHaveAttribute("min", "0");
+    expect(cosineThreshold).toHaveAttribute("max", "1");
+    expect(cosineThreshold).toHaveAttribute("step", "0.01");
+
+    fireEvent.change(topK, { target: { value: "" } });
+    expect(topK).toHaveValue(null);
+    fireEvent.blur(topK);
+    expect(topK).toHaveValue(40);
+
+    fireEvent.change(cosineThreshold, { target: { value: "2" } });
+    fireEvent.blur(cosineThreshold);
+    expect(cosineThreshold).toHaveValue(1);
+
+    fireEvent.click(screen.getByRole("button", { name: /^Save$/i }));
+
+    await waitFor(() => expect(apiClient.updateDefaultSettings).toHaveBeenCalled());
+    expect(vi.mocked(apiClient.updateDefaultSettings).mock.calls[0][0]).toEqual(
+      expect.objectContaining({
+        top_k: 40,
+        cosine_better_than_threshold: 1,
+      }),
+    );
+  });
 });

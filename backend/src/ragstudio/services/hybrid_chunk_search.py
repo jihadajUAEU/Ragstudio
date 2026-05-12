@@ -29,6 +29,18 @@ class HybridChunkSearch:
 
         chunk_text = chunk.text.lower()
         metadata = chunk.metadata_json or {}
+        if _contains_arabic(query) and not self._quality_allows_exact_arabic(metadata):
+            return ChunkScore(
+                score=0.0,
+                breakdown={
+                    "quality_blocked_arabic": 1.0,
+                    "retrieval_explain": build_retrieval_explain(
+                        query_reference=None,
+                        metadata=metadata,
+                        score_breakdown={"quality_blocked_arabic": 1.0},
+                    ).model_dump(),
+                },
+            )
         semantics = self._semantics(metadata)
         query_ref = semantics.extract_query_reference(query) if semantics else None
         reference_metadata = metadata.get("reference_metadata")
@@ -320,3 +332,7 @@ class HybridChunkSearch:
         if isinstance(ref, str) and ref:
             return ref
         return None
+
+
+def _contains_arabic(value: str) -> bool:
+    return re.search(r"[\u0600-\u06FF]", value) is not None

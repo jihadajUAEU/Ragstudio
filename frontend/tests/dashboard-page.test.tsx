@@ -1,6 +1,6 @@
 import "@testing-library/jest-dom/vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, render } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { apiClient } from "../src/api/client";
@@ -91,6 +91,27 @@ describe("DashboardPage", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("does not show empty dashboard tables while data is still loading", () => {
+    vi.mocked(apiClient.health).mockReturnValue(new Promise(() => undefined));
+    vi.mocked(apiClient.documents).mockReturnValue(new Promise(() => undefined));
+
+    renderDashboardPage();
+
+    expect(screen.getByText("Checking")).toBeVisible();
+    expect(screen.getAllByText("Loading").length).toBeGreaterThan(0);
+    expect(screen.queryByText("No documents indexed")).not.toBeInTheDocument();
+  });
+
+  it("shows a section error instead of an empty table when a dashboard query fails", async () => {
+    vi.mocked(apiClient.documents).mockRejectedValueOnce(new Error("documents failed"));
+
+    renderDashboardPage();
+
+    expect(await screen.findByText("Data unavailable")).toBeVisible();
+    expect(screen.getByText("documents failed")).toBeVisible();
+    expect(screen.queryByText("No documents indexed")).not.toBeInTheDocument();
   });
 });
 

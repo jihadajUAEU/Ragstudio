@@ -261,17 +261,27 @@ class ChunkService:
         metadata: dict[str, Any],
         chunk: Chunk | None = None,
     ) -> None:
-        if not metadata.get("text_search_ar"):
+        allows_exact_arabic = self._metadata_allows_exact_arabic(metadata)
+        if not allows_exact_arabic:
+            metadata["text_search_ar"] = ""
+            metadata["tokens_ar"] = []
+        elif not metadata.get("text_search_ar"):
             metadata["text_search_ar"] = (
                 chunk.text_search_ar if chunk is not None else None
             ) or normalize_arabic_text(output.text)
-        if not metadata.get("tokens_ar"):
+        if allows_exact_arabic and not metadata.get("tokens_ar"):
             tokens_ar = chunk.tokens_ar if chunk is not None else None
             metadata["tokens_ar"] = tokens_ar or arabic_tokens(output.text)
         if not metadata.get("extraction_quality"):
             metadata["extraction_quality"] = (
                 chunk.extraction_quality if chunk is not None else None
             ) or {}
+
+    def _metadata_allows_exact_arabic(self, metadata: dict[str, Any]) -> bool:
+        policy = metadata.get("quality_action_policy")
+        if not isinstance(policy, dict):
+            return True
+        return bool(policy.get("index_exact_arabic", True))
 
     def _safe_metadata(self, metadata: dict[str, Any], document_id: str) -> dict[str, Any]:
         safe = {

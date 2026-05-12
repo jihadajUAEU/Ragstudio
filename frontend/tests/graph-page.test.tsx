@@ -15,9 +15,11 @@ vi.mock("@xyflow/react", () => ({
   Position: { Left: "left", Right: "right" },
   ReactFlow: ({
     nodes,
+    edges,
     children,
   }: {
     nodes: Array<{ id: string; data: { label: string; type: string; detail: string } }>;
+    edges: Array<{ id: string; label?: string }>;
     children: ReactNode;
   }) => (
     <div aria-label="Graph relationship map">
@@ -28,6 +30,7 @@ vi.mock("@xyflow/react", () => ({
           <span>{node.data.detail}</span>
         </div>
       ))}
+      <span>{edges.length} preview edges</span>
       {children}
     </div>
   ),
@@ -157,5 +160,6 @@ describe("GraphPage", () => {
         "Showing 50 of 51 nodes and 49 of 50 edges in the visual preview.",
       ),
     ).toBeInTheDocument();
+    expect(screen.getByText("49 preview edges")).toBeInTheDocument();
   });
 });

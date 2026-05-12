@@ -720,6 +720,88 @@ async def test_lifecycle_marks_runtime_failed_when_all_references_are_quarantine
 
 
 @pytest.mark.asyncio
+async def test_lifecycle_cleans_nonpreparsed_native_index_when_quality_blocks_all(client):
+    app = client._transport.app
+    artifact_path = app.state.settings.data_dir / "quality-native-cleanup.pdf"
+    artifact_path.write_text("runtime text", encoding="utf-8")
+
+    async with app.state.session_factory() as session:
+        session.add(
+            SettingsProfile(
+                id="default",
+                provider="openai-compatible",
+                llm_model="gpt-4o",
+                llm_base_url="http://llm.test",
+                embedding_model="text-embedding-3-large",
+                embedding_base_url="http://embedding.test",
+                storage_backend="postgres_pgvector_neo4j",
+                runtime_mode="runtime",
+            )
+        )
+        document = Document(
+            filename="quality-native-cleanup.pdf",
+            content_type="application/pdf",
+            sha256="quality-native-cleanup",
+            artifact_path=str(artifact_path),
+            status=StageStatus.READY.value,
+        )
+        session.add(document)
+        await session.commit()
+
+        runtime = FakeRuntime(
+            [
+                RuntimeChunk(
+                    text=(
+                        "[19:13] \u0648\u062d\u0646\u0627\u0646\u0627 "
+                        "\u0645\u0646 \u0644\u062f\u0646\u0627"
+                    ),
+                    source_location={"page": 312},
+                    metadata={
+                        "quality_action_policy": {
+                            "persist_chunk": True,
+                            "index_vector": False,
+                            "index_exact_arabic": False,
+                            "project_graph": False,
+                            "graph_confidence": "blocked",
+                            "quality_flags": ["missing_expected_script:arabic"],
+                        },
+                        "reference_metadata": {"references": ["19:13"]},
+                    },
+                    runtime_source_id="runtime-blocked",
+                    content_type="text",
+                )
+            ]
+        )
+        result = await IndexLifecycleService(
+            session,
+            app.state.settings,
+            runtime_factory=FakeFactory(runtime),
+            health_service=FakeHealthService(),
+        ).reindex_document(
+            document.id,
+            options=IndexDocumentIn(
+                parser_mode="mineru_strict",
+                domain_metadata=_quran_metadata(),
+            ),
+        )
+        index_record = await session.scalar(
+            select(IndexRecord).where(IndexRecord.document_id == document.id)
+        )
+
+    assert runtime.indexed_paths == [str(artifact_path)]
+    assert runtime.deleted == [document.id, document.id]
+    assert index_record is not None
+    assert index_record.status == StageStatus.FAILED.value
+    assert index_record.error == "No chunks passed the runtime materialization quality gate."
+    assert result.graph_materialization == {
+        "status": "skipped",
+        "node_count": 0,
+        "edge_count": 0,
+        "reason": "No chunks passed the runtime materialization quality gate.",
+    }
+
+
+@pytest.mark.asyncio
 async def test_lifecycle_creates_pending_graph_projection_before_runtime_enrichment(client):
     app = client._transport.app
     artifact_path = app.state.settings.data_dir / "pending-before-runtime.pdf"

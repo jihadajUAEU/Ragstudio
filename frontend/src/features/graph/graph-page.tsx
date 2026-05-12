@@ -79,8 +79,12 @@ export function GraphPage() {
     diagnosticsQuery.data?.checks.find((check) => check.name === "runtime_mode")?.detail ??
     "Graph capability is disabled by the active runtime profile.";
 
-  const previewNodes = filteredGraph.nodes.slice(0, 50);
-  const previewEdges = filteredGraph.edges.slice(0, 50);
+  const previewGraph = useMemo(
+    () => buildPreviewGraphData(filteredGraph.nodes, filteredGraph.edges, 50),
+    [filteredGraph.nodes, filteredGraph.edges],
+  );
+  const previewNodes = previewGraph.nodes;
+  const previewEdges = previewGraph.edges;
   const visualGraph = useMemo(() => buildVisualGraph(previewNodes, previewEdges), [previewNodes, previewEdges]);
   const filteredResultEmpty = hasGraphData && filteredGraph.nodes.length === 0 && filteredGraph.edges.length === 0;
 
@@ -128,10 +132,10 @@ export function GraphPage() {
         </div>
       ) : null}
 
-      {nodes.length > previewNodes.length || edges.length > previewEdges.length ? (
+      {filteredGraph.nodes.length > previewNodes.length || filteredGraph.edges.length > previewEdges.length ? (
         <div className="rounded-md border border-[#d6dde1] bg-[#f7fafb] px-3 py-2 text-sm text-[#3a4a53]">
-          Showing {visualGraph.nodes.length} of {nodes.length} nodes and {visualGraph.edges.length} of{" "}
-          {edges.length} edges in the visual preview.
+          Showing {visualGraph.nodes.length} of {filteredGraph.nodes.length} nodes and{" "}
+          {visualGraph.edges.length} of {filteredGraph.edges.length} edges in the visual preview.
         </div>
       ) : null}
 
@@ -511,6 +515,23 @@ function hasGraphFilters(filters: GraphFilters): boolean {
 
 function edgeScopedFiltersActive(filters: GraphFilters): boolean {
   return Boolean(filters.edgeType || filters.documentId || filters.searchText.trim());
+}
+
+function buildPreviewGraphData(
+  rawNodes: Record<string, unknown>[],
+  rawEdges: Record<string, unknown>[],
+  limit: number,
+): { nodes: Record<string, unknown>[]; edges: Record<string, unknown>[] } {
+  const nodes = rawNodes.slice(0, limit);
+  const nodeIds = new Set(nodes.map((node, index) => graphId(node, index)));
+  const edges = rawEdges
+    .filter((edge) => {
+      const source = graphEndpoint(edge, ["source", "source_id", "from", "start"]);
+      const target = graphEndpoint(edge, ["target", "target_id", "to", "end"]);
+      return Boolean(source && target && nodeIds.has(source) && nodeIds.has(target));
+    })
+    .slice(0, limit);
+  return { nodes, edges };
 }
 
 function buildVisualGraph(
