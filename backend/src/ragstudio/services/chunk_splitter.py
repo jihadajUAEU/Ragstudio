@@ -332,9 +332,10 @@ class ChunkSplitter:
 
         blocks: list[ReferenceSourceBlock] = []
         for index, block in enumerate(normalized_blocks):
+            warning_metadata = tuple(block.warning_metadata())
             warning_codes = tuple(
                 warning["code"]
-                for warning in block.warning_metadata()
+                for warning in warning_metadata
                 if isinstance(warning.get("code"), str)
             )
             blocks.append(
@@ -344,6 +345,7 @@ class ChunkSplitter:
                     page_end=block.page,
                     block_type=block.block_type,
                     parser_warning_codes=warning_codes,
+                    parser_warnings=warning_metadata,
                     source_block_ref=self._source_block_ref(
                         block,
                         content_ref=content_ref,

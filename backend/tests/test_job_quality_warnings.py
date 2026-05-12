@@ -360,6 +360,8 @@ async def test_fix_job_quality_warnings_queues_strict_reindex_from_stored_option
     assert repair_plan["ai_suggestion"]["status"] == "succeeded"
     assert repair_plan["ai_suggestion"]["model"] == "test-reasoning-model"
     repaired_custom_json = payload["index_options"]["domain_metadata"]["custom_json"]
+    assert "repair_plan" not in repaired_custom_json
+    assert repaired_custom_json["repair_plan_ref"]["summary"] == repair_plan["summary"]
     repair_metadata = repaired_custom_json["repair"]
     assert repair_metadata["reference_unit_missing_expected_script"] == {
         "action": "preserve_parallel_reference_units",
@@ -422,14 +424,19 @@ async def test_fix_job_quality_warnings_queues_strict_reindex_from_stored_option
     assert queued.status == StageStatus.READY.value
     assert queued.job_options == payload["index_options"]
     assert queued.result["index_options"] == payload["index_options"]
+    queued_custom_json = queued.job_options["domain_metadata"]["custom_json"]
+    assert "repair_plan" not in queued_custom_json
+    assert queued_custom_json["repair_plan_ref"] == {
+        "version": 1,
+        "strategy": "metadata_aware_warning_repair",
+        "source_job_id": "job-quality-warning-fix",
+        "document_id": "doc-quality-warning-fix",
+        "warning_counts": repair_plan["warning_counts"],
+        "summary": repair_plan["summary"],
+    }
+    assert queued.result["repair_plan"]["summary"] == repair_plan["summary"]
     assert (
-        queued.job_options["domain_metadata"]["custom_json"]["repair_plan"]["summary"]
-        == repair_plan["summary"]
-    )
-    assert (
-        queued.job_options["domain_metadata"]["custom_json"]["repair_plan"][
-            "ai_suggestion"
-        ]["suggestion"]["summary"]
+        queued.result["repair_plan"]["ai_suggestion"]["suggestion"]["summary"]
         == "Preserve parallel reference text and recover prose blocks."
     )
     assert document is not None

@@ -697,6 +697,92 @@ def test_chunk_splitter_builds_canonical_hadith_units_from_header_body_blocks(
     assert parser_warning_codes(header_only) == []
 
 
+def test_chunk_splitter_preserves_unassigned_canonical_blocks_as_provenance(
+    tmp_path: Path,
+):
+    arabic_body = "\u0642\u0627\u0644 \u0631\u0633\u0648\u0644 \u0627\u0644\u0644\u0647"
+    content_list = tmp_path / "source_content_list.json"
+    content_list.write_text(
+        json.dumps(
+            [
+                {"type": "text", "text": "Collection Preface", "page_idx": 0},
+                {"type": "equation_interline", "page_idx": 0},
+                {"type": "text", "text": "Book 1, Hadith 3", "page_idx": 3},
+                {"type": "text", "text": arabic_body, "page_idx": 3},
+                {"type": "text", "text": "Detached commentary", "page_idx": 8},
+            ],
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    chunk = AdapterChunk(
+        text="fallback markdown should not be used",
+        source_location={"artifact": "source/auto/source.md"},
+        metadata={
+            "parser_metadata": {
+                "backend": "mineru",
+                "artifact_extract_dir": str(tmp_path),
+                "content_list_ref": "source_content_list.json",
+                "chunk_index": 0,
+            }
+        },
+    )
+    metadata = DomainMetadata(
+        domain="hadith",
+        document_type="collection",
+        tags=["hadith", "arabic"],
+        script="arabic",
+        custom_json={
+            "reference_schema": {
+                "type": "book_hadith",
+                "canonical_ref_template": "book:{book}:hadith:{hadith}",
+            },
+            "chunking": {"unit": "hadith", "preserve_parallel_text": True},
+            "reference_resolution": {
+                "enabled": True,
+                "build_canonical_units": True,
+                "carry_forward_body_blocks": True,
+                "header_only_policy": "provenance_only",
+                "max_page_gap": 2,
+            },
+            "provenance": {"preserve_original_blocks": True},
+        },
+    )
+
+    split = ChunkSplitter(max_words=1500).split(
+        [chunk],
+        domain_metadata=metadata,
+        parser_mode="mineru_strict",
+    )
+
+    assert len(split) == 4
+    preface, warning_only, canonical, detached = split
+    assert preface.content_type == "reference_provenance"
+    assert preface.text == "Collection Preface"
+    assert preface.metadata["parser_metadata"]["provenance_reason"] == (
+        "unassigned_before_first_reference"
+    )
+    assert preface.metadata["quality_action_policy"]["index_vector"] is False
+
+    assert warning_only.content_type == "reference_provenance"
+    assert warning_only.text.startswith("[Parser quality provenance retained")
+    assert parser_warning_codes(warning_only) == [
+        "suspected_text_misclassified_as_equation"
+    ]
+
+    assert canonical.metadata["reference_metadata"]["references"] == [
+        "book:1:hadith:3"
+    ]
+    assert arabic_body in canonical.text
+
+    assert detached.content_type == "reference_provenance"
+    assert detached.text == "Detached commentary"
+    assert detached.metadata["parser_metadata"]["provenance_reason"] == (
+        "max_page_gap_exceeded"
+    )
+    assert detached.metadata["quality_action_policy"]["project_graph"] is False
+
+
 def test_chunk_splitter_builds_canonical_quran_verse_from_header_body_blocks(
     tmp_path: Path,
 ):

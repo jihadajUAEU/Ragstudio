@@ -156,6 +156,12 @@ class JobQualityWarningService:
             raise JobQualityWarningRepairUnavailable(str(exc)) from exc
         if queued_job is None:
             raise JobQualityWarningRepairDocumentNotFound("Document not found")
+        queued_job.result = {
+            **(queued_job.result if isinstance(queued_job.result, dict) else {}),
+            "repair_plan": repair_plan,
+        }
+        await self.session.commit()
+        await self.session.refresh(queued_job)
 
         index_options = options.model_dump(mode="json", exclude_none=True)
         return JobQualityWarningRepairOut(
@@ -763,10 +769,24 @@ class JobQualityWarningService:
         patch = self._dict_value(repair_plan.get("metadata_patch"))
         custom_json = self._deep_merge(custom_json, patch)
         custom_json = self._with_repair_reference_schema(domain_metadata, custom_json)
-        custom_json["repair_plan"] = repair_plan
+        custom_json["repair_plan_ref"] = self._repair_plan_ref(repair_plan)
         domain_metadata["custom_json"] = custom_json
         payload["domain_metadata"] = domain_metadata
         return IndexDocumentIn.model_validate(payload)
+
+    def _repair_plan_ref(self, repair_plan: dict[str, Any]) -> dict[str, Any]:
+        return {
+            key: value
+            for key, value in {
+                "version": repair_plan.get("version"),
+                "strategy": repair_plan.get("strategy"),
+                "source_job_id": repair_plan.get("source_job_id"),
+                "document_id": repair_plan.get("document_id"),
+                "warning_counts": repair_plan.get("warning_counts"),
+                "summary": repair_plan.get("summary"),
+            }.items()
+            if value not in (None, {}, [])
+        }
 
     def _with_repair_reference_schema(
         self,
