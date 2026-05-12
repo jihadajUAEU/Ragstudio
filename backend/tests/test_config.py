@@ -34,7 +34,15 @@ def test_app_settings_keeps_private_reranker_hosts_out_of_defaults():
 def test_app_settings_accepts_explicit_private_reranker_hosts():
     settings = AppSettings(
         data_dir=Path("/tmp/ragstudio-test"),
-        allowed_reranker_hosts="127.0.0.1,10.10.9.193",
+        allowed_reranker_hosts="127.0.0.1,10.10.9.*",
     )
 
-    assert settings.allowed_reranker_hosts == ["127.0.0.1", "10.10.9.193"]
+    assert settings.allowed_reranker_hosts == ["127.0.0.1", "10.10.9.*"]
+
+
+def test_app_settings_accepts_json_reranker_hosts_from_env(monkeypatch):
+    monkeypatch.setenv("RAGSTUDIO_ALLOWED_RERANKER_HOSTS", '["127.0.0.1","10.10.9.*"]')
+
+    settings = AppSettings(data_dir=Path("/tmp/ragstudio-test"))
+
+    assert settings.allowed_reranker_hosts == ["127.0.0.1", "10.10.9.*"]

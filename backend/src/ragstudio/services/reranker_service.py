@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ipaddress
 from typing import Any
 from urllib.parse import urlparse
 
@@ -120,7 +121,7 @@ class RerankerService:
         if not self.allowed_hosts:
             return False
         host = (urlparse(url).hostname or "").lower()
-        return host in self.allowed_hosts
+        return any(_host_matches_allowed_pattern(host, allowed) for allowed in self.allowed_hosts)
 
     def _failure_trace(
         self,
@@ -231,3 +232,28 @@ class RerankerService:
             return float(value)
         except (TypeError, ValueError):
             return None
+
+
+def _host_matches_allowed_pattern(host: str, allowed: str) -> bool:
+    if host == allowed:
+        return True
+    if "*" not in allowed:
+        return False
+    return _ipv4_wildcard_matches(host, allowed)
+
+
+def _ipv4_wildcard_matches(host: str, pattern: str) -> bool:
+    host_parts = host.split(".")
+    pattern_parts = pattern.split(".")
+    if len(host_parts) != 4 or len(pattern_parts) != 4:
+        return False
+    try:
+        ipaddress.IPv4Address(host)
+    except ValueError:
+        return False
+    for host_part, pattern_part in zip(host_parts, pattern_parts, strict=True):
+        if pattern_part == "*":
+            continue
+        if host_part != pattern_part:
+            return False
+    return True
