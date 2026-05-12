@@ -1,7 +1,8 @@
 from typing import Any
 
 from ragstudio.config import AppSettings
-from ragstudio.db.models import GraphProjectionRecord
+from ragstudio.db.models import GraphProjectionRecord, Job
+from ragstudio.schemas.common import StageStatus, now_utc
 from ragstudio.schemas.diagnostics import DiagnosticsOut
 from ragstudio.schemas.runtime import RuntimeOverallStatus
 from ragstudio.services.adapter import RAGAnythingAdapter
@@ -10,7 +11,7 @@ from ragstudio.services.runtime_profile_service import (
     RuntimeProfileNotConfiguredError,
     RuntimeProfileService,
 )
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 OPTIONAL_SKIPPED_RUNTIME_CHECKS = {"reranker"}
@@ -64,6 +65,7 @@ class DiagnosticsService:
                 runtime_profile_id=profile.id if profile else None,
             )
         )
+        dependency_report.update(await self._job_worker_report(session))
         raganything_available = bool(dependency_report.get("raganything_available"))
 
         if not raganything_available:
@@ -79,6 +81,13 @@ class DiagnosticsService:
                 warnings.append(f"Graph projection {graph_projection}{suffix}")
             else:
                 warnings.append(f"Graph projection is {graph_projection}{suffix}")
+        stale_running_jobs = dependency_report.get("stale_running_jobs", 0)
+        if stale_running_jobs == 1:
+            warnings.append("1 indexing job has an expired worker lease.")
+        elif stale_running_jobs > 1:
+            warnings.append(
+                f"{stale_running_jobs} indexing jobs have expired worker leases."
+            )
 
         return DiagnosticsOut(
             capabilities={
@@ -133,6 +142,8 @@ class DiagnosticsService:
             "native_scoped_query": report.get("native_scoped_query"),
             "scoped_query": report.get("scoped_query"),
             "scoped_query_detail": report.get("scoped_query_detail"),
+            "stale_running_jobs": report.get("stale_running_jobs", 0),
+            "ready_index_jobs": report.get("ready_index_jobs", 0),
         }
 
     def _fallback_dependency_report(
@@ -221,6 +232,31 @@ class DiagnosticsService:
         return {
             "graph_projection": record.status,
             "graph_projection_detail": detail,
+        }
+
+    async def _job_worker_report(self, session: AsyncSession) -> dict[str, int]:
+        timestamp = now_utc()
+        stale_running_jobs = await session.scalar(
+            select(func.count())
+            .select_from(Job)
+            .where(
+                Job.type == "index_document",
+                Job.status == StageStatus.RUNNING.value,
+                Job.lease_expires_at.is_not(None),
+                Job.lease_expires_at < timestamp,
+            )
+        )
+        ready_index_jobs = await session.scalar(
+            select(func.count())
+            .select_from(Job)
+            .where(
+                Job.type == "index_document",
+                Job.status == StageStatus.READY.value,
+            )
+        )
+        return {
+            "stale_running_jobs": stale_running_jobs or 0,
+            "ready_index_jobs": ready_index_jobs or 0,
         }
 
     def _overall_status(
