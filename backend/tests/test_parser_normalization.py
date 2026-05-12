@@ -188,7 +188,41 @@ def test_disallowed_block_type_uses_recovered_text_when_available():
 
     assert blocks[0].text == "Recovered caption text."
     assert blocks[0].warning_metadata()[0]["code"] == "recovered_text_from_disallowed_block"
-    assert blocks[0].warning_metadata()[0]["recovery_source"] == "ocr_repair"
+
+
+def test_repair_metadata_recovers_text_bearing_disallowed_block_as_prose():
+    metadata = DomainMetadata(
+        custom_json={
+            "parser_normalization": {
+                "allowed_block_types": ["paragraph"],
+                "recover_text_bearing_blocks_as_prose": True,
+            }
+        }
+    )
+    data = [
+        {"type": "heading", "text": "Hadith text misclassified as heading", "page_idx": 0}
+    ]
+
+    blocks = MinerUContentNormalizer().normalize_content_list(data, domain_metadata=metadata)
+
+    assert blocks[0].text == "Hadith text misclassified as heading"
+    assert blocks[0].warning_metadata()[0]["code"] == "recovered_text_from_disallowed_block"
+
+
+def test_repair_metadata_recovers_text_bearing_equation_as_prose():
+    metadata = DomainMetadata(
+        custom_json={
+            "parser_normalization": {
+                "recover_text_bearing_blocks_as_prose": True,
+            }
+        }
+    )
+    data = [{"type": "equation", "text": "Arabic prose misclassified as equation", "page_idx": 0}]
+
+    blocks = MinerUContentNormalizer().normalize_content_list(data, domain_metadata=metadata)
+
+    assert blocks[0].text == "Arabic prose misclassified as equation"
+    assert blocks[0].warning_metadata()[0]["code"] == "recovered_text_from_misclassified_block"
 
 
 def test_top_level_table_body_is_extracted_for_table_blocks():

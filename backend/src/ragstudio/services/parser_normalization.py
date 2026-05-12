@@ -31,6 +31,7 @@ class ExpectedContentProfile:
     reference_patterns: tuple[str, ...] = ()
     content_domain: str = "generic"
     parser_strictness: str = "normal"
+    recover_text_bearing_blocks_as_prose: bool = False
 
     @classmethod
     def from_domain_metadata(cls, domain_metadata: DomainMetadata) -> ExpectedContentProfile:
@@ -59,6 +60,9 @@ class ExpectedContentProfile:
         parser_strictness = parser_json.get("parser_strictness") or parser_json.get("strictness")
         if not isinstance(parser_strictness, str) or not parser_strictness.strip():
             parser_strictness = "strict" if reference_patterns or expected_scripts else "normal"
+        recover_text_bearing_blocks_as_prose = bool(
+            parser_json.get("recover_text_bearing_blocks_as_prose")
+        )
 
         return cls(
             expected_scripts=frozenset(expected_scripts),
@@ -66,6 +70,7 @@ class ExpectedContentProfile:
             reference_patterns=tuple(reference_patterns),
             content_domain=_normalize_token(domain_metadata.domain or "generic"),
             parser_strictness=parser_strictness.strip().lower(),
+            recover_text_bearing_blocks_as_prose=recover_text_bearing_blocks_as_prose,
         )
 
     def allows_block_type(self, block_type: str) -> bool:
@@ -144,16 +149,23 @@ class MinerUContentNormalizer:
                 block_type in EQUATION_BLOCK_TYPES
                 and not expected_profile.allows_equations_as_content()
             ):
+                recover_text = (
+                    recovery.text.replace("\x00", "").strip()
+                    if recovery and recovery.text.strip()
+                    else text
+                    if expected_profile.recover_text_bearing_blocks_as_prose
+                    else ""
+                )
                 warning = self._warning_for_misclassified_equation(
                     block_type,
                     page,
-                    recovered=bool(recovery and recovery.text.strip()),
+                    recovered=bool(recover_text),
                     recovery_source=recovery.source if recovery else None,
                 )
-                if recovery and recovery.text.strip():
+                if recover_text:
                     normalized.append(
                         NormalizedBlock(
-                            text=recovery.text.replace("\x00", "").strip(),
+                            text=recover_text,
                             page=page,
                             block_type=block_type,
                             source_item=item,
@@ -175,17 +187,22 @@ class MinerUContentNormalizer:
 
             if not expected_profile.allows_block_type(block_type):
                 if text or (recovery and recovery.text.strip()):
+                    recover_text = (
+                        recovery.text.replace("\x00", "").strip()
+                        if recovery and recovery.text.strip()
+                        else text
+                        if expected_profile.recover_text_bearing_blocks_as_prose
+                        else ""
+                    )
                     warning = self._warning_for_disallowed_block(
                         block_type,
                         page,
-                        recovered=bool(recovery and recovery.text.strip()),
+                        recovered=bool(recover_text),
                         recovery_source=recovery.source if recovery else None,
                     )
                     normalized.append(
                         NormalizedBlock(
-                            text=recovery.text.replace("\x00", "").strip()
-                            if recovery and recovery.text.strip()
-                            else "",
+                            text=recover_text,
                             page=page,
                             block_type=block_type,
                             source_item=item,

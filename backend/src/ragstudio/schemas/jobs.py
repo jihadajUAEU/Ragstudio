@@ -51,3 +51,13 @@ class JobQualityWarningsOut(StudioModel):
     limit: int
     truncated: bool
     items: list[ParserQualityWarningOut]
+
+
+class JobQualityWarningRepairOut(StudioModel):
+    source_job_id: str
+    document_id: str
+    queued_job_id: str
+    queued_job_status: StageStatus
+    index_options: dict[str, Any]
+    repair_plan: dict[str, Any]
+    message: str

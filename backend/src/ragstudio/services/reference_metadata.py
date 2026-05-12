@@ -42,6 +42,16 @@ class ReferenceSemantics:
     boost_neighbor_verses: bool = False
     relationships: dict[str, list[str]] = field(default_factory=dict)
     reference_pattern: str | None = None
+    canonical_ref_template: str | None = None
+    canonical_units_enabled: bool = False
+    carry_forward_body_blocks: bool = False
+    header_only_policy: str = "answerable"
+    continuation_policy: str = "until_next_reference"
+    max_page_gap: int | None = None
+    require_single_reference_per_answerable_chunk: bool = False
+    preserve_original_blocks: bool = False
+    block_preview_chars: int = 160
+    store_text_hash: bool = False
 
     @classmethod
     def from_metadata(cls, metadata: DomainMetadata) -> ReferenceSemantics:
@@ -49,9 +59,20 @@ class ReferenceSemantics:
         reference_schema = custom.get("reference_schema")
         chunking_value = custom.get("chunking")
         retrieval_value = custom.get("retrieval")
+        reference_resolution_value = custom.get("reference_resolution")
+        provenance_value = custom.get("provenance")
         chunking: dict[str, Any] = chunking_value if isinstance(chunking_value, dict) else {}
         retrieval: dict[str, Any] = retrieval_value if isinstance(retrieval_value, dict) else {}
+        reference_resolution: dict[str, Any] = (
+            reference_resolution_value
+            if isinstance(reference_resolution_value, dict)
+            else {}
+        )
+        provenance: dict[str, Any] = (
+            provenance_value if isinstance(provenance_value, dict) else {}
+        )
         schema_pattern = cls._schema_pattern(reference_schema)
+        canonical_ref_template = cls._canonical_ref_template(reference_schema)
 
         has_reference_schema = isinstance(reference_schema, dict)
         structured_reference = has_reference_schema or cls._has_structured_reference_fields(
@@ -96,6 +117,50 @@ class ReferenceSemantics:
             ),
             relationships=cls._relationships(custom.get("relationships")),
             reference_pattern=schema_pattern,
+            canonical_ref_template=canonical_ref_template,
+            canonical_units_enabled=bool(
+                structured_reference
+                and cls._bool_value(reference_resolution.get("enabled"), default=False)
+                and cls._bool_value(
+                    reference_resolution.get("build_canonical_units"),
+                    default=False,
+                )
+            ),
+            carry_forward_body_blocks=cls._bool_value(
+                reference_resolution.get(
+                    "carry_forward_body_blocks",
+                    reference_resolution.get("continuation_reference_carry_forward"),
+                ),
+                default=False,
+            ),
+            header_only_policy=cls._string_value(
+                reference_resolution.get("header_only_policy"),
+                default="answerable",
+            ),
+            continuation_policy=cls._string_value(
+                reference_resolution.get("continuation_policy"),
+                default="until_next_reference",
+            ),
+            max_page_gap=cls._optional_nonnegative_int(
+                reference_resolution.get("max_page_gap")
+            ),
+            require_single_reference_per_answerable_chunk=cls._bool_value(
+                reference_resolution.get("require_single_reference_per_answerable_chunk"),
+                default=False,
+            ),
+            preserve_original_blocks=cls._bool_value(
+                provenance.get("preserve_original_blocks"),
+                default=False,
+            ),
+            block_preview_chars=cls._safe_nonnegative_int(
+                provenance.get("block_preview_chars"),
+                default=160,
+            )
+            or 160,
+            store_text_hash=cls._bool_value(
+                provenance.get("store_text_hash"),
+                default=False,
+            ),
         )
 
     def extract_query_reference(self, query: str) -> dict[str, int | str] | None:
@@ -263,7 +328,10 @@ class ReferenceSemantics:
                 continue
             ref[key] = int(value) if value.isdigit() else value
 
-        if isinstance(ref.get("chapter"), int) and isinstance(ref.get("verse"), int):
+        templated_ref = self._render_canonical_ref(ref)
+        if templated_ref:
+            ref["ref"] = templated_ref
+        elif isinstance(ref.get("chapter"), int) and isinstance(ref.get("verse"), int):
             ref["ref"] = f"{ref['chapter']}:{ref['verse']}"
         elif isinstance(ref.get("book"), int) and isinstance(ref.get("hadith"), int):
             ref["ref"] = f"book:{ref['book']}:hadith:{ref['hadith']}"
@@ -276,6 +344,16 @@ class ReferenceSemantics:
         else:
             ref["ref"] = match.group(0).strip()
         return ref
+
+    def _render_canonical_ref(self, ref: dict[str, int | str]) -> str | None:
+        template = self.canonical_ref_template
+        if not template:
+            return None
+        try:
+            rendered = template.format(**ref).strip()
+        except (KeyError, IndexError, ValueError):
+            return None
+        return rendered or None
 
     @classmethod
     def _has_structured_reference_fields(cls, metadata: DomainMetadata) -> bool:
@@ -368,6 +446,15 @@ class ReferenceSemantics:
         return None
 
     @staticmethod
+    def _canonical_ref_template(reference_schema: Any) -> str | None:
+        if not isinstance(reference_schema, dict):
+            return None
+        value = reference_schema.get("canonical_ref_template")
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        return None
+
+    @staticmethod
     def _field_map_has_chapter_and_verse(fields: dict[Any, Any]) -> bool:
         tokens = {
             str(item).casefold()
@@ -428,6 +515,16 @@ class ReferenceSemantics:
         if isinstance(value, str) and value.isdigit():
             return int(value)
         return default
+
+    @staticmethod
+    def _optional_nonnegative_int(value: Any) -> int | None:
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, int):
+            return max(value, 0)
+        if isinstance(value, str) and value.isdigit():
+            return int(value)
+        return None
 
     @staticmethod
     def _bool_value(value: Any, *, default: bool) -> bool:

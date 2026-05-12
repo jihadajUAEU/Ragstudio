@@ -1,7 +1,15 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type ReactNode,
+} from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
-import { AlertCircle, FileUp, Loader2, RefreshCcw, Trash2, Upload, X } from "lucide-react";
+import { AlertCircle, FileUp, Loader2, RefreshCcw, Search, Trash2, Upload, X } from "lucide-react";
 
 import { apiClient, DEFAULT_PARSER_MODE } from "../../api/client";
 import type {
@@ -23,14 +31,23 @@ const queryKeys = {
   jobs: ["jobs"],
 } as const;
 
+type DocumentsTab = "documents" | "jobs";
+const WARNING_VISIBLE_ROW_LIMIT = 200;
+
 export function DocumentsPage() {
   const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const hadActiveJobsRef = useRef(false);
+  const documentsPanelRef = useRef<HTMLDivElement>(null);
+  const jobsPanelRef = useRef<HTMLDivElement>(null);
   const [file, setFile] = useState<File | null>(null);
   const [deletedFilename, setDeletedFilename] = useState("");
   const [reindexedFilename, setReindexedFilename] = useState("");
   const [selectedWarningJobId, setSelectedWarningJobId] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<DocumentsTab>("documents");
+  const [documentSearch, setDocumentSearch] = useState("");
+  const [jobSearch, setJobSearch] = useState("");
+  const [jobStatusFilter, setJobStatusFilter] = useState("");
   const [indexOptions, setIndexOptions] = useState<IndexDocumentIn>({
     parser_mode: DEFAULT_PARSER_MODE,
     domain_metadata: { domain: "generic", document_type: "document", tags: [] },
@@ -48,6 +65,10 @@ export function DocumentsPage() {
     queryFn: apiClient.documents,
     refetchInterval: activeJobs ? 2000 : false,
   });
+  const documents = useMemo(
+    () => documentsQuery.data?.items ?? [],
+    [documentsQuery.data?.items],
+  );
   const profilesQuery = useQuery({
     queryKey: ["domain-profiles"],
     queryFn: apiClient.domainProfiles,
@@ -62,6 +83,7 @@ export function DocumentsPage() {
       }
       void queryClient.invalidateQueries({ queryKey: queryKeys.documents });
       void queryClient.invalidateQueries({ queryKey: queryKeys.jobs });
+      setActiveTab("jobs");
     },
   });
   const deleteDocument = useMutation({
@@ -72,11 +94,23 @@ export function DocumentsPage() {
         queryClient.invalidateQueries({ queryKey: queryKeys.jobs }),
         queryClient.invalidateQueries({ queryKey: ["chunks"] }),
       ]);
+      setActiveTab("documents");
     },
   });
   const reindexDocument = useMutation({
     mutationFn: ({ documentId, options }: { documentId: string; options: IndexDocumentIn }) =>
       apiClient.createDocumentReindexJob(documentId, options),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.documents }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.jobs }),
+        queryClient.invalidateQueries({ queryKey: ["chunks"] }),
+      ]);
+      setActiveTab("jobs");
+    },
+  });
+  const fixQualityWarnings = useMutation({
+    mutationFn: (jobId: string) => apiClient.fixJobQualityWarnings(jobId),
     onSuccess: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: queryKeys.documents }),
@@ -110,13 +144,59 @@ export function DocumentsPage() {
     [indexOptions, reindexDocument],
   );
 
+  const activateTab = useCallback((tab: DocumentsTab, focusPanel = false) => {
+    setActiveTab(tab);
+    if (focusPanel) {
+      window.requestAnimationFrame(() => {
+        const panel = tab === "documents" ? documentsPanelRef.current : jobsPanelRef.current;
+        panel?.focus();
+      });
+    }
+  }, []);
+
+  const handleTabKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLButtonElement>, tab: DocumentsTab) => {
+      const nextTab = tab === "documents" ? "jobs" : "documents";
+      if (event.key === "ArrowRight" || event.key === "ArrowLeft") {
+        event.preventDefault();
+        activateTab(nextTab, true);
+      }
+      if (event.key === "Home") {
+        event.preventDefault();
+        activateTab("documents", true);
+      }
+      if (event.key === "End") {
+        event.preventDefault();
+        activateTab("jobs", true);
+      }
+    },
+    [activateTab],
+  );
+
   const refresh = () => {
     void documentsQuery.refetch();
     void jobsQuery.refetch();
   };
   const documentsById = useMemo(
-    () => new Map((documentsQuery.data?.items ?? []).map((document) => [document.id, document])),
-    [documentsQuery.data?.items],
+    () => new Map(documents.map((document) => [document.id, document])),
+    [documents],
+  );
+  const filteredDocuments = useMemo(
+    () => filterDocuments(documents, documentSearch),
+    [documentSearch, documents],
+  );
+  const jobStatusOptions = useMemo(
+    () => Array.from(new Set(jobs.map((job) => job.status))).sort(),
+    [jobs],
+  );
+  const activeJobCount = useMemo(() => jobs.filter(isActiveJob).length, [jobs]);
+  const warningJobCount = useMemo(
+    () => jobs.filter(hasInspectableQualityWarnings).length,
+    [jobs],
+  );
+  const filteredJobs = useMemo(
+    () => filterJobs(jobs, documentsById, jobSearch, jobStatusFilter),
+    [documentsById, jobSearch, jobStatusFilter, jobs],
   );
   const selectedWarningJob = useMemo(
     () => jobs.find((job) => job.id === selectedWarningJobId) ?? null,
@@ -125,11 +205,39 @@ export function DocumentsPage() {
   const selectedWarningDocument = selectedWarningJob?.target_id
     ? documentsById.get(selectedWarningJob.target_id)
     : undefined;
+  const latestWarningJob = useMemo(
+    () => jobs.find(hasInspectableQualityWarnings) ?? null,
+    [jobs],
+  );
+  const latestWarningDocument = latestWarningJob?.target_id
+    ? documentsById.get(latestWarningJob.target_id)
+    : undefined;
+  const canFixSelectedWarnings = Boolean(
+    selectedWarningJobId &&
+      selectedWarningJob?.type === "index_document" &&
+      selectedWarningJob.status === "succeeded",
+  );
+  const selectedWarningRepairPending = Boolean(
+    selectedWarningJobId &&
+      fixQualityWarnings.isPending &&
+      fixQualityWarnings.variables === selectedWarningJobId,
+  );
+  const selectedWarningRepairQueued = Boolean(
+    selectedWarningJobId &&
+      fixQualityWarnings.isSuccess &&
+      fixQualityWarnings.variables === selectedWarningJobId,
+  );
   const warningDetailsQuery = useQuery({
     queryKey: ["jobs", selectedWarningJobId, "quality-warnings"],
     queryFn: () => apiClient.jobQualityWarnings(selectedWarningJobId ?? ""),
     enabled: selectedWarningJobId !== null,
   });
+  const fixSelectedWarningJob = useCallback(() => {
+    if (!selectedWarningJobId) {
+      return;
+    }
+    fixQualityWarnings.mutate(selectedWarningJobId);
+  }, [fixQualityWarnings, selectedWarningJobId]);
 
   const refetchDocuments = documentsQuery.refetch;
 
@@ -361,24 +469,32 @@ export function DocumentsPage() {
               />
             </label>
           </div>
-          <div className="min-w-0">
-            <DomainMetadataPanel
-              profiles={profilesQuery.data?.items ?? []}
-              value={indexOptions}
-              onChange={setIndexOptions}
-              disabled={uploadDocument.isPending}
-              onValidityChange={setMetadataValid}
-              suggestContext={
-                file
-                  ? {
-                      filename: file.name,
-                      content_type: file.type || "application/octet-stream",
-                      file,
-                    }
-                  : undefined
-              }
-            />
-          </div>
+          <details className="min-w-0 rounded-md border border-[#d6dde1] bg-[#fbfcfd] p-3">
+            <summary className="cursor-pointer text-sm font-medium text-[#3a4a53]">
+              Index options
+              <span className="ml-2 text-xs font-normal text-[#62717a]">
+                Default parser selected
+              </span>
+            </summary>
+            <div className="mt-3 min-w-0">
+              <DomainMetadataPanel
+                profiles={profilesQuery.data?.items ?? []}
+                value={indexOptions}
+                onChange={setIndexOptions}
+                disabled={uploadDocument.isPending}
+                onValidityChange={setMetadataValid}
+                suggestContext={
+                  file
+                    ? {
+                        filename: file.name,
+                        content_type: file.type || "application/octet-stream",
+                        file,
+                      }
+                    : undefined
+                }
+              />
+            </div>
+          </details>
           <div className="flex justify-end">
             <Button type="submit" disabled={!file || !metadataValid || uploadDocument.isPending}>
               {uploadDocument.isPending ? (
@@ -395,8 +511,66 @@ export function DocumentsPage() {
         </p>
       </section>
 
-      <section className="grid gap-4">
-        <Panel title="Documents" icon={FileUp}>
+      <OperationsStatusStrip
+        documentsCount={documents.length}
+        activeJobCount={activeJobCount}
+        warningJobCount={warningJobCount}
+        latestWarningLabel={
+          latestWarningJob ? formatJobName(latestWarningJob, latestWarningDocument) : null
+        }
+        onViewJobs={() => activateTab("jobs", true)}
+      />
+
+      <div className="grid gap-1">
+        <p className="min-h-5 text-sm text-[#62717a]" role="status">
+          {deleteDocument.isSuccess ? `Deleted ${deletedFilename}` : deleteDocument.error?.message}
+        </p>
+        <p className="min-h-5 text-sm text-[#62717a]" role="status">
+          {reindexDocument.isSuccess
+            ? `Reindex queued for ${reindexedFilename}`
+            : reindexDocument.error?.message}
+        </p>
+      </div>
+
+      <section
+        className="grid min-w-0 max-w-full gap-4 overflow-hidden"
+        aria-label="Documents workspace"
+      >
+        <div
+          role="tablist"
+          aria-label="Document workspace sections"
+          className="scroll-mt-24 flex min-w-0 max-w-full flex-wrap gap-2 overflow-hidden border-b border-[#d6dde1]"
+        >
+          <TabButton
+            id="documents-tab"
+            controls="documents-panel"
+            selected={activeTab === "documents"}
+            onSelect={() => activateTab("documents")}
+            onKeyDown={(event) => handleTabKeyDown(event, "documents")}
+            label="Documents"
+            count={documents.length}
+          />
+          <TabButton
+            id="jobs-tab"
+            controls="jobs-panel"
+            selected={activeTab === "jobs"}
+            onSelect={() => activateTab("jobs")}
+            onKeyDown={(event) => handleTabKeyDown(event, "jobs")}
+            label="Jobs & Warnings"
+            count={jobs.length}
+          />
+        </div>
+
+        <div
+          id="documents-panel"
+          ref={documentsPanelRef}
+          role="tabpanel"
+          aria-labelledby="documents-tab"
+          tabIndex={-1}
+          hidden={activeTab !== "documents"}
+          className="min-w-0 max-w-full overflow-hidden"
+        >
+          <Panel title="Documents" icon={FileUp}>
           <div className="space-y-3">
             {documentsQuery.isLoading ? (
               <EmptyState
@@ -417,27 +591,44 @@ export function DocumentsPage() {
                 }
               />
             ) : (
-              <DataTable
-                columns={documentColumns}
-                data={documentsQuery.data?.items ?? []}
-                emptyTitle="No documents"
-                emptyDescription="Uploaded files will appear here."
-              />
+              <>
+                <TableToolbar
+                  searchLabel="Search documents"
+                  searchValue={documentSearch}
+                  searchPlaceholder="Filename, type, or status"
+                  onSearchChange={setDocumentSearch}
+                  filteredCount={filteredDocuments.length}
+                  totalCount={documents.length}
+                  hasActiveFilters={Boolean(documentSearch.trim())}
+                  onClearFilters={() => setDocumentSearch("")}
+                />
+                <DataTable
+                  ariaLabel="Documents table"
+                  columns={documentColumns}
+                  data={filteredDocuments}
+                  emptyTitle={documents.length ? "No matching documents" : "No documents"}
+                  emptyDescription={
+                    documents.length
+                      ? "Clear the search to see every uploaded file."
+                      : "Uploaded files will appear here."
+                  }
+                />
+              </>
             )}
-            <p className="min-h-5 text-sm text-[#62717a]" role="status">
-              {deleteDocument.isSuccess
-                ? `Deleted ${deletedFilename}`
-                : deleteDocument.error?.message}
-            </p>
-            <p className="min-h-5 text-sm text-[#62717a]" role="status">
-              {reindexDocument.isSuccess
-                ? `Reindex queued for ${reindexedFilename}`
-                : reindexDocument.error?.message}
-            </p>
           </div>
-        </Panel>
+          </Panel>
+        </div>
 
-        <Panel title="Jobs" icon={RefreshCcw}>
+        <div
+          id="jobs-panel"
+          ref={jobsPanelRef}
+          role="tabpanel"
+          aria-labelledby="jobs-tab"
+          tabIndex={-1}
+          hidden={activeTab !== "jobs"}
+          className="min-w-0 max-w-full overflow-hidden"
+        >
+          <Panel title="Jobs & Warnings" icon={RefreshCcw}>
           {jobsQuery.isLoading ? (
             <EmptyState icon={Loader2} title="Loading jobs" description="Fetching job status." />
           ) : jobsQuery.isError ? (
@@ -453,15 +644,41 @@ export function DocumentsPage() {
               }
             />
           ) : (
-            <DataTable
-              columns={jobColumns}
-              data={jobs}
-              emptyTitle="No jobs"
-              emptyDescription="Upload and indexing jobs will appear here."
-            />
+            <>
+              <TableToolbar
+                searchLabel="Search jobs"
+                searchValue={jobSearch}
+                searchPlaceholder="Filename, warning, job id, or log"
+                onSearchChange={setJobSearch}
+                filteredCount={filteredJobs.length}
+                totalCount={jobs.length}
+                statusLabel="Job status"
+                statusValue={jobStatusFilter}
+                statusOptions={jobStatusOptions}
+                statusPlaceholder="All statuses"
+                onStatusChange={setJobStatusFilter}
+                hasActiveFilters={Boolean(jobSearch.trim() || jobStatusFilter)}
+                onClearFilters={() => {
+                  setJobSearch("");
+                  setJobStatusFilter("");
+                }}
+              />
+              <DataTable
+                ariaLabel="Jobs table"
+                columns={jobColumns}
+                data={filteredJobs}
+                emptyTitle={jobs.length ? "No matching jobs" : "No jobs"}
+                emptyDescription={
+                  jobs.length
+                    ? "Clear the search or status filter to see every job."
+                    : "Upload and indexing jobs will appear here."
+                }
+              />
+            </>
           )}
           {selectedWarningJobId ? (
             <QualityWarningsPanel
+              key={selectedWarningJobId}
               jobName={
                 selectedWarningJob
                   ? formatJobName(selectedWarningJob, selectedWarningDocument)
@@ -470,17 +687,342 @@ export function DocumentsPage() {
               details={warningDetailsQuery.data}
               isLoading={warningDetailsQuery.isLoading}
               error={warningDetailsQuery.error}
+              canFixWarnings={canFixSelectedWarnings}
+              isFixingWarnings={selectedWarningRepairPending}
+              fixStatus={
+                selectedWarningRepairQueued && fixQualityWarnings.data
+                  ? `Repair job queued: ${fixQualityWarnings.data.queued_job_id}`
+                  : null
+              }
+              fixError={
+                selectedWarningJobId && fixQualityWarnings.variables === selectedWarningJobId
+                  ? fixQualityWarnings.error
+                  : null
+              }
+              repairPlan={
+                selectedWarningRepairQueued && fixQualityWarnings.data
+                  ? fixQualityWarnings.data.repair_plan
+                  : null
+              }
+              onFixWarnings={fixSelectedWarningJob}
               onClose={() => setSelectedWarningJobId(null)}
             />
           ) : null}
-        </Panel>
+          </Panel>
+        </div>
       </section>
     </div>
   );
 }
 
+function isActiveJob(job: JobOut): boolean {
+  return job.status === "ready" || job.status === "running";
+}
+
 function hasActiveJobs(jobs: JobOut[]): boolean {
-  return jobs.some((job) => job.status === "ready" || job.status === "running");
+  return jobs.some(isActiveJob);
+}
+
+function OperationsStatusStrip({
+  documentsCount,
+  activeJobCount,
+  warningJobCount,
+  latestWarningLabel,
+  onViewJobs,
+}: {
+  documentsCount: number;
+  activeJobCount: number;
+  warningJobCount: number;
+  latestWarningLabel: string | null;
+  onViewJobs: () => void;
+}) {
+  return (
+    <section
+      aria-label="Document indexing status"
+      className="flex flex-col gap-3 rounded-md border border-[#d6dde1] bg-white p-3 lg:flex-row lg:items-center lg:justify-between"
+    >
+      <div className="grid min-w-0 flex-1 gap-3 sm:grid-cols-3">
+        <StatusSummaryItem label="Documents" value={documentsCount} />
+        <StatusSummaryItem label="Active jobs" value={activeJobCount} tone={activeJobCount ? "active" : "neutral"} />
+        <StatusSummaryItem label="Warning jobs" value={warningJobCount} tone={warningJobCount ? "warning" : "neutral"} />
+      </div>
+      <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center">
+        {latestWarningLabel ? (
+          <p className="min-w-0 truncate text-xs text-[#62717a]">
+            Latest warning: <span className="font-medium text-[#3a4a53]">{latestWarningLabel}</span>
+          </p>
+        ) : null}
+        <Button type="button" variant="secondary" size="sm" onClick={onViewJobs}>
+          <RefreshCcw className="h-4 w-4" aria-hidden="true" />
+          View jobs
+        </Button>
+      </div>
+    </section>
+  );
+}
+
+function StatusSummaryItem({
+  label,
+  value,
+  tone = "neutral",
+}: {
+  label: string;
+  value: number;
+  tone?: "neutral" | "active" | "warning";
+}) {
+  const valueClass =
+    tone === "active"
+      ? "text-[#176b87]"
+      : tone === "warning"
+        ? "text-[#8a5a00]"
+        : "text-[#1f2933]";
+
+  return (
+    <div className="min-w-0">
+      <p className="truncate text-xs font-medium uppercase text-[#62717a]">{label}</p>
+      <p className={`mt-1 text-lg font-semibold ${valueClass}`}>{value}</p>
+    </div>
+  );
+}
+
+function TabButton({
+  id,
+  controls,
+  selected,
+  onSelect,
+  onKeyDown,
+  label,
+  count,
+}: {
+  id: string;
+  controls: string;
+  selected: boolean;
+  onSelect: () => void;
+  onKeyDown: (event: KeyboardEvent<HTMLButtonElement>) => void;
+  label: string;
+  count: number;
+}) {
+  return (
+    <button
+      id={id}
+      type="button"
+      role="tab"
+      aria-selected={selected}
+      aria-controls={controls}
+      tabIndex={selected ? 0 : -1}
+      onClick={onSelect}
+      onKeyDown={onKeyDown}
+      className={
+        selected
+          ? "flex h-11 items-center gap-2 border-b-2 border-[#176b87] px-3 text-sm font-semibold text-[#176b87] outline-none focus:ring-2 focus:ring-[#176b87]"
+          : "flex h-11 items-center gap-2 border-b-2 border-transparent px-3 text-sm font-medium text-[#62717a] outline-none hover:text-[#24313a] focus:ring-2 focus:ring-[#176b87]"
+      }
+    >
+      <span>{label}</span>
+      <span
+        className={
+          selected
+            ? "rounded-md bg-[#e5f1f5] px-2 py-0.5 text-xs text-[#164f63]"
+            : "rounded-md bg-[#edf1f3] px-2 py-0.5 text-xs text-[#62717a]"
+        }
+      >
+        {count}
+      </span>
+    </button>
+  );
+}
+
+function TableToolbar({
+  searchLabel,
+  searchValue,
+  searchPlaceholder,
+  onSearchChange,
+  filteredCount,
+  totalCount,
+  statusLabel,
+  statusValue,
+  statusOptions,
+  statusPlaceholder = "All",
+  onStatusChange,
+  hasActiveFilters = false,
+  onClearFilters,
+}: {
+  searchLabel: string;
+  searchValue: string;
+  searchPlaceholder: string;
+  onSearchChange: (value: string) => void;
+  filteredCount: number;
+  totalCount: number;
+  statusLabel?: string;
+  statusValue?: string;
+  statusOptions?: string[];
+  statusPlaceholder?: string;
+  onStatusChange?: (value: string) => void;
+  hasActiveFilters?: boolean;
+  onClearFilters?: () => void;
+}) {
+  return (
+    <div className="flex min-w-0 max-w-full flex-col gap-3 overflow-hidden rounded-md border border-[#d6dde1] bg-white p-3 lg:flex-row lg:items-end lg:justify-between">
+      <div className="flex min-w-0 flex-1 flex-col gap-3 sm:flex-row sm:items-end">
+        <label className="min-w-0 flex-1 text-sm font-medium text-[#3a4a53]">
+          {searchLabel}
+          <div className="mt-1 flex h-10 items-center gap-2 rounded-md border border-[#d6dde1] bg-white px-3 focus-within:ring-2 focus-within:ring-[#176b87]">
+            <Search className="h-4 w-4 shrink-0 text-[#6f7f87]" aria-hidden="true" />
+            <input
+              value={searchValue}
+              onChange={(event) => onSearchChange(event.target.value)}
+              placeholder={searchPlaceholder}
+              className="min-w-0 flex-1 bg-transparent text-sm text-[#24313a] outline-none placeholder:text-[#8c9aa1]"
+            />
+          </div>
+        </label>
+        {statusLabel && statusOptions && onStatusChange ? (
+          <label className="min-w-0 text-sm font-medium text-[#3a4a53] sm:w-48">
+            {statusLabel}
+            <select
+              value={statusValue}
+              onChange={(event) => onStatusChange(event.target.value)}
+              className="mt-1 h-10 w-full rounded-md border border-[#d6dde1] bg-white px-3 text-sm text-[#24313a] outline-none focus:ring-2 focus:ring-[#176b87]"
+            >
+              <option value="">{statusPlaceholder}</option>
+              {statusOptions.map((status) => (
+                <option key={status} value={status}>
+                  {titleCase(status)}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
+      </div>
+      <div className="flex shrink-0 items-center gap-3">
+        {onClearFilters ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={onClearFilters}
+            disabled={!hasActiveFilters}
+          >
+            Clear filters
+          </Button>
+        ) : null}
+        <p className="text-xs font-medium text-[#62717a]" aria-live="polite">
+          {filteredCount} of {totalCount}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function filterDocuments(documents: DocumentOut[], query: string): DocumentOut[] {
+  const normalizedQuery = normalizeSearch(query);
+  if (!normalizedQuery) {
+    return documents;
+  }
+  return documents.filter((document) =>
+    searchTextMatches(
+      [document.filename, document.content_type, document.status, document.id],
+      normalizedQuery,
+    ),
+  );
+}
+
+function filterJobs(
+  jobs: JobOut[],
+  documentsById: Map<string, DocumentOut>,
+  query: string,
+  status: string,
+): JobOut[] {
+  const normalizedQuery = normalizeSearch(query);
+  return jobs.filter((job) => {
+    if (status && job.status !== status) {
+      return false;
+    }
+    if (!normalizedQuery) {
+      return true;
+    }
+    const document = job.target_id ? documentsById.get(job.target_id) : undefined;
+    const parserGroups = jobParserQualityGroups(job);
+    return searchTextMatches(
+      [
+        job.id,
+        job.target_id,
+        job.type,
+        job.status,
+        formatJobName(job, document),
+        formatJobType(job.type),
+        document?.filename,
+        formatMinerUResult(job),
+        jobStageText(job),
+        ...jobWarnings(job),
+        ...job.logs,
+        ...parserGroups.flatMap((group) => [
+          group.code,
+          group.message,
+          ...Object.keys(group.blockTypes),
+          ...Object.keys(group.expectedScripts),
+          ...Object.keys(group.actions),
+          ...group.references,
+        ]),
+      ],
+      normalizedQuery,
+    );
+  });
+}
+
+function filterWarningItems(
+  items: ParserQualityWarningOut[],
+  query: string,
+  codeFilter: string,
+): ParserQualityWarningOut[] {
+  const normalizedQuery = normalizeSearch(query);
+  return items.filter((item) => {
+    const code = item.code ?? "parser_warning";
+    if (codeFilter && code !== codeFilter) {
+      return false;
+    }
+    if (!normalizedQuery) {
+      return true;
+    }
+    return searchTextMatches(
+      [
+        item.chunk_id,
+        item.chunk_preview,
+        item.code,
+        item.message,
+        item.block_type,
+        item.page,
+        warningReferences(item),
+        item.source_location,
+        item.parser_metadata,
+        item.reference_metadata,
+        item.warning,
+      ],
+      normalizedQuery,
+    );
+  });
+}
+
+function normalizeSearch(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function searchTextMatches(values: unknown[], normalizedQuery: string): boolean {
+  return values.some((value) => stringifySearchValue(value).includes(normalizedQuery));
+}
+
+function stringifySearchValue(value: unknown): string {
+  if (value === null || value === undefined) {
+    return "";
+  }
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return String(value).toLowerCase();
+  }
+  try {
+    return JSON.stringify(value).toLowerCase();
+  } catch {
+    return String(value).toLowerCase();
+  }
 }
 
 function formatJobName(job: JobOut, document: DocumentOut | undefined): string {
@@ -694,51 +1236,182 @@ function QualityWarningsPanel({
   details,
   isLoading,
   error,
+  canFixWarnings,
+  isFixingWarnings,
+  fixStatus,
+  fixError,
+  repairPlan,
+  onFixWarnings,
   onClose,
 }: {
   jobName: string;
   details: JobQualityWarningsOut | undefined;
   isLoading: boolean;
   error: Error | null;
+  canFixWarnings: boolean;
+  isFixingWarnings: boolean;
+  fixStatus: string | null;
+  fixError: Error | null;
+  repairPlan: Record<string, unknown> | null;
+  onFixWarnings: () => void;
   onClose: () => void;
 }) {
+  const warningHeadingRef = useRef<HTMLHeadingElement>(null);
+  const [warningSearch, setWarningSearch] = useState("");
+  const [warningCodeFilter, setWarningCodeFilter] = useState("");
   const countEntries = warningCountEntries(details?.warning_counts ?? {});
   const indexQuality = details ? indexQualitySummary(details) : null;
+  const warningItems = useMemo(() => details?.items ?? [], [details?.items]);
+  const warningCodeOptions = useMemo(
+    () =>
+      Array.from(new Set(warningItems.map((item) => item.code ?? "parser_warning"))).sort((left, right) =>
+        left.localeCompare(right),
+      ),
+    [warningItems],
+  );
+  const filteredWarningItems = useMemo(
+    () => filterWarningItems(warningItems, warningSearch, warningCodeFilter),
+    [warningCodeFilter, warningItems, warningSearch],
+  );
+  const visibleWarningItems = useMemo(
+    () => filteredWarningItems.slice(0, WARNING_VISIBLE_ROW_LIMIT),
+    [filteredWarningItems],
+  );
+  const hiddenWarningCount = Math.max(filteredWarningItems.length - visibleWarningItems.length, 0);
+  const warningColumns = useMemo<ColumnDef<ParserQualityWarningOut>[]>(
+    () => [
+      {
+        accessorKey: "code",
+        header: "Warning",
+        cell: ({ row }) => (
+          <div className="min-w-0 space-y-1">
+            <span className="inline-flex max-w-full rounded-md bg-[#fff8df] px-2 py-1 text-xs font-medium text-[#705000]">
+              <span className="truncate">{row.original.code ?? "parser_warning"}</span>
+            </span>
+            {row.original.message ? (
+              <p className="line-clamp-2 text-xs leading-5 text-[#3a4a53]">
+                {row.original.message}
+              </p>
+            ) : null}
+          </div>
+        ),
+      },
+      {
+        accessorKey: "page",
+        header: "Location",
+        cell: ({ row }) => {
+          const metadataLine = [
+            row.original.page != null ? `Page ${row.original.page}` : null,
+            row.original.block_type,
+            warningReferences(row.original),
+          ]
+            .filter(Boolean)
+            .join(" · ");
+
+          return (
+            <div className="min-w-0 space-y-1 text-xs text-[#62717a]">
+              <p className="truncate font-medium text-[#3a4a53]">
+                {metadataLine || "No location metadata"}
+              </p>
+              <p className="truncate">{row.original.chunk_id}</p>
+            </div>
+          );
+        },
+      },
+      {
+        accessorKey: "chunk_preview",
+        header: "Preview",
+        cell: ({ row }) => (
+          <p className="line-clamp-3 text-xs leading-5 text-[#62717a]">
+            {row.original.chunk_preview || "No preview available."}
+          </p>
+        ),
+      },
+      {
+        id: "metadata",
+        header: "Metadata",
+        cell: ({ row }) => <WarningMetadataCell item={row.original} />,
+      },
+    ],
+    [],
+  );
+
+  useEffect(() => {
+    warningHeadingRef.current?.focus();
+  }, []);
 
   return (
-    <div className="mt-4 rounded-md border border-[#d6dde1] bg-[#fbfcfd] p-4">
+    <div
+      className="mt-4 min-w-0 max-w-full overflow-hidden rounded-md border border-[#d6dde1] bg-[#fbfcfd] p-4"
+      role="region"
+      aria-labelledby="warning-details-title"
+    >
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
-          <h4 className="truncate text-sm font-semibold text-[#1f2933]">Warning details</h4>
+          <h4
+            id="warning-details-title"
+            ref={warningHeadingRef}
+            tabIndex={-1}
+            className="truncate text-sm font-semibold text-[#1f2933] outline-none"
+          >
+            Warning details
+          </h4>
           <p className="truncate text-xs text-[#62717a]">{jobName}</p>
         </div>
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          onClick={onClose}
-          aria-label="Close warning details"
-        >
-          <X className="h-4 w-4" aria-hidden="true" />
-          Close
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            onClick={onFixWarnings}
+            disabled={!canFixWarnings || isFixingWarnings}
+            aria-label={`Fix warnings for ${jobName}`}
+          >
+            {isFixingWarnings ? (
+              <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+            ) : (
+              <RefreshCcw className="h-4 w-4" aria-hidden="true" />
+            )}
+            Fix warnings
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={onClose}
+            aria-label="Close warning details"
+          >
+            <X className="h-4 w-4" aria-hidden="true" />
+            Close
+          </Button>
+        </div>
       </div>
 
       {isLoading ? (
-        <p className="mt-4 text-sm text-[#62717a]">Loading warning details.</p>
+        <p className="mt-4 text-sm text-[#62717a]" role="status" aria-live="polite">
+          Loading warning details.
+        </p>
       ) : error ? (
         <p className="mt-4 text-sm text-[#8a1f11]">{error.message}</p>
       ) : details ? (
-        <div className="mt-4 space-y-4">
+        <div className="mt-4 min-w-0 space-y-4">
           <div className="flex flex-wrap gap-2 text-xs">
             {countEntries.length ? (
               countEntries.map(([code, count]) => (
-                <span
+                <button
                   key={code}
-                  className="rounded-md border border-[#e2c46b] bg-[#fff8df] px-2 py-1 text-[#705000]"
+                  type="button"
+                  onClick={() => setWarningCodeFilter(code)}
+                  aria-pressed={warningCodeFilter === code}
+                  aria-label={`Filter warnings by ${code}`}
+                  className={
+                    warningCodeFilter === code
+                      ? "rounded-md border border-[#176b87] bg-[#e5f1f5] px-2 py-1 text-[#164f63] outline-none focus:ring-2 focus:ring-[#176b87]"
+                      : "rounded-md border border-[#e2c46b] bg-[#fff8df] px-2 py-1 text-[#705000] outline-none hover:border-[#d1a837] focus:ring-2 focus:ring-[#176b87]"
+                  }
                 >
                   {code}={count}
-                </span>
+                </button>
               ))
             ) : (
               <span className="text-[#62717a]">No parser warning rows found.</span>
@@ -760,60 +1433,192 @@ function QualityWarningsPanel({
               ))}
             </ul>
           ) : null}
-          {details.items.length ? (
-            <ol className="max-h-96 space-y-2 overflow-auto pr-1">
-              {details.items.map((item, index) => (
-                <QualityWarningItem key={`${item.chunk_id}-${index}`} item={item} />
-              ))}
-            </ol>
+          {warningItems.length ? (
+            <div className="space-y-3">
+              <TableToolbar
+                searchLabel="Search warning details"
+                searchValue={warningSearch}
+                searchPlaceholder="Chunk, preview, page, reference, or metadata"
+                onSearchChange={setWarningSearch}
+                filteredCount={filteredWarningItems.length}
+                totalCount={warningItems.length}
+                statusLabel="Warning type"
+                statusValue={warningCodeFilter}
+                statusOptions={warningCodeOptions}
+                statusPlaceholder="All warning types"
+                onStatusChange={setWarningCodeFilter}
+                hasActiveFilters={Boolean(warningSearch.trim() || warningCodeFilter)}
+                onClearFilters={() => {
+                  setWarningSearch("");
+                  setWarningCodeFilter("");
+                }}
+              />
+              <DataTable
+                ariaLabel="Warning detail table"
+                columns={warningColumns}
+                data={visibleWarningItems}
+                emptyTitle="No matching warnings"
+                emptyDescription="Clear the search or warning type filter to see every warning."
+                className="max-h-96 min-w-0 max-w-full overflow-auto"
+              />
+              {hiddenWarningCount ? (
+                <p className="text-xs text-[#62717a]" role="status">
+                  Showing first {visibleWarningItems.length} of {filteredWarningItems.length} matching warnings. Refine search or warning type to narrow the list.
+                </p>
+              ) : null}
+            </div>
           ) : null}
+          <p className="min-h-5 text-sm text-[#62717a]" role="status">
+            {fixStatus ?? fixError?.message}
+          </p>
+          {repairPlan ? <RepairPlanSummary plan={repairPlan} /> : null}
         </div>
       ) : null}
     </div>
   );
 }
 
-function QualityWarningItem({ item }: { item: ParserQualityWarningOut }) {
-  const metadataLine = [
-    item.page != null ? `Page ${item.page}` : null,
-    item.block_type,
-    warningReferences(item),
-  ]
-    .filter(Boolean)
-    .join(" · ");
+function WarningMetadataCell({ item }: { item: ParserQualityWarningOut }) {
+  const sourcePreview = compactRecordPreview(item.source_location, ["page", "artifact", "artifact_ref"]);
+  const parserPreview = compactRecordPreview(item.parser_metadata, [
+    "chunk_index",
+    "artifact_ref",
+    "block_type",
+  ]);
+  const warningPreview = compactRecordPreview(item.warning, ["code", "action", "expected_script"]);
 
   return (
-    <li className="rounded-md border border-[#edf1f3] bg-white p-3 text-sm text-[#24313a]">
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="rounded-md bg-[#fff8df] px-2 py-1 text-xs font-medium text-[#705000]">
-          {item.code ?? "parser_warning"}
-        </span>
-        {metadataLine ? <span className="text-xs text-[#62717a]">{metadataLine}</span> : null}
-      </div>
-      {item.message ? <p className="mt-2 text-sm text-[#3a4a53]">{item.message}</p> : null}
-      {item.chunk_preview ? (
-        <p className="mt-2 line-clamp-2 text-xs text-[#62717a]">{item.chunk_preview}</p>
-      ) : null}
-      <dl className="mt-2 grid gap-1 text-xs text-[#62717a] md:grid-cols-2">
-        <div className="min-w-0">
-          <dt className="font-medium text-[#3a4a53]">Chunk</dt>
-          <dd className="truncate">{item.chunk_id}</dd>
-        </div>
-        <div className="min-w-0">
-          <dt className="font-medium text-[#3a4a53]">Source</dt>
-          <dd className="truncate">{formatRecord(item.source_location)}</dd>
-        </div>
-        <div className="min-w-0">
-          <dt className="font-medium text-[#3a4a53]">Parser</dt>
-          <dd className="truncate">{formatRecord(item.parser_metadata)}</dd>
-        </div>
-        <div className="min-w-0">
-          <dt className="font-medium text-[#3a4a53]">Warning</dt>
-          <dd className="truncate">{formatRecord(item.warning)}</dd>
-        </div>
-      </dl>
-    </li>
+    <div className="min-w-0 space-y-1 text-xs text-[#62717a]">
+      <MetadataPreviewLine label="Source" value={sourcePreview} />
+      <MetadataPreviewLine label="Parser" value={parserPreview} />
+      <MetadataPreviewLine label="Warning" value={warningPreview} />
+      <details className="mt-1">
+        <summary className="cursor-pointer text-[#176b87]">Details</summary>
+        <dl className="mt-2 max-h-40 space-y-2 overflow-auto rounded-md border border-[#edf1f3] bg-[#fbfcfd] p-2">
+          <MetadataDetail label="Source" value={item.source_location} />
+          <MetadataDetail label="Parser" value={item.parser_metadata} />
+          <MetadataDetail label="Reference" value={item.reference_metadata} />
+          <MetadataDetail label="Warning" value={item.warning} />
+        </dl>
+      </details>
+    </div>
   );
+}
+
+function MetadataPreviewLine({ label, value }: { label: string; value: string }) {
+  return (
+    <p className="min-w-0 truncate">
+      <span className="font-medium text-[#3a4a53]">{label}</span> {value || "None"}
+    </p>
+  );
+}
+
+function MetadataDetail({ label, value }: { label: string; value: unknown }) {
+  return (
+    <div className="min-w-0">
+      <dt className="font-medium text-[#3a4a53]">{label}</dt>
+      <dd className="break-words font-mono text-[11px] leading-5 text-[#62717a]">
+        {formatRecordValue(value)}
+      </dd>
+    </div>
+  );
+}
+
+function compactRecordPreview(record: Record<string, unknown> | null, preferredKeys: string[]): string {
+  if (!record || !Object.keys(record).length) {
+    return "None";
+  }
+  const entries = preferredKeys
+    .map((key) => [key, record[key]] as const)
+    .filter((entry): entry is readonly [string, string | number | boolean] =>
+      typeof entry[1] === "string" || typeof entry[1] === "number" || typeof entry[1] === "boolean",
+    );
+  const fallbackEntries = Object.entries(record).filter(
+    (entry): entry is [string, string | number | boolean] =>
+      typeof entry[1] === "string" || typeof entry[1] === "number" || typeof entry[1] === "boolean",
+  );
+  const previewEntries = (entries.length ? entries : fallbackEntries).slice(0, 2);
+  return previewEntries.map(([key, value]) => `${key}=${String(value)}`).join(", ") || "Available";
+}
+
+function RepairPlanSummary({ plan }: { plan: Record<string, unknown> }) {
+  const summary = stringValue(plan.summary);
+  const steps = repairPlanSteps(plan.steps);
+  const aiSuggestion = repairPlanAiSuggestion(plan.ai_suggestion);
+
+  return (
+    <div className="rounded-md border border-[#d6dde1] bg-white p-3 text-sm text-[#24313a]">
+      <p className="font-medium">Repair plan</p>
+      {summary ? <p className="mt-1 text-xs text-[#62717a]">{summary}</p> : null}
+      {steps.length ? (
+        <ul className="mt-3 space-y-2 text-xs text-[#3a4a53]">
+          {steps.map((step) => (
+            <li key={step.code} className="rounded-md border border-[#edf1f3] p-2">
+              <p className="font-medium text-[#1f2933]">
+                {step.code} · {step.count} · {step.action}
+              </p>
+              <p className="mt-1">{step.reason}</p>
+              <p className="mt-1 text-[#62717a]">{step.expectedEffect}</p>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {aiSuggestion ? <p className="mt-3 text-xs text-[#62717a]">{aiSuggestion}</p> : null}
+    </div>
+  );
+}
+
+function repairPlanSteps(value: unknown): Array<{
+  code: string;
+  count: number;
+  action: string;
+  reason: string;
+  expectedEffect: string;
+}> {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((item) => {
+      if (!isRecord(item)) {
+        return null;
+      }
+      const code = stringValue(item.code);
+      if (!code) {
+        return null;
+      }
+      return {
+        code,
+        count: numberValue(item.count),
+        action: stringValue(item.action) ?? "repair",
+        reason: stringValue(item.reason) ?? "",
+        expectedEffect: stringValue(item.expected_effect) ?? "",
+      };
+    })
+    .filter((item): item is {
+      code: string;
+      count: number;
+      action: string;
+      reason: string;
+      expectedEffect: string;
+    } => item !== null);
+}
+
+function repairPlanAiSuggestion(value: unknown): string | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const status = stringValue(value.status);
+  if (!status) {
+    return null;
+  }
+  if (status === "succeeded") {
+    const suggestion = isRecord(value.suggestion) ? value.suggestion : {};
+    const summary = stringValue(suggestion.summary);
+    return summary ? `AI suggestion: ${summary}` : "AI suggestion received.";
+  }
+  const reason = stringValue(value.reason);
+  return reason ? `AI suggestion ${status}: ${reason}` : `AI suggestion ${status}.`;
 }
 
 function jobParserQualityGroups(job: JobOut | undefined): ParserQualityGroup[] {
@@ -961,11 +1766,20 @@ function warningReferences(item: ParserQualityWarningOut): string | null {
   return values.length ? values.join(", ") : null;
 }
 
-function formatRecord(record: Record<string, unknown>): string {
-  if (!Object.keys(record).length) {
+function formatRecordValue(value: unknown): string {
+  if (value === null || value === undefined) {
     return "None";
   }
-  return JSON.stringify(record);
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  if (Array.isArray(value) && value.length === 0) {
+    return "None";
+  }
+  if (isRecord(value) && !Object.keys(value).length) {
+    return "None";
+  }
+  return JSON.stringify(value);
 }
 
 function Panel({
@@ -978,7 +1792,7 @@ function Panel({
   children: ReactNode;
 }) {
   return (
-    <section className="min-w-0">
+    <section className="min-w-0 max-w-full overflow-hidden">
       <div className="mb-3 flex items-center gap-2">
         <Icon className="h-4 w-4 text-[#176b87]" aria-hidden="true" />
         <h3 className="truncate text-base font-semibold text-[#1f2933]">{title}</h3>

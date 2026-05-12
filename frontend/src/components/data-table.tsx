@@ -15,6 +15,7 @@ interface DataTableProps<TData> {
   data: TData[];
   emptyTitle: string;
   emptyDescription: string;
+  ariaLabel?: string;
   className?: string;
 }
 
@@ -23,6 +24,7 @@ export function DataTable<TData>({
   data,
   emptyTitle,
   emptyDescription,
+  ariaLabel,
   className,
 }: DataTableProps<TData>) {
   const table = useReactTable({
@@ -43,9 +45,9 @@ export function DataTable<TData>({
   }
 
   return (
-    <div className={cn("overflow-hidden rounded-md border border-[#d6dde1] bg-white", className)}>
-      <div className="overflow-x-auto">
-        <table className="min-w-full table-fixed text-left text-sm">
+    <div className={cn("min-w-0 max-w-full overflow-hidden rounded-md border border-[#d6dde1] bg-white", className)}>
+      <div className="max-w-full overflow-x-auto">
+        <table aria-label={ariaLabel} className="w-full min-w-[720px] table-fixed text-left text-sm">
           <thead className="border-b border-[#d6dde1] bg-[#f4f7f8] text-xs uppercase text-[#62717a]">
             {table.getHeaderGroups().map((headerGroup) => (
               <tr key={headerGroup.id}>
@@ -63,7 +65,7 @@ export function DataTable<TData>({
             {table.getRowModel().rows.map((row) => (
               <tr key={row.id} className="hover:bg-[#f7fafb]">
                 {row.getVisibleCells().map((cell) => (
-                  <td key={cell.id} className="min-w-0 px-4 py-3 align-middle text-[#24313a]">
+                  <td key={cell.id} className="min-w-0 overflow-hidden px-4 py-3 align-middle text-[#24313a]">
                     {flexRender(cell.column.columnDef.cell, cell.getContext())}
                   </td>
                 ))}

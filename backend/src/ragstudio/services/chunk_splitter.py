@@ -10,8 +10,17 @@ from ragstudio.schemas.parsing import DomainMetadata, ParserMode
 from ragstudio.services.adapter import AdapterChunk
 from ragstudio.services.chunk_quality_gate import ChunkQualityGate
 from ragstudio.services.domain_metadata_quality_gate import DomainMetadataQualityGate
-from ragstudio.services.parser_normalization import ExpectedContentProfile, MinerUContentNormalizer
+from ragstudio.services.parser_normalization import (
+    ExpectedContentProfile,
+    MinerUContentNormalizer,
+    NormalizedBlock,
+)
 from ragstudio.services.reference_metadata import ReferenceSemantics
+from ragstudio.services.reference_unit_assembler import (
+    AssembledReferenceUnit,
+    ReferenceSourceBlock,
+    ReferenceUnitAssembler,
+)
 
 
 @dataclass(frozen=True)
@@ -42,6 +51,7 @@ class ChunkSplitter:
     def __init__(self, *, max_words: int = 1500) -> None:
         self.max_words = max_words
         self.content_normalizer = MinerUContentNormalizer()
+        self.reference_unit_assembler = ReferenceUnitAssembler()
 
     def split(
         self,
@@ -202,6 +212,14 @@ class ChunkSplitter:
             domain_metadata=domain_metadata,
             expected_profile=expected_profile,
         )
+        canonical_pieces = self._canonical_reference_pieces(
+            chunk,
+            profile,
+            normalized_blocks,
+            content_ref=content_ref,
+        )
+        if canonical_pieces:
+            return ContentListSplitResult(handled=True, pieces=canonical_pieces)
 
         page_parts: dict[int, list[str]] = {}
         page_warnings: dict[int, list[dict[str, Any]]] = {}
@@ -299,6 +317,74 @@ class ChunkSplitter:
                     self._piece_from_parent(page_chunk, part, source_location=source_location)
                 )
         return ContentListSplitResult(handled=True, pieces=pieces)
+
+    def _canonical_reference_pieces(
+        self,
+        chunk: AdapterChunk,
+        profile: ChunkProfile,
+        normalized_blocks: list[NormalizedBlock],
+        *,
+        content_ref: str,
+    ) -> list[SplitPiece]:
+        semantics = profile.semantics
+        if semantics is None or not semantics.canonical_units_enabled:
+            return []
+
+        blocks: list[ReferenceSourceBlock] = []
+        for index, block in enumerate(normalized_blocks):
+            warning_codes = tuple(
+                warning["code"]
+                for warning in block.warning_metadata()
+                if isinstance(warning.get("code"), str)
+            )
+            blocks.append(
+                ReferenceSourceBlock(
+                    text=block.text,
+                    page_start=block.page,
+                    page_end=block.page,
+                    block_type=block.block_type,
+                    parser_warning_codes=warning_codes,
+                    source_block_ref=self._source_block_ref(
+                        block,
+                        content_ref=content_ref,
+                        index=index,
+                    ),
+                )
+            )
+
+        assembled_units = self.reference_unit_assembler.assemble(
+            blocks,
+            semantics=semantics,
+            parent_metadata=dict(chunk.metadata),
+            parent_source_location=dict(chunk.source_location),
+            runtime_source_id=chunk.runtime_source_id,
+            content_type=chunk.content_type,
+            preview_ref=chunk.preview_ref,
+        )
+        return [self._piece_from_assembled(unit) for unit in assembled_units]
+
+    def _piece_from_assembled(self, unit: AssembledReferenceUnit) -> SplitPiece:
+        return SplitPiece(
+            text=unit.text,
+            source_location=dict(unit.source_location),
+            metadata=dict(unit.metadata),
+            runtime_source_id=unit.runtime_source_id,
+            content_type=unit.content_type,
+            preview_ref=unit.preview_ref,
+        )
+
+    def _source_block_ref(
+        self,
+        block: NormalizedBlock,
+        *,
+        content_ref: str,
+        index: int,
+    ) -> str:
+        for key in ("id", "block_id"):
+            value = block.source_item.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return f"{content_ref}:block:{index}"
 
     def _reference_unit_sections(
         self,
@@ -399,13 +485,14 @@ class ChunkSplitter:
     ) -> AdapterChunk:
         metadata = dict(piece.metadata)
         self._enrich_metadata(metadata, piece=piece, profile=profile)
-        self._merge_parser_warnings(
-            metadata,
-            ChunkQualityGate(expected_profile, domain_metadata).warnings_for(
-                piece.text,
+        if not self._is_provenance_only_piece(piece):
+            self._merge_parser_warnings(
                 metadata,
-            ),
-        )
+                ChunkQualityGate(expected_profile, domain_metadata).warnings_for(
+                    piece.text,
+                    metadata,
+                ),
+            )
         parser_metadata = dict(self._parser_metadata(parent))
         parser_metadata.update(self._parser_metadata(piece))
         parent_parser_metadata = self._parser_metadata(parent)
@@ -430,6 +517,12 @@ class ChunkSplitter:
             content_type=piece.content_type,
             preview_ref=piece.preview_ref,
         )
+
+    def _is_provenance_only_piece(self, piece: SplitPiece) -> bool:
+        if piece.content_type == "reference_provenance":
+            return True
+        parser_metadata = self._parser_metadata(piece)
+        return bool(parser_metadata.get("provenance_only"))
 
     def _piece_from_parent(
         self,

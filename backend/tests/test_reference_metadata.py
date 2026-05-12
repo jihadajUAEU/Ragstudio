@@ -106,15 +106,38 @@ def test_reference_semantics_supports_book_hadith_schema():
                 "reference_schema": {
                     "type": "book_hadith",
                     "display": "Book {book}, Hadith {hadith}",
+                    "canonical_ref_template": "book:{book}:hadith:{hadith}",
                     "fields": {"book": "book_number", "hadith": "hadith_number"},
                 },
                 "chunking": {"unit": "hadith", "include_neighbors": 1},
+                "reference_resolution": {
+                    "enabled": True,
+                    "build_canonical_units": True,
+                    "carry_forward_body_blocks": True,
+                    "header_only_policy": "provenance_only",
+                    "continuation_policy": "until_next_reference",
+                    "max_page_gap": 2,
+                    "require_single_reference_per_answerable_chunk": True,
+                },
+                "provenance": {
+                    "preserve_original_blocks": True,
+                    "block_preview_chars": 80,
+                    "store_text_hash": True,
+                },
             },
         )
     )
 
     assert semantics.reference_type == "book_hadith"
     assert semantics.chunk_unit == "hadith"
+    assert semantics.canonical_units_enabled is True
+    assert semantics.carry_forward_body_blocks is True
+    assert semantics.header_only_policy == "provenance_only"
+    assert semantics.max_page_gap == 2
+    assert semantics.require_single_reference_per_answerable_chunk is True
+    assert semantics.preserve_original_blocks is True
+    assert semantics.block_preview_chars == 80
+    assert semantics.store_text_hash is True
     assert semantics.extract_chunk_references("Book 1, Hadith 2 text") == [
         {
             "raw": "Book 1, Hadith 2",

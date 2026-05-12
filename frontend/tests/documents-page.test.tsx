@@ -1,6 +1,6 @@
 import "@testing-library/jest-dom/vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { DocumentsPage } from "../src/features/documents/documents-page";
@@ -17,6 +17,7 @@ vi.mock("../src/api/client", () => ({
     uploadDocument: vi.fn(),
     deleteDocument: vi.fn(),
     createDocumentReindexJob: vi.fn(),
+    fixJobQualityWarnings: vi.fn(),
   },
 }));
 
@@ -28,6 +29,14 @@ function renderDocumentsPage() {
       <DocumentsPage />
     </QueryClientProvider>,
   );
+}
+
+function openJobsWarningsTab() {
+  fireEvent.click(screen.getByRole("tab", { name: /jobs & warnings/i }));
+}
+
+function openIndexOptions() {
+  fireEvent.click(screen.getByText("Index options"));
 }
 
 const jobDefaults = {
@@ -79,6 +88,36 @@ describe("DocumentsPage", () => {
       job_id: "job-1",
       status: "ready",
     });
+    vi.mocked(apiClient.fixJobQualityWarnings).mockResolvedValue({
+      source_job_id: "job-1",
+      document_id: "doc-1",
+      queued_job_id: "job-repair",
+      queued_job_status: "ready",
+      index_options: {
+        parser_mode: "mineru_strict",
+        domain_metadata: { domain: "quran_tafseer" },
+      },
+      repair_plan: {
+        strategy: "metadata_aware_warning_repair",
+        summary: "Apply metadata-aware fixes before reindex.",
+        ai_suggestion: {
+          status: "succeeded",
+          suggestion: {
+            summary: "Preserve Arabic and English hadith text in the same reference unit.",
+          },
+        },
+        steps: [
+          {
+            code: "reference_unit_missing_expected_script",
+            count: 176,
+            action: "preserve_parallel_reference_units",
+            reason: "Reference chunks are missing the expected Arabic script.",
+            expected_effect: "Parallel Arabic/English chunks stay together.",
+          },
+        ],
+      },
+      message: "Generated a metadata-aware repair plan.",
+    });
   });
 
   it("keeps the file upload control visible and enables upload after file selection", () => {
@@ -122,6 +161,7 @@ describe("DocumentsPage", () => {
 
   it("uses MinerU strict as the only parser mode", async () => {
     renderDocumentsPage();
+    openIndexOptions();
 
     expect(screen.queryByText("Local fallback")).not.toBeInTheDocument();
     expect(screen.queryByText("MinerU with fallback")).not.toBeInTheDocument();
@@ -245,6 +285,83 @@ describe("DocumentsPage", () => {
     expect(await screen.findByText("quiet-hash.pdf")).toBeVisible();
     expect(screen.queryByText("SHA-256")).not.toBeInTheDocument();
     expect(screen.queryByText("sha-hidden-from-documents-table")).not.toBeInTheDocument();
+  });
+
+  it("searches the documents and jobs tables", async () => {
+    vi.mocked(apiClient.documents).mockResolvedValue({
+      items: [
+        {
+          id: "doc-quran",
+          filename: "quran.pdf",
+          content_type: "application/pdf",
+          status: "succeeded",
+          sha256: "sha-quran",
+        },
+        {
+          id: "doc-tafseer",
+          filename: "tafseer-notes.pdf",
+          content_type: "application/pdf",
+          status: "running",
+          sha256: "sha-tafseer",
+        },
+      ],
+      total: 2,
+    });
+    vi.mocked(apiClient.jobs).mockResolvedValue({
+      items: [
+        {
+          ...jobDefaults,
+          id: "job-quran",
+          type: "index_document",
+          status: "succeeded",
+          target_id: "doc-quran",
+          progress: 100,
+          logs: ["Parser quality warnings: reference_unit_missing_expected_script=2"],
+          result: {
+            warnings: ["Graph extraction skipped because Neo4j is unavailable"],
+          },
+        },
+        {
+          ...jobDefaults,
+          id: "job-tafseer",
+          type: "index_document",
+          status: "running",
+          target_id: "doc-tafseer",
+          progress: 41,
+          logs: ["MinerU parsing on HPC"],
+          result: {},
+        },
+      ],
+      total: 2,
+    });
+
+    renderDocumentsPage();
+
+    const documentsTable = await screen.findByRole("table", { name: "Documents table" });
+    expect(within(documentsTable).getByText("quran.pdf")).toBeVisible();
+    expect(within(documentsTable).getByText("tafseer-notes.pdf")).toBeVisible();
+
+    fireEvent.change(screen.getByLabelText("Search documents"), {
+      target: { value: "tafseer" },
+    });
+
+    expect(within(documentsTable).queryByText("quran.pdf")).not.toBeInTheDocument();
+    expect(within(documentsTable).getByText("tafseer-notes.pdf")).toBeVisible();
+
+    openJobsWarningsTab();
+    const jobsTable = await screen.findByRole("table", { name: "Jobs table" });
+    fireEvent.change(screen.getByLabelText("Search jobs"), {
+      target: { value: "graph extraction" },
+    });
+
+    expect(within(jobsTable).getByText("Index quran.pdf")).toBeVisible();
+    expect(within(jobsTable).queryByText("Index tafseer-notes.pdf")).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Job status"), {
+      target: { value: "running" },
+    });
+
+    expect(screen.getByText("No matching jobs")).toBeVisible();
   });
 
   it("reindexes an uploaded document with the current parser and metadata", async () => {
@@ -411,6 +528,7 @@ describe("DocumentsPage", () => {
     });
 
     renderDocumentsPage();
+    openJobsWarningsTab();
 
     expect(await screen.findByText("Index tafseer.pdf")).toBeVisible();
     expect(screen.getByText("Index Document · job-1")).toBeVisible();
@@ -429,6 +547,14 @@ describe("DocumentsPage", () => {
           content_type: "application/pdf",
           status: "succeeded",
           sha256: "sha-1",
+          latest_index_options: {
+            parser_mode: "mineru_strict",
+            domain_metadata: {
+              domain: "quran_tafseer",
+              document_type: "scripture",
+              tags: ["arabic"],
+            },
+          },
         },
       ],
       total: 1,
@@ -499,8 +625,10 @@ describe("DocumentsPage", () => {
     });
 
     renderDocumentsPage();
+    openJobsWarningsTab();
 
-    expect(await screen.findByText("Index quran.pdf")).toBeVisible();
+    const jobsTable = await screen.findByRole("table", { name: "Jobs table" });
+    expect(within(jobsTable).getByText("Index quran.pdf")).toBeVisible();
     expect(
       screen.getByText("Ready with warnings · Vector index ready; graph skipped · 1754 chunks"),
     ).toBeVisible();
@@ -532,6 +660,14 @@ describe("DocumentsPage", () => {
           content_type: "application/pdf",
           status: "succeeded",
           sha256: "sha-1",
+          latest_index_options: {
+            parser_mode: "mineru_strict",
+            domain_metadata: {
+              domain: "quran_tafseer",
+              document_type: "scripture",
+              tags: ["arabic"],
+            },
+          },
         },
       ],
       total: 1,
@@ -596,10 +732,29 @@ describe("DocumentsPage", () => {
             page: 12,
           },
         },
+        {
+          chunk_id: "chunk-warning-2",
+          chunk_preview: "English-only ayah 19:13 preview.",
+          source_location: { page: 99, artifact: "content_list.json" },
+          parser_metadata: { artifact_ref: "content_list.json", chunk_index: 43 },
+          reference_metadata: { references: ["19:13"] },
+          code: "reference_unit_missing_expected_script",
+          message:
+            "Reference-bearing chunk is expected to contain Arabic script, but no Arabic letters were detected.",
+          block_type: null,
+          page: 99,
+          warning: {
+            code: "reference_unit_missing_expected_script",
+            message:
+              "Reference-bearing chunk is expected to contain Arabic script, but no Arabic letters were detected.",
+            page: 99,
+          },
+        },
       ],
     });
 
     renderDocumentsPage();
+    openJobsWarningsTab();
 
     fireEvent.click(
       await screen.findByRole("button", {
@@ -618,6 +773,37 @@ describe("DocumentsPage", () => {
     expect(screen.getByText("Quarantined text-bearing block because the profile disallows it.")).toBeVisible();
     expect(screen.getByText("Recovered body text near the quarantined parser block.")).toBeVisible();
     expect(screen.getByText("chunk-warning-1")).toBeVisible();
+
+    fireEvent.change(screen.getByLabelText("Search warning details"), {
+      target: { value: "english-only" },
+    });
+    expect(await screen.findByText("chunk-warning-2")).toBeVisible();
+    expect(screen.queryByText("chunk-warning-1")).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Warning type"), {
+      target: { value: "disallowed_block_type_quarantined" },
+    });
+    expect(screen.getByText("No matching warnings")).toBeVisible();
+
+    fireEvent.change(screen.getByLabelText("Search warning details"), {
+      target: { value: "" },
+    });
+    expect(await screen.findByText("chunk-warning-1")).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: /fix warnings for index quran\.pdf/i }));
+
+    await waitFor(() => {
+      expect(vi.mocked(apiClient.fixJobQualityWarnings).mock.calls[0][0]).toBe("job-1");
+    });
+    expect(await screen.findByText("Repair job queued: job-repair")).toBeVisible();
+    expect(screen.getByText("Repair plan")).toBeVisible();
+    expect(screen.getByText("Apply metadata-aware fixes before reindex.")).toBeVisible();
+    expect(
+      screen.getByText("reference_unit_missing_expected_script · 176 · preserve_parallel_reference_units"),
+    ).toBeVisible();
+    expect(
+      screen.getByText("AI suggestion: Preserve Arabic and English hadith text in the same reference unit."),
+    ).toBeVisible();
   });
 
   it("polls jobs and documents while work is active", async () => {

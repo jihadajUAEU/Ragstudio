@@ -12,6 +12,7 @@ REFERENCE_CUSTOM_JSON_EXAMPLE: dict[str, Any] = {
     "reference_schema": {
         "type": "chapter_verse",
         "display": "{chapter}:{verse}",
+        "canonical_ref_template": "{chapter}:{verse}",
         "fields": {
             "chapter": "chapter_number",
             "verse": "verse_number",
@@ -28,6 +29,21 @@ REFERENCE_CUSTOM_JSON_EXAMPLE: dict[str, Any] = {
         "unit": "verse",
         "include_neighbors": 1,
         "preserve_parallel_text": True,
+        "merge_reference_header_with_body": True,
+    },
+    "reference_resolution": {
+        "enabled": True,
+        "build_canonical_units": True,
+        "carry_forward_body_blocks": True,
+        "header_only_policy": "provenance_only",
+        "continuation_policy": "until_next_reference",
+        "max_page_gap": 1,
+        "require_single_reference_per_answerable_chunk": True,
+    },
+    "provenance": {
+        "preserve_original_blocks": True,
+        "block_preview_chars": 160,
+        "store_text_hash": True,
     },
     "retrieval": {
         "exact_reference_top1": True,
@@ -50,6 +66,8 @@ def validate_custom_json(value: dict[str, Any]) -> dict[str, Any]:
     _validate_reference_schema(value.get("reference_schema"))
     _validate_relationships(value.get("relationships"))
     _validate_chunking(value.get("chunking"))
+    _validate_reference_resolution(value.get("reference_resolution"))
+    _validate_provenance(value.get("provenance"))
     _validate_retrieval(value.get("retrieval"))
     _validate_graph(value.get("graph"))
     return value
@@ -75,12 +93,12 @@ def _validate_reference_schema(value: Any) -> None:
                     "custom_json.reference_schema.fields must map strings to strings."
                 )
 
-    for key in ("type", "display"):
+    for key in ("type", "display", "canonical_ref_template"):
         item = value.get(key)
         if item is not None and not isinstance(item, str):
             raise ValueError(f"custom_json.reference_schema.{key} must be a string.")
 
-    for key in ("pattern", "regex"):
+    for key in ("reference_regex", "pattern", "regex"):
         pattern = value.get(key)
         if pattern is None:
             continue
@@ -151,6 +169,70 @@ def _validate_chunking(value: Any) -> None:
     preserve_parallel_text = value.get("preserve_parallel_text")
     if preserve_parallel_text is not None and not isinstance(preserve_parallel_text, bool):
         raise ValueError("custom_json.chunking.preserve_parallel_text must be a boolean.")
+
+    merge_reference_header_with_body = value.get("merge_reference_header_with_body")
+    if (
+        merge_reference_header_with_body is not None
+        and not isinstance(merge_reference_header_with_body, bool)
+    ):
+        raise ValueError(
+            "custom_json.chunking.merge_reference_header_with_body must be a boolean."
+        )
+
+
+def _validate_reference_resolution(value: Any) -> None:
+    if value is None:
+        return
+    if not isinstance(value, dict):
+        raise ValueError("custom_json.reference_resolution must be an object.")
+
+    for key in (
+        "enabled",
+        "build_canonical_units",
+        "carry_forward_body_blocks",
+        "require_single_reference_per_answerable_chunk",
+        "carry_forward_previous_reference",
+        "continuation_reference_carry_forward",
+        "mark_title_front_matter_non_reference_chunks",
+    ):
+        item = value.get(key)
+        if item is not None and not isinstance(item, bool):
+            raise ValueError(f"custom_json.reference_resolution.{key} must be a boolean.")
+
+    for key in ("header_only_policy", "continuation_policy"):
+        item = value.get(key)
+        if item is not None and not isinstance(item, str):
+            raise ValueError(f"custom_json.reference_resolution.{key} must be a string.")
+
+    max_page_gap = value.get("max_page_gap")
+    if max_page_gap is not None:
+        if isinstance(max_page_gap, bool) or not isinstance(max_page_gap, int):
+            raise ValueError("custom_json.reference_resolution.max_page_gap must be an integer.")
+        if max_page_gap < 0:
+            raise ValueError(
+                "custom_json.reference_resolution.max_page_gap must be non-negative."
+            )
+
+
+def _validate_provenance(value: Any) -> None:
+    if value is None:
+        return
+    if not isinstance(value, dict):
+        raise ValueError("custom_json.provenance must be an object.")
+
+    for key in ("preserve_original_blocks", "store_text_hash"):
+        item = value.get(key)
+        if item is not None and not isinstance(item, bool):
+            raise ValueError(f"custom_json.provenance.{key} must be a boolean.")
+
+    block_preview_chars = value.get("block_preview_chars")
+    if block_preview_chars is not None:
+        if isinstance(block_preview_chars, bool) or not isinstance(block_preview_chars, int):
+            raise ValueError("custom_json.provenance.block_preview_chars must be an integer.")
+        if block_preview_chars < 0:
+            raise ValueError(
+                "custom_json.provenance.block_preview_chars must be non-negative."
+            )
 
 
 def _validate_retrieval(value: Any) -> None:

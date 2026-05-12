@@ -14,19 +14,24 @@ def reference_custom_json(
     *,
     reference_type: str | None = None,
     display: str | None = None,
+    canonical_ref_template: str | None = None,
     fields: dict[str, str] | None = None,
     relationships: dict[str, list[str]] | None = None,
     chunking: dict[str, object] | None = None,
+    reference_resolution: dict[str, object] | None = None,
+    provenance: dict[str, object] | None = None,
     retrieval: dict[str, bool] | None = None,
     graph: dict[str, object] | None = None,
 ) -> dict[str, object]:
     value: dict[str, object] = {}
-    if reference_type or display or fields:
+    if reference_type or display or canonical_ref_template or fields:
         schema: dict[str, object] = {}
         if reference_type:
             schema["type"] = reference_type
         if display:
             schema["display"] = display
+        if canonical_ref_template:
+            schema["canonical_ref_template"] = canonical_ref_template
         if fields:
             schema["fields"] = fields
         value["reference_schema"] = schema
@@ -34,6 +39,10 @@ def reference_custom_json(
         value["relationships"] = relationships
     if chunking:
         value["chunking"] = chunking
+    if reference_resolution:
+        value["reference_resolution"] = reference_resolution
+    if provenance:
+        value["provenance"] = provenance
     if retrieval:
         value["retrieval"] = retrieval
     if graph:
@@ -123,6 +132,7 @@ BUILTIN_PROFILES: list[DomainProfileOut] = [
             custom_json=reference_custom_json(
                 reference_type="book_hadith",
                 display="Book {book}, Hadith {hadith}",
+                canonical_ref_template="book:{book}:hadith:{hadith}",
                 fields={
                     "book": "book_number",
                     "hadith": "hadith_number",
@@ -138,6 +148,21 @@ BUILTIN_PROFILES: list[DomainProfileOut] = [
                     "unit": "hadith",
                     "include_neighbors": 1,
                     "preserve_parallel_text": True,
+                    "merge_reference_header_with_body": True,
+                },
+                reference_resolution={
+                    "enabled": True,
+                    "build_canonical_units": True,
+                    "carry_forward_body_blocks": True,
+                    "header_only_policy": "provenance_only",
+                    "continuation_policy": "until_next_reference",
+                    "max_page_gap": 2,
+                    "require_single_reference_per_answerable_chunk": True,
+                },
+                provenance={
+                    "preserve_original_blocks": True,
+                    "block_preview_chars": 160,
+                    "store_text_hash": True,
                 },
                 retrieval={
                     "exact_reference_top1": True,
@@ -176,6 +201,7 @@ BUILTIN_PROFILES: list[DomainProfileOut] = [
             custom_json=reference_custom_json(
                 reference_type="chapter_verse",
                 display="{chapter}:{verse}",
+                canonical_ref_template="{chapter}:{verse}",
                 fields={
                     "chapter": "surah_number",
                     "verse": "ayah_number",
@@ -191,6 +217,21 @@ BUILTIN_PROFILES: list[DomainProfileOut] = [
                     "unit": "verse",
                     "include_neighbors": 1,
                     "preserve_parallel_text": True,
+                    "merge_reference_header_with_body": True,
+                },
+                reference_resolution={
+                    "enabled": True,
+                    "build_canonical_units": True,
+                    "carry_forward_body_blocks": True,
+                    "header_only_policy": "provenance_only",
+                    "continuation_policy": "until_next_reference",
+                    "max_page_gap": 1,
+                    "require_single_reference_per_answerable_chunk": True,
+                },
+                provenance={
+                    "preserve_original_blocks": True,
+                    "block_preview_chars": 160,
+                    "store_text_hash": True,
                 },
                 retrieval={
                     "exact_reference_top1": True,

@@ -169,6 +169,49 @@ def test_domain_quality_gate_flags_structured_chunks_without_reference_metadata(
     assert "reference_unit_unresolved" in warning_codes
 
 
+def test_domain_quality_gate_treats_reference_provenance_as_non_answerable():
+    chunks = [
+        AdapterChunk(
+            text=(
+                "[19:13] "
+                "\u0648\u062d\u0646\u0627\u0646\u0627 "
+                "\u0645\u0646 \u0644\u062f\u0646\u0627 "
+                "And affection from Us."
+            ),
+            source_location={"page": 312},
+            metadata={"reference_metadata": {"references": ["19:13"]}},
+        ),
+        AdapterChunk(
+            text="[19:14]",
+            source_location={"page": 312},
+            metadata={
+                "parser_metadata": {"provenance_only": True},
+                "reference_metadata": {"references": ["19:14"]},
+            },
+            content_type="reference_provenance",
+        ),
+    ]
+
+    report = DomainMetadataQualityGate().validate_adapter_chunks(
+        chunks,
+        domain_metadata=_quran_metadata(),
+    )
+
+    summary = report["index_quality_report"]["summary"]
+    assert summary["reference_unit_count"] == 1
+    assert summary["reference_unit_unresolved_count"] == 0
+    assert summary["reference_units_missing_expected_script"] == 0
+    assert chunks[1].metadata["quality_action_policy"] == {
+        "persist_chunk": True,
+        "index_vector": False,
+        "index_exact_arabic": False,
+        "project_graph": False,
+        "graph_confidence": "provenance_only",
+        "quality_flags": ["provenance_only"],
+    }
+    assert "extraction_quality" not in chunks[1].metadata
+
+
 def test_domain_quality_gate_builds_retrieval_trace_from_same_warning_shape():
     gate = DomainMetadataQualityGate()
 

@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 from ragstudio.schemas.parsing import DomainMetadata
@@ -597,6 +598,170 @@ def test_chunk_splitter_flags_hadith_reference_missing_expected_arabic():
     )
 
     assert "reference_unit_missing_expected_script" in parser_warning_codes(split[0])
+
+
+def test_chunk_splitter_builds_canonical_hadith_units_from_header_body_blocks(
+    tmp_path: Path,
+):
+    arabic_body = "\u0642\u0627\u0644 \u0631\u0633\u0648\u0644 \u0627\u0644\u0644\u0647"
+    content_list = tmp_path / "source_content_list.json"
+    content_list.write_text(
+        json.dumps(
+            [
+                {"type": "text", "text": "Book 1, Hadith 3", "page_idx": 3},
+                {"type": "text", "text": arabic_body, "page_idx": 3},
+                {
+                    "type": "text",
+                    "text": "The Messenger of Allah said this in translation.",
+                    "page_idx": 4,
+                },
+                {"type": "text", "text": "Book 1, Hadith 4", "page_idx": 4},
+            ],
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    chunk = AdapterChunk(
+        text="fallback markdown should not be used",
+        source_location={"artifact": "source/auto/source.md"},
+        metadata={
+            "parser_metadata": {
+                "backend": "mineru",
+                "artifact_extract_dir": str(tmp_path),
+                "content_list_ref": "source_content_list.json",
+                "chunk_index": 0,
+            }
+        },
+    )
+    metadata = DomainMetadata(
+        domain="hadith",
+        document_type="collection",
+        tags=["hadith", "arabic", "english"],
+        script="arabic",
+        custom_json={
+            "reference_schema": {
+                "type": "book_hadith",
+                "display": "Book {book}, Hadith {hadith}",
+                "canonical_ref_template": "book:{book}:hadith:{hadith}",
+            },
+            "chunking": {"unit": "hadith", "preserve_parallel_text": True},
+            "reference_resolution": {
+                "enabled": True,
+                "build_canonical_units": True,
+                "carry_forward_body_blocks": True,
+                "header_only_policy": "provenance_only",
+                "continuation_policy": "until_next_reference",
+                "max_page_gap": 2,
+                "require_single_reference_per_answerable_chunk": True,
+            },
+            "provenance": {
+                "preserve_original_blocks": True,
+                "block_preview_chars": 80,
+                "store_text_hash": True,
+            },
+        },
+    )
+
+    split = ChunkSplitter(max_words=1500).split(
+        [chunk],
+        domain_metadata=metadata,
+        parser_mode="mineru_strict",
+    )
+
+    assert len(split) == 2
+    canonical = split[0]
+    assert canonical.content_type == "text"
+    assert "Book 1, Hadith 3" in canonical.text
+    assert arabic_body in canonical.text
+    assert "The Messenger of Allah" in canonical.text
+    assert canonical.source_location["page_start"] == 4
+    assert canonical.source_location["page_end"] == 5
+    assert canonical.metadata["reference_metadata"]["references"] == ["book:1:hadith:3"]
+    assert canonical.metadata["canonical_reference_unit"]["answerable"] is True
+    assert canonical.metadata["canonical_reference_unit"]["body_status"] == "assembled"
+    provenance_blocks = canonical.metadata["provenance"]["blocks"]
+    assert [block["role"] for block in provenance_blocks] == [
+        "reference_header",
+        "reference_body",
+        "reference_continuation",
+    ]
+    assert all("text_hash" in block for block in provenance_blocks)
+    assert "reference_unit_missing_expected_script" not in parser_warning_codes(canonical)
+
+    header_only = split[1]
+    assert header_only.text == "Book 1, Hadith 4"
+    assert header_only.content_type == "reference_provenance"
+    assert header_only.metadata["parser_metadata"]["provenance_only"] is True
+    assert header_only.metadata["canonical_reference_unit"]["answerable"] is False
+    assert header_only.metadata["quality_action_policy"]["index_vector"] is False
+    assert parser_warning_codes(header_only) == []
+
+
+def test_chunk_splitter_builds_canonical_quran_verse_from_header_body_blocks(
+    tmp_path: Path,
+):
+    arabic_body = "\u0648\u062d\u0646\u0627\u0646\u0627 \u0645\u0646 \u0644\u062f\u0646\u0627"
+    content_list = tmp_path / "source_content_list.json"
+    content_list.write_text(
+        json.dumps(
+            [
+                {"type": "text", "text": "[19:13]", "page_idx": 311},
+                {"type": "text", "text": arabic_body, "page_idx": 311},
+                {
+                    "type": "text",
+                    "text": "And affection from Us and purity.",
+                    "page_idx": 311,
+                },
+            ],
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    chunk = AdapterChunk(
+        text="fallback markdown should not be used",
+        source_location={"artifact": "source/auto/source.md"},
+        metadata={
+            "parser_metadata": {
+                "backend": "mineru",
+                "artifact_extract_dir": str(tmp_path),
+                "content_list_ref": "source_content_list.json",
+            }
+        },
+    )
+    metadata = DomainMetadata(
+        domain="quran_tafseer",
+        tags=["quran", "arabic", "english"],
+        script="arabic",
+        custom_json={
+            "reference_schema": {
+                "type": "chapter_verse",
+                "canonical_ref_template": "{chapter}:{verse}",
+            },
+            "chunking": {"unit": "verse", "preserve_parallel_text": True},
+            "reference_resolution": {
+                "enabled": True,
+                "build_canonical_units": True,
+                "carry_forward_body_blocks": True,
+                "header_only_policy": "provenance_only",
+                "continuation_policy": "until_next_reference",
+                "max_page_gap": 1,
+                "require_single_reference_per_answerable_chunk": True,
+            },
+            "provenance": {"preserve_original_blocks": True},
+        },
+    )
+
+    split = ChunkSplitter(max_words=1500).split(
+        [chunk],
+        domain_metadata=metadata,
+        parser_mode="mineru_strict",
+    )
+
+    assert len(split) == 1
+    assert split[0].metadata["reference_metadata"]["references"] == ["19:13"]
+    assert split[0].source_location["page_start"] == 312
+    assert arabic_body in split[0].text
+    assert "reference_unit_missing_expected_script" not in parser_warning_codes(split[0])
 
 
 def test_chunk_splitter_dedupes_existing_quality_gate_warning():

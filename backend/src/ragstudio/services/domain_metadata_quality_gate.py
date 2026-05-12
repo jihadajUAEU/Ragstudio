@@ -10,6 +10,7 @@ from ragstudio.services.adapter import AdapterChunk
 from ragstudio.services.arabic_text import arabic_tokens
 from ragstudio.services.parser_normalization import ExpectedContentProfile
 from ragstudio.services.reference_metadata import ReferenceSemantics
+from ragstudio.services.reference_unit_assembler import provenance_only_quality_policy
 
 SCRIPT_PATTERNS = {
     "arabic": re.compile(r"[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]"),
@@ -210,6 +211,11 @@ class DomainMetadataQualityGate:
         profile = self.profile_for(domain_metadata, expected_profile=expected_profile)
         all_records: list[dict[str, Any]] = []
         for index, chunk in enumerate(chunks):
+            if self._is_provenance_only_chunk(chunk):
+                policy = provenance_only_quality_policy()
+                chunk.metadata["quality_action_policy"] = policy
+                chunk.metadata["quality_flags"] = policy["quality_flags"]
+                continue
             records = self._reference_quality_records_for_chunk(
                 chunk,
                 chunk_index=index,
@@ -905,12 +911,20 @@ class DomainMetadataQualityGate:
     ) -> bool:
         if not self._requires_reference_quality(profile):
             return False
+        if self._is_provenance_only_chunk(chunk):
+            return False
         parser_metadata = chunk.metadata.get("parser_metadata")
         if isinstance(parser_metadata, dict) and parser_metadata.get("parser_quality_only"):
             return True
         if not chunk.text.strip():
             return False
         return bool(profile.reference_unit in {"verse", "reference", "hadith", "section"})
+
+    def _is_provenance_only_chunk(self, chunk: AdapterChunk) -> bool:
+        if chunk.content_type == "reference_provenance":
+            return True
+        parser_metadata = chunk.metadata.get("parser_metadata")
+        return isinstance(parser_metadata, dict) and bool(parser_metadata.get("provenance_only"))
 
     def _requires_reference_quality(self, profile: MetadataQualityProfile) -> bool:
         return bool(

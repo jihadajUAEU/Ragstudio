@@ -1,6 +1,9 @@
 import pytest
 from ragstudio.db.models import Chunk, Document, IndexRecord, Job
 from ragstudio.schemas.common import StageStatus
+from ragstudio.schemas.parsing import IndexDocumentIn
+from ragstudio.services.job_quality_warning_service import JobQualityWarningService
+from sqlalchemy import select
 
 
 @pytest.mark.asyncio
@@ -190,3 +193,335 @@ async def test_job_quality_warnings_returns_404_for_unknown_job(client):
 
     assert response.status_code == 404
     assert response.json()["detail"] == "Job not found"
+
+
+@pytest.mark.asyncio
+async def test_fix_job_quality_warnings_queues_strict_reindex_from_stored_options(
+    client,
+    monkeypatch,
+):
+    app = client._transport.app
+    parser_warnings = [
+        {
+            "code": "reference_unit_missing_expected_script",
+            "message": "Expected Arabic text in reference unit.",
+            "expected_script": "arabic",
+            "block_type": "paragraph",
+            "page": 4,
+        },
+        {
+            "code": "reference_unit_unresolved",
+            "message": "Could not tie this chunk to one reference.",
+            "page": 4,
+        },
+        {
+            "code": "disallowed_block_type_quarantined",
+            "message": "Recovered text was emitted as a disallowed block type.",
+            "block_type": "equation",
+            "page": 4,
+        },
+    ]
+    stored_options = {
+        "parser_mode": "mineru_strict",
+        "domain_metadata": {"domain": "quran_tafseer", "tags": ["arabic"]},
+    }
+    expected_options = IndexDocumentIn.model_validate(stored_options).model_dump(
+        mode="json",
+        exclude_none=True,
+    )
+
+    async def fake_ai_repair_suggestion(
+        self,
+        repair_plan,
+        *,
+        options,
+        settings,
+    ):
+        return {
+            "status": "succeeded",
+            "model": "test-reasoning-model",
+            "suggestion": {
+                "summary": "Preserve parallel reference text and recover prose blocks.",
+                "suggested_metadata_overrides": {},
+                "risks": [],
+                "reindex_expectations": {"warnings_should_drop": True},
+            },
+        }
+
+    monkeypatch.setattr(
+        JobQualityWarningService,
+        "_ai_repair_suggestion",
+        fake_ai_repair_suggestion,
+    )
+
+    async with app.state.session_factory() as session:
+        document = Document(
+            id="doc-quality-warning-fix",
+            filename="quality-fix.pdf",
+            content_type="application/pdf",
+            sha256="quality-warning-fix-sha",
+            artifact_path=str(app.state.settings.data_dir / "quality-fix.pdf"),
+            status=StageStatus.SUCCEEDED.value,
+        )
+        session.add(document)
+        session.add(
+            Job(
+                id="job-quality-warning-fix",
+                type="index_document",
+                target_id=document.id,
+                status=StageStatus.SUCCEEDED.value,
+                progress=100,
+                logs=["Parser quality warnings: reference_unit_missing_expected_script=1"],
+                result={
+                    "document_id": document.id,
+                    "index_options": stored_options,
+                    "parser_quality": {
+                        "warning_counts": {
+                            "disallowed_block_type_quarantined": 1,
+                            "reference_unit_missing_expected_script": 1,
+                            "reference_unit_unresolved": 1,
+                        },
+                        "affected_chunks": 1,
+                    },
+                    "index_quality_report": {
+                        "summary": {
+                            "materialization_blocked_reference_count": 1,
+                            "reference_unit_unresolved_count": 1,
+                            "reference_units_missing_expected_script": 1,
+                        },
+                        "references": [
+                            {
+                                "action": "block_reference_materialization",
+                                "status": "missing_expected_script",
+                                "reference": "Book 1, Hadith 2",
+                                "missing_scripts": ["arabic"],
+                                "quality_flags": ["missing_expected_script:arabic"],
+                                "source_location": {"page_start": 4},
+                                "materialization": {
+                                    "action": "block_reference_materialization"
+                                },
+                            }
+                        ],
+                    },
+                },
+                job_options=stored_options,
+            )
+        )
+        session.add(
+            Chunk(
+                id="chunk-warning-fix",
+                document_id=document.id,
+                text="Book 1, Hadith 2 English translation only.",
+                source_location={"page": 4},
+                extraction_quality={"parser_warnings": parser_warnings},
+                metadata_json={
+                    "parser_metadata": {
+                        "backend": "mineru",
+                        "parser_mode": "mineru_strict",
+                    },
+                    "domain_metadata": {
+                        "domain": "quran_tafseer",
+                        "tags": ["arabic"],
+                    },
+                    "reference_metadata": {"references": ["Book 1, Hadith 2"]},
+                    "extraction_quality": {"parser_warnings": parser_warnings},
+                },
+            )
+        )
+        await session.commit()
+
+    response = await client.post("/api/jobs/job-quality-warning-fix/quality-warnings/fix")
+
+    assert response.status_code == 202
+    payload = response.json()
+    assert payload["source_job_id"] == "job-quality-warning-fix"
+    assert payload["document_id"] == "doc-quality-warning-fix"
+    assert payload["queued_job_status"] == StageStatus.READY.value
+    assert payload["index_options"]["parser_mode"] == expected_options["parser_mode"]
+    repair_plan = payload["repair_plan"]
+    assert repair_plan["strategy"] == "metadata_aware_warning_repair"
+    assert repair_plan["warning_counts"] == {
+        "disallowed_block_type_quarantined": 1,
+        "reference_materialization_blocked": 1,
+        "reference_unit_missing_expected_script": 1,
+        "reference_unit_unresolved": 1,
+    }
+    assert {step["code"] for step in repair_plan["steps"]} == {
+        "disallowed_block_type_quarantined",
+        "reference_materialization_blocked",
+        "reference_unit_missing_expected_script",
+        "reference_unit_unresolved",
+    }
+    assert repair_plan["sample_references"] == ["Book 1, Hadith 2"]
+    assert repair_plan["sample_pages"] == [4]
+    assert repair_plan["sample_chunk_previews"] == [
+        "Book 1, Hadith 2 English translation only."
+    ]
+    assert repair_plan["ai_suggestion"]["status"] == "succeeded"
+    assert repair_plan["ai_suggestion"]["model"] == "test-reasoning-model"
+    repaired_custom_json = payload["index_options"]["domain_metadata"]["custom_json"]
+    repair_metadata = repaired_custom_json["repair"]
+    assert repair_metadata["reference_unit_missing_expected_script"] == {
+        "action": "preserve_parallel_reference_units",
+        "preserve_parallel_text": True,
+        "expected_scripts": ["arabic"],
+        "carry_reference_headers_into_body": True,
+    }
+    assert repaired_custom_json["reference_resolution"] == {
+        "enabled": True,
+        "build_canonical_units": True,
+        "carry_forward_body_blocks": True,
+        "header_only_policy": "provenance_only",
+        "continuation_policy": "until_next_reference",
+        "max_page_gap": 2,
+        "require_single_reference_per_answerable_chunk": True,
+        "carry_forward_previous_reference": True,
+        "continuation_reference_carry_forward": True,
+        "mark_title_front_matter_non_reference_chunks": True,
+    }
+    assert repaired_custom_json["chunking"]["merge_reference_header_with_body"] is True
+    assert repaired_custom_json["chunking"]["preserve_parallel_text"] is True
+    assert repaired_custom_json["provenance"] == {
+        "preserve_original_blocks": True,
+        "block_preview_chars": 160,
+        "store_text_hash": True,
+    }
+    assert repaired_custom_json["reference_schema"] == {
+        "type": "chapter_verse",
+        "display": "{chapter}:{verse}",
+        "canonical_ref_template": "{chapter}:{verse}",
+        "fields": {
+            "chapter": "surah_number",
+            "verse": "ayah_number",
+            "page": "page_number",
+        },
+    }
+    assert repair_metadata["reference_unit_unresolved"][
+        "carry_forward_previous_reference"
+    ] is True
+    assert (
+        repair_metadata["reference_materialization_blocked"][
+            "retry_after_reference_quality_repair"
+        ]
+        is True
+    )
+    assert (
+        repair_metadata["disallowed_block_type_quarantined"]["action"]
+        == "recover_text_bearing_blocks_as_prose"
+    )
+    assert "metadata-aware repair plan" in payload["message"]
+
+    async with app.state.session_factory() as session:
+        queued = await session.get(Job, payload["queued_job_id"])
+        document = await session.get(Document, "doc-quality-warning-fix")
+        chunk = await session.get(Chunk, "chunk-warning-fix")
+
+    assert queued is not None
+    assert queued.type == "index_document"
+    assert queued.target_id == "doc-quality-warning-fix"
+    assert queued.status == StageStatus.READY.value
+    assert queued.job_options == payload["index_options"]
+    assert queued.result["index_options"] == payload["index_options"]
+    assert (
+        queued.job_options["domain_metadata"]["custom_json"]["repair_plan"]["summary"]
+        == repair_plan["summary"]
+    )
+    assert (
+        queued.job_options["domain_metadata"]["custom_json"]["repair_plan"][
+            "ai_suggestion"
+        ]["suggestion"]["summary"]
+        == "Preserve parallel reference text and recover prose blocks."
+    )
+    assert document is not None
+    assert document.status == StageStatus.RUNNING.value
+    assert chunk is not None
+    assert chunk.extraction_quality == {"parser_warnings": parser_warnings}
+
+
+@pytest.mark.asyncio
+async def test_fix_job_quality_warnings_rejects_incomplete_index_job(client):
+    app = client._transport.app
+
+    async with app.state.session_factory() as session:
+        document = Document(
+            id="doc-running-warning-fix",
+            filename="running-warning-fix.pdf",
+            content_type="application/pdf",
+            sha256="running-warning-fix-sha",
+            artifact_path=str(app.state.settings.data_dir / "running-warning-fix.pdf"),
+            status=StageStatus.RUNNING.value,
+        )
+        session.add(document)
+        session.add(
+            Job(
+                id="job-running-warning-fix",
+                type="index_document",
+                target_id=document.id,
+                status=StageStatus.RUNNING.value,
+                progress=50,
+                logs=[],
+                result={},
+            )
+        )
+        await session.commit()
+
+    response = await client.post("/api/jobs/job-running-warning-fix/quality-warnings/fix")
+
+    assert response.status_code == 409
+    assert "only be queued after the index job completes" in response.json()["detail"]
+    async with app.state.session_factory() as session:
+        jobs = (
+            await session.execute(
+                select(Job).where(
+                    Job.type == "index_document",
+                    Job.target_id == "doc-running-warning-fix",
+                )
+            )
+        ).scalars().all()
+    assert len(jobs) == 1
+
+
+@pytest.mark.asyncio
+async def test_fix_job_quality_warnings_rejects_existing_active_index_job(client):
+    app = client._transport.app
+
+    async with app.state.session_factory() as session:
+        document = Document(
+            id="doc-active-warning-fix",
+            filename="active-warning-fix.pdf",
+            content_type="application/pdf",
+            sha256="active-warning-fix-sha",
+            artifact_path=str(app.state.settings.data_dir / "active-warning-fix.pdf"),
+            status=StageStatus.RUNNING.value,
+        )
+        session.add(document)
+        session.add_all(
+            [
+                Job(
+                    id="job-completed-warning-fix",
+                    type="index_document",
+                    target_id=document.id,
+                    status=StageStatus.SUCCEEDED.value,
+                    progress=100,
+                    logs=[],
+                    result={"document_id": document.id},
+                    job_options={"parser_mode": "mineru_strict", "domain_metadata": {}},
+                ),
+                Job(
+                    id="job-active-warning-fix",
+                    type="index_document",
+                    target_id=document.id,
+                    status=StageStatus.READY.value,
+                    progress=0,
+                    logs=[],
+                    result={},
+                    job_options={"parser_mode": "mineru_strict", "domain_metadata": {}},
+                ),
+            ]
+        )
+        await session.commit()
+
+    response = await client.post("/api/jobs/job-completed-warning-fix/quality-warnings/fix")
+
+    assert response.status_code == 409
+    assert "active indexing job" in response.json()["detail"]

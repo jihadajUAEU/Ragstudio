@@ -45,6 +45,7 @@ def test_builtin_hadith_profile_has_book_hadith_reference_semantics(tmp_path):
         "reference_schema": {
             "type": "book_hadith",
             "display": "Book {book}, Hadith {hadith}",
+            "canonical_ref_template": "book:{book}:hadith:{hadith}",
             "fields": {
                 "book": "book_number",
                 "hadith": "hadith_number",
@@ -61,6 +62,21 @@ def test_builtin_hadith_profile_has_book_hadith_reference_semantics(tmp_path):
             "unit": "hadith",
             "include_neighbors": 1,
             "preserve_parallel_text": True,
+            "merge_reference_header_with_body": True,
+        },
+        "reference_resolution": {
+            "enabled": True,
+            "build_canonical_units": True,
+            "carry_forward_body_blocks": True,
+            "header_only_policy": "provenance_only",
+            "continuation_policy": "until_next_reference",
+            "max_page_gap": 2,
+            "require_single_reference_per_answerable_chunk": True,
+        },
+        "provenance": {
+            "preserve_original_blocks": True,
+            "block_preview_chars": 160,
+            "store_text_hash": True,
         },
         "retrieval": {
             "exact_reference_top1": True,
@@ -88,7 +104,18 @@ def test_builtin_quran_profile_has_chapter_verse_reference_semantics(tmp_path):
     assert profile is not None
     assert profile.metadata.citation_style == "surah_ayah"
     assert profile.metadata.custom_json["reference_schema"]["type"] == "chapter_verse"
+    assert profile.metadata.custom_json["reference_schema"]["canonical_ref_template"] == (
+        "{chapter}:{verse}"
+    )
     assert profile.metadata.custom_json["chunking"]["unit"] == "verse"
+    assert profile.metadata.custom_json["chunking"]["merge_reference_header_with_body"] is True
+    assert (
+        profile.metadata.custom_json["reference_resolution"]["build_canonical_units"] is True
+    )
+    assert profile.metadata.custom_json["reference_resolution"]["header_only_policy"] == (
+        "provenance_only"
+    )
+    assert profile.metadata.custom_json["provenance"]["preserve_original_blocks"] is True
     assert profile.metadata.custom_json["graph"]["node_types"] == [
         "surah",
         "ayah",
@@ -130,6 +157,7 @@ def test_validate_custom_json_accepts_quran_style_relationships():
         "reference_schema": {
             "type": "surah_ayah",
             "display": "Quran {chapter}:{verse}",
+            "canonical_ref_template": "{chapter}:{verse}",
             "fields": {
                 "chapter": "surah",
                 "verse": "ayah",
@@ -146,6 +174,21 @@ def test_validate_custom_json_accepts_quran_style_relationships():
             "unit": "verse",
             "include_neighbors": 1,
             "preserve_parallel_text": True,
+            "merge_reference_header_with_body": True,
+        },
+        "reference_resolution": {
+            "enabled": True,
+            "build_canonical_units": True,
+            "carry_forward_body_blocks": True,
+            "header_only_policy": "provenance_only",
+            "continuation_policy": "until_next_reference",
+            "max_page_gap": 1,
+            "require_single_reference_per_answerable_chunk": True,
+        },
+        "provenance": {
+            "preserve_original_blocks": True,
+            "block_preview_chars": 160,
+            "store_text_hash": True,
         },
         "retrieval": {
             "exact_reference_top1": True,
@@ -196,6 +239,22 @@ def test_validate_custom_json_rejects_invalid_retrieval_booleans():
 
     with pytest.raises(ValueError, match="retrieval values must be booleans"):
         validate_custom_json({"retrieval": {"boost_same_chapter": 1}})
+
+
+def test_validate_custom_json_rejects_invalid_reference_resolution():
+    with pytest.raises(ValueError, match=r"reference_resolution\.build_canonical_units"):
+        validate_custom_json({"reference_resolution": {"build_canonical_units": "true"}})
+
+    with pytest.raises(ValueError, match=r"reference_resolution\.max_page_gap"):
+        validate_custom_json({"reference_resolution": {"max_page_gap": -1}})
+
+
+def test_validate_custom_json_rejects_invalid_provenance_contract():
+    with pytest.raises(ValueError, match=r"provenance\.preserve_original_blocks"):
+        validate_custom_json({"provenance": {"preserve_original_blocks": "yes"}})
+
+    with pytest.raises(ValueError, match=r"provenance\.block_preview_chars"):
+        validate_custom_json({"provenance": {"block_preview_chars": True}})
 
 
 def test_validate_custom_json_rejects_invalid_reference_regex():

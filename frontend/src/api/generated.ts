@@ -303,6 +303,16 @@ export interface JobQualityWarningsOut {
   items: ParserQualityWarningOut[];
 }
 
+export interface JobQualityWarningRepairOut {
+  source_job_id: string;
+  document_id: string;
+  queued_job_id: string;
+  queued_job_status: StageStatus;
+  index_options: Record<string, unknown>;
+  repair_plan: Record<string, unknown>;
+  message: string;
+}
+
 export type VariantPreset = "balanced" | "precise" | "broad" | "fast";
 
 export interface VariantOut {
