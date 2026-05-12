@@ -58,6 +58,28 @@ async def test_init_db_adds_durable_job_worker_columns(database_url):
                     '{}'::jsonb,
                     NOW(),
                     NOW()
+                ),
+                (
+                    'job-duplicate-ready',
+                    'index_document',
+                    'ready',
+                    'doc-duplicate',
+                    0,
+                    '[]'::jsonb,
+                    '{}'::jsonb,
+                    NOW() - INTERVAL '2 minutes',
+                    NOW() - INTERVAL '2 minutes'
+                ),
+                (
+                    'job-duplicate-running',
+                    'index_document',
+                    'running',
+                    'doc-duplicate',
+                    50,
+                    '[]'::jsonb,
+                    '{}'::jsonb,
+                    NOW() - INTERVAL '1 minute',
+                    NOW() - INTERVAL '1 minute'
                 )
                 """
             )
@@ -87,6 +109,39 @@ async def test_init_db_adds_durable_job_worker_columns(database_url):
             .mappings()
             .one()
         )
+        duplicate_rows = (
+            (
+                await connection.execute(
+                    text(
+                        """
+                        SELECT id, status, progress, logs, result
+                        FROM jobs
+                        WHERE target_id = 'doc-duplicate'
+                        ORDER BY id
+                        """
+                    )
+                )
+            )
+            .mappings()
+            .all()
+        )
+        index_rows = (
+            (
+                await connection.execute(
+                    text(
+                        """
+                        SELECT indexname, indexdef
+                        FROM pg_indexes
+                        WHERE schemaname = current_schema()
+                          AND tablename = 'jobs'
+                          AND indexname = 'uq_active_index_document_job'
+                        """
+                    )
+                )
+            )
+            .mappings()
+            .all()
+        )
 
     assert {
         "worker_id",
@@ -106,6 +161,24 @@ async def test_init_db_adds_durable_job_worker_columns(database_url):
     assert job_row["available_at"] is not None
     assert job_row["job_options"] == {}
     assert job_row["recovery_action"] is None
+    assert [row["id"] for row in duplicate_rows if row["status"] == "running"] == [
+        "job-duplicate-running"
+    ]
+    failed_duplicates = [row for row in duplicate_rows if row["status"] == "failed"]
+    assert [row["id"] for row in failed_duplicates] == ["job-duplicate-ready"]
+    assert failed_duplicates[0]["progress"] == 100
+    assert failed_duplicates[0]["logs"] == [
+        "Superseded duplicate active indexing job during runtime schema migration."
+    ]
+    assert failed_duplicates[0]["result"]["error"] == (
+        "Superseded duplicate active indexing job during runtime schema migration."
+    )
+    assert len(index_rows) == 1
+    assert "CREATE UNIQUE INDEX uq_active_index_document_job" in index_rows[0]["indexdef"]
+    assert "target_id" in index_rows[0]["indexdef"]
+    assert "index_document" in index_rows[0]["indexdef"]
+    assert "ready" in index_rows[0]["indexdef"]
+    assert "running" in index_rows[0]["indexdef"]
 
     await engine.dispose()
 

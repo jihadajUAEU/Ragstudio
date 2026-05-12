@@ -212,6 +212,18 @@ def _backfill_job_runtime_columns(connection) -> None:
 def _ensure_job_runtime_indexes(connection) -> None:
     if connection.dialect.name != "postgresql":
         return
+    _dedupe_active_index_document_jobs(connection)
+    connection.execute(
+        text(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_active_index_document_job
+            ON jobs (target_id)
+            WHERE type = 'index_document'
+              AND status IN ('ready', 'running')
+              AND target_id IS NOT NULL
+            """
+        )
+    )
     connection.execute(
         text(
             """
@@ -225,6 +237,52 @@ def _ensure_job_runtime_indexes(connection) -> None:
             """
             CREATE INDEX IF NOT EXISTS ix_jobs_lease_expires_at
             ON jobs (lease_expires_at)
+            """
+        )
+    )
+
+
+def _dedupe_active_index_document_jobs(connection) -> None:
+    connection.execute(
+        text(
+            """
+            WITH ranked AS (
+                SELECT
+                    id,
+                    row_number() OVER (
+                        PARTITION BY target_id
+                        ORDER BY
+                            CASE WHEN status = 'running' THEN 0 ELSE 1 END,
+                            COALESCE(
+                                lease_expires_at,
+                                heartbeat_at,
+                                available_at,
+                                updated_at,
+                                created_at
+                            ) DESC NULLS LAST,
+                            id DESC
+                    ) AS active_rank
+                FROM jobs
+                WHERE type = 'index_document'
+                  AND status IN ('ready', 'running')
+                  AND target_id IS NOT NULL
+            ),
+            duplicates AS (
+                SELECT id
+                FROM ranked
+                WHERE active_rank > 1
+            )
+            UPDATE jobs
+            SET status = 'failed',
+                progress = 100,
+                worker_id = NULL,
+                lease_expires_at = NULL,
+                recovery_action = NULL,
+                logs = COALESCE(logs, '[]'::jsonb)
+                    || '["Superseded duplicate active indexing job during runtime schema migration."]'::jsonb,
+                result = COALESCE(result, '{}'::jsonb)
+                    || '{"error": "Superseded duplicate active indexing job during runtime schema migration."}'::jsonb
+            WHERE id IN (SELECT id FROM duplicates)
             """
         )
     )
