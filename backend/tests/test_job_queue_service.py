@@ -1,7 +1,7 @@
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from ragstudio.db.models import Job
+from ragstudio.db.models import Document, Job
 from ragstudio.schemas.common import StageStatus
 from ragstudio.services.job_queue_service import JobLeaseLostError, JobQueueService
 
@@ -277,6 +277,16 @@ async def test_recover_expired_running_job_fails_after_max_attempts(client):
 
     async with app.state.session_factory() as session:
         session.add(
+            Document(
+                id="doc-exhausted",
+                filename="exhausted.pdf",
+                content_type="application/pdf",
+                sha256="doc-exhausted-sha",
+                artifact_path="/tmp/doc-exhausted.pdf",
+                status=StageStatus.RUNNING.value,
+            )
+        )
+        session.add(
             Job(
                 id="job-exhausted",
                 type="index_document",
@@ -301,9 +311,11 @@ async def test_recover_expired_running_job_fails_after_max_attempts(client):
         )
         await session.commit()
         job = await session.get(Job, "job-exhausted")
+        document = await session.get(Document, "doc-exhausted")
 
     assert recovered == 1
     assert job.status == StageStatus.FAILED.value
+    assert document.status == StageStatus.FAILED.value
     assert job.progress == 100
     assert job.worker_id is None
     assert job.lease_expires_at is None
@@ -313,6 +325,95 @@ async def test_recover_expired_running_job_fails_after_max_attempts(client):
         == "Worker lease expired after maximum attempts; indexing failed."
     )
     assert job.logs[-1] == "Worker lease expired after maximum attempts; indexing failed."
+
+
+@pytest.mark.asyncio
+async def test_mark_failed_updates_target_document_status(client):
+    app = client._transport.app
+    timestamp = datetime.now(UTC)
+
+    async with app.state.session_factory() as session:
+        session.add(
+            Document(
+                id="doc-mark-failed",
+                filename="mark-failed.pdf",
+                content_type="application/pdf",
+                sha256="doc-mark-failed-sha",
+                artifact_path="/tmp/doc-mark-failed.pdf",
+                status=StageStatus.RUNNING.value,
+            )
+        )
+        session.add(
+            Job(
+                id="job-mark-failed",
+                type="index_document",
+                target_id="doc-mark-failed",
+                status=StageStatus.RUNNING.value,
+                progress=50,
+                logs=["Worker worker-a claimed job."],
+                result={},
+                job_options={"parser_mode": "mineru_strict", "domain_metadata": {}},
+                worker_id="worker-a",
+                lease_expires_at=timestamp + timedelta(minutes=5),
+                heartbeat_at=timestamp,
+                attempts=1,
+            )
+        )
+        await session.commit()
+
+    async with app.state.session_factory() as session:
+        job = await session.get(Job, "job-mark-failed")
+        await JobQueueService(session).mark_failed(
+            job,
+            worker_id="worker-a",
+            reason="Indexing failed.",
+        )
+        await session.commit()
+        document = await session.get(Document, "doc-mark-failed")
+        refreshed_job = await session.get(Job, "job-mark-failed")
+
+    assert document.status == StageStatus.FAILED.value
+    assert refreshed_job.status == StageStatus.FAILED.value
+    assert refreshed_job.result["error"] == "Indexing failed."
+
+
+@pytest.mark.asyncio
+async def test_recover_running_job_with_missing_lease_requeues_full_index(client):
+    app = client._transport.app
+    timestamp = datetime.now(UTC)
+
+    async with app.state.session_factory() as session:
+        session.add(
+            Job(
+                id="job-missing-lease",
+                type="index_document",
+                target_id="doc-missing-lease",
+                status=StageStatus.RUNNING.value,
+                progress=25,
+                logs=["Worker worker-legacy claimed job without a durable lease."],
+                result={},
+                job_options={"parser_mode": "mineru_strict", "domain_metadata": {}},
+                worker_id="worker-legacy",
+                lease_expires_at=None,
+                heartbeat_at=None,
+                attempts=1,
+                max_attempts=3,
+            )
+        )
+        await session.commit()
+
+    async with app.state.session_factory() as session:
+        recovered = await JobQueueService(session).recover_expired_jobs(now=timestamp)
+        await session.commit()
+        job = await session.get(Job, "job-missing-lease")
+
+    assert recovered == 1
+    assert job.status == StageStatus.READY.value
+    assert job.worker_id is None
+    assert job.lease_expires_at is None
+    assert job.heartbeat_at == timestamp
+    assert job.recovery_action == "retry_full_index"
+    assert job.logs[-1] == "Recovered missing worker lease; full indexing will retry."
 
 
 async def _run_worker_action(

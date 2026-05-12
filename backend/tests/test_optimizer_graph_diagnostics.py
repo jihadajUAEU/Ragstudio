@@ -1014,7 +1014,36 @@ async def test_diagnostics_reports_stale_running_jobs(client):
     payload = response.json()
     assert payload["dependency_status"]["stale_running_jobs"] == 1
     assert payload["dependency_status"]["ready_index_jobs"] == 0
-    assert "1 indexing job has an expired worker lease." in payload["warnings"]
+    assert "1 indexing job has a missing or expired worker lease." in payload["warnings"]
+
+
+@pytest.mark.asyncio
+async def test_diagnostics_reports_running_jobs_with_missing_leases(client):
+    from ragstudio.db.models import Job
+
+    app = client._transport.app
+    async with app.state.session_factory() as session:
+        session.add(
+            Job(
+                type="index_document",
+                target_id="doc-missing-worker-lease",
+                status=StageStatus.RUNNING.value,
+                progress=25,
+                logs=["Legacy running job without lease."],
+                result={},
+                worker_id="worker-legacy",
+                lease_expires_at=None,
+                heartbeat_at=None,
+            )
+        )
+        await session.commit()
+
+    response = await client.get("/api/diagnostics")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["dependency_status"]["stale_running_jobs"] == 1
+    assert "1 indexing job has a missing or expired worker lease." in payload["warnings"]
 
 
 @pytest.mark.asyncio

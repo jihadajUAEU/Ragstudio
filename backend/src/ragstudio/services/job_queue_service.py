@@ -4,9 +4,9 @@ from collections.abc import Sequence
 from datetime import datetime, timedelta
 from typing import Any
 
-from ragstudio.db.models import Job
+from ragstudio.db.models import Document, Job
 from ragstudio.schemas.common import StageStatus, new_id, now_utc
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
@@ -115,6 +115,7 @@ class JobQueueService:
         current.heartbeat_at = timestamp
         current.logs = self._append_log(current.logs, reason)
         current.result = {**(current.result or {}), "error": reason}
+        await self._mark_target_document_failed(current)
         await self.session.flush()
 
     async def recover_expired_jobs(self, now: datetime | None = None) -> int:
@@ -123,23 +124,25 @@ class JobQueueService:
             select(Job)
             .where(
                 Job.status == StageStatus.RUNNING.value,
-                Job.lease_expires_at.is_not(None),
-                Job.lease_expires_at < timestamp,
+                or_(Job.lease_expires_at.is_(None), Job.lease_expires_at < timestamp),
             )
             .with_for_update(skip_locked=True)
         )
 
         recovered = 0
         for job in result.scalars().all():
+            missing_lease = job.lease_expires_at is None
             job.worker_id = None
             job.lease_expires_at = None
             job.heartbeat_at = timestamp
             if job.attempts >= job.max_attempts:
-                log = "Worker lease expired after maximum attempts; indexing failed."
+                lease_state = "missing" if missing_lease else "expired"
+                log = f"Worker lease {lease_state} after maximum attempts; indexing failed."
                 job.status = StageStatus.FAILED.value
                 job.progress = 100
                 job.recovery_action = None
                 job.result = {**(job.result or {}), "error": log}
+                await self._mark_target_document_failed(job)
             else:
                 stage = (job.result or {}).get("indexing_stage")
                 stage_name = stage.get("stage") if isinstance(stage, dict) else None
@@ -148,17 +151,32 @@ class JobQueueService:
                 if stage_name in {"search_ready", "graph_enriching"}:
                     job.recovery_action = "resume_graph_projection"
                     log = (
-                        "Recovered expired worker lease; graph projection will resume "
+                        f"Recovered {'missing' if missing_lease else 'expired'} worker lease; "
+                        "graph projection will resume "
                         "from persisted chunks."
                     )
                 else:
                     job.recovery_action = "retry_full_index"
-                    log = "Recovered expired worker lease; full indexing will retry."
+                    lease_state = "missing" if missing_lease else "expired"
+                    log = f"Recovered {lease_state} worker lease; full indexing will retry."
             job.logs = self._append_log(job.logs, log)
             recovered += 1
 
         await self.session.flush()
         return recovered
+
+    async def _mark_target_document_failed(self, job: Job) -> None:
+        if job.type != "index_document" or not job.target_id:
+            return
+        document = await self.session.scalar(
+            select(Document)
+            .where(Document.id == job.target_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        if document is None:
+            return
+        document.status = StageStatus.FAILED.value
 
     async def _require_active_lease(self, job: Job, worker_id: str, timestamp: datetime) -> Job:
         current = await self.session.scalar(
