@@ -1,3 +1,4 @@
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -892,8 +893,20 @@ async def test_lifecycle_marks_pending_graph_projection_skipped_when_persistence
     app = client._transport.app
     artifact_path = app.state.settings.data_dir / "pending-persist-fails.pdf"
     artifact_path.write_text("runtime text", encoding="utf-8")
+    runtime_indexed = asyncio.Event()
+    runtime = PreparsedRuntime()
+
+    original_index_preparsed = runtime.index_preparsed_chunks
+
+    async def observed_index_preparsed_chunks(artifact_path, chunks, *, document_id):
+        result = await original_index_preparsed(artifact_path, chunks, document_id=document_id)
+        runtime_indexed.set()
+        return result
+
+    runtime.index_preparsed_chunks = observed_index_preparsed_chunks
 
     async def failing_persist(self, *args, **kwargs):
+        await asyncio.wait_for(runtime_indexed.wait(), timeout=1)
         raise RuntimeError("canonical chunk write failed")
 
     monkeypatch.setattr(ChunkPersistenceService, "persist", failing_persist)
@@ -926,7 +939,7 @@ async def test_lifecycle_marks_pending_graph_projection_skipped_when_persistence
             await IndexLifecycleService(
                 session,
                 app.state.settings,
-                runtime_factory=FakeFactory(PreparsedRuntime()),
+                runtime_factory=FakeFactory(runtime),
                 health_service=FakeHealthService(),
                 document_parser=FakeDocumentParser(),
             ).reindex_document(
@@ -945,9 +958,80 @@ async def test_lifecycle_marks_pending_graph_projection_skipped_when_persistence
     assert projection_record.status == "skipped"
     assert projection_record.node_count == 0
     assert projection_record.edge_count == 0
+    assert runtime.preparsed_paths == [str(artifact_path)]
+    assert runtime.deleted == [document_id, document_id]
     assert "Canonical chunk persistence failed: canonical chunk write failed" in (
         projection_record.error or ""
     )
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_cleans_preparsed_runtime_index_when_runtime_branch_skips(client):
+    app = client._transport.app
+    artifact_path = app.state.settings.data_dir / "preparsed-runtime-skips.pdf"
+    artifact_path.write_text("runtime text", encoding="utf-8")
+
+    class FailingPreparsedRuntime(PreparsedRuntime):
+        async def index_preparsed_chunks(self, artifact_path, chunks, *, document_id):
+            self.preparsed_paths.append(artifact_path)
+            self.preparsed_chunks = chunks
+            raise RuntimeError("native partial write failed")
+
+    async with app.state.session_factory() as session:
+        session.add(
+            SettingsProfile(
+                id="default",
+                provider="openai-compatible",
+                llm_model="gpt-4o",
+                llm_base_url="http://llm.test",
+                embedding_model="text-embedding-3-large",
+                embedding_base_url="http://embedding.test",
+                storage_backend="postgres_pgvector_neo4j",
+                runtime_mode="runtime",
+            )
+        )
+        document = Document(
+            filename="preparsed-runtime-skips.pdf",
+            content_type="application/pdf",
+            sha256="preparsed-runtime-skips",
+            artifact_path=str(artifact_path),
+            status=StageStatus.READY.value,
+        )
+        session.add(document)
+        await session.commit()
+
+        runtime = FailingPreparsedRuntime()
+        result = await IndexLifecycleService(
+            session,
+            app.state.settings,
+            runtime_factory=FakeFactory(runtime),
+            health_service=FakeHealthService(),
+            document_parser=FakeDocumentParser(),
+        ).reindex_document(
+            document.id,
+            options=IndexDocumentIn(parser_mode="mineru_strict"),
+        )
+        index_record = await session.scalar(
+            select(IndexRecord).where(IndexRecord.document_id == document.id)
+        )
+        projection_record = await session.get(
+            GraphProjectionRecord,
+            result.graph_projection_record_id,
+        )
+
+    assert runtime.preparsed_paths == [str(artifact_path)]
+    assert runtime.deleted == [document.id, document.id]
+    assert index_record is not None
+    assert index_record.status == StageStatus.FAILED.value
+    assert index_record.error == "native partial write failed"
+    assert projection_record is not None
+    assert projection_record.status == "skipped"
+    assert result.graph_materialization == {
+        "status": "skipped",
+        "node_count": 0,
+        "edge_count": 0,
+        "reason": "native partial write failed",
+    }
 
 
 @pytest.mark.asyncio

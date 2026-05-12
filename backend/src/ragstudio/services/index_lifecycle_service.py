@@ -1,3 +1,4 @@
+import logging
 from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass
 from inspect import signature
@@ -24,6 +25,9 @@ from ragstudio.services.runtime_profile_service import RuntimeProfileService
 from ragstudio.services.trace_normalizer import TraceNormalizer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+
+logger = logging.getLogger(__name__)
 
 
 class RuntimeHealthBlockedError(RuntimeError):
@@ -222,8 +226,11 @@ class IndexLifecycleService:
         studio_branch_name = IndexStage.CHUNKS_PERSISTED.value
         runtime_branch_name = IndexStage.RUNTIME_ENRICHING.value
 
-        async def cleanup_runtime_index() -> None:
-            await runtime.delete_document_index(document.id)
+        async def cleanup_runtime_index_best_effort() -> None:
+            try:
+                await runtime.delete_document_index(document.id)
+            except Exception:
+                logger.exception("Failed to clean runtime index for %s.", document.id)
 
         if on_stage is not None:
             await on_stage(
@@ -248,8 +255,7 @@ class IndexLifecycleService:
             )
         except Exception as exc:
             reason = f"Canonical chunk persistence failed: {exc}"
-            if runtime_chunks is not None:
-                await cleanup_runtime_index()
+            await cleanup_runtime_index_best_effort()
             await self._mark_graph_projection_skipped(projection_record.id, reason)
             raise
         chunks = branch_results[studio_branch_name].value
@@ -257,6 +263,7 @@ class IndexLifecycleService:
         runtime_result = branch_results[runtime_branch_name]
         if runtime_result.status == "skipped":
             reason = runtime_result.warning or "Runtime enrichment skipped."
+            await cleanup_runtime_index_best_effort()
             await self._mark_runtime_index_failed(document.id, profile.id, reason)
             projection_record = await self._mark_graph_projection_skipped(
                 projection_record.id,
@@ -278,7 +285,7 @@ class IndexLifecycleService:
         if chunks and expected_runtime_chunk_count == 0:
             reason = "No chunks passed the runtime materialization quality gate."
             if runtime_chunks is not None or runtime_chunk_count > 0:
-                await cleanup_runtime_index()
+                await cleanup_runtime_index_best_effort()
             await self._mark_runtime_index_failed(document.id, profile.id, reason)
             projection_record = await self._mark_graph_projection_skipped(
                 projection_record.id,
@@ -299,7 +306,7 @@ class IndexLifecycleService:
                 f"Runtime enrichment produced {runtime_chunk_count} chunks for "
                 f"{expected_runtime_chunk_count} quality-approved chunks."
             )
-            await cleanup_runtime_index()
+            await cleanup_runtime_index_best_effort()
             await self._mark_runtime_index_failed(document.id, profile.id, reason)
             projection_record = await self._mark_graph_projection_skipped(
                 projection_record.id,
