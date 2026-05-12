@@ -48,17 +48,29 @@ async def test_init_db_adds_durable_job_worker_columns(database_url):
                     id, type, status, target_id, progress, logs, result,
                     created_at, updated_at
                 )
-                VALUES (
-                    'job-1',
-                    'index_document',
-                    'ready',
-                    'doc-1',
-                    0,
-                    '[]'::jsonb,
-                    '{}'::jsonb,
-                    NOW(),
-                    NOW()
-                )
+                VALUES
+                    (
+                        'job-1',
+                        'index_document',
+                        'ready',
+                        'doc-1',
+                        0,
+                        '[]'::jsonb,
+                        '{}'::jsonb,
+                        NOW(),
+                        NOW()
+                    ),
+                    (
+                        'job-2',
+                        'index_document',
+                        'running',
+                        'doc-1',
+                        50,
+                        '[]'::jsonb,
+                        '{}'::jsonb,
+                        NOW() + INTERVAL '1 second',
+                        NOW() + INTERVAL '1 second'
+                    )
                 """
             )
         )
@@ -87,6 +99,51 @@ async def test_init_db_adds_durable_job_worker_columns(database_url):
             .mappings()
             .one()
         )
+        active_jobs = (
+            (
+                await connection.execute(
+                    text(
+                        """
+                        SELECT id
+                        FROM jobs
+                        WHERE type = 'index_document'
+                          AND target_id = 'doc-1'
+                          AND status IN ('ready', 'running')
+                        ORDER BY id
+                        """
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        failed_job = (
+            (
+                await connection.execute(
+                    text(
+                        """
+                        SELECT status, progress, result
+                        FROM jobs
+                        WHERE id = 'job-1'
+                        """
+                    )
+                )
+            )
+            .mappings()
+            .one()
+        )
+        active_index_definition = (
+            await connection.execute(
+                text(
+                    """
+                    SELECT indexdef
+                    FROM pg_indexes
+                    WHERE tablename = 'jobs'
+                      AND indexname = 'uq_active_index_document_job'
+                    """
+                )
+            )
+        ).scalar_one()
 
     assert {
         "worker_id",
@@ -106,6 +163,20 @@ async def test_init_db_adds_durable_job_worker_columns(database_url):
     assert job_row["available_at"] is not None
     assert job_row["job_options"] == {}
     assert job_row["recovery_action"] is None
+    assert active_jobs == ["job-2"]
+    assert failed_job["status"] == "failed"
+    assert failed_job["progress"] == 100
+    assert (
+        failed_job["result"]["error"]
+        == "Superseded by a newer active indexing job during database initialization."
+    )
+    assert "CREATE UNIQUE INDEX" in active_index_definition
+    assert "uq_active_index_document_job" in active_index_definition
+    assert "WHERE" in active_index_definition
+    assert "index_document" in active_index_definition
+    assert "ready" in active_index_definition
+    assert "running" in active_index_definition
+    assert "target_id IS NOT NULL" in active_index_definition
 
     await engine.dispose()
 

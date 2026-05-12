@@ -212,6 +212,7 @@ def _backfill_job_runtime_columns(connection) -> None:
 def _ensure_job_runtime_indexes(connection) -> None:
     if connection.dialect.name != "postgresql":
         return
+    _deduplicate_active_index_document_jobs(connection)
     connection.execute(
         text(
             """
@@ -223,8 +224,60 @@ def _ensure_job_runtime_indexes(connection) -> None:
     connection.execute(
         text(
             """
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_active_index_document_job
+            ON jobs (target_id)
+            WHERE type = 'index_document'
+              AND status IN ('ready', 'running')
+              AND target_id IS NOT NULL
+            """
+        )
+    )
+    connection.execute(
+        text(
+            """
             CREATE INDEX IF NOT EXISTS ix_jobs_lease_expires_at
             ON jobs (lease_expires_at)
+            """
+        )
+    )
+
+
+def _deduplicate_active_index_document_jobs(connection) -> None:
+    connection.execute(
+        text(
+            """
+            WITH ranked AS (
+                SELECT id,
+                       row_number() OVER (
+                           PARTITION BY target_id
+                           ORDER BY COALESCE(created_at, updated_at, NOW()) DESC, id DESC
+                       ) AS active_rank
+                FROM jobs
+                WHERE type = 'index_document'
+                  AND status IN ('ready', 'running')
+                  AND target_id IS NOT NULL
+            )
+            UPDATE jobs
+            SET status = 'failed',
+                progress = 100,
+                worker_id = NULL,
+                lease_expires_at = NULL,
+                recovery_action = NULL,
+                logs = COALESCE(logs, CAST('[]' AS JSONB))
+                    || jsonb_build_array(
+                        'Superseded by a newer active indexing job '
+                        || 'during database initialization.'
+                    ),
+                result = jsonb_set(
+                    COALESCE(result, CAST('{}' AS JSONB)),
+                    '{error}',
+                    to_jsonb(
+                        'Superseded by a newer active indexing job '
+                        || 'during database initialization.'
+                    ),
+                    true
+                )
+            WHERE id IN (SELECT id FROM ranked WHERE active_rank > 1)
             """
         )
     )

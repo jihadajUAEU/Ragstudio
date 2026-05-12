@@ -1386,7 +1386,7 @@ async def test_delete_missing_document_returns_404(client):
 
 
 @pytest.mark.asyncio
-async def test_delete_document_with_active_index_job_removes_document_job_and_artifact(
+async def test_delete_document_rejects_active_index_job_and_preserves_state(
     client,
     tmp_path,
 ):
@@ -1417,13 +1417,15 @@ async def test_delete_document_with_active_index_job_removes_document_job_and_ar
 
     response = await client.delete(f"/api/documents/{document_id}")
 
-    assert response.status_code == 204
-    assert response.content == b""
-    assert not artifact.exists()
+    assert response.status_code == 409
+    assert "active indexing job" in response.json()["detail"]
+    assert artifact.exists()
     async with session_factory() as session:
-        assert await session.get(Document, document_id) is None
+        document = await session.get(Document, document_id)
         job_id = await session.scalar(select(Job.id).where(Job.target_id == document_id))
-    assert job_id is None
+    assert document is not None
+    assert document.status == StageStatus.RUNNING.value
+    assert job_id is not None
 
 
 @pytest.mark.asyncio

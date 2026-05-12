@@ -322,6 +322,12 @@ async def test_recover_expired_running_job_fails_after_max_attempts(client):
         job.result["error"]
         == "Worker lease expired after maximum attempts; indexing failed."
     )
+    assert job.result["indexing_stage"] == {
+        "stage": "failed",
+        "label": "Failed",
+        "detail": "Worker lease expired after maximum attempts; indexing failed.",
+        "progress": 100,
+    }
     assert job.logs[-1] == "Worker lease expired after maximum attempts; indexing failed."
     assert document.status == StageStatus.FAILED.value
 
@@ -375,6 +381,12 @@ async def test_mark_failed_marks_index_document_failed(client):
     assert job.worker_id is None
     assert job.lease_expires_at is None
     assert job.result["error"] == "Runtime indexing failed."
+    assert job.result["indexing_stage"] == {
+        "stage": "failed",
+        "label": "Failed",
+        "detail": "Runtime indexing failed.",
+        "progress": 100,
+    }
     assert document.status == StageStatus.FAILED.value
 
 
