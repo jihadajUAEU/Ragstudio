@@ -143,9 +143,12 @@ class DocumentService:
         )
 
     async def delete_document(self, document_id: str) -> DeleteDocumentResult:
+        await self.lock_document_workflow(document_id)
         document = await self.session.get(Document, document_id)
         if document is None:
             return "not_found"
+        if await self.active_index_job(document_id) is not None:
+            raise ActiveIndexJobError("Document has an active indexing job")
 
         artifact_path = Path(document.artifact_path)
         try:

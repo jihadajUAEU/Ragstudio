@@ -223,6 +223,8 @@ async def delete_document(
         ).delete_document(document_id)
     except GraphProjectionCleanupError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ActiveIndexJobError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     if result == "not_found":
         raise HTTPException(status_code=404, detail="Document not found")
     return Response(status_code=status.HTTP_204_NO_CONTENT)
