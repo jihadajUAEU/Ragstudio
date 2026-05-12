@@ -80,12 +80,15 @@ export function GraphPage() {
     "Graph capability is disabled by the active runtime profile.";
 
   const previewGraph = useMemo(
-    () => buildPreviewGraphData(filteredGraph.nodes, filteredGraph.edges, 50),
+    () => buildEndpointClosedPreview(filteredGraph.nodes, filteredGraph.edges, 50, 50),
     [filteredGraph.nodes, filteredGraph.edges],
   );
   const previewNodes = previewGraph.nodes;
   const previewEdges = previewGraph.edges;
-  const visualGraph = useMemo(() => buildVisualGraph(previewNodes, previewEdges), [previewNodes, previewEdges]);
+  const visualGraph = useMemo(
+    () => buildVisualGraph(previewNodes, previewEdges),
+    [previewNodes, previewEdges],
+  );
   const filteredResultEmpty = hasGraphData && filteredGraph.nodes.length === 0 && filteredGraph.edges.length === 0;
 
   return (
@@ -517,21 +520,50 @@ function edgeScopedFiltersActive(filters: GraphFilters): boolean {
   return Boolean(filters.edgeType || filters.documentId || filters.searchText.trim());
 }
 
-function buildPreviewGraphData(
+function buildEndpointClosedPreview(
   rawNodes: Record<string, unknown>[],
   rawEdges: Record<string, unknown>[],
-  limit: number,
+  maxNodes: number,
+  maxEdges: number,
 ): { nodes: Record<string, unknown>[]; edges: Record<string, unknown>[] } {
-  const nodes = rawNodes.slice(0, limit);
-  const nodeIds = new Set(nodes.map((node, index) => graphId(node, index)));
-  const edges = rawEdges
-    .filter((edge) => {
-      const source = graphEndpoint(edge, ["source", "source_id", "from", "start"]);
-      const target = graphEndpoint(edge, ["target", "target_id", "to", "end"]);
-      return Boolean(source && target && nodeIds.has(source) && nodeIds.has(target));
-    })
-    .slice(0, limit);
-  return { nodes, edges };
+  const nodeEntries = rawNodes.map((node, index) => ({ node, id: graphId(node, index) }));
+  const nodesById = new Map(nodeEntries.map((entry) => [entry.id, entry.node]));
+  const selectedNodeIds = new Set<string>();
+  const selectedEdges: Record<string, unknown>[] = [];
+
+  for (const edge of rawEdges) {
+    if (selectedEdges.length >= maxEdges) {
+      break;
+    }
+
+    const source = graphEndpoint(edge, ["source", "source_id", "from", "start"]);
+    const target = graphEndpoint(edge, ["target", "target_id", "to", "end"]);
+    if (!source || !target || !nodesById.has(source) || !nodesById.has(target)) {
+      continue;
+    }
+
+    const missingEndpointIds = [source, target].filter((id) => !selectedNodeIds.has(id));
+    if (selectedNodeIds.size + missingEndpointIds.length > maxNodes) {
+      continue;
+    }
+
+    for (const id of missingEndpointIds) {
+      selectedNodeIds.add(id);
+    }
+    selectedEdges.push(edge);
+  }
+
+  for (const entry of nodeEntries) {
+    if (selectedNodeIds.size >= maxNodes) {
+      break;
+    }
+    selectedNodeIds.add(entry.id);
+  }
+
+  return {
+    nodes: nodeEntries.filter((entry) => selectedNodeIds.has(entry.id)).map((entry) => entry.node),
+    edges: selectedEdges,
+  };
 }
 
 function buildVisualGraph(

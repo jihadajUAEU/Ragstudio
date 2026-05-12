@@ -30,7 +30,9 @@ vi.mock("@xyflow/react", () => ({
           <span>{node.data.detail}</span>
         </div>
       ))}
-      <span>{edges.length} preview edges</span>
+      {edges.map((edge) => (
+        <span key={edge.id}>{edge.label}</span>
+      ))}
       {children}
     </div>
   ),
@@ -47,7 +49,7 @@ vi.mock("../src/api/client", () => ({
 function renderGraphPage() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
-  render(
+  return render(
     <QueryClientProvider client={queryClient}>
       <GraphPage />
     </QueryClientProvider>,
@@ -160,6 +162,34 @@ describe("GraphPage", () => {
         "Showing 50 of 51 nodes and 49 of 50 edges in the visual preview.",
       ),
     ).toBeInTheDocument();
-    expect(screen.getByText("49 preview edges")).toBeInTheDocument();
+  });
+
+  it("keeps preview edges endpoint-closed instead of slicing nodes and edges independently", async () => {
+    vi.mocked(apiClient.diagnostics).mockResolvedValue({
+      capabilities: { graph: true },
+      dependency_status: {},
+      warnings: [],
+      runtime_mode: "runtime",
+      overall_status: "ready",
+      checks: [],
+    });
+    const nodes = Array.from({ length: 52 }, (_, index) => ({
+      id: `node-${index + 1}`,
+      label: `Node ${index + 1}`,
+    }));
+    vi.mocked(apiClient.graph).mockResolvedValue({
+      nodes,
+      edges: [{ source: "node-51", target: "node-52", type: "late-edge" }],
+    });
+
+    const { container } = renderGraphPage();
+
+    const map = await screen.findByLabelText("Graph relationship map");
+    expect(map).toHaveTextContent("Node 51");
+    expect(map).toHaveTextContent("Node 52");
+    expect(map).toHaveTextContent("late-edge");
+    expect(container).toHaveTextContent(
+      "Showing 50 of 52 nodes and 1 of 1 edges in the visual preview.",
+    );
   });
 });
