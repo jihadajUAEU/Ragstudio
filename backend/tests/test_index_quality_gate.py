@@ -1,4 +1,5 @@
 import pytest
+from ragstudio.schemas.parsing import DomainMetadata
 from ragstudio.services.adapter import AdapterChunk
 from ragstudio.services.index_quality_gate import (
     IndexQualityGate,
@@ -38,3 +39,38 @@ def test_gate_accepts_arabic_mineru_chunks():
 
     assert report["status"] == "passed"
     assert report["arabic_token_count"] >= 3
+
+
+def test_gate_annotates_metadata_aware_reference_warnings():
+    chunks = [
+        AdapterChunk(
+            text="And affection from Us and purity, and he was fearing of Allah.",
+            source_location={"page": 312},
+            metadata={
+                "reference_metadata": {"references": ["19:13"]},
+                "parser_metadata": {"backend": "mineru", "parser_mode": "mineru_strict"},
+            },
+        ),
+        _chunk("[1:1]\n\n\u0627\u0644\u062d\u0645\u062f \u0644\u0644\u0647"),
+    ]
+
+    report = IndexQualityGate().validate_adapter_chunks(
+        chunks,
+        language="quran",
+        domain_metadata=DomainMetadata(
+            domain="quran_tafseer",
+            language="arabic",
+            tags=["quran", "arabic"],
+            citation_style="surah_ayah",
+            script="arabic",
+        ),
+    )
+
+    assert report["status"] == "passed_with_warnings"
+    assert report["parser_quality"] == {
+        "warning_counts": {"reference_unit_missing_expected_script": 1},
+        "affected_chunks": 1,
+    }
+    assert chunks[0].metadata["extraction_quality"]["parser_warnings"][0][
+        "expected_script"
+    ] == "arabic"

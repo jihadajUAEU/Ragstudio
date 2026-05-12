@@ -1,10 +1,13 @@
 from __future__ import annotations
 
-import re
 from typing import Any
 
+from ragstudio.schemas.parsing import DomainMetadata
 from ragstudio.services.adapter import AdapterChunk
-from ragstudio.services.arabic_text import arabic_tokens
+from ragstudio.services.domain_metadata_quality_gate import (
+    DomainMetadataQualityGate,
+    DomainMetadataQualityGateError,
+)
 
 
 class IndexQualityGateError(RuntimeError):
@@ -15,31 +18,23 @@ class IndexQualityGateError(RuntimeError):
 
 
 class IndexQualityGate:
-    raw_pdf_pattern = re.compile(r"(%PDF-\d|\b\d+\s+\d+\s+obj\b|\bxref\b|\bendobj\b)")
+    raw_pdf_pattern = DomainMetadataQualityGate.raw_pdf_pattern
+
+    def __init__(self, domain_gate: DomainMetadataQualityGate | None = None) -> None:
+        self.domain_gate = domain_gate or DomainMetadataQualityGate()
 
     def validate_adapter_chunks(
         self,
         chunks: list[AdapterChunk],
         *,
         language: str = "unknown",
+        domain_metadata: DomainMetadata | None = None,
     ) -> dict[str, Any]:
-        text = "\n".join(chunk.text for chunk in chunks)
-        if self.raw_pdf_pattern.search(text):
-            raise IndexQualityGateError(
-                "raw_pdf_persisted",
-                "Raw PDF syntax reached chunk persistence.",
+        try:
+            return self.domain_gate.validate_adapter_chunks(
+                chunks,
+                language=language,
+                domain_metadata=domain_metadata,
             )
-
-        tokens = arabic_tokens(text)
-        if language in {"arabic", "quran"} and not tokens:
-            raise IndexQualityGateError(
-                "arabic_tokens_missing",
-                "Arabic document has no normalized Arabic search tokens.",
-            )
-
-        return {
-            "status": "passed",
-            "chunk_count": len(chunks),
-            "arabic_token_count": len(tokens),
-        }
-
+        except DomainMetadataQualityGateError as exc:
+            raise IndexQualityGateError(exc.reason, exc.detail) from exc

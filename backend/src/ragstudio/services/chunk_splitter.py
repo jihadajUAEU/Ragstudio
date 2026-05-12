@@ -9,6 +9,7 @@ from typing import Any
 from ragstudio.schemas.parsing import DomainMetadata, ParserMode
 from ragstudio.services.adapter import AdapterChunk
 from ragstudio.services.chunk_quality_gate import ChunkQualityGate
+from ragstudio.services.domain_metadata_quality_gate import DomainMetadataQualityGate
 from ragstudio.services.parser_normalization import ExpectedContentProfile, MinerUContentNormalizer
 from ragstudio.services.reference_metadata import ReferenceSemantics
 
@@ -400,7 +401,10 @@ class ChunkSplitter:
         self._enrich_metadata(metadata, piece=piece, profile=profile)
         self._merge_parser_warnings(
             metadata,
-            ChunkQualityGate(expected_profile, domain_metadata).warnings_for(piece.text),
+            ChunkQualityGate(expected_profile, domain_metadata).warnings_for(
+                piece.text,
+                metadata,
+            ),
         )
         parser_metadata = dict(self._parser_metadata(parent))
         parser_metadata.update(self._parser_metadata(piece))
@@ -463,7 +467,10 @@ class ChunkSplitter:
         expected_profile: ExpectedContentProfile,
         domain_metadata: DomainMetadata,
     ) -> bool:
-        if ChunkQualityGate(expected_profile, domain_metadata).warnings_for(piece.text):
+        if ChunkQualityGate(expected_profile, domain_metadata).warnings_for(
+            piece.text,
+            piece.metadata,
+        ):
             return True
         if profile.semantics is None:
             return False
@@ -499,31 +506,7 @@ class ChunkSplitter:
         metadata: dict[str, Any],
         warnings: list[dict[str, Any]],
     ) -> None:
-        if not warnings:
-            return
-
-        extraction_quality = metadata.get("extraction_quality")
-        if isinstance(extraction_quality, dict):
-            extraction_quality = dict(extraction_quality)
-        else:
-            extraction_quality = {}
-
-        existing = extraction_quality.get("parser_warnings")
-        parser_warnings = list(existing) if isinstance(existing, list) else []
-        seen = {
-            json.dumps(warning, sort_keys=True, default=str)
-            for warning in parser_warnings
-            if isinstance(warning, dict)
-        }
-        for warning in warnings:
-            key = json.dumps(warning, sort_keys=True, default=str)
-            if key in seen:
-                continue
-            parser_warnings.append(dict(warning))
-            seen.add(key)
-
-        extraction_quality["parser_warnings"] = parser_warnings
-        metadata["extraction_quality"] = extraction_quality
+        DomainMetadataQualityGate.merge_parser_warnings(metadata, warnings)
 
     def _warning_only_piece(
         self,

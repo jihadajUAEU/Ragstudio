@@ -12,6 +12,7 @@ from ragstudio.schemas.parsing import DomainMetadata, IndexDocumentIn, ParserMod
 from ragstudio.schemas.runtime import RuntimeProfile
 from ragstudio.services.artifact_store import ArtifactStore
 from ragstudio.services.chunk_service import ChunkService
+from ragstudio.services.domain_metadata_quality_gate import DomainMetadataQualityGate
 from ragstudio.services.graph_projection_runner import GraphProjectionRunner
 from ragstudio.services.index_artifact_cleanup import cleanup_document_index_artifacts
 from ragstudio.services.index_lifecycle_service import (
@@ -485,39 +486,10 @@ class DocumentService:
         job.result = result
 
     def _parser_quality_summary(self, chunks: list[Any]) -> dict[str, Any]:
-        warning_counts: dict[str, int] = {}
-        affected_chunks = 0
-        for chunk in chunks:
-            codes = sorted(set(self._parser_warning_codes(chunk)))
-            if not codes:
-                continue
-            affected_chunks += 1
-            for code in codes:
-                warning_counts[code] = warning_counts.get(code, 0) + 1
-        return {
-            "warning_counts": dict(sorted(warning_counts.items())),
-            "affected_chunks": affected_chunks,
-        }
+        return DomainMetadataQualityGate().parser_quality_summary(chunks)
 
     def _parser_warning_codes(self, chunk: Any) -> list[str]:
-        extraction_quality = getattr(chunk, "extraction_quality", None)
-        if not isinstance(extraction_quality, dict):
-            metadata = getattr(chunk, "metadata", None)
-            if isinstance(metadata, dict):
-                extraction_quality = metadata.get("extraction_quality")
-        if not isinstance(extraction_quality, dict):
-            return []
-        warnings = extraction_quality.get("parser_warnings")
-        if not isinstance(warnings, list):
-            return []
-        codes: list[str] = []
-        for warning in warnings:
-            if not isinstance(warning, dict):
-                continue
-            code = warning.get("code")
-            if isinstance(code, str) and code:
-                codes.append(code)
-        return codes
+        return DomainMetadataQualityGate().parser_warning_codes_for_chunk(chunk)
 
     def _parser_quality_warning(self, parser_quality: dict[str, Any]) -> str | None:
         warning_counts = parser_quality.get("warning_counts")
