@@ -78,6 +78,11 @@ def test_builtin_hadith_profile_has_book_hadith_reference_semantics(tmp_path):
             "block_preview_chars": 160,
             "store_text_hash": True,
         },
+        "parser_normalization": {
+            "allow_equations_as_content": False,
+            "recover_text_bearing_blocks_as_prose": True,
+            "preserve_original_block_type": True,
+        },
         "retrieval": {
             "exact_reference_top1": True,
             "boost_same_chapter": True,
@@ -116,6 +121,11 @@ def test_builtin_quran_profile_has_chapter_verse_reference_semantics(tmp_path):
         "provenance_only"
     )
     assert profile.metadata.custom_json["provenance"]["preserve_original_blocks"] is True
+    assert profile.metadata.custom_json["parser_normalization"] == {
+        "allow_equations_as_content": False,
+        "recover_text_bearing_blocks_as_prose": True,
+        "preserve_original_block_type": True,
+    }
     assert profile.metadata.custom_json["graph"]["node_types"] == [
         "surah",
         "ayah",
@@ -124,6 +134,32 @@ def test_builtin_quran_profile_has_chapter_verse_reference_semantics(tmp_path):
     ]
     assert "references" in profile.metadata.custom_json["graph"]["edge_types"]
     assert profile.metadata.custom_json["retrieval"]["exact_reference_top1"] is True
+
+
+def test_builtin_profiles_have_domain_specific_parser_normalization(tmp_path):
+    profiles = {profile.id: profile for profile in DomainMetadataService(tmp_path).list_profiles()}
+
+    assert profiles["generic"].metadata.custom_json["parser_normalization"] == {
+        "allow_equations_as_content": False,
+        "recover_text_bearing_blocks_as_prose": False,
+        "preserve_original_block_type": True,
+    }
+    assert profiles["research_paper"].metadata.custom_json["parser_normalization"] == {
+        "allow_equations_as_content": True,
+        "recover_text_bearing_blocks_as_prose": False,
+        "preserve_original_block_type": True,
+    }
+    assert profiles["table_spreadsheet"].metadata.custom_json["parser_normalization"] == {
+        "allow_equations_as_content": True,
+        "recover_text_bearing_blocks_as_prose": True,
+        "preserve_original_block_type": True,
+    }
+    for profile_id in ("policy_admin", "hadith", "quran_tafseer", "fatwa_fiqh"):
+        assert profiles[profile_id].metadata.custom_json["parser_normalization"] == {
+            "allow_equations_as_content": False,
+            "recover_text_bearing_blocks_as_prose": True,
+            "preserve_original_block_type": True,
+        }
 
 
 @pytest.mark.asyncio
@@ -255,6 +291,14 @@ def test_validate_custom_json_rejects_invalid_provenance_contract():
 
     with pytest.raises(ValueError, match=r"provenance\.block_preview_chars"):
         validate_custom_json({"provenance": {"block_preview_chars": True}})
+
+
+def test_validate_custom_json_rejects_invalid_parser_normalization_contract():
+    with pytest.raises(ValueError, match=r"parser_normalization\.allow_equations"):
+        validate_custom_json({"parser_normalization": {"allow_equations_as_content": "false"}})
+
+    with pytest.raises(ValueError, match=r"parser_normalization\.allowed_block_types"):
+        validate_custom_json({"parser_normalization": {"allowed_block_types": ["text", 42]}})
 
 
 def test_validate_custom_json_rejects_invalid_reference_regex():
@@ -982,6 +1026,10 @@ def test_ai_metadata_merge_deep_merges_custom_json():
                 "fields": {"book": "book_number", "hadith": "hadith_number"},
             },
             "chunking": {"unit": "hadith", "include_neighbors": 1},
+            "parser_normalization": {
+                "allow_equations_as_content": False,
+                "recover_text_bearing_blocks_as_prose": True,
+            },
             "retrieval": {"exact_reference_top1": True},
             "graph": {
                 "node_types": ["collection", "book", "chapter", "hadith", "chunk"],
@@ -998,6 +1046,7 @@ def test_ai_metadata_merge_deep_merges_custom_json():
                 "fields": {"chapter": "chapter_title"},
             },
             "chunking": {"preserve_parallel_text": True},
+            "parser_normalization": {"preserve_original_block_type": True},
             "retrieval": {"boost_same_chapter": True},
             "graph": {"edge_types": ["same_chapter"]},
         }
@@ -1019,6 +1068,11 @@ def test_ai_metadata_merge_deep_merges_custom_json():
             "unit": "hadith",
             "include_neighbors": 1,
             "preserve_parallel_text": True,
+        },
+        "parser_normalization": {
+            "allow_equations_as_content": False,
+            "recover_text_bearing_blocks_as_prose": True,
+            "preserve_original_block_type": True,
         },
         "retrieval": {
             "exact_reference_top1": True,

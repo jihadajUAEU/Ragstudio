@@ -20,6 +20,7 @@ def reference_custom_json(
     chunking: dict[str, object] | None = None,
     reference_resolution: dict[str, object] | None = None,
     provenance: dict[str, object] | None = None,
+    parser_normalization: dict[str, object] | None = None,
     retrieval: dict[str, bool] | None = None,
     graph: dict[str, object] | None = None,
 ) -> dict[str, object]:
@@ -43,11 +44,38 @@ def reference_custom_json(
         value["reference_resolution"] = reference_resolution
     if provenance:
         value["provenance"] = provenance
+    if parser_normalization:
+        value["parser_normalization"] = parser_normalization
     if retrieval:
         value["retrieval"] = retrieval
     if graph:
         value["graph"] = graph
     return value
+
+
+GENERIC_PARSER_NORMALIZATION: dict[str, object] = {
+    "allow_equations_as_content": False,
+    "recover_text_bearing_blocks_as_prose": False,
+    "preserve_original_block_type": True,
+}
+
+PROSE_PARSER_NORMALIZATION: dict[str, object] = {
+    "allow_equations_as_content": False,
+    "recover_text_bearing_blocks_as_prose": True,
+    "preserve_original_block_type": True,
+}
+
+TECHNICAL_PARSER_NORMALIZATION: dict[str, object] = {
+    "allow_equations_as_content": True,
+    "recover_text_bearing_blocks_as_prose": False,
+    "preserve_original_block_type": True,
+}
+
+TABULAR_PARSER_NORMALIZATION: dict[str, object] = {
+    "allow_equations_as_content": True,
+    "recover_text_bearing_blocks_as_prose": True,
+    "preserve_original_block_type": True,
+}
 
 
 BUILTIN_PROFILES: list[DomainProfileOut] = [
@@ -60,7 +88,10 @@ BUILTIN_PROFILES: list[DomainProfileOut] = [
             document_type="document",
             tags=["document"],
             expected_structure="sections",
-            custom_json=reference_custom_json(chunking={"unit": "section"}),
+            custom_json=reference_custom_json(
+                chunking={"unit": "section"},
+                parser_normalization=GENERIC_PARSER_NORMALIZATION,
+            ),
         ),
     ),
     DomainProfileOut(
@@ -75,6 +106,7 @@ BUILTIN_PROFILES: list[DomainProfileOut] = [
             expected_structure="abstract_sections_references",
             custom_json=reference_custom_json(
                 chunking={"unit": "section", "preserve_parallel_text": False},
+                parser_normalization=TECHNICAL_PARSER_NORMALIZATION,
                 retrieval={"boost_same_chapter": True},
             ),
         ),
@@ -96,6 +128,7 @@ BUILTIN_PROFILES: list[DomainProfileOut] = [
                 fields={"section": "section_number"},
                 relationships={"section": ["same_section"], "next": ["next_section"]},
                 chunking={"unit": "section"},
+                parser_normalization=PROSE_PARSER_NORMALIZATION,
                 retrieval={"exact_reference_top1": True, "boost_same_chapter": True},
             ),
         ),
@@ -111,6 +144,7 @@ BUILTIN_PROFILES: list[DomainProfileOut] = [
             expected_structure="rows",
             custom_json=reference_custom_json(
                 chunking={"unit": "row"},
+                parser_normalization=TABULAR_PARSER_NORMALIZATION,
                 retrieval={"exact_reference_top1": False},
             ),
         ),
@@ -164,6 +198,7 @@ BUILTIN_PROFILES: list[DomainProfileOut] = [
                     "block_preview_chars": 160,
                     "store_text_hash": True,
                 },
+                parser_normalization=PROSE_PARSER_NORMALIZATION,
                 retrieval={
                     "exact_reference_top1": True,
                     "boost_same_chapter": True,
@@ -233,6 +268,7 @@ BUILTIN_PROFILES: list[DomainProfileOut] = [
                     "block_preview_chars": 160,
                     "store_text_hash": True,
                 },
+                parser_normalization=PROSE_PARSER_NORMALIZATION,
                 retrieval={
                     "exact_reference_top1": True,
                     "boost_same_chapter": True,
@@ -272,6 +308,7 @@ BUILTIN_PROFILES: list[DomainProfileOut] = [
                     "question": ["answer"],
                 },
                 chunking={"unit": "question_answer"},
+                parser_normalization=PROSE_PARSER_NORMALIZATION,
                 retrieval={"boost_same_chapter": True},
             ),
         ),

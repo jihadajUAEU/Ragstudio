@@ -45,6 +45,11 @@ REFERENCE_CUSTOM_JSON_EXAMPLE: dict[str, Any] = {
         "block_preview_chars": 160,
         "store_text_hash": True,
     },
+    "parser_normalization": {
+        "allow_equations_as_content": False,
+        "recover_text_bearing_blocks_as_prose": True,
+        "preserve_original_block_type": True,
+    },
     "retrieval": {
         "exact_reference_top1": True,
         "boost_same_chapter": True,
@@ -68,6 +73,7 @@ def validate_custom_json(value: dict[str, Any]) -> dict[str, Any]:
     _validate_chunking(value.get("chunking"))
     _validate_reference_resolution(value.get("reference_resolution"))
     _validate_provenance(value.get("provenance"))
+    _validate_parser_normalization(value.get("parser_normalization"))
     _validate_retrieval(value.get("retrieval"))
     _validate_graph(value.get("graph"))
     return value
@@ -232,6 +238,36 @@ def _validate_provenance(value: Any) -> None:
         if block_preview_chars < 0:
             raise ValueError(
                 "custom_json.provenance.block_preview_chars must be non-negative."
+            )
+
+
+def _validate_parser_normalization(value: Any) -> None:
+    if value is None:
+        return
+    if not isinstance(value, dict):
+        raise ValueError("custom_json.parser_normalization must be an object.")
+
+    for key in (
+        "allow_equations_as_content",
+        "recover_text_bearing_blocks_as_prose",
+        "preserve_original_block_type",
+    ):
+        item = value.get(key)
+        if item is not None and not isinstance(item, bool):
+            raise ValueError(f"custom_json.parser_normalization.{key} must be a boolean.")
+
+    for key in ("parser_strictness", "strictness"):
+        item = value.get(key)
+        if item is not None and not isinstance(item, str):
+            raise ValueError(f"custom_json.parser_normalization.{key} must be a string.")
+
+    for key in ("allowed_block_types", "expected_scripts", "reference_patterns"):
+        item = value.get(key)
+        if item is None:
+            continue
+        if not isinstance(item, list) or any(not isinstance(entry, str) for entry in item):
+            raise ValueError(
+                f"custom_json.parser_normalization.{key} must be a list of strings."
             )
 
 

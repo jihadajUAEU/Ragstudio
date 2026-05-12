@@ -435,6 +435,12 @@ Content type: {content_type}
         if value.domain != "generic" or value.document_type != "document":
             return False
 
+        normalized_custom_json = self._normalize_custom_json(value.custom_json)
+        generic_parser_normalization = {
+            "allow_equations_as_content": False,
+            "recover_text_bearing_blocks_as_prose": False,
+            "preserve_original_block_type": True,
+        }
         return (
             self._is_empty_metadata_value(value.language)
             and value.tags in ([], ["document"])
@@ -443,7 +449,15 @@ Content type: {content_type}
             and value.collection is None
             and value.citation_style is None
             and value.expected_structure in (None, "sections")
-            and value.custom_json in ({}, {"chunking": {"unit": "section"}})
+            and normalized_custom_json
+            in (
+                {},
+                {"chunking": {"unit": "section"}},
+                {
+                    "chunking": {"unit": "section"},
+                    "parser_normalization": generic_parser_normalization,
+                },
+            )
             and value.reference_pattern is None
             and value.script is None
             and value.content_role is None
@@ -464,7 +478,16 @@ Content type: {content_type}
     ) -> dict[str, object]:
         merged = self._normalize_custom_json(baseline)
         ai = self._normalize_custom_json(ai_value, require_graph_policy=False)
-        for key in ("reference_schema", "relationships", "chunking", "retrieval", "graph"):
+        for key in (
+            "reference_schema",
+            "relationships",
+            "chunking",
+            "reference_resolution",
+            "provenance",
+            "parser_normalization",
+            "retrieval",
+            "graph",
+        ):
             base_section = merged.get(key)
             ai_section = ai.get(key)
             if isinstance(base_section, dict) and isinstance(ai_section, dict):
@@ -540,14 +563,81 @@ Content type: {content_type}
             unit = chunking.get("unit")
             include_neighbors = chunking.get("include_neighbors")
             preserve_parallel_text = chunking.get("preserve_parallel_text")
+            merge_reference_header_with_body = chunking.get("merge_reference_header_with_body")
             if isinstance(unit, str):
                 chunking_values["unit"] = unit
             if isinstance(include_neighbors, int) and not isinstance(include_neighbors, bool):
                 chunking_values["include_neighbors"] = max(0, include_neighbors)
             if isinstance(preserve_parallel_text, bool):
                 chunking_values["preserve_parallel_text"] = preserve_parallel_text
+            if isinstance(merge_reference_header_with_body, bool):
+                chunking_values["merge_reference_header_with_body"] = (
+                    merge_reference_header_with_body
+                )
             if chunking_values:
                 normalized["chunking"] = chunking_values
+
+        reference_resolution = value.get("reference_resolution")
+        if isinstance(reference_resolution, dict):
+            reference_resolution_values: dict[str, object] = {}
+            for key in (
+                "enabled",
+                "build_canonical_units",
+                "carry_forward_body_blocks",
+                "require_single_reference_per_answerable_chunk",
+                "carry_forward_previous_reference",
+                "continuation_reference_carry_forward",
+                "mark_title_front_matter_non_reference_chunks",
+            ):
+                item = reference_resolution.get(key)
+                if isinstance(item, bool):
+                    reference_resolution_values[key] = item
+            for key in ("header_only_policy", "continuation_policy"):
+                item = reference_resolution.get(key)
+                if isinstance(item, str):
+                    reference_resolution_values[key] = item
+            max_page_gap = reference_resolution.get("max_page_gap")
+            if isinstance(max_page_gap, int) and not isinstance(max_page_gap, bool):
+                reference_resolution_values["max_page_gap"] = max(0, max_page_gap)
+            if reference_resolution_values:
+                normalized["reference_resolution"] = reference_resolution_values
+
+        provenance = value.get("provenance")
+        if isinstance(provenance, dict):
+            provenance_values: dict[str, object] = {}
+            for key in ("preserve_original_blocks", "store_text_hash"):
+                item = provenance.get(key)
+                if isinstance(item, bool):
+                    provenance_values[key] = item
+            block_preview_chars = provenance.get("block_preview_chars")
+            if isinstance(block_preview_chars, int) and not isinstance(block_preview_chars, bool):
+                provenance_values["block_preview_chars"] = max(0, block_preview_chars)
+            if provenance_values:
+                normalized["provenance"] = provenance_values
+
+        parser_normalization = value.get("parser_normalization")
+        if isinstance(parser_normalization, dict):
+            parser_values: dict[str, object] = {}
+            for key in (
+                "allow_equations_as_content",
+                "recover_text_bearing_blocks_as_prose",
+                "preserve_original_block_type",
+            ):
+                item = parser_normalization.get(key)
+                if isinstance(item, bool):
+                    parser_values[key] = item
+            for key in ("parser_strictness", "strictness"):
+                item = parser_normalization.get(key)
+                if isinstance(item, str):
+                    parser_values[key] = item
+            for key in ("allowed_block_types", "expected_scripts", "reference_patterns"):
+                items = parser_normalization.get(key)
+                if isinstance(items, list):
+                    strings = [item for item in items if isinstance(item, str) and item]
+                    if strings:
+                        parser_values[key] = strings
+            if parser_values:
+                normalized["parser_normalization"] = parser_values
 
         retrieval = value.get("retrieval")
         if isinstance(retrieval, dict):
