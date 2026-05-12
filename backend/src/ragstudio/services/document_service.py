@@ -416,6 +416,7 @@ class DocumentService:
             )
         chunk_count = len(chunks or [])
         parser_quality = self._parser_quality_summary(chunks or [])
+        index_quality_report = self._index_quality_report(chunks or [])
         parser_warning = self._parser_quality_warning(parser_quality)
         document.status = StageStatus.SUCCEEDED.value
         job.status = StageStatus.SUCCEEDED.value
@@ -426,6 +427,7 @@ class DocumentService:
             "chunk_count": chunk_count,
             "graph_materialization": graph_materialization,
             "parser_quality": parser_quality,
+            "index_quality_report": index_quality_report,
         }
         job.logs = [*job.logs, f"Indexed {chunk_count} chunks."]
         if parser_warning:
@@ -487,6 +489,9 @@ class DocumentService:
 
     def _parser_quality_summary(self, chunks: list[Any]) -> dict[str, Any]:
         return DomainMetadataQualityGate().parser_quality_summary(chunks)
+
+    def _index_quality_report(self, chunks: list[Any]) -> dict[str, Any]:
+        return DomainMetadataQualityGate().index_quality_report_from_chunks(chunks)
 
     def _parser_warning_codes(self, chunk: Any) -> list[str]:
         return DomainMetadataQualityGate().parser_warning_codes_for_chunk(chunk)

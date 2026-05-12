@@ -73,8 +73,10 @@ class ChunkPersistenceService:
         return Chunk(
             document_id=document.id,
             text=text,
-            text_search_ar=normalize_arabic_text(text),
-            tokens_ar=arabic_tokens(text),
+            text_search_ar=normalize_arabic_text(text)
+            if self._index_exact_arabic(metadata)
+            else "",
+            tokens_ar=arabic_tokens(text) if self._index_exact_arabic(metadata) else [],
             extraction_quality=self._extraction_quality(metadata),
             source_location=sanitize_db_value(adapter_chunk.source_location),
             metadata_json=sanitize_db_value(metadata),
@@ -124,6 +126,12 @@ class ChunkPersistenceService:
         if isinstance(extraction_quality, dict):
             return sanitize_db_value(extraction_quality)
         return {}
+
+    def _index_exact_arabic(self, metadata: dict[str, Any]) -> bool:
+        policy = metadata.get("quality_action_policy")
+        if not isinstance(policy, dict):
+            return True
+        return bool(policy.get("index_exact_arabic", True))
 
     def _is_absolute_path_value(self, value: Any) -> bool:
         if not isinstance(value, str):

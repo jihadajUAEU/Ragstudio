@@ -9,6 +9,7 @@ from ragstudio.schemas.parsing import DomainMetadata
 from ragstudio.services.adapter import AdapterChunk
 from ragstudio.services.arabic_text import arabic_tokens
 from ragstudio.services.parser_normalization import ExpectedContentProfile
+from ragstudio.services.reference_metadata import ReferenceSemantics
 
 SCRIPT_PATTERNS = {
     "arabic": re.compile(r"[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]"),
@@ -29,6 +30,7 @@ BOOK_HADITH_PATTERN = re.compile(
     r"\bBook\s+\d+\s*,?\s*Hadith\s+\d+\b",
     flags=re.IGNORECASE,
 )
+QUALITY_REPORT_VERSION = 1
 
 
 class DomainMetadataQualityGateError(RuntimeError):
@@ -48,6 +50,7 @@ class MetadataQualityProfile:
     reference_unit: str | None
     reference_type: str | None
     equation_blocks_allowed: bool
+    structured_references: bool
 
 
 class DomainMetadataQualityGate:
@@ -68,11 +71,17 @@ class DomainMetadataQualityGate:
         )
         chunking = _dict_value(custom_json, "chunking") or {}
         reference_schema = _dict_value(custom_json, "reference_schema") or {}
+        semantics = ReferenceSemantics.from_metadata(domain_metadata)
         preserve_parallel_text = bool(chunking.get("preserve_parallel_text"))
-        reference_unit = _string_value(chunking.get("unit"))
+        reference_unit = _string_value(chunking.get("unit")) or (
+            semantics.chunk_unit if semantics.profile_name != "generic" else None
+        )
         reference_type = _string_value(reference_schema.get("type")) or _string_value(
             domain_metadata.citation_style
-        )
+        ) or semantics.reference_type
+        reference_patterns = list(expected_profile.reference_patterns)
+        if semantics.reference_pattern and semantics.reference_pattern not in reference_patterns:
+            reference_patterns.append(semantics.reference_pattern)
         return MetadataQualityProfile(
             domain=str(domain_metadata.domain or "generic").strip().casefold(),
             expected_scripts=frozenset(
@@ -80,12 +89,13 @@ class DomainMetadataQualityGate:
                 for script in expected_profile.expected_scripts
                 if script in SCRIPT_PATTERNS
             ),
-            reference_patterns=expected_profile.reference_patterns,
+            reference_patterns=tuple(reference_patterns),
             parser_strictness=expected_profile.parser_strictness,
             preserve_parallel_text=preserve_parallel_text,
             reference_unit=reference_unit,
             reference_type=reference_type,
             equation_blocks_allowed=expected_profile.allows_equations_as_content(),
+            structured_references=semantics.profile_name != "generic",
         )
 
     def warnings_for_text(
@@ -143,12 +153,20 @@ class DomainMetadataQualityGate:
                 "Arabic document has no normalized Arabic search tokens.",
             )
 
-        for chunk in chunks:
-            self.annotate_chunk(
-                chunk,
+        if self._requires_reference_quality(profile):
+            index_quality_report = self.annotate_reference_quality(
+                chunks,
                 domain_metadata=domain_metadata,
                 expected_profile=expected_profile,
             )
+        else:
+            for chunk in chunks:
+                self.annotate_chunk(
+                    chunk,
+                    domain_metadata=domain_metadata,
+                    expected_profile=expected_profile,
+                )
+            index_quality_report = self.index_quality_report_from_chunks(chunks)
         quality_summary = self.parser_quality_summary(chunks)
         status = "passed_with_warnings" if quality_summary["warning_counts"] else "passed"
         return {
@@ -163,6 +181,7 @@ class DomainMetadataQualityGate:
                 "reference_type": profile.reference_type,
             },
             "parser_quality": quality_summary,
+            "index_quality_report": index_quality_report,
         }
 
     def annotate_chunk(
@@ -180,6 +199,122 @@ class DomainMetadataQualityGate:
         )
         self.merge_parser_warnings(chunk.metadata, warnings)
         return warnings
+
+    def annotate_reference_quality(
+        self,
+        chunks: list[AdapterChunk],
+        *,
+        domain_metadata: DomainMetadata | None = None,
+        expected_profile: ExpectedContentProfile | None = None,
+    ) -> dict[str, Any]:
+        profile = self.profile_for(domain_metadata, expected_profile=expected_profile)
+        all_records: list[dict[str, Any]] = []
+        for index, chunk in enumerate(chunks):
+            records = self._reference_quality_records_for_chunk(
+                chunk,
+                chunk_index=index,
+                profile=profile,
+                domain_metadata=domain_metadata or DomainMetadata(),
+            )
+            all_records.extend(records)
+            if records:
+                quality = dict(chunk.metadata.get("quality") or {})
+                quality["by_reference"] = records
+                chunk.metadata["quality"] = quality
+            policy = self._quality_action_policy(records)
+            if policy:
+                chunk.metadata["quality_action_policy"] = policy
+                chunk.metadata["quality_flags"] = policy["quality_flags"]
+            self.merge_parser_warnings(
+                chunk.metadata,
+                self._parser_warnings_from_reference_records(records),
+            )
+
+        report = self._index_quality_report(
+            all_records,
+            profile=profile,
+        )
+        for chunk in chunks:
+            chunk.metadata["index_quality_report_version"] = QUALITY_REPORT_VERSION
+        return report
+
+    def index_quality_report_from_chunks(
+        self,
+        chunks: list[Any],
+        *,
+        document_id: str | None = None,
+        runtime_profile_id: str | None = None,
+    ) -> dict[str, Any]:
+        records: list[dict[str, Any]] = []
+        domain_profile = "generic"
+        for chunk in chunks:
+            metadata = self._chunk_metadata(chunk)
+            if document_id is None:
+                candidate_document_id = getattr(chunk, "document_id", None) or metadata.get(
+                    "document_id"
+                )
+                if isinstance(candidate_document_id, str) and candidate_document_id:
+                    document_id = candidate_document_id
+            if runtime_profile_id is None:
+                candidate_profile_id = getattr(chunk, "runtime_profile_id", None)
+                if isinstance(candidate_profile_id, str) and candidate_profile_id:
+                    runtime_profile_id = candidate_profile_id
+            domain_metadata = metadata.get("domain_metadata")
+            if isinstance(domain_metadata, dict):
+                domain_profile = str(domain_metadata.get("domain") or domain_profile)
+            quality = metadata.get("quality")
+            if not isinstance(quality, dict):
+                continue
+            by_reference = quality.get("by_reference")
+            if not isinstance(by_reference, list):
+                continue
+            records.extend(item for item in by_reference if isinstance(item, dict))
+
+        if not records:
+            return self.unknown_quality_report(
+                document_id=document_id,
+                runtime_profile_id=runtime_profile_id,
+                domain_profile=domain_profile,
+            )
+
+        report = self._index_quality_report(
+            records,
+            profile=None,
+            domain_profile=domain_profile,
+        )
+        if document_id:
+            report["document_id"] = document_id
+        if runtime_profile_id:
+            report["runtime_profile_id"] = runtime_profile_id
+        return report
+
+    def unknown_quality_report(
+        self,
+        *,
+        document_id: str | None = None,
+        runtime_profile_id: str | None = None,
+        domain_profile: str = "unknown",
+    ) -> dict[str, Any]:
+        report: dict[str, Any] = {
+            "quality_report_version": None,
+            "status": "quality_unknown",
+            "domain_profile": domain_profile,
+            "references": [],
+            "summary": {
+                "reference_unit_count": 0,
+                "reference_units_with_expected_script": 0,
+                "reference_units_missing_expected_script": 0,
+                "reference_script_coverage_ratio": None,
+                "reference_unit_unresolved_count": 0,
+                "quality_unknown_document_count": 1,
+                "materialization_blocked_reference_count": 0,
+            },
+        }
+        if document_id:
+            report["document_id"] = document_id
+        if runtime_profile_id:
+            report["runtime_profile_id"] = runtime_profile_id
+        return report
 
     def parser_quality_summary(self, chunks: list[Any]) -> dict[str, Any]:
         warning_counts: dict[str, int] = {}
@@ -236,6 +371,402 @@ class DomainMetadataQualityGate:
             "affected_candidate_ids": affected_candidate_ids,
         }
 
+    def _reference_quality_records_for_chunk(
+        self,
+        chunk: AdapterChunk,
+        *,
+        chunk_index: int,
+        profile: MetadataQualityProfile,
+        domain_metadata: DomainMetadata,
+    ) -> list[dict[str, Any]]:
+        units = self._reference_text_units(
+            chunk.text,
+            chunk.metadata,
+            domain_metadata,
+            profile,
+        )
+        if not units:
+            if not self._chunk_requires_reference_unit(chunk, profile):
+                return []
+            return [
+                self._unresolved_reference_record(
+                    chunk,
+                    chunk_index=chunk_index,
+                    profile=profile,
+                    reason="reference_metadata_missing",
+                )
+            ]
+
+        records: list[dict[str, Any]] = []
+        for unit in units:
+            reference = unit.get("reference")
+            text = str(unit.get("text") or "")
+            start = int(unit.get("start") or 0)
+            end = int(unit.get("end") or len(text))
+            if not isinstance(reference, str) or not reference:
+                records.append(
+                    self._unresolved_reference_record(
+                        chunk,
+                        chunk_index=chunk_index,
+                        profile=profile,
+                        reason="reference_unit_unresolved",
+                    )
+                )
+                continue
+            records.append(
+                self._reference_record(
+                    reference=reference,
+                    text=text,
+                    text_span={"start": start, "end": end},
+                    source_location=chunk.source_location,
+                    parser_warning_codes=self.parser_warning_codes_for_chunk(chunk),
+                    profile=profile,
+                )
+            )
+        return records
+
+    def _reference_text_units(
+        self,
+        text: str,
+        metadata: dict[str, Any] | None,
+        domain_metadata: DomainMetadata,
+        profile: MetadataQualityProfile,
+    ) -> list[dict[str, Any]]:
+        label_units = self._labelled_reference_units(text)
+        if label_units:
+            return label_units
+
+        references = self._metadata_references(metadata)
+        if len(references) == 1:
+            return [
+                {
+                    "reference": references[0],
+                    "text": text,
+                    "start": 0,
+                    "end": len(text),
+                }
+            ]
+        if len(references) > 1:
+            return []
+
+        semantics = ReferenceSemantics.from_metadata(domain_metadata)
+        semantic_refs = semantics.extract_chunk_references(text)
+        if len(semantic_refs) == 1:
+            return [
+                {
+                    "reference": str(semantic_refs[0]["ref"]),
+                    "text": text,
+                    "start": 0,
+                    "end": len(text),
+                }
+            ]
+        if profile.structured_references:
+            return []
+        return []
+
+    def _labelled_reference_units(self, text: str) -> list[dict[str, Any]]:
+        matches = list(CHAPTER_VERSE_PATTERN.finditer(text))
+        if not matches:
+            return []
+        units: list[dict[str, Any]] = []
+        for index, match in enumerate(matches):
+            start = match.start()
+            end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+            chapter = int(match.group("chapter"))
+            verse = int(match.group("verse"))
+            units.append(
+                {
+                    "reference": f"{chapter}:{verse}",
+                    "text": text[start:end].strip(),
+                    "start": start,
+                    "end": end,
+                }
+            )
+        return units
+
+    def _reference_record(
+        self,
+        *,
+        reference: str,
+        text: str,
+        text_span: dict[str, int],
+        source_location: dict[str, Any] | None,
+        parser_warning_codes: list[str],
+        profile: MetadataQualityProfile,
+    ) -> dict[str, Any]:
+        expected_scripts = sorted(profile.expected_scripts)
+        observed_scripts = [
+            script for script in expected_scripts if SCRIPT_PATTERNS[script].search(text)
+        ]
+        missing_scripts = [
+            script for script in expected_scripts if script not in set(observed_scripts)
+        ]
+        flags = [
+            f"missing_expected_script:{script}" for script in missing_scripts
+        ]
+        status = "missing_expected_script" if missing_scripts else "passed"
+        action = (
+            "block_reference_materialization"
+            if missing_scripts and profile.preserve_parallel_text
+            else "warn_reference_quality"
+            if missing_scripts
+            else "allow_materialization"
+        )
+        materialization = self._reference_materialization_policy(
+            status=status,
+            flags=flags,
+            missing_scripts=missing_scripts,
+            action=action,
+        )
+        return {
+            "reference": reference,
+            "text_span": text_span,
+            "source_location": dict(source_location or {}),
+            "arabic_token_count": len(arabic_tokens(text)),
+            "latin_token_count": len(_latin_tokens(text)),
+            "expected_scripts": expected_scripts,
+            "observed_scripts": observed_scripts,
+            "missing_scripts": missing_scripts,
+            "parser_warning_codes": sorted(set(parser_warning_codes)),
+            "status": status,
+            "action": action,
+            "quality_flags": flags,
+            "materialization": materialization,
+        }
+
+    def _unresolved_reference_record(
+        self,
+        chunk: AdapterChunk,
+        *,
+        chunk_index: int,
+        profile: MetadataQualityProfile,
+        reason: str,
+    ) -> dict[str, Any]:
+        flags = ["reference_unit_unresolved"]
+        materialization = self._reference_materialization_policy(
+            status="unresolved",
+            flags=flags,
+            missing_scripts=[],
+            action="quarantine_reference_unit",
+        )
+        return {
+            "reference": None,
+            "text_span": {"start": 0, "end": len(chunk.text)},
+            "source_location": dict(chunk.source_location or {}),
+            "arabic_token_count": len(arabic_tokens(chunk.text)),
+            "latin_token_count": len(_latin_tokens(chunk.text)),
+            "expected_scripts": sorted(profile.expected_scripts),
+            "observed_scripts": [
+                script
+                for script in sorted(profile.expected_scripts)
+                if SCRIPT_PATTERNS[script].search(chunk.text)
+            ],
+            "missing_scripts": [],
+            "parser_warning_codes": sorted(set(self.parser_warning_codes_for_chunk(chunk))),
+            "status": "unresolved",
+            "action": "quarantine_reference_unit",
+            "quality_flags": flags,
+            "materialization": materialization,
+            "unresolved_reason": reason,
+            "chunk_index": chunk_index,
+        }
+
+    def _reference_materialization_policy(
+        self,
+        *,
+        status: str,
+        flags: list[str],
+        missing_scripts: list[str],
+        action: str,
+    ) -> dict[str, Any]:
+        blocked = action in {"block_reference_materialization", "quarantine_reference_unit"}
+        exact_arabic_blocked = blocked or "arabic" in missing_scripts
+        return {
+            "persist_chunk": True,
+            "index_vector": not blocked,
+            "index_exact_arabic": not exact_arabic_blocked,
+            "project_graph": not blocked,
+            "graph_confidence": "blocked" if blocked else "degraded" if flags else "high",
+            "quality_flags": list(flags),
+            "status": status,
+            "action": action,
+        }
+
+    def _quality_action_policy(self, records: list[dict[str, Any]]) -> dict[str, Any] | None:
+        if not records:
+            return None
+        policies = [
+            record.get("materialization")
+            for record in records
+            if isinstance(record.get("materialization"), dict)
+        ]
+        if not policies:
+            return None
+        flags = sorted(
+            {
+                str(flag)
+                for policy in policies
+                for flag in policy.get("quality_flags", [])
+                if flag
+            }
+        )
+        index_vector = all(bool(policy.get("index_vector", True)) for policy in policies)
+        index_exact_arabic = all(
+            bool(policy.get("index_exact_arabic", True)) for policy in policies
+        )
+        project_graph = all(bool(policy.get("project_graph", True)) for policy in policies)
+        if not project_graph:
+            graph_confidence = "blocked"
+        elif flags:
+            graph_confidence = "degraded"
+        else:
+            graph_confidence = "high"
+        return {
+            "persist_chunk": True,
+            "index_vector": index_vector,
+            "index_exact_arabic": index_exact_arabic,
+            "project_graph": project_graph,
+            "graph_confidence": graph_confidence,
+            "quality_flags": flags,
+        }
+
+    def _parser_warnings_from_reference_records(
+        self,
+        records: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        warnings: list[dict[str, Any]] = []
+        for record in records:
+            status = record.get("status")
+            if status == "missing_expected_script":
+                for script in record.get("missing_scripts", []):
+                    if not isinstance(script, str):
+                        continue
+                    warnings.append(
+                        {
+                            "code": "reference_unit_missing_expected_script",
+                            "message": (
+                                "Reference unit is expected to contain "
+                                f"{script.capitalize()} script, but no "
+                                f"{script.capitalize()} letters were detected."
+                            ),
+                            "reference": record.get("reference"),
+                            "expected_script": script,
+                            "source_location": record.get("source_location"),
+                            "action": record.get("action"),
+                        }
+                    )
+            elif status == "unresolved":
+                warnings.append(
+                    {
+                        "code": "reference_unit_unresolved",
+                        "message": (
+                            "Structured metadata requires a resolvable reference unit, "
+                            "but this chunk could not be tied to one reference."
+                        ),
+                        "source_location": record.get("source_location"),
+                        "action": record.get("action"),
+                    }
+                )
+        return warnings
+
+    def _index_quality_report(
+        self,
+        records: list[dict[str, Any]],
+        *,
+        profile: MetadataQualityProfile | None,
+        domain_profile: str | None = None,
+    ) -> dict[str, Any]:
+        reference_records = [
+            self._public_reference_record(record)
+            for record in records
+            if record.get("reference") is not None
+        ]
+        unresolved_records = [
+            self._public_reference_record(record)
+            for record in records
+            if record.get("reference") is None and record.get("status") == "unresolved"
+        ]
+        missing_count = sum(
+            1
+            for record in reference_records
+            if record.get("status") == "missing_expected_script"
+        )
+        passed_count = sum(1 for record in reference_records if record.get("status") == "passed")
+        total = len(reference_records)
+        blocked_count = sum(
+            1
+            for record in [*reference_records, *unresolved_records]
+            if not record.get("materialization", {}).get("index_vector", True)
+        )
+        if unresolved_records or missing_count:
+            status = "ready_with_warnings"
+        else:
+            status = "passed"
+        return {
+            "quality_report_version": QUALITY_REPORT_VERSION,
+            "status": status,
+            "domain_profile": domain_profile
+            or (profile.domain if profile is not None else "generic"),
+            "references": reference_records,
+            "unresolved": unresolved_records,
+            "summary": {
+                "reference_unit_count": total,
+                "reference_units_with_expected_script": passed_count,
+                "reference_units_missing_expected_script": missing_count,
+                "reference_script_coverage_ratio": (
+                    round(passed_count / total, 6) if total else None
+                ),
+                "reference_unit_unresolved_count": len(unresolved_records),
+                "quality_unknown_document_count": 0,
+                "materialization_blocked_reference_count": blocked_count,
+            },
+        }
+
+    def _public_reference_record(self, record: dict[str, Any]) -> dict[str, Any]:
+        return {
+            key: value
+            for key, value in record.items()
+            if key
+            in {
+                "reference",
+                "text_span",
+                "source_location",
+                "arabic_token_count",
+                "latin_token_count",
+                "expected_scripts",
+                "observed_scripts",
+                "missing_scripts",
+                "parser_warning_codes",
+                "status",
+                "action",
+                "quality_flags",
+                "materialization",
+                "unresolved_reason",
+                "chunk_index",
+            }
+        }
+
+    def _chunk_requires_reference_unit(
+        self,
+        chunk: AdapterChunk,
+        profile: MetadataQualityProfile,
+    ) -> bool:
+        if not self._requires_reference_quality(profile):
+            return False
+        parser_metadata = chunk.metadata.get("parser_metadata")
+        if isinstance(parser_metadata, dict) and parser_metadata.get("parser_quality_only"):
+            return True
+        if not chunk.text.strip():
+            return False
+        return bool(profile.reference_unit in {"verse", "reference", "hadith", "section"})
+
+    def _requires_reference_quality(self, profile: MetadataQualityProfile) -> bool:
+        return bool(
+            profile.structured_references
+            and profile.reference_unit in {"verse", "reference", "hadith", "section"}
+            and profile.expected_scripts
+        )
+
     def _has_reference(
         self,
         text: str,
@@ -258,13 +789,27 @@ class DomainMetadataQualityGate:
     def _metadata_references(self, metadata: dict[str, Any] | None) -> list[str]:
         if not isinstance(metadata, dict):
             return []
-        reference_metadata = metadata.get("reference_metadata")
-        if not isinstance(reference_metadata, dict):
-            return []
-        references = reference_metadata.get("references")
-        if not isinstance(references, list):
-            return []
-        return [reference for reference in references if isinstance(reference, str) and reference]
+        references: list[str] = []
+        for key in ("reference_metadata", "relationship_metadata"):
+            reference_metadata = metadata.get(key)
+            if not isinstance(reference_metadata, dict):
+                continue
+            values = reference_metadata.get("references")
+            if not isinstance(values, list):
+                continue
+            references.extend(
+                reference for reference in values if isinstance(reference, str) and reference
+            )
+        return list(dict.fromkeys(references))
+
+    def _chunk_metadata(self, chunk: Any) -> dict[str, Any]:
+        metadata = getattr(chunk, "metadata", None)
+        if isinstance(metadata, dict):
+            return metadata
+        metadata_json = getattr(chunk, "metadata_json", None)
+        if isinstance(metadata_json, dict):
+            return metadata_json
+        return {}
 
     def _requires_document_arabic(
         self,
@@ -313,3 +858,7 @@ def _dict_value(value: dict[str, Any], key: str) -> dict[str, Any] | None:
 
 def _string_value(value: Any) -> str | None:
     return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+def _latin_tokens(text: str) -> list[str]:
+    return re.findall(r"[A-Za-z]+", text)

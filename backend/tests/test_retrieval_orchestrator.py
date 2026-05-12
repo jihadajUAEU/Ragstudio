@@ -382,6 +382,15 @@ class FakeRuntimeTool:
         )
 
 
+class EmptyRuntimeTool:
+    async def query(self, query, *, document_ids, query_config):
+        return RuntimeQueryResult(
+            answer="",
+            sources=[],
+            timings={"runtime_query_ms": 3, "native_scoped_query": True},
+        )
+
+
 class NativeDuplicateParserWarningRuntimeTool:
     async def query(self, query, *, document_ids, query_config):
         return RuntimeQueryResult(
@@ -485,6 +494,22 @@ class NativeSearchShouldNotRun:
 class ExplodingChunkSearchService:
     async def search(self, search_in):
         raise RuntimeError("metadata search exploded")
+
+
+class EmptyQualityReportChunkSearchService:
+    def __init__(self, report):
+        self.report = report
+        self.calls = 0
+
+    async def search(self, search_in):
+        self.calls += 1
+        return type("SearchResult", (), {"items": [], "total": 0})()
+
+    async def quality_reports_for_documents(self, document_ids):
+        return [
+            {**self.report, "document_id": document_id}
+            for document_id in document_ids
+        ]
 
 
 class GraphHydrationFailingChunkSearchService(FakeChunkSearchService):
@@ -748,6 +773,83 @@ async def test_orchestrator_surfaces_parser_quality_warnings_in_evidence_and_tra
     )
     assert evidence.metadata["parser_quality_warning_codes"] == [warning_code]
     assert f"parser_quality_warning:{warning_code}" in evidence.reasons
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_emits_quality_diagnostics_when_arabic_candidates_are_empty():
+    report = {
+        "quality_report_version": 1,
+        "status": "ready_with_warnings",
+        "domain_profile": "quran_tafseer",
+        "references": [
+            {
+                "reference": "19:13",
+                "expected_scripts": ["arabic", "latin"],
+                "observed_scripts": ["latin"],
+                "missing_scripts": ["arabic"],
+                "status": "missing_expected_script",
+                "materialization": {"index_exact_arabic": False},
+            }
+        ],
+        "summary": {"reference_units_missing_expected_script": 1},
+    }
+    answer_service = FakeAnswerService()
+    orchestrator = RetrievalOrchestrator(
+        chunk_service=EmptyQualityReportChunkSearchService(report),
+        answer_service=answer_service,
+        reranker_service=FakeRerankerService(),
+        graph_expansion_service=FakeGraphExpansionService(),
+    )
+
+    result = await orchestrator.query(
+        "\u062d\u0646\u0627\u0646\u0627",
+        runtime=EmptyRuntimeTool(),
+        profile=type("Profile", (), {"enable_rerank": False, "reranker_provider": "disabled"})(),
+        document_ids=["doc-quran"],
+        variant_id="variant-1",
+        query_config={"limit": 8, "graph_expansion_enabled": False},
+    )
+
+    trace = next(
+        item for item in result.chunk_traces if item.get("stage") == "quality_diagnostics"
+    )
+    assert trace["status"] == "warning"
+    assert trace["query_script"] == "arabic"
+    assert trace["affected_references"] == ["19:13"]
+    assert trace["documents"][0]["document_id"] == "doc-quran"
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_reports_legacy_quality_unknown_for_empty_arabic_results():
+    report = {
+        "quality_report_version": None,
+        "status": "quality_unknown",
+        "domain_profile": "quran_tafseer",
+        "references": [],
+        "summary": {"quality_unknown_document_count": 1},
+    }
+    orchestrator = RetrievalOrchestrator(
+        chunk_service=EmptyQualityReportChunkSearchService(report),
+        answer_service=FakeAnswerService(),
+        reranker_service=FakeRerankerService(),
+        graph_expansion_service=FakeGraphExpansionService(),
+    )
+
+    result = await orchestrator.query(
+        "\u062d\u0646\u0627\u0646\u0627",
+        runtime=EmptyRuntimeTool(),
+        profile=type("Profile", (), {"enable_rerank": False, "reranker_provider": "disabled"})(),
+        document_ids=["legacy-doc"],
+        variant_id="variant-1",
+        query_config={"limit": 8, "graph_expansion_enabled": False},
+    )
+
+    trace = next(
+        item for item in result.chunk_traces if item.get("stage") == "quality_diagnostics"
+    )
+    assert trace["status"] == "unknown"
+    assert trace["quality_status"] == "quality_unknown"
+    assert trace["quality_unknown_documents"] == ["legacy-doc"]
 
 
 @pytest.mark.asyncio

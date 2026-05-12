@@ -72,6 +72,103 @@ def test_domain_quality_gate_annotates_extraction_chunks_for_retrieval_time():
     ] == "arabic"
 
 
+def test_domain_quality_gate_reports_canonical_reference_units_for_quran_19_13():
+    chunks = [
+        AdapterChunk(
+            text=(
+                "[19:12] \u064a\u0627 \u064a\u062d\u064a\u0649 "
+                "\u062e\u0630 \u0627\u0644\u0643\u062a\u0627\u0628 "
+                "O John, take the Scripture."
+            ),
+            source_location={"page": 312},
+            metadata={"reference_metadata": {"references": ["19:12"]}},
+        ),
+        AdapterChunk(
+            text="[19:13] And affection from Us and purity, and he was fearing of Allah.",
+            source_location={"page": 312},
+            metadata={"reference_metadata": {"references": ["19:13"]}},
+        ),
+    ]
+
+    report = DomainMetadataQualityGate().validate_adapter_chunks(
+        chunks,
+        domain_metadata=_quran_metadata(),
+    )
+
+    references = {
+        item["reference"]: item for item in report["index_quality_report"]["references"]
+    }
+    assert references["19:12"]["status"] == "passed"
+    assert references["19:13"]["status"] == "missing_expected_script"
+    assert references["19:13"]["missing_scripts"] == ["arabic"]
+    assert references["19:13"]["materialization"]["index_exact_arabic"] is False
+    assert chunks[1].metadata["quality_action_policy"]["index_vector"] is False
+
+
+def test_domain_quality_gate_prevents_multi_reference_arabic_masking():
+    chunks = [
+        AdapterChunk(
+            text=(
+                "[19:12] \u064a\u0627 \u064a\u062d\u064a\u0649 "
+                "\u062e\u0630 \u0627\u0644\u0643\u062a\u0627\u0628 "
+                "O John, take the Scripture strongly.\n\n"
+                "[19:13] And affection from Us and purity, and he was fearing of Allah."
+            ),
+            source_location={"page": 312},
+            metadata={"reference_metadata": {"references": ["19:12", "19:13"]}},
+        )
+    ]
+
+    report = DomainMetadataQualityGate().validate_adapter_chunks(
+        chunks,
+        domain_metadata=_quran_metadata(),
+    )
+
+    by_reference = {
+        item["reference"]: item for item in chunks[0].metadata["quality"]["by_reference"]
+    }
+    assert by_reference["19:12"]["status"] == "passed"
+    assert by_reference["19:13"]["status"] == "missing_expected_script"
+    assert by_reference["19:13"]["arabic_token_count"] == 0
+    assert report["index_quality_report"]["summary"][
+        "reference_units_missing_expected_script"
+    ] == 1
+
+
+def test_domain_quality_gate_flags_structured_chunks_without_reference_metadata():
+    chunks = [
+        AdapterChunk(
+            text=(
+                "[19:12] \u064a\u0627 \u064a\u062d\u064a\u0649 "
+                "\u062e\u0630 \u0627\u0644\u0643\u062a\u0627\u0628 "
+                "O John, take the Scripture."
+            ),
+            source_location={"page": 312},
+            metadata={"reference_metadata": {"references": ["19:12"]}},
+        ),
+        AdapterChunk(
+            text="And affection from Us and purity, and he was fearing of Allah.",
+            source_location={"page": 312},
+            metadata={},
+        ),
+    ]
+
+    report = DomainMetadataQualityGate().validate_adapter_chunks(
+        chunks,
+        domain_metadata=_quran_metadata(),
+    )
+
+    unresolved = report["index_quality_report"]["unresolved"]
+    assert unresolved[0]["status"] == "unresolved"
+    assert unresolved[0]["quality_flags"] == ["reference_unit_unresolved"]
+    assert chunks[1].metadata["quality_action_policy"]["project_graph"] is False
+    warning_codes = [
+        warning["code"]
+        for warning in chunks[1].metadata["extraction_quality"]["parser_warnings"]
+    ]
+    assert "reference_unit_unresolved" in warning_codes
+
+
 def test_domain_quality_gate_builds_retrieval_trace_from_same_warning_shape():
     gate = DomainMetadataQualityGate()
 

@@ -37,6 +37,7 @@ class HybridChunkSearch:
         same_chapter = 0.0
         neighbor_match = 0.0
         requested_ref = self._query_reference_label(query_ref)
+        quality_allows_reference_boost = self._quality_allows_reference_boost(metadata)
         if isinstance(query_ref, dict) and isinstance(reference_metadata, dict):
             q_chapter = query_ref.get("chapter")
             q_verse = query_ref.get("verse")
@@ -50,10 +51,16 @@ class HybridChunkSearch:
                 if isinstance(references, list)
                 else set()
             )
-            if semantics and semantics.exact_reference_top1 and requested_ref in explicit_refs:
+            if (
+                quality_allows_reference_boost
+                and semantics
+                and semantics.exact_reference_top1
+                and requested_ref in explicit_refs
+            ):
                 reference_exact = 100.0
             elif (
-                semantics
+                quality_allows_reference_boost
+                and semantics
                 and semantics.exact_reference_top1
                 and isinstance(q_chapter, int)
                 and isinstance(q_verse, int)
@@ -66,7 +73,8 @@ class HybridChunkSearch:
             ):
                 reference_exact = 100.0
             elif (
-                semantics
+                quality_allows_reference_boost
+                and semantics
                 and semantics.boost_same_chapter
                 and isinstance(q_chapter, int)
                 and isinstance(chapter_start, int)
@@ -76,7 +84,8 @@ class HybridChunkSearch:
                 same_chapter = 60.0 if q_verse is None else 5.0
 
             if (
-                semantics
+                quality_allows_reference_boost
+                and semantics
                 and semantics.boost_neighbor_verses
                 and requested_ref
                 in {
@@ -161,9 +170,26 @@ class HybridChunkSearch:
 
         return min(boost, 12.0)
 
+    def _quality_allows_reference_boost(self, metadata: dict[str, Any]) -> bool:
+        policy = metadata.get("quality_action_policy")
+        if not isinstance(policy, dict):
+            return True
+        return self._quality_allows_exact_arabic(metadata) and policy.get(
+            "graph_confidence"
+        ) != "blocked"
+
+    def _quality_allows_exact_arabic(self, metadata: dict[str, Any]) -> bool:
+        policy = metadata.get("quality_action_policy")
+        if not isinstance(policy, dict):
+            return True
+        return bool(policy.get("index_exact_arabic", True))
+
     def _arabic_exact_score(self, query: str, chunk: Chunk) -> float:
         variants = arabic_query_variants(query)
         if not variants:
+            return 0.0
+        metadata = chunk.metadata_json if isinstance(chunk.metadata_json, dict) else {}
+        if not self._quality_allows_exact_arabic(metadata):
             return 0.0
         stored_tokens = getattr(chunk, "tokens_ar", None)
         token_set = set(
@@ -184,6 +210,9 @@ class HybridChunkSearch:
     def _arabic_token_score(self, query: str, chunk: Chunk) -> float:
         variants = set(arabic_query_variants(query))
         if not variants:
+            return 0.0
+        metadata = chunk.metadata_json if isinstance(chunk.metadata_json, dict) else {}
+        if not self._quality_allows_exact_arabic(metadata):
             return 0.0
         stored_tokens = getattr(chunk, "tokens_ar", None)
         tokens = set(

@@ -207,7 +207,7 @@ class GraphProjectionRunner:
         }
 
     async def _chunks(self, document_id: str) -> list[Chunk]:
-        return list(
+        chunks = list(
             (
                 await self.session.execute(
                     select(Chunk)
@@ -218,6 +218,7 @@ class GraphProjectionRunner:
             .scalars()
             .all()
         )
+        return [chunk for chunk in chunks if _project_graph(chunk)]
 
     async def _delete_projection_records(self, document_id: str) -> None:
         await self.session.execute(
@@ -394,6 +395,14 @@ def _needs_graph_cleanup(record: GraphProjectionRecord) -> bool:
     if record.status == "succeeded":
         return True
     return record.node_count > 0 or record.edge_count > 0
+
+
+def _project_graph(chunk: Chunk) -> bool:
+    metadata = chunk.metadata_json if isinstance(chunk.metadata_json, dict) else {}
+    policy = metadata.get("quality_action_policy")
+    if not isinstance(policy, dict):
+        return True
+    return bool(policy.get("project_graph", True)) and policy.get("graph_confidence") != "blocked"
 
 
 def _has_stored_graph_target(record: GraphProjectionRecord) -> bool:

@@ -166,6 +166,9 @@ class GraphMaterializationService:
         for index, chunk in enumerate(chunks):
             node_id = chunk_graph_id(document_id=document_id, chunk_id=chunk.id)
             metadata = chunk.metadata_json if isinstance(chunk.metadata_json, dict) else {}
+            if not _project_graph_chunk(metadata):
+                continue
+            quality_policy = _quality_policy(metadata)
             aliases = _chunk_aliases(chunk, index, metadata)
             aliases_by_chunk_node_id[node_id] = aliases
             for alias in aliases:
@@ -192,6 +195,10 @@ class GraphMaterializationService:
                     "content_type": chunk.content_type,
                     **_source_location_properties(chunk.source_location),
                     "references": references,
+                    "quality_flags": _neo4j_property(quality_policy.get("quality_flags")),
+                    "graph_confidence": _neo4j_property(
+                        quality_policy.get("graph_confidence", "high")
+                    ),
                 }
             )
         legacy_to_chunk_id = {
@@ -205,6 +212,8 @@ class GraphMaterializationService:
             current_chunk_node_id = chunk_graph_id(document_id=document_id, chunk_id=chunk.id)
             current_chunk_aliases = aliases_by_chunk_node_id.get(current_chunk_node_id, set())
             metadata = chunk.metadata_json if isinstance(chunk.metadata_json, dict) else {}
+            if not _project_graph_chunk(metadata):
+                continue
             relationship_metadata = metadata.get("relationship_metadata")
             if not isinstance(relationship_metadata, dict):
                 continue
@@ -289,6 +298,8 @@ class GraphMaterializationService:
             chunk.source_id = node.source_id,
             chunk.text_preview = node.text_preview,
             chunk.content_type = node.content_type,
+            chunk.quality_flags = node.quality_flags,
+            chunk.graph_confidence = node.graph_confidence,
             chunk.page = node.page,
             chunk.section = node.section,
             chunk.start_index = node.start_index,
@@ -440,6 +451,18 @@ def _references(metadata: dict[str, Any]) -> list[str]:
     if not isinstance(references, list):
         return []
     return [str(reference) for reference in references if reference is not None]
+
+
+def _quality_policy(metadata: dict[str, Any]) -> dict[str, Any]:
+    policy = metadata.get("quality_action_policy")
+    return policy if isinstance(policy, dict) else {}
+
+
+def _project_graph_chunk(metadata: dict[str, Any]) -> bool:
+    policy = _quality_policy(metadata)
+    if not policy:
+        return True
+    return bool(policy.get("project_graph", True)) and policy.get("graph_confidence") != "blocked"
 
 
 def _source_location_properties(value: Any) -> dict[str, Any]:

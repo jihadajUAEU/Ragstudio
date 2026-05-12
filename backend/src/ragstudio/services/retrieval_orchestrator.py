@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from dataclasses import asdict, replace
 from time import perf_counter
 from typing import Any
 
 from ragstudio.schemas.chunks import ChunkOut
+from ragstudio.services.arabic_text import arabic_tokens
 from ragstudio.services.chunk_service import ChunkService
 from ragstudio.services.context_assembly_service import ContextAssemblyService
 from ragstudio.services.domain_metadata_quality_gate import DomainMetadataQualityGate
@@ -214,6 +216,13 @@ class RetrievalOrchestrator:
                     },
                 ]
             )
+            quality_diagnostics_trace = await self._quality_diagnostics_trace(
+                query,
+                document_ids,
+                fused,
+            )
+            if quality_diagnostics_trace is not None:
+                traces.append(quality_diagnostics_trace)
             observability.record_stage(
                 "final_fusion",
                 candidate_count=len(fused),
@@ -291,6 +300,35 @@ class RetrievalOrchestrator:
             )
         except Exception as exc:
             return self._failed_orchestrated_answer(exc, started, timings)
+
+    async def _quality_diagnostics_trace(
+        self,
+        query: str,
+        document_ids: list[str],
+        candidates: list[EvidenceCandidate],
+    ) -> dict[str, Any] | None:
+        if candidates or not document_ids:
+            return None
+        query_script = _query_script(query)
+        if query_script is None:
+            return None
+        lookup = getattr(self.chunk_service, "quality_reports_for_documents", None)
+        if not callable(lookup):
+            return None
+        try:
+            reports = await lookup(document_ids)
+        except Exception as exc:
+            return {
+                "stage": "quality_diagnostics",
+                "status": "failed",
+                "reason": exc.__class__.__name__,
+                "detail": str(exc),
+            }
+        return _quality_diagnostics_from_reports(
+            reports,
+            query_script=query_script,
+            query=query,
+        )
 
     def _context_assembly_service(self, profile: Any) -> ContextAssemblyService:
         max_context_tokens = getattr(profile, "max_context_tokens", None)
@@ -801,6 +839,115 @@ def _cache_query_type(query: str, intent: str) -> str:
 
 def _contains_arabic(value: str) -> bool:
     return any("\u0600" <= character <= "\u06FF" for character in value)
+
+
+def _query_script(query: str) -> str | None:
+    if arabic_tokens(query) or _contains_arabic(query):
+        return "arabic"
+    return None
+
+
+def _quality_diagnostics_from_reports(
+    reports: list[dict[str, Any]],
+    *,
+    query_script: str,
+    query: str,
+) -> dict[str, Any] | None:
+    reference_hints = _reference_hints(query)
+    affected: list[str] = []
+    document_summaries: list[dict[str, Any]] = []
+    unknown_documents: list[str] = []
+
+    for report in reports:
+        if not isinstance(report, dict):
+            continue
+        document_id = report.get("document_id")
+        status = report.get("status")
+        if status == "quality_unknown":
+            if isinstance(document_id, str):
+                unknown_documents.append(document_id)
+            document_summaries.append(
+                {
+                    "document_id": document_id,
+                    "quality_status": "quality_unknown",
+                    "quality_report_version": report.get("quality_report_version"),
+                }
+            )
+            continue
+        references = report.get("references")
+        if not isinstance(references, list):
+            continue
+        document_affected = []
+        for item in references:
+            if not isinstance(item, dict):
+                continue
+            reference = item.get("reference")
+            if not isinstance(reference, str) or not reference:
+                continue
+            if reference_hints and reference not in reference_hints:
+                continue
+            if not _reference_affects_script(item, query_script):
+                continue
+            document_affected.append(reference)
+        if document_affected:
+            affected.extend(document_affected)
+            document_summaries.append(
+                {
+                    "document_id": document_id,
+                    "quality_status": status,
+                    "affected_references": document_affected[:5],
+                    "summary": report.get("summary"),
+                }
+            )
+
+    affected = list(dict.fromkeys(affected))[:5]
+    if affected:
+        return {
+            "stage": "quality_diagnostics",
+            "status": "warning",
+            "quality_status": "missing_expected_script",
+            "query_script": query_script,
+            "message": (
+                "Arabic content is missing for one or more expected reference units "
+                "in this document."
+            ),
+            "affected_references": affected,
+            "documents": document_summaries,
+        }
+    if unknown_documents:
+        return {
+            "stage": "quality_diagnostics",
+            "status": "unknown",
+            "quality_status": "quality_unknown",
+            "query_script": query_script,
+            "message": (
+                "No reference-level index quality report is available for one or more "
+                "selected documents."
+            ),
+            "quality_unknown_documents": unknown_documents,
+            "documents": document_summaries,
+        }
+    return None
+
+
+def _reference_affects_script(reference: dict[str, Any], query_script: str) -> bool:
+    expected = reference.get("expected_scripts")
+    if isinstance(expected, list) and query_script not in expected:
+        return False
+    missing = reference.get("missing_scripts")
+    if isinstance(missing, list) and query_script in missing:
+        return True
+    materialization = reference.get("materialization")
+    if isinstance(materialization, dict) and query_script == "arabic":
+        return not bool(materialization.get("index_exact_arabic", True))
+    return False
+
+
+def _reference_hints(query: str) -> set[str]:
+    return {
+        re.sub(r"\s+", "", match)
+        for match in re.findall(r"\b\d{1,4}\s*:\s*\d{1,4}\b", query)
+    }
 
 
 def _evidence_from_context(

@@ -120,6 +120,64 @@ async def test_persist_chunks_preserves_parser_warnings_in_quality_fields(
 
 
 @pytest.mark.asyncio
+async def test_persist_chunks_blocks_exact_arabic_for_quarantined_reference(
+    tmp_path,
+    database_url,
+):
+    engine = make_engine(database_url)
+    await init_db(engine)
+    factory = make_session_factory(engine)
+
+    async with factory() as session:
+        document = Document(
+            id="doc-quarantined-reference",
+            filename="quran.pdf",
+            content_type="application/pdf",
+            sha256="quran-quarantined-sha",
+            artifact_path=str(tmp_path / "quran.pdf"),
+            status="running",
+        )
+        session.add(document)
+        await session.commit()
+
+        chunks = await ChunkPersistenceService(session).persist(
+            document,
+            [
+                AdapterChunk(
+                    text="[19:13] \u0648\u062d\u0646\u0627\u0646\u0627",
+                    source_location={"page": 312, "reference": "19:13"},
+                    metadata={
+                        "parser_metadata": {"backend": "mineru"},
+                        "reference_metadata": {"references": ["19:13"]},
+                        "quality_action_policy": {
+                            "persist_chunk": True,
+                            "index_vector": False,
+                            "index_exact_arabic": False,
+                            "project_graph": False,
+                            "graph_confidence": "blocked",
+                            "quality_flags": ["missing_expected_script:arabic"],
+                        },
+                    },
+                )
+            ],
+            IndexDocumentIn(
+                parser_mode="mineru_strict",
+                domain_metadata=DomainMetadata(domain="quran_tafseer", language="arabic"),
+            ),
+            commit=True,
+        )
+
+        persisted = await session.get(Chunk, chunks[0].id)
+
+    await engine.dispose()
+
+    assert persisted is not None
+    assert persisted.text_search_ar == ""
+    assert persisted.tokens_ar == []
+    assert persisted.metadata_json["quality_action_policy"]["index_exact_arabic"] is False
+
+
+@pytest.mark.asyncio
 async def test_persist_chunks_replaces_existing_chunks(tmp_path, database_url):
     engine = make_engine(database_url)
     await init_db(engine)

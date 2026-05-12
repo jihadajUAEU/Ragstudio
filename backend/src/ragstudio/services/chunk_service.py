@@ -2,7 +2,7 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path, PureWindowsPath
 from typing import Any
 
-from ragstudio.db.models import Chunk, Document
+from ragstudio.db.models import Chunk, Document, IndexRecord
 from ragstudio.schemas.chunks import ChunkOut, ChunkSearchIn, ChunkSearchOut
 from ragstudio.schemas.parsing import DomainMetadata, IndexDocumentIn, ParserMode
 from ragstudio.services.adapter import AdapterChunk, RAGAnythingAdapter
@@ -12,6 +12,7 @@ from ragstudio.services.chunk_persistence_service import ChunkPersistenceService
 from ragstudio.services.chunk_sanitizer import sanitize_db_value
 from ragstudio.services.chunk_splitter import ChunkSplitter
 from ragstudio.services.document_parser_service import DocumentParserService
+from ragstudio.services.domain_metadata_quality_gate import DomainMetadataQualityGate
 from ragstudio.services.hybrid_chunk_search import ChunkScore, HybridChunkSearch
 from ragstudio.services.index_quality_gate import IndexQualityGate
 from ragstudio.services.mineru_client import MinerUClient
@@ -163,6 +164,60 @@ class ChunkService:
             for chunk_id in unique_ids
             if chunk_id in chunks_by_id
         ]
+
+    async def quality_reports_for_documents(
+        self,
+        document_ids: list[str],
+    ) -> list[dict[str, Any]]:
+        requested = list(dict.fromkeys(document_id for document_id in document_ids if document_id))
+        if not requested:
+            return []
+
+        gate = getattr(self.quality_gate, "domain_gate", DomainMetadataQualityGate())
+        reports_by_document: dict[str, dict[str, Any]] = {}
+        records = (
+            await self.session.execute(
+                select(IndexRecord)
+                .where(IndexRecord.document_id.in_(requested))
+                .order_by(IndexRecord.created_at.desc(), IndexRecord.id.desc())
+            )
+        ).scalars()
+        for record in records:
+            if record.document_id in reports_by_document:
+                continue
+            index_shape = record.index_shape if isinstance(record.index_shape, dict) else {}
+            report = index_shape.get("index_quality_report")
+            if isinstance(report, dict) and report.get("quality_report_version"):
+                report = dict(report)
+                report.setdefault("document_id", record.document_id)
+                report.setdefault("runtime_profile_id", record.runtime_profile_id)
+                reports_by_document[record.document_id] = report
+
+        missing = [
+            document_id
+            for document_id in requested
+            if document_id not in reports_by_document
+        ]
+        if missing:
+            chunk_rows = (
+                await self.session.execute(
+                    select(Chunk)
+                    .where(Chunk.document_id.in_(missing))
+                    .order_by(Chunk.created_at.asc(), Chunk.id.asc())
+                )
+            ).scalars()
+            chunks_by_document: dict[str, list[Chunk]] = {
+                document_id: [] for document_id in missing
+            }
+            for chunk in chunk_rows:
+                chunks_by_document.setdefault(chunk.document_id, []).append(chunk)
+            for document_id in missing:
+                reports_by_document[document_id] = gate.index_quality_report_from_chunks(
+                    chunks_by_document.get(document_id, []),
+                    document_id=document_id,
+                )
+
+        return [reports_by_document[document_id] for document_id in requested]
 
     def _chunk_out_with_score(
         self,

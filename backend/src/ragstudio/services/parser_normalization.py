@@ -323,15 +323,20 @@ def _scripts_from_metadata(domain_metadata: DomainMetadata) -> set[str]:
     language = _normalize_token(domain_metadata.language)
     tags = {_normalize_token(tag) for tag in domain_metadata.tags}
 
+    mixed_script_aliases = {"mixed", "arabic_english", "arabic_latin"}
+    latin_aliases = {"english", "latin", "translation"}
+
     if script in {"arabic", "latin"}:
         scripts.add(script)
-    if script == "mixed":
+    if script in mixed_script_aliases:
         scripts.update({"arabic", "latin"})
     if language == "arabic" or "arabic" in tags:
         scripts.add("arabic")
-    if language in {"english", "latin"} or "english" in tags:
+    if language in latin_aliases or tags.intersection(latin_aliases):
         scripts.add("latin")
-    if language == "mixed":
+    if language in mixed_script_aliases:
+        scripts.update({"arabic", "latin"})
+    if tags.intersection(mixed_script_aliases):
         scripts.update({"arabic", "latin"})
     return scripts
 

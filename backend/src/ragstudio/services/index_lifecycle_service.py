@@ -141,11 +141,13 @@ class IndexLifecycleService:
             adapter_chunks,
             options.domain_metadata,
         )
-        self.quality_gate.validate_adapter_chunks(
+        quality_report = self.quality_gate.validate_adapter_chunks(
             adapter_chunks,
             language=self._quality_language(options.domain_metadata),
             domain_metadata=options.domain_metadata,
         )
+        index_quality_report = quality_report.get("index_quality_report")
+        runtime_adapter_chunks = self._runtime_materializable_chunks(adapter_chunks)
         if on_stage is not None:
             await on_stage(
                 IndexStage.MINERU_VALIDATED,
@@ -179,6 +181,12 @@ class IndexLifecycleService:
                         "embedding_model": profile.embedding_model,
                         "embedding_dimensions": profile.embedding_dimensions,
                         "parser_mode": options.parser_mode,
+                        "index_quality_report": index_quality_report,
+                        "quality_report_version": (
+                            index_quality_report.get("quality_report_version")
+                            if isinstance(index_quality_report, dict)
+                            else None
+                        ),
                     },
                     chunk_count=len(chunks),
                 )
@@ -202,11 +210,13 @@ class IndexLifecycleService:
             if runtime_chunks is not None:
                 return runtime_chunks
             await runtime.delete_document_index(document.id)
+            if not runtime_adapter_chunks:
+                return []
             return await self._index_runtime_document(
                 runtime,
                 artifact_path,
                 document.id,
-                preparsed_chunks=adapter_chunks,
+                preparsed_chunks=runtime_adapter_chunks,
             )
 
         studio_branch_name = IndexStage.CHUNKS_PERSISTED.value
@@ -258,11 +268,28 @@ class IndexLifecycleService:
             )
 
         runtime_chunk_count = len(runtime_result.value or [])
-        canonical_chunk_count = len(chunks)
-        if runtime_chunk_count != canonical_chunk_count:
+        expected_runtime_chunk_count = len(runtime_adapter_chunks)
+        if chunks and expected_runtime_chunk_count == 0:
+            reason = "No chunks passed the runtime materialization quality gate."
+            await self._mark_runtime_index_failed(document.id, profile.id, reason)
+            projection_record = await self._mark_graph_projection_skipped(
+                projection_record.id,
+                reason,
+            )
+            return IndexLifecycleResult(
+                chunks=chunks,
+                graph_projection_record_id=projection_record.id,
+                graph_materialization={
+                    "status": "skipped",
+                    "node_count": 0,
+                    "edge_count": 0,
+                    "reason": reason,
+                },
+            )
+        if runtime_chunk_count != expected_runtime_chunk_count:
             reason = (
                 f"Runtime enrichment produced {runtime_chunk_count} chunks for "
-                f"{canonical_chunk_count} canonical chunks."
+                f"{expected_runtime_chunk_count} quality-approved chunks."
             )
             await self._mark_runtime_index_failed(document.id, profile.id, reason)
             projection_record = await self._mark_graph_projection_skipped(
@@ -280,7 +307,11 @@ class IndexLifecycleService:
                 },
             )
 
-        await self._mark_runtime_index_succeeded(document.id, profile.id, len(chunks))
+        await self._mark_runtime_index_succeeded(
+            document.id,
+            profile.id,
+            expected_runtime_chunk_count,
+        )
         if on_stage is not None:
             await on_stage(
                 IndexStage.GRAPH_ENRICHING,
@@ -329,6 +360,20 @@ class IndexLifecycleService:
         if "document_id" in parameters:
             return await runtime.index_document(artifact_path, document_id=document_id)
         return await runtime.index_document(artifact_path)
+
+    def _runtime_materializable_chunks(
+        self,
+        chunks: list[AdapterChunk],
+    ) -> list[AdapterChunk]:
+        return [
+            chunk
+            for chunk in chunks
+            if self._quality_policy(chunk.metadata).get("index_vector", True)
+        ]
+
+    def _quality_policy(self, metadata: dict[str, Any]) -> dict[str, Any]:
+        policy = metadata.get("quality_action_policy")
+        return policy if isinstance(policy, dict) else {}
 
     def _normalize_runtime_chunks(
         self,

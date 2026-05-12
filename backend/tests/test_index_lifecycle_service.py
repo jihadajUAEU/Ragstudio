@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 from ragstudio.db.models import Chunk, Document, GraphProjectionRecord, IndexRecord, SettingsProfile
 from ragstudio.schemas.common import StageStatus
-from ragstudio.schemas.parsing import IndexDocumentIn
+from ragstudio.schemas.parsing import DomainMetadata, IndexDocumentIn
 from ragstudio.services.adapter import AdapterChunk
 from ragstudio.services.chunk_persistence_service import ChunkPersistenceService
 from ragstudio.services.graph_materialization_service import GraphMaterializationResult
@@ -231,6 +231,22 @@ def _add_auth_to_call(call: dict, profile) -> None:
         call["neo4j_username"] = username
     if password is not None:
         call["neo4j_password"] = password
+
+
+def _quran_metadata() -> DomainMetadata:
+    return DomainMetadata(
+        domain="quran_tafseer",
+        language="mixed",
+        tags=["quran", "arabic", "english"],
+        citation_style="surah_ayah",
+        expected_structure="surah_ayah_sections",
+        reference_pattern="surah_number:verse_number",
+        script="arabic_english",
+        custom_json={
+            "reference_schema": {"type": "chapter_verse", "display": "{chapter}:{verse}"},
+            "chunking": {"unit": "verse", "preserve_parallel_text": True},
+        },
+    )
 
 
 @pytest.mark.asyncio
@@ -545,6 +561,162 @@ async def test_lifecycle_uses_preparsed_mineru_chunks_for_strict_runtime_reindex
     ]
     assert chunks is not None
     assert [chunk.text for chunk in chunks] == ["Remote MinerU chunk"]
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_filters_quarantined_reference_from_preparsed_runtime_index(client):
+    app = client._transport.app
+    artifact_path = app.state.settings.data_dir / "quality-filter-runtime.pdf"
+    artifact_path.write_text("runtime text", encoding="utf-8")
+
+    parser_chunks = [
+        AdapterChunk(
+            text=(
+                "[19:12] \u064a\u0627 \u064a\u062d\u064a\u0649 "
+                "\u062e\u0630 \u0627\u0644\u0643\u062a\u0627\u0628 "
+                "O John, take the Scripture."
+            ),
+            source_location={"page": 312},
+            metadata={"reference_metadata": {"references": ["19:12"]}},
+        ),
+        AdapterChunk(
+            text="[19:13] And affection from Us and purity, and he was fearing of Allah.",
+            source_location={"page": 312},
+            metadata={"reference_metadata": {"references": ["19:13"]}},
+        ),
+    ]
+
+    async with app.state.session_factory() as session:
+        session.add(
+            SettingsProfile(
+                id="default",
+                provider="openai-compatible",
+                llm_model="gpt-4o",
+                llm_base_url="http://llm.test",
+                embedding_model="text-embedding-3-large",
+                embedding_base_url="http://embedding.test",
+                storage_backend="postgres_pgvector_neo4j",
+                runtime_mode="runtime",
+            )
+        )
+        document = Document(
+            filename="quality-filter-runtime.pdf",
+            content_type="application/pdf",
+            sha256="quality-filter-runtime",
+            artifact_path=str(artifact_path),
+            status=StageStatus.READY.value,
+        )
+        session.add(document)
+        await session.commit()
+
+        runtime = PreparsedRuntime()
+        result = await IndexLifecycleService(
+            session,
+            app.state.settings,
+            runtime_factory=FakeFactory(runtime),
+            health_service=FakeHealthService(),
+            document_parser=FakeDocumentParser(parser_chunks),
+        ).reindex_document(
+            document.id,
+            options=IndexDocumentIn(
+                parser_mode="mineru_strict",
+                domain_metadata=_quran_metadata(),
+            ),
+        )
+
+        stored_chunks = (
+            await session.execute(select(Chunk).where(Chunk.document_id == document.id))
+        ).scalars().all()
+        index_record = await session.scalar(
+            select(IndexRecord).where(IndexRecord.document_id == document.id)
+        )
+
+    assert result is not None
+    assert [chunk.text for chunk in runtime.preparsed_chunks] == [parser_chunks[0].text]
+    assert len(stored_chunks) == 2
+    blocked = next(chunk for chunk in stored_chunks if "19:13" in chunk.text)
+    assert blocked.metadata_json["quality_action_policy"]["index_vector"] is False
+    assert blocked.tokens_ar == []
+    assert index_record is not None
+    report = index_record.index_shape["index_quality_report"]
+    references = {item["reference"]: item for item in report["references"]}
+    assert references["19:13"]["materialization"]["index_vector"] is False
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_marks_runtime_failed_when_all_references_are_quarantined(client):
+    app = client._transport.app
+    artifact_path = app.state.settings.data_dir / "quality-all-blocked-runtime.pdf"
+    artifact_path.write_text("runtime text", encoding="utf-8")
+
+    parser_chunks = [
+        AdapterChunk(
+            text=(
+                "[19:13] \u0648\u062d\u0646\u0627\u0646\u0627 "
+                "\u0645\u0646 \u0644\u062f\u0646\u0627"
+            ),
+            source_location={"page": 312},
+            metadata={"reference_metadata": {"references": ["19:13"]}},
+        )
+    ]
+
+    async with app.state.session_factory() as session:
+        session.add(
+            SettingsProfile(
+                id="default",
+                provider="openai-compatible",
+                llm_model="gpt-4o",
+                llm_base_url="http://llm.test",
+                embedding_model="text-embedding-3-large",
+                embedding_base_url="http://embedding.test",
+                storage_backend="postgres_pgvector_neo4j",
+                runtime_mode="runtime",
+            )
+        )
+        document = Document(
+            filename="quality-all-blocked-runtime.pdf",
+            content_type="application/pdf",
+            sha256="quality-all-blocked-runtime",
+            artifact_path=str(artifact_path),
+            status=StageStatus.READY.value,
+        )
+        session.add(document)
+        await session.commit()
+
+        runtime = PreparsedRuntime()
+        result = await IndexLifecycleService(
+            session,
+            app.state.settings,
+            runtime_factory=FakeFactory(runtime),
+            health_service=FakeHealthService(),
+            document_parser=FakeDocumentParser(parser_chunks),
+        ).reindex_document(
+            document.id,
+            options=IndexDocumentIn(
+                parser_mode="mineru_strict",
+                domain_metadata=_quran_metadata(),
+            ),
+        )
+        index_record = await session.scalar(
+            select(IndexRecord).where(IndexRecord.document_id == document.id)
+        )
+        projection_record = await session.get(
+            GraphProjectionRecord,
+            result.graph_projection_record_id,
+        )
+
+    assert runtime.preparsed_paths == []
+    assert index_record is not None
+    assert index_record.status == StageStatus.FAILED.value
+    assert index_record.error == "No chunks passed the runtime materialization quality gate."
+    assert projection_record is not None
+    assert projection_record.status == "skipped"
+    assert result.graph_materialization == {
+        "status": "skipped",
+        "node_count": 0,
+        "edge_count": 0,
+        "reason": "No chunks passed the runtime materialization quality gate.",
+    }
 
 
 @pytest.mark.asyncio
@@ -1010,6 +1182,76 @@ async def test_graph_projection_runner_materializes_pending_record(client):
     assert refreshed_record.error is None
     assert refreshed_record.projection_run_id is not None
     assert refreshed_record.graph_storage_password is None
+
+
+@pytest.mark.asyncio
+async def test_graph_projection_runner_skips_blocked_quality_policy_chunks(client):
+    app = client._transport.app
+
+    async with app.state.session_factory() as session:
+        session.add(
+            SettingsProfile(
+                id="default",
+                provider="openai-compatible",
+                llm_model="gpt-4o",
+                llm_base_url="http://llm.test",
+                embedding_model="text-embedding-3-large",
+                embedding_base_url="http://embedding.test",
+                storage_backend="postgres_pgvector_neo4j",
+                runtime_mode="runtime",
+                neo4j_uri="bolt://neo4j.test:7687",
+            )
+        )
+        document = Document(
+            filename="graph-quality-policy.txt",
+            content_type="text/plain",
+            sha256="graph-quality-policy",
+            artifact_path=str(app.state.settings.data_dir / "graph-quality-policy.txt"),
+            status=StageStatus.SUCCEEDED.value,
+        )
+        session.add(document)
+        await session.flush()
+        session.add_all(
+            [
+                Chunk(
+                    document_id=document.id,
+                    text="Allowed graph runner chunk",
+                    source_location={"page": 1},
+                    metadata_json={"relationship_metadata": {"references": ["19:12"]}},
+                    runtime_profile_id="default",
+                ),
+                Chunk(
+                    document_id=document.id,
+                    text="Blocked graph runner chunk",
+                    source_location={"page": 1},
+                    metadata_json={
+                        "relationship_metadata": {"references": ["19:13"]},
+                        "quality_action_policy": {
+                            "project_graph": False,
+                            "graph_confidence": "blocked",
+                        },
+                    },
+                    runtime_profile_id="default",
+                ),
+            ]
+        )
+        session.add(
+            GraphProjectionRecord(
+                document_id=document.id,
+                runtime_profile_id="default",
+                status="pending",
+            )
+        )
+        await session.flush()
+
+        fake = FakeGraphMaterializationService()
+        await GraphProjectionRunner(
+            session,
+            app.state.settings,
+            materialization_service=fake,
+        ).materialize_pending(document.id)
+
+    assert fake.calls[0]["chunk_count"] == 1
 
 
 @pytest.mark.asyncio

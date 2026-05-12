@@ -361,7 +361,7 @@ class ReferenceSemantics:
     def _schema_pattern(reference_schema: Any) -> str | None:
         if not isinstance(reference_schema, dict):
             return None
-        for key in ("pattern", "regex"):
+        for key in ("reference_regex", "pattern", "regex"):
             value = reference_schema.get(key)
             if isinstance(value, str) and value.strip():
                 return value.strip()
