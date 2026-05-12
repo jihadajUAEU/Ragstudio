@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any, Literal
 
@@ -25,6 +26,7 @@ from ragstudio.services.index_progress import (
     update_job_stage,
 )
 from ragstudio.services.job_worker import JobWorker
+from ragstudio.services.job_queue_service import JobLeaseLostError
 from ragstudio.services.runtime_factory import RuntimeUnavailableError
 from ragstudio.services.runtime_profile_service import (
     RuntimeProfileNotConfiguredError,
@@ -374,7 +376,12 @@ class DocumentService:
         job: Job,
         options: IndexDocumentIn | None = None,
         on_mineru_status=None,
+        ensure_active_lease: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
+        async def ensure_current_lease() -> None:
+            if ensure_active_lease is not None:
+                await ensure_active_lease()
+
         job.status = StageStatus.RUNNING.value
         job.progress = 50
         job.logs = [*job.logs, "Indexing document chunks."]
@@ -389,6 +396,7 @@ class DocumentService:
                 detail: str,
                 chunk_count: int | None = None,
             ) -> None:
+                await ensure_current_lease()
                 update_job_stage(job, stage, detail=detail, chunk_count=chunk_count)
                 await self.session.commit()
 
@@ -418,6 +426,17 @@ class DocumentService:
         parser_quality = self._parser_quality_summary(chunks or [])
         index_quality_report = self._index_quality_report(chunks or [])
         parser_warning = self._parser_quality_warning(parser_quality)
+        graph_materialization_log = None
+        if graph_materialization.get("status") == "pending" and self.settings is not None:
+            await ensure_current_lease()
+            graph_materialization = await GraphProjectionRunner(
+                self.session,
+                self.settings,
+            ).materialize_pending(document.id)
+            await ensure_current_lease()
+            status = str(graph_materialization.get("status") or "unknown")
+            graph_materialization_log = f"Graph projection materialization {status}."
+        await ensure_current_lease()
         document.status = StageStatus.SUCCEEDED.value
         job.status = StageStatus.SUCCEEDED.value
         job.progress = 100
@@ -432,18 +451,8 @@ class DocumentService:
         job.logs = [*job.logs, f"Indexed {chunk_count} chunks."]
         if parser_warning:
             job.logs = [*job.logs, f"Parser quality warnings: {parser_warning}"]
-        if graph_materialization.get("status") == "pending" and self.settings is not None:
-            await self.session.commit()
-            graph_materialization = await GraphProjectionRunner(
-                self.session,
-                self.settings,
-            ).materialize_pending(document.id)
-            job.result = {
-                **job.result,
-                "graph_materialization": graph_materialization,
-            }
-            status = str(graph_materialization.get("status") or "unknown")
-            job.logs = [*job.logs, f"Graph projection materialization {status}."]
+        if graph_materialization_log:
+            job.logs = [*job.logs, graph_materialization_log]
         graph_warning = self._graph_materialization_warning(graph_materialization)
         warning_entries = [item for item in (graph_warning, parser_warning) if item]
         combined_warning = "; ".join(warning_entries) if warning_entries else None
@@ -591,13 +600,19 @@ class DocumentService:
         document_id: str,
         job_id: str,
         options: IndexDocumentIn,
+        ensure_active_lease: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
         document = await self.session.get(Document, document_id)
         job = await self.session.get(Job, job_id)
         if document is None or job is None:
             return
 
+        async def ensure_current_lease() -> None:
+            if ensure_active_lease is not None:
+                await ensure_active_lease()
+
         async def on_mineru_status(payload: dict[str, Any]) -> None:
+            await ensure_current_lease()
             result = job.result or {}
             existing_mineru = result.get("mineru")
             mineru = dict(existing_mineru) if isinstance(existing_mineru, dict) else {}
@@ -644,6 +659,7 @@ class DocumentService:
             await self.session.commit()
 
         try:
+            await ensure_current_lease()
             job.status = StageStatus.RUNNING.value
             job.progress = max(job.progress, 1)
             job.logs = [*job.logs, "Indexing document chunks."]
@@ -654,9 +670,18 @@ class DocumentService:
                 job,
                 options,
                 on_mineru_status=on_mineru_status,
+                ensure_active_lease=ensure_active_lease,
             )
             await self.session.commit()
+        except JobLeaseLostError:
+            await self.session.rollback()
+            raise
         except Exception as exc:
+            try:
+                await ensure_current_lease()
+            except JobLeaseLostError:
+                await self.session.rollback()
+                raise
             await cleanup_document_index_artifacts(self.session, document.id)
             document.status = StageStatus.FAILED.value
             job.status = StageStatus.FAILED.value

@@ -3,6 +3,8 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from ragstudio.db.models import Chunk, Document, GraphProjectionRecord, Job, SettingsProfile
 from ragstudio.schemas.common import StageStatus
+from ragstudio.schemas.parsing import IndexDocumentIn
+from ragstudio.services.document_service import DocumentService
 from ragstudio.services.index_job_runner import IndexJobRunner
 from ragstudio.services.job_queue_service import JobLeaseLostError
 from sqlalchemy import select
@@ -373,8 +375,9 @@ async def test_index_job_runner_clears_terminal_lease_after_document_service_com
         )
         await session.commit()
 
-    async def fake_run_index_job(self, document_id, job_id, options):
+    async def fake_run_index_job(self, document_id, job_id, options, ensure_active_lease=None):
         assert options.parser_mode == "mineru_strict"
+        assert ensure_active_lease is not None
         job = await self.session.get(Job, job_id)
         job.status = StageStatus.SUCCEEDED.value
         job.progress = 100
@@ -397,3 +400,75 @@ async def test_index_job_runner_clears_terminal_lease_after_document_service_com
     assert refreshed.worker_id is None
     assert refreshed.lease_expires_at is None
     assert refreshed.recovery_action is None
+
+
+@pytest.mark.asyncio
+async def test_run_index_job_rolls_back_terminal_state_after_lease_loss(
+    client,
+    tmp_path,
+    monkeypatch,
+):
+    app = client._transport.app
+    artifact = tmp_path / "uploads" / "lease-guard-sha"
+    artifact.parent.mkdir(parents=True)
+    artifact.write_text("Quran 1:4", encoding="utf-8")
+    async with app.state.session_factory() as session:
+        document = Document(
+            filename="lease-guard.pdf",
+            content_type="application/pdf",
+            sha256="lease-guard-sha",
+            artifact_path=str(artifact),
+            status=StageStatus.READY.value,
+        )
+        session.add(document)
+        await session.flush()
+        job = Job(
+            id="job-lease-guard",
+            type="index_document",
+            target_id=document.id,
+            status=StageStatus.RUNNING.value,
+            progress=1,
+            logs=[],
+            result={},
+            job_options={"parser_mode": "mineru_strict", "domain_metadata": {}},
+            worker_id="worker-a",
+            lease_expires_at=datetime.now(UTC) + timedelta(minutes=5),
+        )
+        session.add(job)
+        await session.commit()
+        document_id = document.id
+
+    async def fake_index_document(self, document_id, **kwargs):
+        return [object()]
+
+    monkeypatch.setattr(
+        "ragstudio.services.document_service.ChunkService.index_document",
+        fake_index_document,
+    )
+
+    guard_calls = 0
+
+    async def ensure_active_lease():
+        nonlocal guard_calls
+        guard_calls += 1
+        if guard_calls > 1:
+            raise JobLeaseLostError("Job job-lease-guard lease is no longer held by worker-a.")
+
+    async with app.state.session_factory() as session:
+        with pytest.raises(JobLeaseLostError):
+            await DocumentService(session, tmp_path).run_index_job(
+                document_id,
+                "job-lease-guard",
+                IndexDocumentIn(parser_mode="mineru_strict"),
+                ensure_active_lease=ensure_active_lease,
+            )
+
+    async with app.state.session_factory() as session:
+        refreshed_document = await session.get(Document, document_id)
+        refreshed_job = await session.get(Job, "job-lease-guard")
+
+    assert guard_calls == 2
+    assert refreshed_document.status == StageStatus.RUNNING.value
+    assert refreshed_job.status == StageStatus.RUNNING.value
+    assert refreshed_job.progress == 1
+    assert "chunk_count" not in refreshed_job.result
