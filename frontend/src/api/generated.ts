@@ -258,6 +258,12 @@ export interface JobOut {
   progress: number;
   logs: string[];
   result: Record<string, unknown>;
+  worker_id: string | null;
+  lease_expires_at: string | null;
+  heartbeat_at: string | null;
+  attempts: number;
+  max_attempts: number;
+  recovery_action: string | null;
 }
 
 export type VariantPreset = "balanced" | "precise" | "broad" | "fast";

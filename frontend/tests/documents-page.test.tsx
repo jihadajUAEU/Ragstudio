@@ -19,6 +19,15 @@ vi.mock("../src/api/client", () => ({
   },
 }));
 
+const jobRuntimeFields = {
+  worker_id: null,
+  lease_expires_at: null,
+  heartbeat_at: null,
+  attempts: 0,
+  max_attempts: 3,
+  recovery_action: null,
+};
+
 function renderDocumentsPage() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
@@ -367,6 +376,7 @@ describe("DocumentsPage", () => {
     vi.mocked(apiClient.jobs).mockResolvedValue({
       items: [
         {
+          ...jobRuntimeFields,
           id: "job-1",
           type: "index_document",
           status: "running",
@@ -411,6 +421,7 @@ describe("DocumentsPage", () => {
     vi.mocked(apiClient.jobs).mockResolvedValue({
       items: [
         {
+          ...jobRuntimeFields,
           id: "job-1",
           type: "index_document",
           status: "succeeded",
@@ -460,6 +471,7 @@ describe("DocumentsPage", () => {
       .mockResolvedValueOnce({
         items: [
           {
+            ...jobRuntimeFields,
             id: "job-1",
             type: "index_document",
             status: "running",
@@ -474,6 +486,7 @@ describe("DocumentsPage", () => {
       .mockResolvedValue({
         items: [
           {
+            ...jobRuntimeFields,
             id: "job-1",
             type: "index_document",
             status: "succeeded",
