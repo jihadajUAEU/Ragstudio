@@ -212,6 +212,7 @@ def _backfill_job_runtime_columns(connection) -> None:
 def _ensure_job_runtime_indexes(connection) -> None:
     if connection.dialect.name != "postgresql":
         return
+    _resolve_duplicate_active_index_jobs(connection)
     connection.execute(
         text(
             """
@@ -223,8 +224,62 @@ def _ensure_job_runtime_indexes(connection) -> None:
     connection.execute(
         text(
             """
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_active_index_document_job
+            ON jobs (target_id)
+            WHERE type = 'index_document'
+              AND status IN ('ready', 'running')
+              AND target_id IS NOT NULL
+            """
+        )
+    )
+    connection.execute(
+        text(
+            """
             CREATE INDEX IF NOT EXISTS ix_jobs_lease_expires_at
             ON jobs (lease_expires_at)
+            """
+        )
+    )
+
+
+def _resolve_duplicate_active_index_jobs(connection) -> None:
+    connection.execute(
+        text(
+            """
+            WITH ranked AS (
+                SELECT id,
+                       row_number() OVER (
+                           PARTITION BY target_id
+                           ORDER BY
+                               CASE WHEN status = 'running' THEN 0 ELSE 1 END,
+                               created_at ASC NULLS LAST,
+                               id ASC
+                       ) AS active_rank
+                FROM jobs
+                WHERE type = 'index_document'
+                  AND status IN ('ready', 'running')
+                  AND target_id IS NOT NULL
+            )
+            UPDATE jobs AS job
+            SET status = 'failed',
+                progress = 100,
+                worker_id = NULL,
+                lease_expires_at = NULL,
+                recovery_action = NULL,
+                logs = COALESCE(job.logs, CAST('[]' AS JSONB))
+                    || CAST(
+                        '["Duplicate active index_document job resolved during DB initialization."]'
+                        AS JSONB
+                    ),
+                result = COALESCE(job.result, CAST('{}' AS JSONB))
+                    || CAST(
+                        '{"error": "Duplicate active index_document job resolved during DB initialization."}'
+                        AS JSONB
+                    ),
+                updated_at = NOW()
+            FROM ranked
+            WHERE job.id = ranked.id
+              AND ranked.active_rank > 1
             """
         )
     )
