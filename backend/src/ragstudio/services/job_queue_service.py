@@ -4,7 +4,7 @@ from collections.abc import Sequence
 from datetime import datetime, timedelta
 from typing import Any
 
-from ragstudio.db.models import Job
+from ragstudio.db.models import Document, Job
 from ragstudio.schemas.common import StageStatus, new_id, now_utc
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -115,6 +115,7 @@ class JobQueueService:
         current.heartbeat_at = timestamp
         current.logs = self._append_log(current.logs, reason)
         current.result = {**(current.result or {}), "error": reason}
+        await self._mark_index_document_failed(current)
         await self.session.flush()
 
     async def recover_expired_jobs(self, now: datetime | None = None) -> int:
@@ -140,6 +141,7 @@ class JobQueueService:
                 job.progress = 100
                 job.recovery_action = None
                 job.result = {**(job.result or {}), "error": log}
+                await self._mark_index_document_failed(job)
             else:
                 stage = (job.result or {}).get("indexing_stage")
                 stage_name = stage.get("stage") if isinstance(stage, dict) else None
@@ -159,6 +161,13 @@ class JobQueueService:
 
         await self.session.flush()
         return recovered
+
+    async def _mark_index_document_failed(self, job: Job) -> None:
+        if job.type != "index_document" or not job.target_id:
+            return
+        document = await self.session.get(Document, job.target_id, with_for_update=True)
+        if document is not None:
+            document.status = StageStatus.FAILED.value
 
     async def _require_active_lease(self, job: Job, worker_id: str, timestamp: datetime) -> Job:
         current = await self.session.scalar(

@@ -1,7 +1,7 @@
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from ragstudio.db.models import Job
+from ragstudio.db.models import Document, Job
 from ragstudio.schemas.common import StageStatus
 from ragstudio.services.job_queue_service import JobLeaseLostError, JobQueueService
 
@@ -276,6 +276,15 @@ async def test_recover_expired_running_job_fails_after_max_attempts(client):
     expired = datetime.now(UTC) - timedelta(minutes=10)
 
     async with app.state.session_factory() as session:
+        document = Document(
+            id="doc-exhausted",
+            filename="exhausted.txt",
+            content_type="text/plain",
+            sha256="doc-exhausted-sha",
+            artifact_path=str(app.state.settings.data_dir / "doc-exhausted.txt"),
+            status=StageStatus.RUNNING.value,
+        )
+        session.add(document)
         session.add(
             Job(
                 id="job-exhausted",
@@ -301,6 +310,7 @@ async def test_recover_expired_running_job_fails_after_max_attempts(client):
         )
         await session.commit()
         job = await session.get(Job, "job-exhausted")
+        document = await session.get(Document, "doc-exhausted")
 
     assert recovered == 1
     assert job.status == StageStatus.FAILED.value
@@ -313,6 +323,59 @@ async def test_recover_expired_running_job_fails_after_max_attempts(client):
         == "Worker lease expired after maximum attempts; indexing failed."
     )
     assert job.logs[-1] == "Worker lease expired after maximum attempts; indexing failed."
+    assert document.status == StageStatus.FAILED.value
+
+
+@pytest.mark.asyncio
+async def test_mark_failed_marks_index_document_failed(client):
+    app = client._transport.app
+    timestamp = datetime.now(UTC)
+
+    async with app.state.session_factory() as session:
+        document = Document(
+            id="doc-worker-failed",
+            filename="worker-failed.txt",
+            content_type="text/plain",
+            sha256="doc-worker-failed-sha",
+            artifact_path=str(app.state.settings.data_dir / "worker-failed.txt"),
+            status=StageStatus.RUNNING.value,
+        )
+        session.add(document)
+        session.add(
+            Job(
+                id="job-worker-failed",
+                type="index_document",
+                target_id=document.id,
+                status=StageStatus.RUNNING.value,
+                progress=75,
+                logs=["Worker worker-a claimed job."],
+                result={},
+                job_options={"parser_mode": "mineru_strict", "domain_metadata": {}},
+                worker_id="worker-a",
+                lease_expires_at=timestamp + timedelta(minutes=5),
+                heartbeat_at=timestamp,
+                attempts=1,
+            )
+        )
+        await session.commit()
+
+    async with app.state.session_factory() as session:
+        job = await session.get(Job, "job-worker-failed")
+        await JobQueueService(session).mark_failed(
+            job,
+            worker_id="worker-a",
+            reason="Runtime indexing failed.",
+        )
+        await session.commit()
+        job = await session.get(Job, "job-worker-failed")
+        document = await session.get(Document, "doc-worker-failed")
+
+    assert job.status == StageStatus.FAILED.value
+    assert job.progress == 100
+    assert job.worker_id is None
+    assert job.lease_expires_at is None
+    assert job.result["error"] == "Runtime indexing failed."
+    assert document.status == StageStatus.FAILED.value
 
 
 async def _run_worker_action(
