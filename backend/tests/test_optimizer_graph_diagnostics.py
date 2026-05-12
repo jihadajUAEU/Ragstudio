@@ -379,9 +379,9 @@ async def test_graph_fallback_scans_only_relationship_metadata_chunks(client):
 
         graph = await GraphService(session, app.state.settings).get_graph()
 
-    assert {node["id"] for node in graph.nodes} == {"a", "b"}
+    assert {node["id"] for node in graph.nodes} == {f"{document.id}:a", f"{document.id}:b"}
     assert {tuple(node["labels"]) for node in graph.nodes} == {("RelationshipMetadata",)}
-    assert graph.edges[0]["id"] == "a-b-related"
+    assert graph.edges[0]["id"] == f"{document.id}:a-b-related"
     assert graph.detail == "Relationship metadata fallback graph."
 
 
@@ -435,8 +435,11 @@ async def test_graph_fallback_limits_after_relationship_metadata_filter(client):
             limit=1
         )
 
-    assert {node["id"] for node in graph["nodes"]} == {"older-a", "older-b"}
-    assert graph["edges"][0]["id"] == "older-a-older-b-related"
+    assert {node["id"] for node in graph["nodes"]} == {
+        f"{document.id}:older-a",
+        f"{document.id}:older-b",
+    }
+    assert graph["edges"][0]["id"] == f"{document.id}:older-a-older-b-related"
     assert graph["detail"] == "Relationship metadata fallback graph."
 
 
@@ -481,18 +484,81 @@ async def test_graph_service_builds_fallback_graph_from_chunk_relationship_metad
 
         graph = await GraphService(session, app.state.settings).get_graph()
 
-    assert {node["id"] for node in graph.nodes} == {"reference:2:255", "topic:throne_verse"}
+    assert {node["id"] for node in graph.nodes} == {
+        f"{document.id}:reference:2:255",
+        f"{document.id}:topic:throne_verse",
+    }
     assert {tuple(node["labels"]) for node in graph.nodes} == {("RelationshipMetadata",)}
     assert graph.edges == [
         {
-            "id": "reference:2:255-topic:throne_verse-mentions",
-            "source": "reference:2:255",
-            "target": "topic:throne_verse",
+            "id": f"{document.id}:reference:2:255-topic:throne_verse-mentions",
+            "source": f"{document.id}:reference:2:255",
+            "target": f"{document.id}:topic:throne_verse",
             "type": "mentions",
-            "properties": {"document_id": document.id, "page": 12},
+            "properties": {
+                "document_id": document.id,
+                "source_relationship_id": "reference:2:255",
+                "target_relationship_id": "topic:throne_verse",
+                "page": 12,
+            },
         }
     ]
     assert graph.detail == "Relationship metadata fallback graph."
+
+
+@pytest.mark.asyncio
+async def test_graph_fallback_scopes_identical_relationship_ids_by_document(client):
+    from ragstudio.db.models import Chunk, Document
+    from ragstudio.schemas.common import StageStatus
+    from ragstudio.services.graph_service import GraphService
+
+    app = client._transport.app
+    async with app.state.session_factory() as session:
+        documents = [
+            Document(
+                filename=f"relationships-{index}.txt",
+                content_type="text/plain",
+                sha256=f"relationships-shared-{index}",
+                artifact_path=str(app.state.settings.data_dir / f"relationships-{index}.txt"),
+                status=StageStatus.SUCCEEDED.value,
+            )
+            for index in range(2)
+        ]
+        session.add_all(documents)
+        await session.flush()
+        session.add_all(
+            [
+                Chunk(
+                    document_id=document.id,
+                    text=f"Document {index} relationship.",
+                    metadata_json={
+                        "relationship_metadata": {
+                            "graph_relationships": [
+                                {
+                                    "source": "shared-source",
+                                    "target": "shared-target",
+                                    "type": "mentions",
+                                }
+                            ]
+                        }
+                    },
+                )
+                for index, document in enumerate(documents)
+            ]
+        )
+        await session.commit()
+
+        graph = await GraphService(session, app.state.settings).get_graph()
+
+    document_ids = {document.id for document in documents}
+    assert {node["properties"]["document_id"] for node in graph.nodes} == document_ids
+    assert {node["id"] for node in graph.nodes} == {
+        f"{document.id}:shared-source" for document in documents
+    } | {f"{document.id}:shared-target" for document in documents}
+    assert {edge["id"] for edge in graph.edges} == {
+        f"{document.id}:shared-source-shared-target-mentions" for document in documents
+    }
+    assert {edge["properties"]["document_id"] for edge in graph.edges} == document_ids
 
 
 @pytest.mark.asyncio

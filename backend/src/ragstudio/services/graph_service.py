@@ -106,7 +106,7 @@ class GraphService:
             .order_by(Chunk.created_at.desc())
             .limit(limit)
         )
-        nodes: dict[str, dict[str, Any]] = {}
+        nodes: dict[tuple[str, str], dict[str, Any]] = {}
         edges: dict[str, dict[str, Any]] = {}
         for chunk in result.scalars().all():
             metadata = chunk.metadata_json if isinstance(chunk.metadata_json, dict) else {}
@@ -134,40 +134,46 @@ class GraphService:
                     or not rel_type
                 ):
                     continue
+                source_node_id = f"{chunk.document_id}:{source}"
+                target_node_id = f"{chunk.document_id}:{target}"
                 nodes.setdefault(
-                    source,
+                    (chunk.document_id, source),
                     {
-                        "id": source,
+                        "id": source_node_id,
                         "labels": ["RelationshipMetadata"],
                         "properties": {
                             "label": relationship.get("source_label", source),
                             "document_id": chunk.document_id,
+                            "relationship_id": source,
                             **source_location,
                         },
                     },
                 )
                 nodes.setdefault(
-                    target,
+                    (chunk.document_id, target),
                     {
-                        "id": target,
+                        "id": target_node_id,
                         "labels": ["RelationshipMetadata"],
                         "properties": {
                             "label": relationship.get("target_label", target),
                             "document_id": chunk.document_id,
+                            "relationship_id": target,
                             **source_location,
                         },
                     },
                 )
-                edge_id = f"{source}-{target}-{rel_type}"
+                edge_id = f"{chunk.document_id}:{source}-{target}-{rel_type}"
                 edges.setdefault(
                     edge_id,
                     {
                         "id": edge_id,
-                        "source": source,
-                        "target": target,
+                        "source": source_node_id,
+                        "target": target_node_id,
                         "type": rel_type,
                         "properties": {
                             "document_id": chunk.document_id,
+                            "source_relationship_id": source,
+                            "target_relationship_id": target,
                             **source_location,
                         },
                     },
