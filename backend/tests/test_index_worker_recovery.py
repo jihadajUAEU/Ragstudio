@@ -31,6 +31,14 @@ class FakeGraphProjectionRunner:
 
 
 @pytest.mark.asyncio
+async def test_index_worker_healthcheck_queries_database(database_url, tmp_path):
+    from ragstudio.config import AppSettings
+    from ragstudio.workers.index_worker import healthcheck
+
+    assert await healthcheck(AppSettings(database_url=database_url, data_dir=tmp_path))
+
+
+@pytest.mark.asyncio
 async def test_worker_cycle_claims_and_runs_one_job(client, tmp_path, monkeypatch):
     app = client._transport.app
     artifact = tmp_path / "uploads" / "worker-cycle-sha"
