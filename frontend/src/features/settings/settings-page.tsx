@@ -190,6 +190,9 @@ export function SettingsPage() {
   const testLlm = useMutation({
     mutationFn: apiClient.testLlmSettings,
   });
+  const testReranker = useMutation({
+    mutationFn: apiClient.testRerankerSettings,
+  });
   const testMinerU = useMutation({
     mutationFn: apiClient.testMinerUSettings,
   });
@@ -408,7 +411,7 @@ export function SettingsPage() {
 
   const submitForTest = (
     form: HTMLFormElement | null,
-    mutation: typeof testEmbedding | typeof testLlm | typeof testMinerU,
+    mutation: typeof testEmbedding | typeof testLlm | typeof testReranker | typeof testMinerU,
   ) => {
     if (!form?.reportValidity()) {
       return;
@@ -434,6 +437,13 @@ export function SettingsPage() {
     : testLlm.data
       ? `${testLlm.data.ok ? "Connected" : "Failed"}: ${testLlm.data.detail}`
       : settingsQuery.data?.has_llm_api_key
+        ? "Saved API key present"
+        : "";
+  const rerankerTestMessage = testReranker.error
+    ? testReranker.error.message
+    : testReranker.data
+      ? `${testReranker.data.ok ? "Connected" : "Failed"}: ${testReranker.data.detail}`
+      : settingsQuery.data?.has_reranker_api_key
         ? "Saved API key present"
         : "";
   const mineruTestMessage = testMinerU.error
@@ -707,6 +717,24 @@ export function SettingsPage() {
               onChange={(value) => updateNumberField("reranker_timeout_ms", value)}
               onBlur={() => commitNumberField("reranker_timeout_ms", 10000)}
             />
+          </div>
+          <div className="mt-5 flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <p className="min-h-5 text-sm text-[#62717a]" role="status">
+              {rerankerTestMessage}
+            </p>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={(event) => submitForTest(event.currentTarget.form, testReranker)}
+              disabled={testReranker.isPending || busy}
+            >
+              {testReranker.isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+              ) : (
+                <PlugZap className="h-4 w-4" aria-hidden="true" />
+              )}
+              Test Reranker
+            </Button>
           </div>
         </section>
 

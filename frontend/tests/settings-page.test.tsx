@@ -15,6 +15,7 @@ vi.mock("../src/api/client", () => ({
     testEmbeddingSettings: vi.fn(),
     testMinerUSettings: vi.fn(),
     testLlmSettings: vi.fn(),
+    testRerankerSettings: vi.fn(),
     syncProviderPreview: vi.fn(),
   },
   ApiError: class ApiError extends Error {
@@ -128,10 +129,29 @@ describe("SettingsPage provider sync", () => {
         mineru_enabled: true,
         mineru_base_url: "http://10.10.9.19:8765",
         mineru_timeout_ms: 1800000,
+        enable_rerank: true,
+        reranker_provider: "generic_http",
+        reranker_model: "Qwen/Qwen3-Reranker-8B",
+        reranker_base_url: "http://10.10.9.193:8005/v1/rerank",
+        reranker_timeout_ms: 10000,
       },
-      changed_fields: ["llm_base_url", "llm_model", "embedding_base_url", "mineru_base_url"],
+      changed_fields: [
+        "llm_base_url",
+        "llm_model",
+        "embedding_base_url",
+        "mineru_base_url",
+        "reranker_base_url",
+      ],
       ignored_sections: ["stt"],
       detail: "Provider manifest preview generated.",
+    });
+    vi.mocked(apiClient.testRerankerSettings).mockResolvedValue({
+      ok: true,
+      provider: "generic_http",
+      model: "Qwen/Qwen3-Reranker-8B",
+      base_url: "http://10.10.9.193:8005/v1/rerank",
+      latency_ms: 20,
+      detail: "Reranker returned ranked results.",
     });
   });
 
@@ -160,6 +180,8 @@ describe("SettingsPage provider sync", () => {
     expect(screen.getByDisplayValue("QuantTrio/Qwen3-VL-32B-Instruct-AWQ")).toBeVisible();
     expect(screen.getByDisplayValue("http://10.10.9.192:8001/v1")).toBeVisible();
     expect(screen.getByDisplayValue("http://10.10.9.19:8765")).toBeVisible();
+    expect(screen.getByDisplayValue("Qwen/Qwen3-Reranker-8B")).toBeVisible();
+    expect(screen.getByDisplayValue("http://10.10.9.193:8005/v1/rerank")).toBeVisible();
     expect(screen.getByText("Vision")).toBeVisible();
     expect(screen.getByText(/Synced preview/i)).toBeVisible();
     expect(apiClient.updateDefaultSettings).not.toHaveBeenCalled();
@@ -187,6 +209,10 @@ describe("SettingsPage provider sync", () => {
         embedding_provider: "vllm_openai",
         embedding_base_url: "http://10.10.9.192:8001/v1",
         mineru_base_url: "http://10.10.9.19:8765",
+        enable_rerank: true,
+        reranker_provider: "generic_http",
+        reranker_model: "Qwen/Qwen3-Reranker-8B",
+        reranker_base_url: "http://10.10.9.193:8005/v1/rerank",
       }),
     );
   });
@@ -296,6 +322,32 @@ describe("SettingsPage provider sync", () => {
       expect.objectContaining({
         reranker_provider: "llm",
         reranker_fallback_provider: "llm",
+      }),
+    );
+  });
+
+  it("tests the configured reranker", async () => {
+    renderSettings();
+
+    await screen.findByText("Vision and reranker");
+    await screen.findByDisplayValue("gpt-4.1");
+    fireEvent.change(screen.getByLabelText("Reranker provider"), {
+      target: { value: "generic_http" },
+    });
+    fireEvent.change(screen.getByLabelText("Reranker model"), {
+      target: { value: "Qwen/Qwen3-Reranker-8B" },
+    });
+    fireEvent.change(screen.getByLabelText("Reranker base URL"), {
+      target: { value: "http://10.10.9.193:8005/v1/rerank" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Test Reranker/i }));
+
+    expect(await screen.findByText(/Connected: Reranker returned ranked results/i)).toBeVisible();
+    expect(vi.mocked(apiClient.testRerankerSettings).mock.calls[0][0]).toEqual(
+      expect.objectContaining({
+        reranker_provider: "generic_http",
+        reranker_model: "Qwen/Qwen3-Reranker-8B",
+        reranker_base_url: "http://10.10.9.193:8005/v1/rerank",
       }),
     );
   });

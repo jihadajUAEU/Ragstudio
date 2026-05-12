@@ -266,6 +266,15 @@ class MinerUConnectionTestOut(StudioModel):
     detail: str
 
 
+class RerankerConnectionTestOut(StudioModel):
+    ok: bool
+    provider: str
+    model: str | None
+    base_url: str | None
+    latency_ms: int
+    detail: str
+
+
 class ProviderSyncPreviewIn(StudioModel):
     manifest_url: str
 

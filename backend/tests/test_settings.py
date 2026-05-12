@@ -272,6 +272,12 @@ async def test_provider_sync_preview_maps_manifest_without_persisting(client, mo
                     "apiUrl": "http://10.10.9.19:8765",
                     "timeoutMs": 1800000,
                 },
+                "reranker": {
+                    "apiUrl": "http://10.10.9.193:8005/v1",
+                    "model": "Qwen/Qwen3-Reranker-8B",
+                    "endpoint": "/v1/rerank",
+                    "timeoutMs": 10000,
+                },
                 "stt": {"apiUrl": "http://10.10.9.196:8002/v1"},
             }
 
@@ -330,6 +336,11 @@ async def test_provider_sync_preview_maps_manifest_without_persisting(client, mo
     assert body["patch"]["mineru_require_hpc"] is True
     assert body["patch"]["mineru_base_url"] == "http://10.10.9.19:8765"
     assert body["patch"]["mineru_timeout_ms"] == 14400000
+    assert body["patch"]["enable_rerank"] is True
+    assert body["patch"]["reranker_provider"] == "generic_http"
+    assert body["patch"]["reranker_model"] == "Qwen/Qwen3-Reranker-8B"
+    assert body["patch"]["reranker_base_url"] == "http://10.10.9.193:8005/v1/rerank"
+    assert body["patch"]["reranker_timeout_ms"] == 10000
     assert "llm_base_url" in body["changed_fields"]
     assert "stt" in body["ignored_sections"]
     assert read_response.json()["llm_model"] == "gpt-4.1"
@@ -395,6 +406,10 @@ async def test_provider_sync_preview_rejects_invalid_manifest_url(client):
         ({"embeddings": {"timeoutMs": 0}}, "embeddings.timeoutMs"),
         ({"hpcMineru": {"enabled": "yes"}}, "hpcMineru.enabled"),
         ({"hpcMineru": {"timeoutMs": -1}}, "hpcMineru.timeoutMs"),
+        ({"reranker": {"apiUrl": 42}}, "reranker.apiUrl"),
+        ({"reranker": {"model": False}}, "reranker.model"),
+        ({"reranker": {"endpoint": 42}}, "reranker.endpoint"),
+        ({"reranker": {"timeoutMs": 0}}, "reranker.timeoutMs"),
     ],
 )
 @pytest.mark.asyncio
@@ -795,3 +810,135 @@ async def test_settings_accepts_dedicated_bge_with_llm_fallback(client):
     assert body["reranker_provider"] == "generic_http"
     assert body["reranker_model"] == "BAAI/bge-reranker-v2-m3"
     assert body["reranker_fallback_provider"] == "llm"
+
+
+@pytest.mark.asyncio
+async def test_reranker_connection_test_calls_configured_rerank_endpoint(client, monkeypatch):
+    requests = []
+
+    class FakeResponse:
+        status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"results": [{"index": 1, "relevance_score": 0.98}]}
+
+    class FakeAsyncClient:
+        def __init__(self, timeout):
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return None
+
+        async def post(self, url, headers, json):
+            requests.append({"url": url, "headers": headers, "json": json, "timeout": self.timeout})
+            return FakeResponse()
+
+    monkeypatch.setattr(
+        "ragstudio.services.reranker_service.httpx.AsyncClient",
+        FakeAsyncClient,
+    )
+    payload = {
+        "provider": "openai",
+        "llm_model": "gpt-4.1",
+        "embedding_model": "text-embedding-3-large",
+        "storage_backend": "postgres_pgvector_neo4j",
+        "reranker_provider": "generic_http",
+        "reranker_model": "Qwen/Qwen3-Reranker-8B",
+        "reranker_base_url": "http://127.0.0.1:8005/v1/rerank",
+        "reranker_api_key": "secret-reranker-token",
+        "reranker_timeout_ms": 5000,
+        "enable_rerank": True,
+    }
+
+    response = await client.post("/api/settings/default/test-reranker", json=payload)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is True
+    assert body["provider"] == "generic_http"
+    assert body["model"] == "Qwen/Qwen3-Reranker-8B"
+    assert requests == [
+        {
+            "url": "http://127.0.0.1:8005/v1/rerank",
+            "headers": {
+                "Content-Type": "application/json",
+                "Authorization": "Bearer secret-reranker-token",
+            },
+            "json": {
+                "query": "Which passage is most relevant to Ragstudio reranking?",
+                "documents": [
+                    "Ragstudio checks parser health.",
+                    "Ragstudio reranks retrieved evidence before answering.",
+                ],
+                "top_n": 2,
+                "model": "Qwen/Qwen3-Reranker-8B",
+            },
+            "timeout": 5.0,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_reranker_connection_test_uses_saved_api_key_when_blank(client, monkeypatch):
+    requests = []
+
+    class FakeResponse:
+        status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"results": [{"index": 1, "relevance_score": 0.98}]}
+
+    class FakeAsyncClient:
+        def __init__(self, timeout):
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return None
+
+        async def post(self, url, headers, json):
+            requests.append({"headers": headers})
+            return FakeResponse()
+
+    monkeypatch.setattr(
+        "ragstudio.services.reranker_service.httpx.AsyncClient",
+        FakeAsyncClient,
+    )
+    saved_payload = {
+        "provider": "openai",
+        "llm_model": "gpt-4.1",
+        "embedding_model": "text-embedding-3-large",
+        "storage_backend": "postgres_pgvector_neo4j",
+        "reranker_provider": "generic_http",
+        "reranker_model": "Qwen/Qwen3-Reranker-8B",
+        "reranker_base_url": "http://127.0.0.1:8005/v1/rerank",
+        "reranker_api_key": "saved-reranker-token",
+        "enable_rerank": True,
+    }
+    test_payload = {key: value for key, value in saved_payload.items() if key != "reranker_api_key"}
+
+    save_response = await client.put("/api/settings/default", json=saved_payload)
+    response = await client.post("/api/settings/default/test-reranker", json=test_payload)
+
+    assert save_response.status_code == 200
+    assert response.status_code == 200
+    assert response.json()["ok"] is True
+    assert requests == [
+        {
+            "headers": {
+                "Content-Type": "application/json",
+                "Authorization": "Bearer saved-reranker-token",
+            }
+        }
+    ]

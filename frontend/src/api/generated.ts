@@ -204,6 +204,15 @@ export interface MinerUConnectionTestOut {
   detail: string;
 }
 
+export interface RerankerConnectionTestOut {
+  ok: boolean;
+  provider: string;
+  model: string | null;
+  base_url: string | null;
+  latency_ms: number;
+  detail: string;
+}
+
 export interface ProviderSyncPreviewIn {
   manifest_url: string;
 }

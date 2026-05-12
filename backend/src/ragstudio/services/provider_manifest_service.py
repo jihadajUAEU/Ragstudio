@@ -1,4 +1,5 @@
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 from ragstudio.schemas.settings import (
@@ -7,8 +8,8 @@ from ragstudio.schemas.settings import (
     SettingsProfileOut,
 )
 
-SUPPORTED_SECTIONS = {"reasoning", "embeddings", "hpcMineru"}
-KNOWN_SECTIONS = {"stt", "reasoning", "embeddings", "ragAnything", "hpcMineru"}
+SUPPORTED_SECTIONS = {"reasoning", "embeddings", "hpcMineru", "reranker"}
+KNOWN_SECTIONS = {"stt", "reasoning", "embeddings", "ragAnything", "hpcMineru", "reranker"}
 CAPABILITIES = {"text", "vision", "reasoning"}
 
 
@@ -101,6 +102,19 @@ class ProviderManifestService:
                 mineru, "timeoutMs", "hpcMineru.timeoutMs"
             )
 
+        reranker = manifest.get("reranker")
+        if isinstance(reranker, dict):
+            if "enabled" in reranker and not isinstance(reranker["enabled"], bool):
+                raise ProviderManifestError(
+                    "Provider manifest field reranker.enabled must be a boolean."
+                )
+            self._validate_optional_str(reranker, "apiUrl", "reranker.apiUrl")
+            self._validate_optional_str(reranker, "model", "reranker.model")
+            self._validate_optional_str(reranker, "endpoint", "reranker.endpoint")
+            self._validate_optional_positive_int(
+                reranker, "timeoutMs", "reranker.timeoutMs"
+            )
+
     def _validate_optional_str(
         self, section: dict[str, Any], key: str, field_name: str
     ) -> None:
@@ -178,7 +192,55 @@ class ProviderManifestService:
             if timeout_ms is not None:
                 patch["mineru_timeout_ms"] = max(timeout_ms, MINERU_DEFAULT_TIMEOUT_MS)
 
+        reranker = manifest.get("reranker")
+        if isinstance(reranker, dict):
+            enabled = reranker.get("enabled")
+            api_url = self._optional_str(reranker.get("apiUrl"))
+            endpoint = self._optional_str(reranker.get("endpoint"))
+            model = self._optional_str(reranker.get("model"))
+            timeout_ms = self._optional_int(reranker.get("timeoutMs"))
+            if enabled is False:
+                patch["enable_rerank"] = False
+                patch["reranker_provider"] = "disabled"
+            elif api_url or endpoint or model or timeout_ms is not None or enabled is True:
+                patch["enable_rerank"] = True
+                if api_url or endpoint:
+                    reranker_url = self._reranker_endpoint_url(api_url, endpoint)
+                    if reranker_url:
+                        patch["reranker_provider"] = "generic_http"
+                        patch["reranker_base_url"] = reranker_url
+                if model:
+                    patch["reranker_provider"] = "generic_http"
+                    patch["reranker_model"] = model
+                if timeout_ms is not None:
+                    patch["reranker_timeout_ms"] = timeout_ms
+
         return patch
+
+    def _reranker_endpoint_url(self, api_url: str | None, endpoint: str | None) -> str | None:
+        if endpoint:
+            endpoint_parsed = urlparse(endpoint)
+            if endpoint_parsed.scheme in {"http", "https"} and endpoint_parsed.netloc:
+                return endpoint.rstrip("/")
+
+        if not api_url:
+            return None
+
+        base = api_url.rstrip("/")
+        if not endpoint:
+            return base if base.endswith("/rerank") else f"{base}/rerank"
+
+        endpoint_path = f"/{endpoint.strip('/')}"
+        parsed_base = urlparse(base)
+        base_path = parsed_base.path.rstrip("/")
+        if (
+            parsed_base.scheme in {"http", "https"}
+            and parsed_base.netloc
+            and base_path
+            and endpoint_path.startswith(f"{base_path}/")
+        ):
+            return f"{parsed_base.scheme}://{parsed_base.netloc}{endpoint_path}"
+        return f"{base}{endpoint_path}"
 
     def _capabilities(self, raw: object, model: str | None) -> list[str]:
         if isinstance(raw, list):

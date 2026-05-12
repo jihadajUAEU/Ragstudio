@@ -20,6 +20,7 @@ import type {
   ParserMode,
   ProviderSyncPreviewIn,
   ProviderSyncPreviewOut,
+  RerankerConnectionTestOut,
   ChunkSearchIn,
   ChunkSearchOut,
   QueryIn,
@@ -156,6 +157,12 @@ export const apiClient = {
     }),
   testLlmSettings: (payload: SettingsProfileIn) =>
     request<LlmConnectionTestOut>("/api/settings/default/test-llm", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }),
+  testRerankerSettings: (payload: SettingsProfileIn) =>
+    request<RerankerConnectionTestOut>("/api/settings/default/test-reranker", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),

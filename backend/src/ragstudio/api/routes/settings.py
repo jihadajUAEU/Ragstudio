@@ -4,13 +4,15 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ragstudio.api.deps import get_session
+from ragstudio.api.deps import get_session, get_settings
+from ragstudio.config import AppSettings
 from ragstudio.schemas.settings import (
     EmbeddingConnectionTestOut,
     LlmConnectionTestOut,
     MinerUConnectionTestOut,
     ProviderSyncPreviewIn,
     ProviderSyncPreviewOut,
+    RerankerConnectionTestOut,
     SettingsProfileIn,
     SettingsProfileOut,
 )
@@ -21,6 +23,7 @@ from ragstudio.services.provider_manifest_service import (
     ProviderManifestError,
     ProviderManifestService,
 )
+from ragstudio.services.reranker_connection_service import RerankerConnectionService
 from ragstudio.services.runtime_policy import (
     ProductPolicyError,
     enforce_product_runtime_settings,
@@ -96,6 +99,18 @@ async def test_llm_settings(
 ) -> LlmConnectionTestOut:
     resolved_payload = await SettingsService(session).resolve_llm_test_payload(payload)
     return await LlmConnectionService().test(resolved_payload)
+
+
+@router.post("/default/test-reranker", response_model=RerankerConnectionTestOut)
+async def test_reranker_settings(
+    payload: SettingsProfileIn,
+    session: AsyncSession = Depends(get_session),
+    settings: AppSettings = Depends(get_settings),
+) -> RerankerConnectionTestOut:
+    resolved_payload = await SettingsService(session).resolve_reranker_test_payload(payload)
+    return await RerankerConnectionService(settings.allowed_reranker_hosts).test(
+        resolved_payload
+    )
 
 
 @router.post("/default/test-mineru", response_model=MinerUConnectionTestOut)

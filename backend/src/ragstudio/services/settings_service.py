@@ -83,6 +83,16 @@ class SettingsService:
 
         return data.model_copy(update={"llm_api_key": profile.llm_api_key})
 
+    async def resolve_reranker_test_payload(self, data: SettingsProfileIn) -> SettingsProfileIn:
+        if data.reranker_api_key:
+            return data
+
+        profile = await self.session.get(SettingsProfile, "default")
+        if profile is None or not profile.reranker_api_key:
+            return data
+
+        return data.model_copy(update={"reranker_api_key": profile.reranker_api_key})
+
     def _to_out(self, profile: SettingsProfile) -> SettingsProfileOut:
         def default_bool(value: bool | None, default: bool) -> bool:
             return default if value is None else bool(value)
