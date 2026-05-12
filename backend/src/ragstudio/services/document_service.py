@@ -76,7 +76,11 @@ class DocumentService:
         self.session.add(document)
         try:
             await self.session.flush()
-            job = JobWorker.build("index_document", document.id)
+            job = JobWorker.build(
+                "index_document",
+                document.id,
+                options=self._job_options_payload(options),
+            )
             self.session.add(job)
             self.queued_index_job_id = job.id
             await self.session.flush()
@@ -167,14 +171,18 @@ class DocumentService:
             raise
         return "deleted"
 
-    async def create_index_job(self, document_id: str) -> Job | None:
+    async def create_index_job(
+        self,
+        document_id: str,
+        options: IndexDocumentIn | None = None,
+    ) -> Job | None:
         await self.lock_document_workflow(document_id)
         document = await self.session.get(Document, document_id)
         if document is None:
             return None
         if await self.active_index_job(document_id) is not None:
             raise ActiveIndexJobError("Document already has an active indexing job")
-        return await self._enqueue_index_job(document)
+        return await self._enqueue_index_job(document, options)
 
     async def lock_document_workflow(self, document_id: str) -> None:
         await self.session.execute(
@@ -207,8 +215,16 @@ class DocumentService:
             job.result = {**(job.result or {}), "document_id": document_id, "error": reason}
         await self.session.commit()
 
-    async def _enqueue_index_job(self, document: Document) -> Job:
-        job = JobWorker.build("index_document", document.id)
+    async def _enqueue_index_job(
+        self,
+        document: Document,
+        options: IndexDocumentIn | None = None,
+    ) -> Job:
+        job = JobWorker.build(
+            "index_document",
+            document.id,
+            options=self._job_options_payload(options),
+        )
         self.session.add(job)
         document.status = StageStatus.RUNNING.value
         self.queued_index_job_id = job.id
@@ -288,6 +304,9 @@ class DocumentService:
             return "mineru_strict"
         return None
 
+    def _job_options_payload(self, options: IndexDocumentIn | None) -> dict[str, Any]:
+        return (options or IndexDocumentIn()).model_dump(mode="json", exclude_none=True)
+
     async def _ensure_queued_index_job(
         self,
         document: Document,
@@ -303,7 +322,7 @@ class DocumentService:
             if existing_chunk_id is not None:
                 return
 
-        await self._enqueue_index_job(document)
+        await self._enqueue_index_job(document, options)
 
     async def _ensure_indexed(
         self,
@@ -320,7 +339,11 @@ class DocumentService:
             if await self._has_ready_runtime_index(document.id, profile):
                 return
 
-        job = JobWorker.build("index_document", document.id)
+        job = JobWorker.build(
+            "index_document",
+            document.id,
+            options=self._job_options_payload(options),
+        )
         add_job = True
         if options is None:
             existing_job = await self.session.scalar(

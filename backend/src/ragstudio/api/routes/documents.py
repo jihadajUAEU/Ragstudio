@@ -125,7 +125,7 @@ async def reindex_document(
         except RuntimeError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         try:
-            job = await service.create_index_job(document_id)
+            job = await service.create_index_job(document_id, options)
         except ActiveIndexJobError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         if job is None:

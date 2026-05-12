@@ -13,6 +13,7 @@ from ragstudio.db.models import (
     SettingsProfile,
 )
 from ragstudio.schemas.common import StageStatus
+from ragstudio.schemas.parsing import IndexDocumentIn
 from ragstudio.schemas.runtime import RuntimeHealthCheck
 from ragstudio.services.document_service import DocumentService
 from ragstudio.services.graph_materialization_service import GraphMaterializationResult
@@ -549,6 +550,55 @@ async def test_reindex_document_queues_job_with_updated_metadata(client, monkeyp
         "reference_schema": {"type": "surah_ayah"},
         "retrieval": {"exact_reference_top1": True},
     }
+
+
+@pytest.mark.asyncio
+async def test_reindex_persists_job_options_for_worker(client, tmp_path, monkeypatch):
+    await seed_product_runtime_profile(client)
+    allow_product_readiness(monkeypatch)
+    app = client._transport.app
+    index_options = {
+        "parser_mode": "mineru_strict",
+        "domain_metadata": {"domain": "quran", "tags": ["arabic"]},
+    }
+    expected_options = IndexDocumentIn.model_validate(index_options).model_dump(
+        mode="json",
+        exclude_none=True,
+    )
+
+    async def noop_run_index_job(settings, document_id, job_id, options):
+        return None
+
+    monkeypatch.setattr("ragstudio.api.routes.documents._run_index_job", noop_run_index_job)
+
+    artifact = tmp_path / "uploads" / "durable-worker-sha"
+    artifact.parent.mkdir(parents=True)
+    artifact.write_text("Quran 1:4", encoding="utf-8")
+    async with app.state.session_factory() as session:
+        document = Document(
+            filename="worker-quran.pdf",
+            content_type="application/pdf",
+            sha256="durable-worker-sha",
+            artifact_path=str(artifact),
+            status=StageStatus.SUCCEEDED.value,
+        )
+        session.add(document)
+        await session.commit()
+        document_id = document.id
+
+    response = await client.post(
+        f"/api/documents/{document_id}/reindex",
+        json=index_options,
+    )
+
+    assert response.status_code == 202
+    async with app.state.session_factory() as session:
+        job = await session.get(Job, response.json()["job_id"])
+
+    assert job is not None
+    assert job.status == StageStatus.READY.value
+    assert job.job_options == expected_options
+    assert job.result["index_options"] == job.job_options
 
 
 @pytest.mark.asyncio
