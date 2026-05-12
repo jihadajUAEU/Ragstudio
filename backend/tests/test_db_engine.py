@@ -21,6 +21,96 @@ def test_make_engine_rejects_sqlite_url():
 
 
 @pytest.mark.asyncio
+async def test_init_db_adds_durable_job_worker_columns(database_url):
+    engine = make_engine(database_url)
+    async with engine.begin() as connection:
+        await connection.execute(
+            text(
+                """
+                CREATE TABLE jobs (
+                    id VARCHAR PRIMARY KEY,
+                    type VARCHAR NOT NULL,
+                    status VARCHAR DEFAULT 'ready' NOT NULL,
+                    target_id VARCHAR,
+                    progress INTEGER DEFAULT 0 NOT NULL,
+                    logs JSONB DEFAULT '[]'::jsonb NOT NULL,
+                    result JSONB DEFAULT '{}'::jsonb NOT NULL,
+                    created_at TIMESTAMP,
+                    updated_at TIMESTAMP
+                )
+                """
+            )
+        )
+        await connection.execute(
+            text(
+                """
+                INSERT INTO jobs (
+                    id, type, status, target_id, progress, logs, result,
+                    created_at, updated_at
+                )
+                VALUES (
+                    'job-1',
+                    'index_document',
+                    'ready',
+                    'doc-1',
+                    0,
+                    '[]'::jsonb,
+                    '{}'::jsonb,
+                    NOW(),
+                    NOW()
+                )
+                """
+            )
+        )
+
+    await init_db(engine)
+
+    async with engine.connect() as connection:
+        columns = await connection.run_sync(
+            lambda sync_connection: {
+                column["name"] for column in inspect(sync_connection).get_columns("jobs")
+            }
+        )
+        job_row = (
+            (
+                await connection.execute(
+                    text(
+                        """
+                        SELECT worker_id, lease_expires_at, heartbeat_at, attempts,
+                               max_attempts, available_at, job_options, recovery_action
+                        FROM jobs
+                        WHERE id = 'job-1'
+                        """
+                    )
+                )
+            )
+            .mappings()
+            .one()
+        )
+
+    assert {
+        "worker_id",
+        "lease_expires_at",
+        "heartbeat_at",
+        "attempts",
+        "max_attempts",
+        "available_at",
+        "job_options",
+        "recovery_action",
+    }.issubset(columns)
+    assert job_row["worker_id"] is None
+    assert job_row["lease_expires_at"] is None
+    assert job_row["heartbeat_at"] is None
+    assert job_row["attempts"] == 0
+    assert job_row["max_attempts"] == 3
+    assert job_row["available_at"] is not None
+    assert job_row["job_options"] == {}
+    assert job_row["recovery_action"] is None
+
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
 async def test_init_db_backfills_runtime_columns_for_existing_postgres_tables(
     tmp_path,
     database_url,

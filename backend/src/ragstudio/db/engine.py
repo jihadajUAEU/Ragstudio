@@ -141,6 +141,24 @@ def _ensure_runtime_columns(connection) -> None:
                 "error_type": "VARCHAR",
             },
         )
+    if "jobs" in table_names:
+        _ensure_columns(
+            connection,
+            inspector,
+            "jobs",
+            {
+                "worker_id": "VARCHAR",
+                "lease_expires_at": _datetime_column(connection),
+                "heartbeat_at": _datetime_column(connection),
+                "attempts": "INTEGER DEFAULT 0 NOT NULL",
+                "max_attempts": "INTEGER DEFAULT 3 NOT NULL",
+                "available_at": _datetime_now_column(connection),
+                "job_options": _json_object_column(connection),
+                "recovery_action": "VARCHAR",
+            },
+        )
+        _backfill_job_runtime_columns(connection)
+        _ensure_job_runtime_indexes(connection)
     if "graph_projection_records" in table_names:
         _ensure_columns(
             connection,
@@ -165,6 +183,51 @@ def _ensure_columns(connection, inspector, table_name: str, additions: dict[str,
     for column, definition in additions.items():
         if column not in existing:
             connection.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {column} {definition}"))
+
+
+def _backfill_job_runtime_columns(connection) -> None:
+    available_at_default = (
+        "NOW()" if connection.dialect.name == "postgresql" else "CURRENT_TIMESTAMP"
+    )
+    job_options_default = (
+        "CAST('{}' AS JSONB)" if connection.dialect.name == "postgresql" else "'{}'"
+    )
+    connection.execute(
+        text(
+            f"""
+            UPDATE jobs
+            SET attempts = COALESCE(attempts, 0),
+                max_attempts = COALESCE(max_attempts, 3),
+                available_at = COALESCE(available_at, created_at, {available_at_default}),
+                job_options = COALESCE(job_options, {job_options_default})
+            WHERE attempts IS NULL
+               OR max_attempts IS NULL
+               OR available_at IS NULL
+               OR job_options IS NULL
+            """
+        )
+    )
+
+
+def _ensure_job_runtime_indexes(connection) -> None:
+    if connection.dialect.name != "postgresql":
+        return
+    connection.execute(
+        text(
+            """
+            CREATE INDEX IF NOT EXISTS ix_jobs_claimable
+            ON jobs (type, status, available_at)
+            """
+        )
+    )
+    connection.execute(
+        text(
+            """
+            CREATE INDEX IF NOT EXISTS ix_jobs_lease_expires_at
+            ON jobs (lease_expires_at)
+            """
+        )
+    )
 
 
 def _backfill_chunk_search_columns(connection) -> None:
@@ -397,6 +460,12 @@ def _datetime_column(connection) -> str:
     if connection.dialect.name == "postgresql":
         return "TIMESTAMP WITH TIME ZONE"
     return "DATETIME"
+
+
+def _datetime_now_column(connection) -> str:
+    if connection.dialect.name == "postgresql":
+        return "TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL"
+    return "DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL"
 
 
 async def session_scope(factory: async_sessionmaker[AsyncSession]) -> AsyncIterator[AsyncSession]:

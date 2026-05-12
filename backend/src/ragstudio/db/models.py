@@ -184,6 +184,8 @@ class GraphProjectionRecord(Base, TimestampMixin):
 class Job(Base, TimestampMixin):
     __tablename__ = "jobs"
     __table_args__ = (
+        Index("ix_jobs_claimable", "type", "status", "available_at"),
+        Index("ix_jobs_lease_expires_at", "lease_expires_at"),
         Index(
             "uq_active_index_document_job",
             "target_id",
@@ -208,6 +210,20 @@ class Job(Base, TimestampMixin):
     result: Mapped[dict[str, Any]] = mapped_column(
         JsonDictType, default=dict
     )
+    worker_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    heartbeat_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    max_attempts: Mapped[int] = mapped_column(Integer, default=3)
+    available_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now_utc
+    )
+    job_options: Mapped[dict[str, Any]] = mapped_column(JsonDictType, default=dict)
+    recovery_action: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
 class Variant(Base, TimestampMixin):
