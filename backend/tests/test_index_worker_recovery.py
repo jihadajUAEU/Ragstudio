@@ -31,6 +31,148 @@ class FakeGraphProjectionRunner:
 
 
 @pytest.mark.asyncio
+async def test_worker_cycle_claims_and_runs_one_job(client, tmp_path, monkeypatch):
+    app = client._transport.app
+    artifact = tmp_path / "uploads" / "worker-cycle-sha"
+    artifact.parent.mkdir(parents=True)
+    artifact.write_text("Quran 1:4", encoding="utf-8")
+    async with app.state.session_factory() as session:
+        session.add(
+            SettingsProfile(
+                id="default",
+                provider="openai-compatible",
+                llm_model="gpt-4o",
+                embedding_model="text-embedding-3-large",
+                storage_backend="postgres_pgvector_neo4j",
+                runtime_mode="runtime",
+            )
+        )
+        document = Document(
+            filename="worker-cycle.pdf",
+            content_type="application/pdf",
+            sha256="worker-cycle-sha",
+            artifact_path=str(artifact),
+            status=StageStatus.SUCCEEDED.value,
+        )
+        session.add(document)
+        await session.flush()
+        session.add(
+            Job(
+                id="job-worker-cycle",
+                type="index_document",
+                target_id=document.id,
+                status=StageStatus.READY.value,
+                progress=0,
+                logs=[],
+                result={"index_options": {"parser_mode": "mineru_strict", "domain_metadata": {}}},
+                job_options={"parser_mode": "mineru_strict", "domain_metadata": {}},
+            )
+        )
+        await session.commit()
+
+    ran = []
+
+    class FakeIndexJobRunner:
+        def __init__(self, session, settings, *, worker_id, lease_seconds=300):
+            self.session = session
+            self.settings = settings
+            self.worker_id = worker_id
+            self.lease_seconds = lease_seconds
+
+        async def run(self, job):
+            ran.append((job.id, self.worker_id, self.lease_seconds))
+            job.status = StageStatus.SUCCEEDED.value
+            job.progress = 100
+            job.worker_id = None
+            job.lease_expires_at = None
+
+    monkeypatch.setattr("ragstudio.workers.index_worker.IndexJobRunner", FakeIndexJobRunner)
+
+    from ragstudio.workers.index_worker import run_once
+
+    async with app.state.session_factory() as session:
+        processed = await run_once(
+            session,
+            app.state.settings,
+            worker_id="worker-test",
+            lease_seconds=123,
+        )
+
+    assert processed == 1
+    assert ran == [("job-worker-cycle", "worker-test", 123)]
+
+
+@pytest.mark.asyncio
+async def test_worker_cycle_recovers_expired_graph_projection_job(
+    client,
+    tmp_path,
+    monkeypatch,
+):
+    app = client._transport.app
+    artifact = tmp_path / "uploads" / "worker-recover-sha"
+    artifact.parent.mkdir(parents=True)
+    artifact.write_text("Quran 1:4", encoding="utf-8")
+    async with app.state.session_factory() as session:
+        document = Document(
+            filename="worker-recover.pdf",
+            content_type="application/pdf",
+            sha256="worker-recover-sha",
+            artifact_path=str(artifact),
+            status=StageStatus.SUCCEEDED.value,
+        )
+        session.add(document)
+        await session.flush()
+        session.add(
+            Job(
+                id="job-worker-recover",
+                type="index_document",
+                target_id=document.id,
+                status=StageStatus.RUNNING.value,
+                progress=75,
+                logs=["Search ready: Lexical and metadata retrieval are ready."],
+                result={"indexing_stage": {"stage": "search_ready", "chunk_count": 1}},
+                job_options={"parser_mode": "mineru_strict", "domain_metadata": {}},
+                worker_id="worker-old",
+                lease_expires_at=datetime.now(UTC) - timedelta(minutes=5),
+                attempts=1,
+            )
+        )
+        await session.commit()
+
+    ran = []
+
+    class FakeIndexJobRunner:
+        def __init__(self, session, settings, *, worker_id, lease_seconds=300):
+            self.session = session
+            self.worker_id = worker_id
+
+        async def run(self, job):
+            ran.append((job.id, job.recovery_action, job.worker_id, job.attempts))
+            job.status = StageStatus.SUCCEEDED.value
+            job.progress = 100
+            job.worker_id = None
+            job.lease_expires_at = None
+            job.recovery_action = None
+
+    monkeypatch.setattr("ragstudio.workers.index_worker.IndexJobRunner", FakeIndexJobRunner)
+
+    from ragstudio.workers.index_worker import run_once
+
+    async with app.state.session_factory() as session:
+        processed = await run_once(session, app.state.settings, worker_id="worker-test")
+
+    async with app.state.session_factory() as session:
+        job = await session.get(Job, "job-worker-recover")
+
+    assert processed == 1
+    assert ran == [("job-worker-recover", "resume_graph_projection", "worker-test", 2)]
+    assert job.status == StageStatus.SUCCEEDED.value
+    assert job.worker_id is None
+    assert job.lease_expires_at is None
+    assert job.recovery_action is None
+
+
+@pytest.mark.asyncio
 async def test_index_job_runner_resumes_graph_projection_without_reindex(
     client,
     tmp_path,
