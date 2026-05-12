@@ -728,7 +728,7 @@ async def test_native_adapter_queries_selected_documents_with_scoped_lightrag(tm
             "chunk_id": "chunk-1",
             "document_id": "doc-1",
             "text": "Sahih al-Bukhari 7277 Hadith Collection",
-            "source_location": {"file_path": "bukhari.pdf"},
+            "source_location": {},
             "metadata": {
                 "chunk_identity": "chunk-1",
                 "full_doc_id": "doc-1",
@@ -830,6 +830,37 @@ async def test_native_adapter_filters_raw_overfetch_without_scope_leak(tmp_path)
         }
     ]
     assert rag.lightrag.aquery_data_calls == 0
+
+
+def test_native_sources_from_proxy_scrubs_file_paths(tmp_path):
+    adapter = NativeRAGAnythingAdapter(
+        profile(runtime_working_dir=str(tmp_path / "runtime")),
+        AppSettings(database_url="postgresql+asyncpg://user:pass@localhost:5432/ragstudio"),
+    )
+    proxy = SimpleNamespace(
+        collected_results=[
+            {
+                "id": "chunk-1",
+                "full_doc_id": "doc-1",
+                "content": "Scoped native text",
+                "file_path": "/srv/ragstudio/uploads/private.pdf",
+                "page": 7,
+                "page_idx": 6,
+                "reference": "2:255",
+                "score": 0.93,
+            }
+        ]
+    )
+
+    sources = adapter._native_sources_from_proxy(proxy, ["doc-1"])
+
+    assert sources[0]["source_location"] == {
+        "page": 7,
+        "page_idx": 6,
+        "reference": "2:255",
+    }
+    assert "file_path" not in sources[0]["source_location"]
+    assert "/srv/ragstudio" not in str(sources)
 
 
 @pytest.mark.asyncio

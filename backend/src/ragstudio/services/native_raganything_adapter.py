@@ -654,11 +654,16 @@ class NativeRAGAnythingAdapter:
                 or row.get("runtime_source_id")
                 or chunk_id
             )
+            source_location = {
+                key: value
+                for key, value in row.items()
+                if key in {"page", "page_idx", "reference"} and value is not None
+            }
             deduped[chunk_id] = {
                 "chunk_id": chunk_id,
                 "document_id": document_id,
                 "text": str(row.get("content") or ""),
-                "source_location": {"file_path": row.get("file_path")},
+                "source_location": source_location,
                 "metadata": {
                     "chunk_identity": chunk_identity,
                     "full_doc_id": document_id,
