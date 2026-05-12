@@ -1,6 +1,6 @@
 import "@testing-library/jest-dom/vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, render } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { apiClient } from "../src/api/client";
@@ -91,6 +91,32 @@ describe("DashboardPage", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("shows per-query loading states instead of empty document and job tables", async () => {
+    vi.mocked(apiClient.documents).mockReturnValue(new Promise<never>(() => undefined));
+    vi.mocked(apiClient.jobs).mockReturnValue(new Promise<never>(() => undefined));
+
+    renderDashboardPage();
+
+    expect(screen.getByText("Loading documents")).toBeVisible();
+    expect(screen.getByText("Loading jobs")).toBeVisible();
+    expect(screen.queryByText("No documents indexed")).not.toBeInTheDocument();
+    expect(screen.queryByText("No jobs running")).not.toBeInTheDocument();
+  });
+
+  it("shows per-query errors instead of false empty document and job tables", async () => {
+    vi.mocked(apiClient.documents).mockRejectedValue(new Error("Documents request failed"));
+    vi.mocked(apiClient.jobs).mockRejectedValue(new Error("Jobs request failed"));
+
+    renderDashboardPage();
+
+    expect(await screen.findByText("Documents unavailable")).toBeVisible();
+    expect(screen.getByText("Documents request failed")).toBeVisible();
+    expect(await screen.findByText("Jobs unavailable")).toBeVisible();
+    expect(screen.getByText("Jobs request failed")).toBeVisible();
+    expect(screen.queryByText("No documents indexed")).not.toBeInTheDocument();
+    expect(screen.queryByText("No jobs running")).not.toBeInTheDocument();
   });
 });
 

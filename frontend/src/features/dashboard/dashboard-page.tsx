@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef } from "react";
 import type { ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
+import type { UseQueryResult } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
 import {
   AlertTriangle,
@@ -221,27 +222,36 @@ export function DashboardPage() {
         <MetricCard
           icon={Server}
           label="API service"
-          value={healthQuery.data?.status === "ok" ? "Online" : "Unavailable"}
-          detail={healthQuery.data?.service ?? "Waiting for backend"}
-          tone={healthQuery.data?.status === "ok" ? "good" : "muted"}
+          value={queryMetricValue(healthQuery, (health) =>
+            health.status === "ok" ? "Online" : "Unavailable",
+          )}
+          detail={queryMetricDetail(healthQuery, (health) => health.service, "Checking backend")}
+          tone={healthQuery.data?.status === "ok" ? "good" : healthQuery.isError ? "bad" : "muted"}
         />
         <MetricCard
           icon={FileText}
           label="Documents"
-          value={formatCount(documentsQuery.data?.total)}
-          detail="Uploaded source files"
+          value={queryMetricValue(documentsQuery, (documents) => formatCount(documents.total))}
+          detail={queryMetricDetail(documentsQuery, () => "Uploaded source files", "Loading documents")}
+          tone={documentsQuery.isError ? "bad" : documentsQuery.isLoading ? "muted" : "neutral"}
         />
         <MetricCard
           icon={PlayCircle}
           label="Runs"
-          value={formatCount(runsQuery.data?.total)}
-          detail="Recorded query executions"
+          value={queryMetricValue(runsQuery, (runs) => formatCount(runs.total))}
+          detail={queryMetricDetail(runsQuery, () => "Recorded query executions", "Loading runs")}
+          tone={runsQuery.isError ? "bad" : runsQuery.isLoading ? "muted" : "neutral"}
         />
         <MetricCard
           icon={GitBranch}
           label="Graph"
-          value={formatCount(graphQuery.data?.nodes.length)}
-          detail={`${formatCount(graphQuery.data?.edges.length)} edges indexed`}
+          value={queryMetricValue(graphQuery, (graph) => formatCount(graph.nodes.length))}
+          detail={queryMetricDetail(
+            graphQuery,
+            (graph) => `${formatCount(graph.edges.length)} edges indexed`,
+            "Loading graph",
+          )}
+          tone={graphQuery.isError ? "bad" : graphQuery.isLoading ? "muted" : "neutral"}
         />
       </section>
 
@@ -265,41 +275,73 @@ export function DashboardPage() {
 
       <section className="grid gap-4 xl:grid-cols-[minmax(0,1.25fr)_minmax(360px,0.75fr)]">
         <Panel title="Documents" icon={FileText}>
-          <DataTable
-            columns={documentColumns}
-            data={documentsQuery.data?.items ?? []}
-            emptyTitle="No documents indexed"
-            emptyDescription="Uploaded files and their ingestion status will appear here."
-          />
+          <QueryTableState
+            query={documentsQuery}
+            loadingTitle="Loading documents"
+            loadingDescription="Fetching uploaded source files and ingestion status."
+            errorTitle="Documents unavailable"
+            onRetry={() => void documentsQuery.refetch()}
+          >
+            <DataTable
+              columns={documentColumns}
+              data={documentsQuery.data?.items ?? []}
+              emptyTitle="No documents indexed"
+              emptyDescription="Uploaded files and their ingestion status will appear here."
+            />
+          </QueryTableState>
         </Panel>
 
         <Panel title="Jobs" icon={Database}>
-          <DataTable
-            columns={jobColumns}
-            data={jobsQuery.data?.items ?? []}
-            emptyTitle="No jobs running"
-            emptyDescription="Ingestion and indexing jobs will be listed as work starts."
-          />
+          <QueryTableState
+            query={jobsQuery}
+            loadingTitle="Loading jobs"
+            loadingDescription="Fetching ingestion and indexing job status."
+            errorTitle="Jobs unavailable"
+            onRetry={() => void jobsQuery.refetch()}
+          >
+            <DataTable
+              columns={jobColumns}
+              data={jobsQuery.data?.items ?? []}
+              emptyTitle="No jobs running"
+              emptyDescription="Ingestion and indexing jobs will be listed as work starts."
+            />
+          </QueryTableState>
         </Panel>
       </section>
 
       <section className="grid gap-4 xl:grid-cols-2">
         <Panel title="Variants" icon={SlidersHorizontal}>
-          <DataTable
-            columns={variantColumns}
-            data={variantsQuery.data?.items ?? []}
-            emptyTitle="No variants configured"
-            emptyDescription="Retrieval and generation variants will appear after they are created."
-          />
+          <QueryTableState
+            query={variantsQuery}
+            loadingTitle="Loading variants"
+            loadingDescription="Fetching retrieval and generation variants."
+            errorTitle="Variants unavailable"
+            onRetry={() => void variantsQuery.refetch()}
+          >
+            <DataTable
+              columns={variantColumns}
+              data={variantsQuery.data?.items ?? []}
+              emptyTitle="No variants configured"
+              emptyDescription="Retrieval and generation variants will appear after they are created."
+            />
+          </QueryTableState>
         </Panel>
 
         <Panel title="Recent Runs" icon={PlayCircle}>
-          <DataTable
-            columns={runColumns}
-            data={runsQuery.data?.items ?? []}
-            emptyTitle="No query runs"
-            emptyDescription="Queries executed through the studio will be shown here."
-          />
+          <QueryTableState
+            query={runsQuery}
+            loadingTitle="Loading query runs"
+            loadingDescription="Fetching recorded query executions."
+            errorTitle="Query runs unavailable"
+            onRetry={() => void runsQuery.refetch()}
+          >
+            <DataTable
+              columns={runColumns}
+              data={runsQuery.data?.items ?? []}
+              emptyTitle="No query runs"
+              emptyDescription="Queries executed through the studio will be shown here."
+            />
+          </QueryTableState>
         </Panel>
       </section>
 
@@ -318,6 +360,33 @@ function hasActiveJobs(jobs: JobOut[]): boolean {
   return jobs.some((job) => job.status === "ready" || job.status === "running");
 }
 
+function queryMetricValue<TData>(
+  query: Pick<UseQueryResult<TData, Error>, "data" | "isError" | "isLoading">,
+  format: (data: TData) => string,
+) {
+  if (query.isLoading) {
+    return "Loading";
+  }
+  if (query.isError || !query.data) {
+    return "Unavailable";
+  }
+  return format(query.data);
+}
+
+function queryMetricDetail<TData>(
+  query: Pick<UseQueryResult<TData, Error>, "data" | "error" | "isError" | "isLoading">,
+  format: (data: TData) => string,
+  loadingDetail: string,
+) {
+  if (query.isLoading) {
+    return loadingDetail;
+  }
+  if (query.isError) {
+    return query.error?.message ?? "Request failed";
+  }
+  return query.data ? format(query.data) : "Waiting for data";
+}
+
 function MetricCard({
   icon: Icon,
   label,
@@ -329,12 +398,13 @@ function MetricCard({
   label: string;
   value: string;
   detail: string;
-  tone?: "neutral" | "good" | "muted";
+  tone?: "neutral" | "good" | "muted" | "bad";
 }) {
   const toneClass = {
     neutral: "bg-[#e8f1f4] text-[#176b87]",
     good: "bg-[#ecf8f0] text-[#24563a]",
     muted: "bg-[#f1f3f4] text-[#5b656b]",
+    bad: "bg-[#fff1f0] text-[#9a3412]",
   }[tone];
 
   return (
@@ -371,4 +441,42 @@ function Panel({
       {children}
     </section>
   );
+}
+
+function QueryTableState<TData>({
+  query,
+  loadingTitle,
+  loadingDescription,
+  errorTitle,
+  onRetry,
+  children,
+}: {
+  query: UseQueryResult<TData, Error>;
+  loadingTitle: string;
+  loadingDescription: string;
+  errorTitle: string;
+  onRetry: () => void;
+  children: ReactNode;
+}) {
+  if (query.isLoading) {
+    return <EmptyState icon={Loader2} title={loadingTitle} description={loadingDescription} />;
+  }
+
+  if (query.isError) {
+    return (
+      <EmptyState
+        icon={AlertTriangle}
+        title={errorTitle}
+        description={query.error.message}
+        action={
+          <Button variant="secondary" onClick={onRetry}>
+            <RefreshCcw className="h-4 w-4" aria-hidden="true" />
+            Retry
+          </Button>
+        }
+      />
+    );
+  }
+
+  return children;
 }
