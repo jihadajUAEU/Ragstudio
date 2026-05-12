@@ -11,7 +11,7 @@ from ragstudio.services.runtime_profile_service import (
     RuntimeProfileNotConfiguredError,
     RuntimeProfileService,
 )
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 OPTIONAL_SKIPPED_RUNTIME_CHECKS = {"reranker"}
@@ -83,10 +83,10 @@ class DiagnosticsService:
                 warnings.append(f"Graph projection is {graph_projection}{suffix}")
         stale_running_jobs = dependency_report.get("stale_running_jobs", 0)
         if stale_running_jobs == 1:
-            warnings.append("1 indexing job has an expired worker lease.")
+            warnings.append("1 indexing job has a missing or expired worker lease.")
         elif stale_running_jobs > 1:
             warnings.append(
-                f"{stale_running_jobs} indexing jobs have expired worker leases."
+                f"{stale_running_jobs} indexing jobs have missing or expired worker leases."
             )
 
         return DiagnosticsOut(
@@ -242,8 +242,7 @@ class DiagnosticsService:
             .where(
                 Job.type == "index_document",
                 Job.status == StageStatus.RUNNING.value,
-                Job.lease_expires_at.is_not(None),
-                Job.lease_expires_at < timestamp,
+                or_(Job.lease_expires_at.is_(None), Job.lease_expires_at < timestamp),
             )
         )
         ready_index_jobs = await session.scalar(

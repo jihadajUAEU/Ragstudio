@@ -6,7 +6,7 @@ from typing import Any
 
 from ragstudio.db.models import Job
 from ragstudio.schemas.common import StageStatus, new_id, now_utc
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
@@ -123,14 +123,14 @@ class JobQueueService:
             select(Job)
             .where(
                 Job.status == StageStatus.RUNNING.value,
-                Job.lease_expires_at.is_not(None),
-                Job.lease_expires_at < timestamp,
+                or_(Job.lease_expires_at.is_(None), Job.lease_expires_at < timestamp),
             )
             .with_for_update(skip_locked=True)
         )
 
         recovered = 0
         for job in result.scalars().all():
+            missing_lease = job.lease_expires_at is None
             job.worker_id = None
             job.lease_expires_at = None
             job.heartbeat_at = timestamp
@@ -148,12 +148,14 @@ class JobQueueService:
                 if stage_name in {"search_ready", "graph_enriching"}:
                     job.recovery_action = "resume_graph_projection"
                     log = (
-                        "Recovered expired worker lease; graph projection will resume "
+                        f"Recovered {'missing' if missing_lease else 'expired'} worker lease; "
+                        "graph projection will resume "
                         "from persisted chunks."
                     )
                 else:
                     job.recovery_action = "retry_full_index"
-                    log = "Recovered expired worker lease; full indexing will retry."
+                    lease_state = "missing" if missing_lease else "expired"
+                    log = f"Recovered {lease_state} worker lease; full indexing will retry."
             job.logs = self._append_log(job.logs, log)
             recovered += 1
 

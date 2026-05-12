@@ -315,6 +315,45 @@ async def test_recover_expired_running_job_fails_after_max_attempts(client):
     assert job.logs[-1] == "Worker lease expired after maximum attempts; indexing failed."
 
 
+@pytest.mark.asyncio
+async def test_recover_running_job_with_missing_lease_requeues_full_index(client):
+    app = client._transport.app
+    timestamp = datetime.now(UTC)
+
+    async with app.state.session_factory() as session:
+        session.add(
+            Job(
+                id="job-missing-lease",
+                type="index_document",
+                target_id="doc-missing-lease",
+                status=StageStatus.RUNNING.value,
+                progress=25,
+                logs=["Worker worker-legacy claimed job without a durable lease."],
+                result={},
+                job_options={"parser_mode": "mineru_strict", "domain_metadata": {}},
+                worker_id="worker-legacy",
+                lease_expires_at=None,
+                heartbeat_at=None,
+                attempts=1,
+                max_attempts=3,
+            )
+        )
+        await session.commit()
+
+    async with app.state.session_factory() as session:
+        recovered = await JobQueueService(session).recover_expired_jobs(now=timestamp)
+        await session.commit()
+        job = await session.get(Job, "job-missing-lease")
+
+    assert recovered == 1
+    assert job.status == StageStatus.READY.value
+    assert job.worker_id is None
+    assert job.lease_expires_at is None
+    assert job.heartbeat_at == timestamp
+    assert job.recovery_action == "retry_full_index"
+    assert job.logs[-1] == "Recovered missing worker lease; full indexing will retry."
+
+
 async def _run_worker_action(
     queue: JobQueueService,
     job: Job,
