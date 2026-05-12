@@ -1,6 +1,4 @@
-import asyncio
 import json
-import logging
 
 from fastapi import (
     APIRouter,
@@ -15,11 +13,9 @@ from fastapi import (
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ragstudio.api.background import create_background_task
 from ragstudio.api.deps import get_session
 from ragstudio.api.upload_utils import read_upload_file
 from ragstudio.config import AppSettings
-from ragstudio.db.engine import make_engine, make_session_factory
 from ragstudio.schemas.documents import DocumentOut
 from ragstudio.schemas.parsing import IndexDocumentIn
 from ragstudio.services.chunk_service import ChunkService
@@ -43,7 +39,6 @@ from ragstudio.services.runtime_profile_service import (
 )
 
 router = APIRouter(prefix="/api/documents", tags=["documents"])
-logger = logging.getLogger(__name__)
 
 
 @router.post("", response_model=DocumentOut, status_code=201)
@@ -82,16 +77,6 @@ async def upload_document(
             options=options,
             index_immediately=False,
         )
-        if service.queued_index_job_id is not None:
-            create_background_task(
-                request.app,
-                _run_index_job(
-                    settings,
-                    document.id,
-                    service.queued_index_job_id,
-                    index_options,
-                )
-            )
         return document
     except (RuntimeHealthBlockedError, RuntimeUnavailableError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -130,10 +115,6 @@ async def reindex_document(
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         if job is None:
             raise HTTPException(status_code=404, detail="Document not found")
-        create_background_task(
-            request.app,
-            _run_index_job(settings, document_id, job.id, options),
-        )
         return {"document_id": document_id, "job_id": job.id, "status": job.status}
     except (RuntimeHealthBlockedError, RuntimeUnavailableError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -180,58 +161,6 @@ def _runtime_profile_detail(exc: Exception) -> str:
         "storage_backend=postgres_pgvector_neo4j, runtime_mode=runtime, "
         "embedding_provider=vllm_openai, and a ready MinerU sidecar."
     )
-
-
-async def _run_index_job(
-    settings: AppSettings,
-    document_id: str,
-    job_id: str,
-    options: IndexDocumentIn,
-) -> None:
-    engine = make_engine(settings.resolved_database_url)
-    factory = make_session_factory(engine)
-    try:
-        async with factory() as background_session:
-            service = DocumentService(
-                background_session,
-                settings.data_dir,
-                settings=settings,
-            )
-            await service.run_index_job(document_id, job_id, options)
-    except asyncio.CancelledError:
-        await _mark_background_index_failed(
-            settings,
-            document_id,
-            job_id,
-            "Indexing task was interrupted before completion.",
-        )
-        raise
-    except Exception as exc:
-        logger.exception("Background document indexing failed for job %s", job_id)
-        await _mark_background_index_failed(settings, document_id, job_id, str(exc))
-    finally:
-        await engine.dispose()
-
-
-async def _mark_background_index_failed(
-    settings: AppSettings,
-    document_id: str,
-    job_id: str,
-    reason: str,
-) -> None:
-    engine = make_engine(settings.resolved_database_url)
-    factory = make_session_factory(engine)
-    try:
-        async with factory() as background_session:
-            await DocumentService(
-                background_session,
-                settings.data_dir,
-                settings=settings,
-            ).mark_index_job_failed(document_id, job_id, reason)
-    except Exception:
-        logger.exception("Failed to persist background indexing failure for job %s", job_id)
-    finally:
-        await engine.dispose()
 
 
 def _parse_index_options(

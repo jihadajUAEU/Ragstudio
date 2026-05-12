@@ -218,19 +218,6 @@ async def test_reindex_reports_legacy_runtime_profile_without_crashing(client, t
 async def test_upload_uses_default_parser_mode_when_omitted(client, monkeypatch):
     await seed_product_runtime_profile(client)
     allow_product_readiness(monkeypatch)
-    scheduled = []
-
-    async def fake_run_index_job(settings, document_id, job_id, options):
-        scheduled.append(
-            {
-                "document_id": document_id,
-                "job_id": job_id,
-                "parser_mode": options.parser_mode,
-                "domain_metadata": options.domain_metadata.model_dump(exclude_none=True),
-            }
-        )
-
-    monkeypatch.setattr("ragstudio.api.routes.documents._run_index_job", fake_run_index_job)
 
     response = await client.post(
         "/api/documents",
@@ -242,14 +229,15 @@ async def test_upload_uses_default_parser_mode_when_omitted(client, monkeypatch)
         files={"file": ("policy.txt", b"Policy line\n", "text/plain")},
     )
 
-    for _ in range(20):
-        if scheduled:
-            break
-        await asyncio.sleep(0.01)
-
     assert response.status_code == 201
-    assert scheduled[0]["parser_mode"] == "mineru_strict"
-    assert scheduled[0]["domain_metadata"]["domain"] == "policy"
+    document_id = response.json()["id"]
+    jobs = await wait_for_jobs(client, 1, terminal=False)
+    job_summary = next(job for job in jobs if job["target_id"] == document_id)
+    async with client._transport.app.state.session_factory() as session:
+        job = await session.get(Job, job_summary["id"])
+    assert job is not None
+    assert job.job_options["parser_mode"] == "mineru_strict"
+    assert job.job_options["domain_metadata"]["domain"] == "policy"
 
 
 @pytest.mark.asyncio
@@ -435,18 +423,6 @@ async def test_duplicate_upload_with_explicit_default_options_reuses_active_job(
 async def test_duplicate_upload_does_not_schedule_second_active_job(client, monkeypatch):
     await seed_product_runtime_profile(client)
     allow_product_readiness(monkeypatch)
-    scheduled = []
-
-    async def fake_run_index_job(settings, document_id, job_id, options):
-        scheduled.append(
-            {
-                "document_id": document_id,
-                "job_id": job_id,
-                "parser_mode": options.parser_mode,
-            }
-        )
-
-    monkeypatch.setattr("ragstudio.api.routes.documents._run_index_job", fake_run_index_job)
 
     first_response = await client.post(
         "/api/documents",
@@ -459,37 +435,28 @@ async def test_duplicate_upload_does_not_schedule_second_active_job(client, monk
         files={"file": ("notes-copy.txt", b"same bytes", "text/plain")},
     )
 
-    for _ in range(20):
-        if len(scheduled) == 1:
-            break
-        await asyncio.sleep(0.01)
-    jobs = await wait_for_jobs(client, 1, terminal=False)
-
     assert first_response.status_code == 201
     assert second_response.status_code == 201
-    assert first_response.json()["id"] == second_response.json()["id"]
-    assert len(scheduled) == 1
-    assert scheduled[0]["job_id"] == jobs[0]["id"]
-    assert scheduled[0]["parser_mode"] == "mineru_strict"
+    document_id = first_response.json()["id"]
+    assert document_id == second_response.json()["id"]
+    await wait_for_jobs(client, 1, terminal=False)
+    async with client._transport.app.state.session_factory() as session:
+        result = await session.execute(
+            select(Job).where(
+                Job.type == "index_document",
+                Job.target_id == document_id,
+                Job.status.in_([StageStatus.READY.value, StageStatus.RUNNING.value]),
+            )
+        )
+        active_jobs = result.scalars().all()
+    assert len(active_jobs) == 1
+    assert active_jobs[0].job_options["parser_mode"] == "mineru_strict"
 
 
 @pytest.mark.asyncio
 async def test_reindex_document_queues_job_with_updated_metadata(client, monkeypatch, tmp_path):
     await seed_product_runtime_profile(client)
     allow_product_readiness(monkeypatch)
-    scheduled = []
-
-    async def fake_run_index_job(settings, document_id, job_id, options):
-        scheduled.append(
-            {
-                "document_id": document_id,
-                "job_id": job_id,
-                "parser_mode": options.parser_mode,
-                "domain_metadata": options.domain_metadata.model_dump(exclude_none=True),
-            }
-        )
-
-    monkeypatch.setattr("ragstudio.api.routes.documents._run_index_job", fake_run_index_job)
 
     async def validate_sidecar(self, options):
         return None
@@ -530,23 +497,20 @@ async def test_reindex_document_queues_job_with_updated_metadata(client, monkeyp
         },
     )
 
-    for _ in range(20):
-        if scheduled:
-            break
-        await asyncio.sleep(0.01)
-
     assert response.status_code == 202
     body = response.json()
     assert body["document_id"] == document_id
     assert body["job_id"]
     assert body["status"] == "ready"
-    assert scheduled[0]["document_id"] == document_id
-    assert scheduled[0]["job_id"] == body["job_id"]
-    assert scheduled[0]["parser_mode"] == "mineru_strict"
-    assert scheduled[0]["domain_metadata"]["domain"] == "religion"
-    assert scheduled[0]["domain_metadata"]["document_type"] == "religious_text"
-    assert scheduled[0]["domain_metadata"]["tags"] == ["quran"]
-    assert scheduled[0]["domain_metadata"]["custom_json"] == {
+    async with session_factory() as session:
+        job = await session.get(Job, body["job_id"])
+    assert job is not None
+    assert job.target_id == document_id
+    assert job.job_options["parser_mode"] == "mineru_strict"
+    assert job.job_options["domain_metadata"]["domain"] == "religion"
+    assert job.job_options["domain_metadata"]["document_type"] == "religious_text"
+    assert job.job_options["domain_metadata"]["tags"] == ["quran"]
+    assert job.job_options["domain_metadata"]["custom_json"] == {
         "reference_schema": {"type": "surah_ayah"},
         "retrieval": {"exact_reference_top1": True},
     }
@@ -565,11 +529,6 @@ async def test_reindex_persists_job_options_for_worker(client, tmp_path, monkeyp
         mode="json",
         exclude_none=True,
     )
-
-    async def noop_run_index_job(settings, document_id, job_id, options):
-        return None
-
-    monkeypatch.setattr("ragstudio.api.routes.documents._run_index_job", noop_run_index_job)
 
     artifact = tmp_path / "uploads" / "durable-worker-sha"
     artifact.parent.mkdir(parents=True)
@@ -599,6 +558,51 @@ async def test_reindex_persists_job_options_for_worker(client, tmp_path, monkeyp
     assert job.status == StageStatus.READY.value
     assert job.job_options == expected_options
     assert job.result["index_options"] == job.job_options
+
+
+@pytest.mark.asyncio
+async def test_reindex_does_not_schedule_in_process_background_task(client, tmp_path, monkeypatch):
+    await seed_product_runtime_profile(client)
+    allow_product_readiness(monkeypatch)
+    app = client._transport.app
+    artifact = tmp_path / "uploads" / "no-background-sha"
+    artifact.parent.mkdir(parents=True)
+    artifact.write_text("Quran 1:4", encoding="utf-8")
+    async with app.state.session_factory() as session:
+        document = Document(
+            filename="no-background.pdf",
+            content_type="application/pdf",
+            sha256="no-background-sha",
+            artifact_path=str(artifact),
+            status=StageStatus.SUCCEEDED.value,
+        )
+        session.add(document)
+        await session.commit()
+        document_id = document.id
+
+    called = False
+
+    def fail_background_task(*_args, **_kwargs):
+        nonlocal called
+        called = True
+        raise AssertionError("route must not create an in-process indexing task")
+
+    import ragstudio.api.routes.documents as document_routes
+
+    monkeypatch.setattr(
+        document_routes,
+        "create_background_task",
+        fail_background_task,
+        raising=False,
+    )
+
+    response = await client.post(
+        f"/api/documents/{document_id}/reindex",
+        json={"parser_mode": "mineru_strict", "domain_metadata": {}},
+    )
+
+    assert response.status_code == 202
+    assert called is False
 
 
 @pytest.mark.asyncio
@@ -756,9 +760,6 @@ async def test_rematerialize_document_graph_serializes_with_reindex_job_creation
             "reason": None,
         }
 
-    async def fake_run_index_job(settings, document_id, job_id, options):
-        return None
-
     async def validate_sidecar(self, options):
         return None
 
@@ -766,7 +767,6 @@ async def test_rematerialize_document_graph_serializes_with_reindex_job_creation
         "ragstudio.api.routes.documents.GraphProjectionRunner.rematerialize_document",
         fake_rematerialize_document,
     )
-    monkeypatch.setattr("ragstudio.api.routes.documents._run_index_job", fake_run_index_job)
     monkeypatch.setattr(
         "ragstudio.services.chunk_service.ChunkService.validate_strict_mineru_sidecar",
         validate_sidecar,
@@ -884,14 +884,6 @@ async def test_reindex_document_concurrent_requests_create_one_active_job(
 ):
     await seed_product_runtime_profile(client)
     allow_product_readiness(monkeypatch)
-    started = asyncio.Event()
-    release = asyncio.Event()
-
-    async def fake_run_index_job(settings, document_id, job_id, options):
-        started.set()
-        await release.wait()
-
-    monkeypatch.setattr("ragstudio.api.routes.documents._run_index_job", fake_run_index_job)
 
     async def validate_sidecar(self, options):
         return None
@@ -929,7 +921,6 @@ async def test_reindex_document_concurrent_requests_create_one_active_job(
             ),
         )
 
-    release.set()
     statuses = sorted(response.status_code for response in responses)
     assert statuses == [202, 409]
     async with session_factory() as session:
@@ -982,7 +973,7 @@ async def test_reindex_document_validates_strict_mineru_before_queueing(client, 
 
 
 @pytest.mark.asyncio
-async def test_upload_uses_runtime_index_lifecycle_when_profile_exists(client, monkeypatch):
+async def test_upload_queues_runtime_index_job_when_profile_exists(client, monkeypatch):
     async def validate_sidecar(self, options):
         return None
 
@@ -1026,15 +1017,18 @@ async def test_upload_uses_runtime_index_lifecycle_when_profile_exists(client, m
 
     assert response.status_code == 201
     document_id = response.json()["id"]
-    await wait_for_jobs(client, 1)
+    jobs = await wait_for_jobs(client, 1, terminal=False)
     async with app.state.session_factory() as session:
         record = await session.scalar(
             select(IndexRecord).where(IndexRecord.document_id == document_id)
         )
+        job = await session.get(Job, jobs[0]["id"])
 
-    assert record is not None
-    assert record.runtime_profile_id == "default"
-    assert record.chunk_count == 1
+    assert record is None
+    assert job is not None
+    assert jobs[0]["target_id"] == document_id
+    assert jobs[0]["status"] == StageStatus.READY.value
+    assert job.job_options["parser_mode"] == "mineru_strict"
 
 
 @pytest.mark.asyncio
