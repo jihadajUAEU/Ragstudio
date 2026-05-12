@@ -44,6 +44,10 @@ class FakeDriver:
         self.closed = True
 
 
+def compact_cypher(query: str) -> str:
+    return " ".join(query.split())
+
+
 def profile():
     return SimpleNamespace(
         id="default",
@@ -117,13 +121,29 @@ async def test_replace_document_graph_deletes_and_rebuilds_projection():
         for _, params in relationship_calls
         for relationship in params["relationships"]
     }
-    queries = "\n".join(query for query, _ in calls)
-    assert "MERGE (chunk:RagstudioChunk:RagstudioGraphNode:`ragstudio_default`" in queries
-    assert "MERGE (ref:RagstudioReference:RagstudioGraphNode:`ragstudio_default`" in queries
-    assert "SET chunk:Chunk:RagstudioChunk:RagstudioGraphNode" in queries
-    assert "SET ref:Reference:RagstudioReference:RagstudioGraphNode" in queries
-    assert "MATCH (source:RagstudioGraphNode:`ragstudio_default`" in queries
-    assert "MATCH (target:RagstudioGraphNode:`ragstudio_default`" in queries
+    chunk_query = compact_cypher(node_call[0])
+    reference_query = compact_cypher(reference_call[0])
+    relationship_queries = [compact_cypher(query) for query, _ in relationship_calls]
+    assert (
+        "MERGE (chunk:RagstudioChunk:RagstudioGraphNode:`ragstudio_default` "
+        "{ document_id: node.document_id, id: node.id })"
+    ) in chunk_query
+    assert (
+        "MERGE (ref:RagstudioReference:RagstudioGraphNode:`ragstudio_default` "
+        "{ document_id: node.document_id, id: node.id })"
+    ) in reference_query
+    assert "SET chunk:Chunk:RagstudioChunk:RagstudioGraphNode" in chunk_query
+    assert "SET ref:Reference:RagstudioReference:RagstudioGraphNode" in reference_query
+    assert all(
+        "MATCH (source:RagstudioGraphNode:`ragstudio_default` "
+        "{ document_id: rel.document_id, id: rel.source })" in query
+        for query in relationship_queries
+    )
+    assert all(
+        "MATCH (target:RagstudioGraphNode:`ragstudio_default` "
+        "{ document_id: rel.document_id, id: rel.target })" in query
+        for query in relationship_queries
+    )
     assert relationship_types == {"REFERENCES", "NEXT_HADITH"}
     assert result.status == "succeeded"
     assert result.node_count == 3
@@ -353,10 +373,14 @@ async def test_replace_document_graph_creates_projection_indexes_without_apoc():
         chunks=[chunk_with_relationships()],
     )
 
-    queries = "\n".join(query for query, _ in driver.session_instance.calls)
+    queries = compact_cypher("\n".join(query for query, _ in driver.session_instance.calls))
     assert "CREATE INDEX ragstudio_chunk_projection IF NOT EXISTS" in queries
     assert "CREATE INDEX ragstudio_reference_projection IF NOT EXISTS" in queries
     assert "CREATE INDEX ragstudio_graph_projection_node IF NOT EXISTS" in queries
+    assert (
+        "CREATE INDEX ragstudio_graph_projection_node IF NOT EXISTS "
+        "FOR (n:RagstudioGraphNode) ON (n.document_id, n.id)"
+    ) in queries
     assert "apoc." not in queries
 
 
