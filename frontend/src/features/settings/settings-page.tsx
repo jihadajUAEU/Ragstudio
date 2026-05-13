@@ -3,7 +3,11 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2, PlugZap, RefreshCcw, RotateCcw, Save, Settings } from "lucide-react";
 
 import { ApiError, apiClient } from "../../api/client";
-import type { SettingsProfileIn, SettingsProfileOut } from "../../api/generated";
+import type {
+  MinerUConnectionTestOut,
+  SettingsProfileIn,
+  SettingsProfileOut,
+} from "../../api/generated";
 import { Button } from "../../components/ui/button";
 
 const queryKeys = {
@@ -471,16 +475,12 @@ export function SettingsPage() {
         : rerankerUsesLlm && settingsQuery.data?.has_llm_api_key
           ? "Saved LLM API key present"
         : "";
-  const mineruOptimization = testMinerU.data?.optimization ?? {};
-  const mineruOptimizationMessage = [
-    mineruOptimization.backend ? `backend=${String(mineruOptimization.backend)}` : "",
-    mineruOptimization.device ? `device=${String(mineruOptimization.device)}` : "",
-    mineruOptimization.max_concurrent_files
-      ? `maxConcurrentFiles=${String(mineruOptimization.max_concurrent_files)}`
-      : "",
-  ]
-    .filter(Boolean)
-    .join("; ");
+  const mineruOptimizationMessage = testMinerU.data
+    ? missingMinerUOptimizationDetail(
+        testMinerU.data.detail,
+        mineruReportedOptimization(testMinerU.data),
+      )
+    : "";
   const mineruTestMessage = testMinerU.error
     ? testMinerU.error.message
     : testMinerU.data
@@ -1579,6 +1579,43 @@ function settingsToFormValues(settings: SettingsProfileOut): SettingsProfileIn {
     embedding_func_max_async: settings.embedding_func_max_async,
     max_parallel_insert: settings.max_parallel_insert,
   };
+}
+
+function mineruReportedOptimization(
+  data: MinerUConnectionTestOut,
+): Record<string, unknown> {
+  const optimization = data.optimization;
+  if (isRecord(optimization.reported)) {
+    return optimization.reported;
+  }
+  if (isFlatMinerUOptimization(optimization)) {
+    return optimization;
+  }
+  return {};
+}
+
+function missingMinerUOptimizationDetail(
+  detail: string,
+  optimization: Record<string, unknown>,
+): string {
+  const tokens = [
+    optimization.backend ? `backend=${String(optimization.backend)}` : "",
+    optimization.device ? `device=${String(optimization.device)}` : "",
+    optimization.max_concurrent_files
+      ? `maxConcurrentFiles=${String(optimization.max_concurrent_files)}`
+      : "",
+  ].filter(Boolean);
+  return tokens.filter((token) => !detail.includes(token)).join("; ");
+}
+
+function isFlatMinerUOptimization(
+  value: MinerUConnectionTestOut["optimization"],
+): value is MinerUConnectionTestOut["optimization"] & Record<string, unknown> {
+  return Boolean(value.backend || value.device || value.max_concurrent_files);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function getMessage(settingsError: Error | null, mutationError: Error | null) {

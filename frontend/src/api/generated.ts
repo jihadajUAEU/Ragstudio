@@ -216,7 +216,15 @@ export interface MinerUConnectionTestOut {
   base_url: string;
   latency_ms: number;
   detail: string;
-  optimization: Record<string, unknown>;
+  optimization: {
+    requested?: Record<string, unknown>;
+    reported?: Record<string, unknown>;
+    capacity_reported?: boolean;
+    warning?: string | null;
+    backend?: unknown;
+    device?: unknown;
+    max_concurrent_files?: unknown;
+  };
 }
 
 export interface RerankerConnectionTestOut {
@@ -262,6 +270,18 @@ export interface DomainMetadata {
   metadata_sources?: string[];
 }
 
+export interface MinerUParseOptionsIn {
+  parser?: string | null;
+  parse_method?: string | null;
+  backend?: string | null;
+  device?: string | null;
+  lang?: string | null;
+  formula?: boolean | null;
+  table?: boolean | null;
+  source?: string | null;
+  max_concurrent_files?: number | null;
+}
+
 export interface DomainProfileOut {
   id: string;
   name: string;
@@ -272,6 +292,7 @@ export interface DomainProfileOut {
 export interface IndexDocumentIn {
   parser_mode?: ParserMode;
   domain_metadata?: DomainMetadata;
+  mineru_parse_options?: MinerUParseOptionsIn | null;
 }
 
 export interface JobOut {

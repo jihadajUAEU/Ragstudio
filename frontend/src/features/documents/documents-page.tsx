@@ -17,6 +17,7 @@ import type {
   IndexDocumentIn,
   JobOut,
   JobQualityWarningsOut,
+  MinerUParseOptionsIn,
   ParserQualityWarningOut,
 } from "../../api/generated";
 import { DataTable } from "../../components/data-table";
@@ -33,6 +34,14 @@ const queryKeys = {
 
 type DocumentsTab = "documents" | "jobs";
 const WARNING_VISIBLE_ROW_LIMIT = 200;
+const DEFAULT_MINERU_PARSE_OPTIONS: MinerUParseOptionsIn = {
+  parse_method: "auto",
+  backend: "pipeline",
+  device: "cuda:0",
+  formula: true,
+  table: true,
+  max_concurrent_files: 1,
+};
 
 export function DocumentsPage() {
   const queryClient = useQueryClient();
@@ -53,6 +62,12 @@ export function DocumentsPage() {
     domain_metadata: { domain: "generic", document_type: "document", tags: [] },
   });
   const [metadataValid, setMetadataValid] = useState(true);
+  const setMineruParseOptions = useCallback(
+    (mineru_parse_options: MinerUParseOptionsIn | null) => {
+      setIndexOptions((current) => ({ ...current, mineru_parse_options }));
+    },
+    [],
+  );
   const jobsQuery = useQuery({
     queryKey: queryKeys.jobs,
     queryFn: apiClient.jobs,
@@ -136,9 +151,12 @@ export function DocumentsPage() {
   const reindexExistingDocument = useCallback(
     (document: DocumentOut) => {
       setReindexedFilename(document.filename);
+      const baseOptions = document.latest_index_options ?? indexOptions;
       reindexDocument.mutate({
         documentId: document.id,
-        options: document.latest_index_options ?? indexOptions,
+        options: indexOptions.mineru_parse_options
+          ? { ...baseOptions, mineru_parse_options: indexOptions.mineru_parse_options }
+          : baseOptions,
       });
     },
     [indexOptions, reindexDocument],
@@ -493,6 +511,11 @@ export function DocumentsPage() {
                     : undefined
                 }
               />
+              <MinerUParseOptionsControls
+                value={indexOptions.mineru_parse_options ?? null}
+                disabled={uploadDocument.isPending}
+                onChange={setMineruParseOptions}
+              />
             </div>
           </details>
           <div className="flex justify-end">
@@ -759,6 +782,157 @@ function OperationsStatusStrip({
       </div>
     </section>
   );
+}
+
+function MinerUParseOptionsControls({
+  value,
+  disabled,
+  onChange,
+}: {
+  value: MinerUParseOptionsIn | null;
+  disabled: boolean;
+  onChange: (value: MinerUParseOptionsIn | null) => void;
+}) {
+  const enabled = value !== null;
+  const options = value ?? DEFAULT_MINERU_PARSE_OPTIONS;
+  const updateOption = <K extends keyof MinerUParseOptionsIn>(
+    key: K,
+    nextValue: MinerUParseOptionsIn[K],
+  ) => {
+    onChange(compactMinerUParseOptions({ ...options, [key]: nextValue }));
+  };
+
+  return (
+    <section className="mt-3 grid gap-3 border-t border-[#d6dde1] pt-3">
+      <label className="flex h-10 items-center gap-2 text-sm font-medium text-[#3a4a53]">
+        <input
+          type="checkbox"
+          checked={enabled}
+          disabled={disabled}
+          onChange={(event) =>
+            onChange(event.target.checked ? DEFAULT_MINERU_PARSE_OPTIONS : null)
+          }
+        />
+        Override MinerU parser options
+      </label>
+      {enabled ? (
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="text-sm font-medium text-[#3a4a53]">
+            <span className="mb-1.5 block">MinerU parse method</span>
+            <select
+              aria-label="MinerU parse method"
+              value={options.parse_method ?? "auto"}
+              disabled={disabled}
+              onChange={(event) => updateOption("parse_method", event.target.value)}
+              className="h-10 w-full rounded-md border border-[#cfd8dd] bg-white px-3 text-sm"
+            >
+              <option value="auto">auto</option>
+              <option value="ocr">ocr</option>
+              <option value="txt">txt</option>
+            </select>
+          </label>
+          <MinerUTextOption
+            label="MinerU backend"
+            value={options.backend ?? ""}
+            disabled={disabled}
+            onChange={(backend) => updateOption("backend", backend)}
+          />
+          <MinerUTextOption
+            label="MinerU device"
+            value={options.device ?? ""}
+            disabled={disabled}
+            onChange={(device) => updateOption("device", device)}
+          />
+          <MinerUTextOption
+            label="MinerU language"
+            value={options.lang ?? ""}
+            disabled={disabled}
+            onChange={(lang) => updateOption("lang", lang)}
+          />
+          <label className="flex h-10 items-center gap-2 self-end text-sm font-medium text-[#3a4a53]">
+            <input
+              type="checkbox"
+              checked={options.formula ?? true}
+              disabled={disabled}
+              onChange={(event) => updateOption("formula", event.target.checked)}
+            />
+            Parse formulas for this document
+          </label>
+          <label className="flex h-10 items-center gap-2 self-end text-sm font-medium text-[#3a4a53]">
+            <input
+              type="checkbox"
+              checked={options.table ?? true}
+              disabled={disabled}
+              onChange={(event) => updateOption("table", event.target.checked)}
+            />
+            Parse tables for this document
+          </label>
+          <MinerUTextOption
+            label="MinerU source"
+            value={options.source ?? ""}
+            disabled={disabled}
+            onChange={(source) => updateOption("source", source)}
+          />
+          <label className="text-sm font-medium text-[#3a4a53]">
+            <span className="mb-1.5 block">MinerU max concurrent files</span>
+            <input
+              aria-label="MinerU max concurrent files"
+              type="number"
+              min={1}
+              max={8}
+              value={options.max_concurrent_files ?? 1}
+              disabled={disabled}
+              onChange={(event) =>
+                updateOption(
+                  "max_concurrent_files",
+                  Math.max(1, Math.min(Number(event.target.value || 1), 8)),
+                )
+              }
+              className="h-10 w-full rounded-md border border-[#cfd8dd] bg-white px-3 text-sm"
+            />
+          </label>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function MinerUTextOption({
+  label,
+  value,
+  disabled,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  disabled: boolean;
+  onChange: (value: string | null) => void;
+}) {
+  return (
+    <label className="text-sm font-medium text-[#3a4a53]">
+      <span className="mb-1.5 block">{label}</span>
+      <input
+        aria-label={label}
+        value={value}
+        disabled={disabled}
+        onChange={(event) => onChange(event.target.value.trim() || null)}
+        className="h-10 w-full rounded-md border border-[#cfd8dd] bg-white px-3 text-sm"
+      />
+    </label>
+  );
+}
+
+function compactMinerUParseOptions(options: MinerUParseOptionsIn): MinerUParseOptionsIn {
+  return {
+    parse_method: options.parse_method || undefined,
+    backend: options.backend || undefined,
+    device: options.device || undefined,
+    lang: options.lang || undefined,
+    formula: options.formula,
+    table: options.table,
+    source: options.source || undefined,
+    max_concurrent_files: options.max_concurrent_files ?? undefined,
+  };
 }
 
 function StatusSummaryItem({

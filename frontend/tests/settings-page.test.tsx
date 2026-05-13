@@ -281,6 +281,31 @@ describe("SettingsPage provider sync", () => {
     expect(screen.getByText(/maxConcurrentFiles=2/)).toBeVisible();
   });
 
+  it("does not duplicate MinerU optimization details already present in backend detail", async () => {
+    vi.mocked(apiClient.testMinerUSettings).mockResolvedValueOnce({
+      ok: true,
+      base_url: "http://127.0.0.1:8765",
+      latency_ms: 12,
+      detail:
+        "RAG-Anything sidecar ready (HPC coordinator mode; backend=pipeline; device=cuda:0; maxConcurrentFiles=2).",
+      optimization: {
+        backend: "pipeline",
+        device: "cuda:0",
+        max_concurrent_files: 2,
+      },
+    });
+    renderSettings();
+
+    await screen.findByDisplayValue("gpt-4.1");
+    fireEvent.click(screen.getByRole("button", { name: /Test MinerU/i }));
+
+    const status = await screen.findByText(/Connected: RAG-Anything sidecar ready/);
+    const text = status.textContent ?? "";
+    expect(text.match(/backend=pipeline/g) ?? []).toHaveLength(1);
+    expect(text.match(/device=cuda:0/g) ?? []).toHaveLength(1);
+    expect(text.match(/maxConcurrentFiles=2/g) ?? []).toHaveLength(1);
+  });
+
   it("keeps runtime mode and storage backend pairings explicit", async () => {
     renderSettings();
 

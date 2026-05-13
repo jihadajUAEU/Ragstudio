@@ -67,6 +67,9 @@ class ChunkPersistenceService:
             adapter_chunk.metadata,
             options.domain_metadata,
             options.parser_mode,
+            options.mineru_parse_options.model_dump(mode="json", exclude_none=True)
+            if options.mineru_parse_options is not None
+            else None,
             document.id,
             index_shape,
         )
@@ -107,6 +110,7 @@ class ChunkPersistenceService:
         metadata: dict[str, Any],
         domain_metadata: DomainMetadata,
         parser_mode: ParserMode,
+        mineru_parse_options: dict[str, Any] | None,
         document_id: str,
         index_shape: dict[str, Any],
     ) -> dict[str, Any]:
@@ -118,6 +122,8 @@ class ChunkPersistenceService:
         parser_metadata = dict(merged.get("parser_metadata") or {})
         parser_metadata.setdefault("backend", "mineru")
         parser_metadata["parser_mode"] = parser_mode
+        if mineru_parse_options is not None:
+            parser_metadata["mineru_parse_options"] = mineru_parse_options
         merged["parser_metadata"] = parser_metadata
         return merged
 
@@ -183,6 +189,4 @@ class ChunkPersistenceService:
         artifact_ref = parser_metadata.get("artifact_ref")
         chunk_index = parser_metadata.get("chunk_index")
         preview_ref = metadata.get("preview_ref")
-        return "|".join(
-            str(part) for part in (document_id, artifact_ref, preview_ref, chunk_index)
-        )
+        return "|".join(str(part) for part in (document_id, artifact_ref, preview_ref, chunk_index))

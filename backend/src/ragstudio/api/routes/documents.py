@@ -47,11 +47,14 @@ async def upload_document(
     file: UploadFile,
     parser_mode: str | None = Form(default=None),
     domain_metadata: str | None = Form(default=None),
+    mineru_parse_options: str | None = Form(default=None),
     session: AsyncSession = Depends(get_session),
 ) -> DocumentOut:
     options = (
-        _parse_index_options(parser_mode, domain_metadata)
-        if parser_mode is not None or domain_metadata is not None
+        _parse_index_options(parser_mode, domain_metadata, mineru_parse_options)
+        if parser_mode is not None
+        or domain_metadata is not None
+        or mineru_parse_options is not None
         else None
     )
     index_options = options or IndexDocumentIn()
@@ -166,6 +169,7 @@ def _runtime_profile_detail(exc: Exception) -> str:
 def _parse_index_options(
     parser_mode: str | None,
     domain_metadata: str | None,
+    mineru_parse_options: str | None = None,
 ) -> IndexDocumentIn:
     try:
         metadata_payload = json.loads(domain_metadata or "{}")
@@ -174,13 +178,23 @@ def _parse_index_options(
             status_code=400,
             detail=f"domain_metadata must be valid JSON: {exc.msg}",
         ) from exc
+    mineru_parse_options_payload = None
+    if mineru_parse_options:
+        try:
+            mineru_parse_options_payload = json.loads(mineru_parse_options)
+        except json.JSONDecodeError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"mineru_parse_options must be valid JSON: {exc.msg}",
+            ) from exc
     try:
-        return IndexDocumentIn.model_validate(
-            {
-                "parser_mode": parser_mode or DEFAULT_PARSER_MODE,
-                "domain_metadata": metadata_payload,
-            }
-        )
+        payload = {
+            "parser_mode": parser_mode or DEFAULT_PARSER_MODE,
+            "domain_metadata": metadata_payload,
+        }
+        if mineru_parse_options_payload is not None:
+            payload["mineru_parse_options"] = mineru_parse_options_payload
+        return IndexDocumentIn.model_validate(payload)
     except ValidationError as exc:
         raise HTTPException(status_code=422, detail=exc.errors()) from exc
 

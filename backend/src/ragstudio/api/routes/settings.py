@@ -10,6 +10,7 @@ from ragstudio.schemas.settings import (
     EmbeddingConnectionTestOut,
     LlmConnectionTestOut,
     MinerUConnectionTestOut,
+    MinerUOptimizationOut,
     ProviderSyncPreviewIn,
     ProviderSyncPreviewOut,
     RerankerConnectionTestOut,
@@ -94,6 +95,35 @@ def _mineru_optimization_detail(optimization: dict[str, object]) -> str:
     return "; ".join(parts)
 
 
+def _requested_mineru_optimization(payload: SettingsProfileIn) -> dict[str, object]:
+    requested: dict[str, object] = {}
+    if payload.mineru_backend:
+        requested["backend"] = payload.mineru_backend
+    if payload.mineru_device:
+        requested["device"] = payload.mineru_device
+    if payload.mineru_max_concurrent_files:
+        requested["max_concurrent_files"] = payload.mineru_max_concurrent_files
+    return requested
+
+
+def _mineru_optimization_summary(
+    payload: SettingsProfileIn,
+    reported: dict[str, object] | None = None,
+) -> MinerUOptimizationOut:
+    requested = _requested_mineru_optimization(payload)
+    reported = reported or {}
+    capacity_reported = "max_concurrent_files" in reported
+    warning = None
+    if requested.get("max_concurrent_files") and not capacity_reported:
+        warning = "capacity not reported by sidecar"
+    return MinerUOptimizationOut(
+        requested=requested,
+        reported=reported,
+        capacity_reported=capacity_reported,
+        warning=warning,
+    )
+
+
 @router.post("/default/test-embedding", response_model=EmbeddingConnectionTestOut)
 async def test_embedding_settings(
     payload: SettingsProfileIn,
@@ -119,20 +149,20 @@ async def test_reranker_settings(
     settings: AppSettings = Depends(get_settings),
 ) -> RerankerConnectionTestOut:
     resolved_payload = await SettingsService(session).resolve_reranker_test_payload(payload)
-    return await RerankerConnectionService(settings.allowed_reranker_hosts).test(
-        resolved_payload
-    )
+    return await RerankerConnectionService(settings.allowed_reranker_hosts).test(resolved_payload)
 
 
 @router.post("/default/test-mineru", response_model=MinerUConnectionTestOut)
 async def test_mineru_settings(payload: SettingsProfileIn) -> MinerUConnectionTestOut:
     base_url = payload.mineru_base_url or ""
+    empty_optimization = _mineru_optimization_summary(payload)
     if not base_url:
         return MinerUConnectionTestOut(
             ok=False,
             base_url="",
             latency_ms=0,
             detail="MinerU base URL is not configured.",
+            optimization=empty_optimization,
         )
 
     started = time.perf_counter()
@@ -149,6 +179,7 @@ async def test_mineru_settings(payload: SettingsProfileIn) -> MinerUConnectionTe
                 base_url=base_url,
                 latency_ms=latency_ms,
                 detail=health.detail or "MinerU sidecar is not ready.",
+                optimization=_mineru_optimization_summary(payload, health.optimization),
             )
         if payload.mineru_require_hpc and not health.is_hpc_coordinator:
             return MinerUConnectionTestOut(
@@ -161,6 +192,7 @@ async def test_mineru_settings(payload: SettingsProfileIn) -> MinerUConnectionTe
                     f"mode={health.hpc_mode or 'unknown'}. "
                     "Start the HPC coordinator sidecar or disable the HPC requirement."
                 ),
+                optimization=_mineru_optimization_summary(payload, health.optimization),
             )
         mode_detail = (
             "HPC coordinator mode"
@@ -168,16 +200,20 @@ async def test_mineru_settings(payload: SettingsProfileIn) -> MinerUConnectionTe
             else f"{health.hpc_mode or 'unknown'} mode"
         )
         optimization = health.optimization
+        optimization_summary = _mineru_optimization_summary(payload, optimization)
         optimization_detail = _mineru_optimization_detail(optimization)
         detail_suffix = (
             f"{mode_detail}; {optimization_detail}" if optimization_detail else mode_detail
         )
+        detail = f"{health.detail or 'MinerU health check succeeded.'} ({detail_suffix})."
+        if optimization_summary.warning:
+            detail = f"{detail} {optimization_summary.warning}."
         return MinerUConnectionTestOut(
             ok=True,
             base_url=base_url,
             latency_ms=latency_ms,
-            detail=f"{health.detail or 'MinerU health check succeeded.'} ({detail_suffix}).",
-            optimization=optimization,
+            detail=detail,
+            optimization=optimization_summary,
         )
     except httpx.HTTPError as exc:
         latency_ms = int((time.perf_counter() - started) * 1000)
@@ -186,4 +222,5 @@ async def test_mineru_settings(payload: SettingsProfileIn) -> MinerUConnectionTe
             base_url=base_url,
             latency_ms=latency_ms,
             detail=f"MinerU health check failed: {exc}",
+            optimization=empty_optimization,
         )

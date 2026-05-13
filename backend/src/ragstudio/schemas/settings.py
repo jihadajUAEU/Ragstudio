@@ -32,9 +32,7 @@ class SettingsProfileIn(StudioModel):
     llm_provider: LlmProvider = "openai_compatible"
     llm_base_url: str | None = None
     llm_api_key: str | None = None
-    llm_timeout_ms: int = Field(
-        default=10000, ge=RUNTIME_TIMEOUT_MIN_MS, le=RUNTIME_TIMEOUT_MAX_MS
-    )
+    llm_timeout_ms: int = Field(default=10000, ge=RUNTIME_TIMEOUT_MIN_MS, le=RUNTIME_TIMEOUT_MAX_MS)
     llm_capabilities: list[LlmCapability] = Field(default_factory=list)
     embedding_model: str
     storage_backend: StorageBackend = DEFAULT_STORAGE_BACKEND
@@ -137,12 +135,12 @@ class SettingsProfileIn(StudioModel):
 
     @field_validator("mineru_backend", "mineru_device", "mineru_lang", "mineru_source")
     @classmethod
-    def normalize_mineru_parser_text(
-        cls, value: str | None, info: ValidationInfo
-    ) -> str | None:
+    def normalize_mineru_parser_text(cls, value: str | None, info: ValidationInfo) -> str | None:
         if value is None:
-            return "pipeline" if info.field_name == "mineru_backend" else (
-                "cuda:0" if info.field_name == "mineru_device" else None
+            return (
+                "pipeline"
+                if info.field_name == "mineru_backend"
+                else ("cuda:0" if info.field_name == "mineru_device" else None)
             )
         normalized = value.strip()
         if normalized:
@@ -301,12 +299,19 @@ class LlmConnectionTestOut(StudioModel):
     detail: str
 
 
+class MinerUOptimizationOut(StudioModel):
+    requested: dict[str, object] = Field(default_factory=dict)
+    reported: dict[str, object] = Field(default_factory=dict)
+    capacity_reported: bool = False
+    warning: str | None = None
+
+
 class MinerUConnectionTestOut(StudioModel):
     ok: bool
     base_url: str
     latency_ms: int
     detail: str
-    optimization: dict[str, object] = Field(default_factory=dict)
+    optimization: MinerUOptimizationOut = Field(default_factory=MinerUOptimizationOut)
 
 
 class RerankerConnectionTestOut(StudioModel):

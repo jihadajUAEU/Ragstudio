@@ -454,6 +454,45 @@ async def test_duplicate_upload_does_not_schedule_second_active_job(client, monk
 
 
 @pytest.mark.asyncio
+async def test_upload_persists_document_specific_mineru_parse_options(
+    client,
+    monkeypatch,
+):
+    await seed_product_runtime_profile(client)
+    allow_product_readiness(monkeypatch)
+    mineru_parse_options = {
+        "parse_method": "ocr",
+        "backend": "pipeline",
+        "device": "cuda:0",
+        "lang": "arabic",
+        "formula": False,
+        "table": False,
+        "source": "huggingface",
+        "max_concurrent_files": 2,
+    }
+
+    response = await client.post(
+        "/api/documents",
+        data={
+            "parser_mode": "mineru_strict",
+            "domain_metadata": "{}",
+            "mineru_parse_options": json.dumps(mineru_parse_options),
+        },
+        files={"file": ("tafseer.pdf", b"%PDF-1.4", "application/pdf")},
+    )
+
+    assert response.status_code == 201
+    document_id = response.json()["id"]
+    await wait_for_jobs(client, 1, terminal=False)
+    async with client._transport.app.state.session_factory() as session:
+        result = await session.execute(
+            select(Job).where(Job.type == "index_document", Job.target_id == document_id)
+        )
+        job = result.scalars().one()
+    assert job.job_options["mineru_parse_options"] == mineru_parse_options
+
+
+@pytest.mark.asyncio
 async def test_reindex_document_queues_job_with_updated_metadata(client, monkeypatch, tmp_path):
     await seed_product_runtime_profile(client)
     allow_product_readiness(monkeypatch)
@@ -514,6 +553,56 @@ async def test_reindex_document_queues_job_with_updated_metadata(client, monkeyp
         "reference_schema": {"type": "surah_ayah"},
         "retrieval": {"exact_reference_top1": True},
     }
+
+
+@pytest.mark.asyncio
+async def test_reindex_persists_document_specific_mineru_parse_options(
+    client,
+    tmp_path,
+    monkeypatch,
+):
+    await seed_product_runtime_profile(client)
+    allow_product_readiness(monkeypatch)
+    app = client._transport.app
+    mineru_parse_options = {
+        "parse_method": "ocr",
+        "backend": "pipeline",
+        "device": "cuda:0",
+        "lang": "arabic",
+        "formula": False,
+        "table": False,
+        "source": "huggingface",
+        "max_concurrent_files": 2,
+    }
+    artifact = tmp_path / "uploads" / "reindex-mineru-options-sha"
+    artifact.parent.mkdir(parents=True)
+    artifact.write_text("Quran 1:4", encoding="utf-8")
+    async with app.state.session_factory() as session:
+        document = Document(
+            filename="tafseer.pdf",
+            content_type="application/pdf",
+            sha256="reindex-mineru-options-sha",
+            artifact_path=str(artifact),
+            status=StageStatus.SUCCEEDED.value,
+        )
+        session.add(document)
+        await session.commit()
+        document_id = document.id
+
+    response = await client.post(
+        f"/api/documents/{document_id}/reindex",
+        json={
+            "parser_mode": "mineru_strict",
+            "domain_metadata": {"domain": "quran_tafseer"},
+            "mineru_parse_options": mineru_parse_options,
+        },
+    )
+
+    assert response.status_code == 202
+    async with app.state.session_factory() as session:
+        job = await session.get(Job, response.json()["job_id"])
+    assert job is not None
+    assert job.job_options["mineru_parse_options"] == mineru_parse_options
 
 
 @pytest.mark.asyncio

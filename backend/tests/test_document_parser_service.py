@@ -252,7 +252,32 @@ async def test_commit_before_remote_parse_releases_session_before_parse(tmp_path
     ]
 
 
-def test_mineru_parse_options_use_ai_metadata_overrides(tmp_path):
+def test_index_document_options_accept_document_mineru_parse_options():
+    options = IndexDocumentIn.model_validate(
+        {
+            "parser_mode": "mineru_strict",
+            "domain_metadata": {"domain": "quran_tafseer"},
+            "mineru_parse_options": {
+                "parse_method": "ocr",
+                "backend": "pipeline",
+                "device": "cuda:0",
+                "lang": "arabic",
+                "formula": False,
+                "table": False,
+                "source": "huggingface",
+                "max_concurrent_files": 2,
+            },
+        }
+    )
+
+    assert options.mineru_parse_options is not None
+    assert options.mineru_parse_options.parse_method == "ocr"
+    assert options.mineru_parse_options.backend == "pipeline"
+    assert options.mineru_parse_options.device == "cuda:0"
+    assert options.mineru_parse_options.max_concurrent_files == 2
+
+
+def test_mineru_parse_options_ignore_hidden_domain_metadata_overrides(tmp_path):
     settings = SettingsProfile(
         id="default",
         provider="openai-compatible",
@@ -263,9 +288,12 @@ def test_mineru_parse_options_use_ai_metadata_overrides(tmp_path):
         mineru_enabled=True,
         mineru_base_url="http://10.10.9.19:8765",
         mineru_backend="pipeline",
-        mineru_device="cuda:0",
+        mineru_device="cuda:1",
+        mineru_lang="en",
         mineru_formula=True,
         mineru_table=True,
+        mineru_source="huggingface",
+        mineru_max_concurrent_files=2,
     )
     metadata = DomainMetadata(
         domain="quran_tafseer",
@@ -284,6 +312,8 @@ def test_mineru_parse_options_use_ai_metadata_overrides(tmp_path):
                 "lang": "arabic",
                 "formula": False,
                 "table": False,
+                "device": "cuda:0",
+                "max_concurrent_files": 1,
             },
         },
     )
@@ -295,13 +325,14 @@ def test_mineru_parse_options_use_ai_metadata_overrides(tmp_path):
 
     assert parse_options.to_metadata() == {
         "parser": "mineru",
-        "parseMethod": "ocr",
+        "parseMethod": "auto",
         "parserKwargs": {
             "backend": "pipeline",
-            "device": "cuda:0",
-            "formula": False,
-            "table": False,
-            "lang": "arabic",
+            "device": "cuda:1",
+            "formula": True,
+            "table": True,
+            "lang": "en",
+            "source": "huggingface",
         },
-        "maxConcurrentFiles": 1,
+        "maxConcurrentFiles": 2,
     }

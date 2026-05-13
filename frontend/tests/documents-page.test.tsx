@@ -159,6 +159,65 @@ describe("DocumentsPage", () => {
     });
   });
 
+  it("uploads with document-specific MinerU parser options", async () => {
+    renderDocumentsPage();
+    openIndexOptions();
+
+    fireEvent.click(screen.getByLabelText("Override MinerU parser options"));
+    fireEvent.change(screen.getByLabelText("MinerU parse method"), {
+      target: { value: "ocr" },
+    });
+    fireEvent.change(screen.getByLabelText("MinerU backend"), {
+      target: { value: "pipeline" },
+    });
+    fireEvent.change(screen.getByLabelText("MinerU device"), {
+      target: { value: "cuda:0" },
+    });
+    fireEvent.change(screen.getByLabelText("MinerU language"), {
+      target: { value: "arabic" },
+    });
+    const formulaToggle = screen.getByLabelText("Parse formulas for this document");
+    if ((formulaToggle as HTMLInputElement).checked) {
+      fireEvent.click(formulaToggle);
+    }
+    const tableToggle = screen.getByLabelText("Parse tables for this document");
+    if ((tableToggle as HTMLInputElement).checked) {
+      fireEvent.click(tableToggle);
+    }
+    fireEvent.change(screen.getByLabelText("MinerU source"), {
+      target: { value: "huggingface" },
+    });
+    fireEvent.change(screen.getByLabelText("MinerU max concurrent files"), {
+      target: { value: "2" },
+    });
+
+    const file = new File(["pdf"], "tafseer.pdf", { type: "application/pdf" });
+    fireEvent.change(screen.getByLabelText(/upload file/i), {
+      target: { files: [file] },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^upload$/i }));
+
+    await waitFor(() => {
+      expect(apiClient.uploadDocument).toHaveBeenCalled();
+    });
+    expect(vi.mocked(apiClient.uploadDocument).mock.calls[0][0]).toEqual({
+      file,
+      options: expect.objectContaining({
+        parser_mode: "mineru_strict",
+        mineru_parse_options: {
+          parse_method: "ocr",
+          backend: "pipeline",
+          device: "cuda:0",
+          lang: "arabic",
+          formula: false,
+          table: false,
+          source: "huggingface",
+          max_concurrent_files: 2,
+        },
+      }),
+    });
+  });
+
   it("uses MinerU strict as the only parser mode", async () => {
     renderDocumentsPage();
     openIndexOptions();
@@ -405,6 +464,72 @@ describe("DocumentsPage", () => {
       });
     });
     expect(await screen.findByText("Reindex queued for tafseer.pdf")).toBeVisible();
+  });
+
+  it("reindexes with document-specific MinerU parser options", async () => {
+    vi.mocked(apiClient.documents).mockResolvedValue({
+      items: [
+        {
+          id: "doc-1",
+          filename: "tafseer.pdf",
+          content_type: "application/pdf",
+          status: "succeeded",
+          sha256: "sha-1",
+        },
+      ],
+      total: 1,
+    });
+    renderDocumentsPage();
+    openIndexOptions();
+
+    fireEvent.click(screen.getByLabelText("Override MinerU parser options"));
+    fireEvent.change(screen.getByLabelText("MinerU parse method"), {
+      target: { value: "ocr" },
+    });
+    fireEvent.change(screen.getByLabelText("MinerU backend"), {
+      target: { value: "pipeline" },
+    });
+    fireEvent.change(screen.getByLabelText("MinerU device"), {
+      target: { value: "cuda:0" },
+    });
+    fireEvent.change(screen.getByLabelText("MinerU language"), {
+      target: { value: "arabic" },
+    });
+    const formulaToggle = screen.getByLabelText("Parse formulas for this document");
+    if ((formulaToggle as HTMLInputElement).checked) {
+      fireEvent.click(formulaToggle);
+    }
+    const tableToggle = screen.getByLabelText("Parse tables for this document");
+    if ((tableToggle as HTMLInputElement).checked) {
+      fireEvent.click(tableToggle);
+    }
+    fireEvent.change(screen.getByLabelText("MinerU source"), {
+      target: { value: "huggingface" },
+    });
+    fireEvent.change(screen.getByLabelText("MinerU max concurrent files"), {
+      target: { value: "2" },
+    });
+
+    fireEvent.click(await screen.findByRole("button", { name: /reindex tafseer\.pdf/i }));
+
+    await waitFor(() => {
+      expect(apiClient.createDocumentReindexJob).toHaveBeenCalledWith(
+        "doc-1",
+        expect.objectContaining({
+          parser_mode: "mineru_strict",
+          mineru_parse_options: {
+            parse_method: "ocr",
+            backend: "pipeline",
+            device: "cuda:0",
+            lang: "arabic",
+            formula: false,
+            table: false,
+            source: "huggingface",
+            max_concurrent_files: 2,
+          },
+        }),
+      );
+    });
   });
 
   it("reindexes with the document's current index options when available", async () => {

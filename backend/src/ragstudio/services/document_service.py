@@ -295,7 +295,19 @@ class DocumentService:
             )
         except ValidationError:
             metadata_model = DomainMetadata()
-        return IndexDocumentIn(parser_mode=parser_mode, domain_metadata=metadata_model)
+        payload: dict[str, Any] = {
+            "parser_mode": parser_mode,
+            "domain_metadata": metadata_model,
+        }
+        if isinstance(parser_metadata, dict) and isinstance(
+            parser_metadata.get("mineru_parse_options"),
+            dict,
+        ):
+            payload["mineru_parse_options"] = parser_metadata["mineru_parse_options"]
+        try:
+            return IndexDocumentIn.model_validate(payload)
+        except ValidationError:
+            return IndexDocumentIn(parser_mode=parser_mode, domain_metadata=metadata_model)
 
     def _parser_mode_from_metadata(self, parser_metadata: Any) -> ParserMode | None:
         if not isinstance(parser_metadata, dict):
@@ -414,9 +426,7 @@ class DocumentService:
             )
             chunks = lifecycle_result.chunks if lifecycle_result is not None else []
             graph_materialization = (
-                dict(lifecycle_result.graph_materialization)
-                if lifecycle_result is not None
-                else {}
+                dict(lifecycle_result.graph_materialization) if lifecycle_result is not None else {}
             )
         else:
             chunks = await ChunkService(self.session, self.store.root).index_document(
@@ -530,9 +540,7 @@ class DocumentService:
             return None
         fallback = f"Graph materialization {status}."
         return str(
-            graph_materialization.get("reason")
-            or graph_materialization.get("error")
-            or fallback
+            graph_materialization.get("reason") or graph_materialization.get("error") or fallback
         )
 
     async def _active_runtime_profile(self) -> RuntimeProfile | None:

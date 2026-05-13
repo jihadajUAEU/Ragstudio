@@ -1,6 +1,6 @@
 from typing import Any, Literal
 
-from pydantic import Field
+from pydantic import Field, field_validator
 
 from ragstudio.schemas.common import StudioModel
 from ragstudio.services.runtime_policy import DEFAULT_PARSER_MODE
@@ -23,6 +23,35 @@ class DomainMetadata(StudioModel):
     script: str | None = None
     content_role: str | None = None
     metadata_sources: list[str] = Field(default_factory=list)
+
+
+class MinerUParseOptionsIn(StudioModel):
+    parser: str | None = None
+    parse_method: str | None = None
+    backend: str | None = None
+    device: str | None = None
+    lang: str | None = None
+    formula: bool | None = None
+    table: bool | None = None
+    source: str | None = None
+    max_concurrent_files: int | None = Field(default=None, ge=1, le=8)
+
+    @field_validator("parser", "parse_method", "backend", "device", "lang", "source")
+    @classmethod
+    def normalize_text_option(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if normalized:
+            return normalized
+        return None
+
+    @field_validator("max_concurrent_files", mode="before")
+    @classmethod
+    def reject_bool_capacity(cls, value: object) -> object:
+        if isinstance(value, bool):
+            raise ValueError("max_concurrent_files must be an integer")
+        return value
 
 
 class DomainProfileOut(StudioModel):
@@ -55,3 +84,4 @@ class DomainMetadataSuggestOut(StudioModel):
 class IndexDocumentIn(StudioModel):
     parser_mode: ParserMode = DEFAULT_PARSER_MODE
     domain_metadata: DomainMetadata = Field(default_factory=DomainMetadata)
+    mineru_parse_options: MinerUParseOptionsIn | None = None

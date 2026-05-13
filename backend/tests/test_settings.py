@@ -746,15 +746,66 @@ async def test_mineru_connection_test_reports_hpc_mode(client, monkeypatch):
     assert response.status_code == 200
     body = response.json()
     assert body["ok"] is True
-    assert body["optimization"] == {
+    assert body["optimization"]["reported"] == {
         "backend": "pipeline",
         "device": "cuda:0",
         "max_concurrent_files": 2,
     }
+    assert body["optimization"]["capacity_reported"] is True
     assert "HPC coordinator mode" in body["detail"]
     assert "backend=pipeline" in body["detail"]
     assert "device=cuda:0" in body["detail"]
     assert "maxConcurrentFiles=2" in body["detail"]
+
+
+@pytest.mark.asyncio
+async def test_mineru_connection_test_warns_when_sidecar_capacity_is_missing(
+    client,
+    monkeypatch,
+):
+    class FakeClient:
+        def __init__(self, base_url, timeout_ms, poll_interval_ms):
+            self.base_url = base_url
+
+        async def health(self):
+            from ragstudio.services.mineru_client import MinerUSidecarHealth
+
+            return MinerUSidecarHealth(
+                ready=True,
+                detail="RAG-Anything sidecar ready",
+                version="hybrid",
+                hpc_enabled=True,
+                hpc_mode="coordinator",
+                raw={"hpcMineru": {"enabled": True, "mode": "coordinator"}},
+            )
+
+    monkeypatch.setattr("ragstudio.api.routes.settings.MinerUClient", FakeClient)
+    payload = {
+        "provider": "openai",
+        "llm_model": "gpt-4.1",
+        "embedding_model": "text-embedding-3-large",
+        "storage_backend": "postgres_pgvector_neo4j",
+        "mineru_enabled": True,
+        "mineru_base_url": "http://10.10.9.19:8765",
+        "mineru_require_hpc": True,
+        "mineru_backend": "pipeline",
+        "mineru_device": "cuda:0",
+        "mineru_max_concurrent_files": 2,
+    }
+
+    response = await client.post("/api/settings/default/test-mineru", json=payload)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is True
+    assert body["optimization"]["requested"] == {
+        "backend": "pipeline",
+        "device": "cuda:0",
+        "max_concurrent_files": 2,
+    }
+    assert body["optimization"]["reported"] == {}
+    assert body["optimization"]["capacity_reported"] is False
+    assert "capacity not reported by sidecar" in body["detail"]
 
 
 @pytest.mark.asyncio
@@ -1025,9 +1076,7 @@ async def test_reranker_connection_test_uses_saved_api_key_when_blank(client, mo
 
 
 @pytest.mark.asyncio
-async def test_reranker_connection_test_uses_saved_llm_key_for_llm_provider(
-    client, monkeypatch
-):
+async def test_reranker_connection_test_uses_saved_llm_key_for_llm_provider(client, monkeypatch):
     requests = []
 
     class FakeResponse:
@@ -1039,11 +1088,7 @@ async def test_reranker_connection_test_uses_saved_llm_key_for_llm_provider(
         def json(self):
             return {
                 "choices": [
-                    {
-                        "message": {
-                            "content": '[{"index": 1, "score": 0.98, "reason": "matches"}]'
-                        }
-                    }
+                    {"message": {"content": '[{"index": 1, "score": 0.98, "reason": "matches"}]'}}
                 ]
             }
 

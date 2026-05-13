@@ -111,6 +111,9 @@ export const apiClient = {
     formData.set("file", file);
     formData.set("parser_mode", options.parser_mode ?? DEFAULT_PARSER_MODE);
     formData.set("domain_metadata", JSON.stringify(options.domain_metadata ?? {}));
+    if (options.mineru_parse_options) {
+      formData.set("mineru_parse_options", JSON.stringify(options.mineru_parse_options));
+    }
     return request<DocumentOut>("/api/documents", {
       method: "POST",
       body: formData,
