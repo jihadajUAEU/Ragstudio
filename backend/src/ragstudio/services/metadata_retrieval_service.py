@@ -139,11 +139,19 @@ class MetadataRetrievalService:
         if isinstance(extraction_quality, dict):
             warnings = extraction_quality.get("parser_warnings")
             parser_warnings = warnings if isinstance(warnings, list) else []
+        counted_parser_warnings = [
+            warning
+            for warning in parser_warnings
+            if not (
+                isinstance(warning, dict)
+                and bool(warning.get("suppressed_from_counts"))
+            )
+        ]
         parser_metadata = metadata.get("parser_metadata")
         parser_metadata = parser_metadata if isinstance(parser_metadata, dict) else {}
         return {
             "parser": metadata.get("backend") or parser_metadata.get("backend"),
-            "warning_count": len(parser_warnings),
+            "warning_count": len(counted_parser_warnings),
         }
 
 

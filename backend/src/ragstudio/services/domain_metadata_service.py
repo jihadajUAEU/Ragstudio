@@ -21,6 +21,7 @@ def reference_custom_json(
     reference_resolution: dict[str, object] | None = None,
     provenance: dict[str, object] | None = None,
     parser_normalization: dict[str, object] | None = None,
+    mineru_parse_options: dict[str, object] | None = None,
     retrieval: dict[str, bool] | None = None,
     graph: dict[str, object] | None = None,
 ) -> dict[str, object]:
@@ -46,6 +47,8 @@ def reference_custom_json(
         value["provenance"] = provenance
     if parser_normalization:
         value["parser_normalization"] = parser_normalization
+    if mineru_parse_options:
+        value["mineru_parse_options"] = mineru_parse_options
     if retrieval:
         value["retrieval"] = retrieval
     if graph:
@@ -199,6 +202,16 @@ BUILTIN_PROFILES: list[DomainProfileOut] = [
                     "store_text_hash": True,
                 },
                 parser_normalization=PROSE_PARSER_NORMALIZATION,
+                mineru_parse_options={
+                    "parser": "mineru",
+                    "parse_method": "ocr",
+                    "backend": "pipeline",
+                    "device": "cuda:0",
+                    "lang": "arabic",
+                    "formula": False,
+                    "table": False,
+                    "max_concurrent_files": 1,
+                },
                 retrieval={
                     "exact_reference_top1": True,
                     "boost_same_chapter": True,
@@ -269,6 +282,16 @@ BUILTIN_PROFILES: list[DomainProfileOut] = [
                     "store_text_hash": True,
                 },
                 parser_normalization=PROSE_PARSER_NORMALIZATION,
+                mineru_parse_options={
+                    "parser": "mineru",
+                    "parse_method": "ocr",
+                    "backend": "pipeline",
+                    "device": "cuda:0",
+                    "lang": "arabic",
+                    "formula": False,
+                    "table": False,
+                    "max_concurrent_files": 1,
+                },
                 retrieval={
                     "exact_reference_top1": True,
                     "boost_same_chapter": True,

@@ -57,7 +57,7 @@ async def suggest_domain_metadata(
     filename = file.filename or "upload"
     content_type = file.content_type or "application/octet-stream"
     data = await read_upload_file(file)
-    sampler = PageSampler()
+    sampler = PageSampler(max_pages=10)
     pages = sampler.sample(data, filename=filename, content_type=content_type)
     if not pages:
         raise HTTPException(

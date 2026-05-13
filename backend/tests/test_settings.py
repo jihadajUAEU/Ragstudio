@@ -119,6 +119,37 @@ async def test_settings_profile_saves_vllm_embedding_config_without_returning_se
 
 
 @pytest.mark.asyncio
+async def test_settings_profile_saves_mineru_a100_parser_tuning(client):
+    payload = {
+        "provider": "openai",
+        "llm_model": "gpt-4.1",
+        "embedding_model": "text-embedding-3-large",
+        "storage_backend": "postgres_pgvector_neo4j",
+        "mineru_enabled": True,
+        "mineru_base_url": "http://127.0.0.1:8765",
+        "mineru_backend": "pipeline",
+        "mineru_device": "cuda:0",
+        "mineru_lang": "arabic",
+        "mineru_formula": False,
+        "mineru_table": False,
+        "mineru_source": "huggingface",
+        "mineru_max_concurrent_files": 2,
+    }
+
+    create_response = await client.put("/api/settings/default", json=payload)
+
+    assert create_response.status_code == 200
+    body = create_response.json()
+    assert body["mineru_backend"] == "pipeline"
+    assert body["mineru_device"] == "cuda:0"
+    assert body["mineru_lang"] == "arabic"
+    assert body["mineru_formula"] is False
+    assert body["mineru_table"] is False
+    assert body["mineru_source"] == "huggingface"
+    assert body["mineru_max_concurrent_files"] == 2
+
+
+@pytest.mark.asyncio
 async def test_embedding_connection_test_validates_vector_dimensions(client, monkeypatch):
     requests = []
 
@@ -271,6 +302,13 @@ async def test_provider_sync_preview_maps_manifest_without_persisting(client, mo
                     "enabled": True,
                     "apiUrl": "http://10.10.9.19:8765",
                     "timeoutMs": 1800000,
+                    "backend": "pipeline",
+                    "device": "cuda:0",
+                    "lang": "arabic",
+                    "formula": False,
+                    "table": False,
+                    "source": "huggingface",
+                    "maxConcurrentFiles": 2,
                 },
                 "reranker": {
                     "apiUrl": "http://10.10.9.193:8005/v1",
@@ -336,6 +374,13 @@ async def test_provider_sync_preview_maps_manifest_without_persisting(client, mo
     assert body["patch"]["mineru_require_hpc"] is True
     assert body["patch"]["mineru_base_url"] == "http://10.10.9.19:8765"
     assert body["patch"]["mineru_timeout_ms"] == 14400000
+    assert body["patch"]["mineru_backend"] == "pipeline"
+    assert body["patch"]["mineru_device"] == "cuda:0"
+    assert body["patch"]["mineru_lang"] == "arabic"
+    assert body["patch"]["mineru_formula"] is False
+    assert body["patch"]["mineru_table"] is False
+    assert body["patch"]["mineru_source"] == "huggingface"
+    assert body["patch"]["mineru_max_concurrent_files"] == 2
     assert body["patch"]["enable_rerank"] is True
     assert body["patch"]["reranker_provider"] == "generic_http"
     assert body["patch"]["reranker_model"] == "Qwen/Qwen3-Reranker-8B"
@@ -407,6 +452,14 @@ async def test_provider_sync_preview_rejects_invalid_manifest_url(client):
         ({"embeddings": {"timeoutMs": 1800001}}, "embeddings.timeoutMs"),
         ({"hpcMineru": {"enabled": "yes"}}, "hpcMineru.enabled"),
         ({"hpcMineru": {"timeoutMs": -1}}, "hpcMineru.timeoutMs"),
+        ({"hpcMineru": {"backend": 42}}, "hpcMineru.backend"),
+        ({"hpcMineru": {"device": False}}, "hpcMineru.device"),
+        ({"hpcMineru": {"lang": 123}}, "hpcMineru.lang"),
+        ({"hpcMineru": {"formula": "true"}}, "hpcMineru.formula"),
+        ({"hpcMineru": {"table": "true"}}, "hpcMineru.table"),
+        ({"hpcMineru": {"source": 123}}, "hpcMineru.source"),
+        ({"hpcMineru": {"maxConcurrentFiles": 0}}, "hpcMineru.maxConcurrentFiles"),
+        ({"hpcMineru": {"maxConcurrentFiles": 9}}, "hpcMineru.maxConcurrentFiles"),
         ({"reranker": {"apiUrl": 42}}, "reranker.apiUrl"),
         ({"reranker": {"model": False}}, "reranker.model"),
         ({"reranker": {"endpoint": 42}}, "reranker.endpoint"),
@@ -615,7 +668,15 @@ async def test_mineru_connection_test(client, monkeypatch):
                 version="hybrid",
                 hpc_enabled=True,
                 hpc_mode="coordinator",
-                raw={},
+                raw={
+                    "hpcMineru": {
+                        "enabled": True,
+                        "mode": "coordinator",
+                        "backend": "pipeline",
+                        "device": "cuda:0",
+                        "maxConcurrentFiles": 2,
+                    }
+                },
             )
 
     monkeypatch.setattr("ragstudio.api.routes.settings.MinerUClient", FakeClient)
@@ -658,7 +719,15 @@ async def test_mineru_connection_test_reports_hpc_mode(client, monkeypatch):
                 version="hybrid",
                 hpc_enabled=True,
                 hpc_mode="coordinator",
-                raw={},
+                raw={
+                    "hpcMineru": {
+                        "enabled": True,
+                        "mode": "coordinator",
+                        "backend": "pipeline",
+                        "device": "cuda:0",
+                        "maxConcurrentFiles": 2,
+                    }
+                },
             )
 
     monkeypatch.setattr("ragstudio.api.routes.settings.MinerUClient", FakeClient)
@@ -675,8 +744,17 @@ async def test_mineru_connection_test_reports_hpc_mode(client, monkeypatch):
     response = await client.post("/api/settings/default/test-mineru", json=payload)
 
     assert response.status_code == 200
-    assert response.json()["ok"] is True
-    assert "HPC coordinator mode" in response.json()["detail"]
+    body = response.json()
+    assert body["ok"] is True
+    assert body["optimization"] == {
+        "backend": "pipeline",
+        "device": "cuda:0",
+        "max_concurrent_files": 2,
+    }
+    assert "HPC coordinator mode" in body["detail"]
+    assert "backend=pipeline" in body["detail"]
+    assert "device=cuda:0" in body["detail"]
+    assert "maxConcurrentFiles=2" in body["detail"]
 
 
 @pytest.mark.asyncio

@@ -52,6 +52,10 @@ class ReferenceSemantics:
     preserve_original_blocks: bool = False
     block_preview_chars: int = 160
     store_text_hash: bool = False
+    primary_anchor_pattern: str | None = None
+    primary_anchor_unit: str | None = None
+    inline_reference_pattern: str | None = None
+    inline_reference_policy: str = "starts_unit"
 
     @classmethod
     def from_metadata(cls, metadata: DomainMetadata) -> ReferenceSemantics:
@@ -71,6 +75,14 @@ class ReferenceSemantics:
         provenance: dict[str, Any] = (
             provenance_value if isinstance(provenance_value, dict) else {}
         )
+        domain_structure_value = custom.get("domain_structure")
+        domain_structure: dict[str, Any] = (
+            domain_structure_value if isinstance(domain_structure_value, dict) else {}
+        )
+        primary_anchor = domain_structure.get("primary_anchor")
+        primary_anchor = primary_anchor if isinstance(primary_anchor, dict) else {}
+        inline_references = domain_structure.get("inline_references")
+        inline_references = inline_references if isinstance(inline_references, dict) else {}
         schema_pattern = cls._schema_pattern(reference_schema)
         canonical_ref_template = cls._canonical_ref_template(reference_schema)
 
@@ -81,7 +93,11 @@ class ReferenceSemantics:
         profile_name = "scripture_reference" if structured_reference else "generic"
         reference_type = cls._reference_type(metadata, reference_schema)
 
-        chunk_unit = cls._string_value(chunking.get("unit"), default="section")
+        primary_anchor_unit = cls._string_value(primary_anchor.get("unit"), default=None)
+        chunk_unit = cls._string_value(
+            chunking.get("unit"),
+            default=primary_anchor_unit or "section",
+        )
         if chunk_unit == "section" and structured_reference:
             chunk_unit = "verse"
 
@@ -161,6 +177,22 @@ class ReferenceSemantics:
                 provenance.get("store_text_hash"),
                 default=False,
             ),
+            primary_anchor_pattern=cls._string_value(
+                primary_anchor.get("regex"),
+                default=None,
+            ),
+            primary_anchor_unit=cls._string_value(
+                primary_anchor.get("unit"),
+                default=None,
+            ),
+            inline_reference_pattern=cls._string_value(
+                inline_references.get("regex"),
+                default=None,
+            ),
+            inline_reference_policy=cls._string_value(
+                inline_references.get("policy"),
+                default="starts_unit",
+            ),
         )
 
     def extract_query_reference(self, query: str) -> dict[str, int | str] | None:
@@ -182,8 +214,46 @@ class ReferenceSemantics:
             references.append(ref)
         return references
 
+    def extract_primary_anchor_references(self, text: str) -> list[dict[str, int | str]]:
+        pattern = self._primary_anchor_regex()
+        if pattern is None:
+            return self.extract_chunk_references(text)
+        stripped = text.strip()
+        if not stripped:
+            return []
+        references: list[dict[str, int | str]] = []
+        seen: set[str] = set()
+        for match in pattern.finditer(stripped):
+            reference = self._match_to_reference(match)
+            key = str(reference["ref"])
+            if key in seen:
+                continue
+            seen.add(key)
+            references.append(reference)
+        return references
+
     def split_reference_units(self, text: str) -> list[str]:
         matches = list(self._iter_matches(text))
+        if not matches:
+            return []
+
+        units: list[str] = []
+        leading = text[: matches[0].start()].strip()
+        for index, match in enumerate(matches):
+            start = match.start()
+            end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+            unit = text[start:end].strip()
+            if index == 0 and leading:
+                unit = f"{leading}\n\n{unit}".strip()
+            if unit:
+                units.append(unit)
+        return units
+
+    def split_primary_anchor_units(self, text: str) -> list[str]:
+        pattern = self._primary_anchor_regex()
+        if pattern is None:
+            return self.split_reference_units(text)
+        matches = list(pattern.finditer(text))
         if not matches:
             return []
 
@@ -204,7 +274,42 @@ class ReferenceSemantics:
         text: str,
         source_location: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        references = self.extract_chunk_references(text)
+        all_references = self.extract_chunk_references(text)
+        if (
+            self.inline_reference_policy == "cross_reference_only"
+            and self.primary_anchor_pattern
+        ):
+            primary_references = self.extract_primary_anchor_references(text)
+            if not primary_references:
+                return {}
+            primary_labels = {
+                str(reference["ref"])
+                for reference in primary_references
+                if reference.get("ref") is not None
+            }
+            cross_references = [
+                reference
+                for reference in all_references
+                if str(reference.get("ref")) not in primary_labels
+            ]
+            return self._reference_metadata_from_references(
+                primary_references,
+                source_location,
+                cross_references=cross_references,
+            )
+
+        return self._reference_metadata_from_references(
+            all_references,
+            source_location,
+        )
+
+    def _reference_metadata_from_references(
+        self,
+        references: list[dict[str, int | str]],
+        source_location: dict[str, Any] | None = None,
+        *,
+        cross_references: list[dict[str, int | str]] | None = None,
+    ) -> dict[str, Any]:
         if not references:
             return {}
 
@@ -212,6 +317,9 @@ class ReferenceSemantics:
             "reference_type": self.reference_type,
             "references": [str(ref["ref"]) for ref in references],
         }
+        cross_reference_labels = self._reference_labels(cross_references or [])
+        if cross_reference_labels:
+            metadata["cross_references"] = cross_reference_labels
         chapter_verse_refs = [
             ref
             for ref in references
@@ -278,6 +386,20 @@ class ReferenceSemantics:
 
         return metadata
 
+    def _reference_labels(self, references: list[dict[str, int | str]]) -> list[str]:
+        labels: list[str] = []
+        seen: set[str] = set()
+        for reference in references:
+            label = reference.get("ref")
+            if label is None:
+                continue
+            item = str(label)
+            if item in seen:
+                continue
+            seen.add(item)
+            labels.append(item)
+        return labels
+
     def chunk_reference_metadata(
         self,
         text: str,
@@ -317,6 +439,14 @@ class ReferenceSemantics:
         if reference_type in {"book_hadith", "hadith"}:
             patterns.append(BOOK_HADITH_PATTERN)
         return patterns
+
+    def _primary_anchor_regex(self) -> re.Pattern[str] | None:
+        if not self.primary_anchor_pattern:
+            return None
+        try:
+            return re.compile(self.primary_anchor_pattern, flags=re.IGNORECASE)
+        except re.error:
+            return None
 
     def _match_to_reference(self, match: re.Match[str]) -> dict[str, int | str]:
         groups = match.groupdict()
@@ -533,7 +663,7 @@ class ReferenceSemantics:
         return default
 
     @staticmethod
-    def _string_value(value: Any, *, default: str) -> str:
+    def _string_value(value: Any, *, default: str | None) -> str | None:
         if isinstance(value, str) and value.strip():
             return value.strip()
         return default

@@ -111,6 +111,25 @@ class ProviderManifestService:
             self._validate_optional_positive_int(
                 mineru, "timeoutMs", "hpcMineru.timeoutMs"
             )
+            self._validate_optional_str(mineru, "backend", "hpcMineru.backend")
+            self._validate_optional_str(mineru, "device", "hpcMineru.device")
+            self._validate_optional_str(mineru, "lang", "hpcMineru.lang")
+            if "formula" in mineru and not isinstance(mineru["formula"], bool):
+                raise ProviderManifestError(
+                    "Provider manifest field hpcMineru.formula must be a boolean."
+                )
+            if "table" in mineru and not isinstance(mineru["table"], bool):
+                raise ProviderManifestError(
+                    "Provider manifest field hpcMineru.table must be a boolean."
+                )
+            self._validate_optional_str(mineru, "source", "hpcMineru.source")
+            self._validate_optional_int_range(
+                mineru,
+                "maxConcurrentFiles",
+                "hpcMineru.maxConcurrentFiles",
+                minimum=1,
+                maximum=8,
+            )
 
         reranker = manifest.get("reranker")
         if isinstance(reranker, dict):
@@ -218,6 +237,11 @@ class ProviderManifestService:
             enabled = mineru.get("enabled")
             api_url = self._optional_str(mineru.get("apiUrl"))
             timeout_ms = self._optional_int(mineru.get("timeoutMs"))
+            backend = self._optional_str(mineru.get("backend"))
+            device = self._optional_str(mineru.get("device"))
+            lang = self._optional_str(mineru.get("lang"))
+            source = self._optional_str(mineru.get("source"))
+            max_concurrent_files = self._optional_int(mineru.get("maxConcurrentFiles"))
             if isinstance(enabled, bool):
                 patch["mineru_enabled"] = enabled
                 if enabled:
@@ -226,6 +250,20 @@ class ProviderManifestService:
                 patch["mineru_base_url"] = api_url.rstrip("/")
             if timeout_ms is not None:
                 patch["mineru_timeout_ms"] = max(timeout_ms, MINERU_DEFAULT_TIMEOUT_MS)
+            if backend:
+                patch["mineru_backend"] = backend
+            if device:
+                patch["mineru_device"] = device
+            if lang:
+                patch["mineru_lang"] = lang
+            if isinstance(mineru.get("formula"), bool):
+                patch["mineru_formula"] = mineru["formula"]
+            if isinstance(mineru.get("table"), bool):
+                patch["mineru_table"] = mineru["table"]
+            if source:
+                patch["mineru_source"] = source
+            if max_concurrent_files is not None:
+                patch["mineru_max_concurrent_files"] = max_concurrent_files
 
         reranker = manifest.get("reranker")
         if isinstance(reranker, dict):

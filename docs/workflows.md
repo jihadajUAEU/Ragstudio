@@ -79,7 +79,7 @@ Open **Settings** to edit the default runtime profile. The form fields are:
 
 Use **Provider sync** to preview a hosted HPC provider manifest before saving runtime changes. Enter a manifest URL such as `https://updates.jihadaj.com/providers.json`, click **Sync**, and review the updated LLM, embeddings, and MinerU fields. Sync only updates the form preview. Click **Save** to persist the reviewed settings.
 
-The supported manifest sections are `reasoning`, `embeddings`, and `hpcMineru`. `reasoning` configures the OpenAI-compatible LLM endpoint and shows read-only capability badges for Text, Vision, and Reasoning.
+The supported manifest sections are `reasoning`, `embeddings`, `reranker`, and `hpcMineru`. `hpcMineru` can provide `enabled`, `apiUrl`, `timeoutMs`, `backend`, `device`, `lang`, `formula`, `table`, `source`, and `maxConcurrentFiles`; Settings previews these values before saving. `reasoning` configures the OpenAI-compatible LLM endpoint and shows read-only capability badges for Text, Vision, and Reasoning.
 
 Click **Test LLM** to validate an OpenAI-compatible generation endpoint through `POST /api/settings/default/test-llm`. The backend sends one tiny request to `{base_url}/chat/completions` and checks that the response includes choices.
 
@@ -136,6 +136,8 @@ Artifacts are stored under `.ragstudio/mineru-artifacts/<document_id>/`. Ragstud
 
 Domain metadata is applied before parsing. Parser metadata is added after parsing. Chunk metadata therefore has two top-level groups: `domain_metadata` and `parser_metadata`.
 
+Ragstudio sends RAG-Anything parser hints inside the existing `metadata` form field for `/parse-async`. The sidecar receives `ragAnything.parser`, `ragAnything.parseMethod`, `ragAnything.parserKwargs`, and `ragAnything.maxConcurrentFiles`. For A100 jobs, the expected parser kwargs are usually `backend=pipeline`, `device=cuda:0`, `formula=true`, and `table=true`.
+
 MinerU output is passed through Ragstudio's shared metadata-driven chunking layer before persistence. Large markdown artifacts are split by metadata profile, headings, pages, verse markers, paragraph boundaries, and a hard word cap so a successful MinerU parse cannot persist as a single oversized retrieval chunk.
 
 ### Parser Quality Warnings
@@ -156,10 +158,29 @@ Common warning codes:
   where the document profile expects prose/reference text, so raw parser math was
   excluded from chunk text.
 - `recovered_text_from_misclassified_block`: MinerU supplied recovered text for a
-  suspicious non-text block, and Ragstudio used that recovered text.
+  suspicious non-text block, and Ragstudio used that recovered text. When
+  `custom_json.layout_quality_policy` says this recovery is normal for the
+  document, the intelligent parser quality gate marks the warning as `info`,
+  keeps it visible for audit, and excludes it from warning counts.
+- `recovered_text_from_disallowed_block`: MinerU supplied recovered text for a
+  block type outside the active parser profile. A document-specific
+  `layout_quality_policy` can classify text-bearing recovery as acceptable,
+  degraded, or blocking.
 - `reference_unit_missing_expected_script`: a reference-bearing chunk is expected
-  to include the configured script, such as Arabic or Latin, but no matching
-  letters were detected.
+  to include a script required by the active domain policy, such as Arabic or
+  Latin, but no matching letters were detected. When
+  `custom_json.quality_policy` is present, only `required_scripts` trigger this
+  warning. `optional_scripts` are enrichment signals and do not warn when absent
+  if `missing_optional_script_action` is `no_warning`.
+
+For commentary, translation, legal analysis, manuals, and other secondary-source
+documents, autosuggest can mark a primary-source script as optional. For example,
+an English Tafseer organized by `Verse 18:30` may require Latin text for
+answerable chunks while treating Arabic as optional enrichment. Inline citations
+such as `25:75-76` can be stored as cross-references instead of separate
+answerable chunks when
+`custom_json.domain_structure.inline_references.policy` is
+`cross_reference_only`.
 
 These warnings do not automatically discard evidence. They make incomplete parser
 extraction visible to jobs, retrieval traces, source metadata, and answer prompts so

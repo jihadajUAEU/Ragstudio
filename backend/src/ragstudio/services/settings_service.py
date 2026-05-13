@@ -138,6 +138,13 @@ class SettingsService:
             mineru_timeout_ms=max(profile.mineru_timeout_ms or 0, MINERU_DEFAULT_TIMEOUT_MS),
             mineru_poll_interval_ms=profile.mineru_poll_interval_ms or 1_000,
             mineru_require_hpc=default_bool(profile.mineru_require_hpc, True),
+            mineru_backend=profile.mineru_backend or "pipeline",
+            mineru_device=profile.mineru_device or "cuda:0",
+            mineru_lang=profile.mineru_lang,
+            mineru_formula=default_bool(profile.mineru_formula, True),
+            mineru_table=default_bool(profile.mineru_table, True),
+            mineru_source=profile.mineru_source,
+            mineru_max_concurrent_files=profile.mineru_max_concurrent_files or 1,
             runtime_mode=normalize_runtime_mode(
                 profile.runtime_mode,
                 profile.storage_backend,
@@ -208,4 +215,9 @@ class SettingsService:
         timeout = values.get("mineru_timeout_ms")
         if isinstance(timeout, int):
             values["mineru_timeout_ms"] = max(timeout, MINERU_DEFAULT_TIMEOUT_MS)
+        values["mineru_backend"] = cast(str | None, values.get("mineru_backend")) or "pipeline"
+        values["mineru_device"] = cast(str | None, values.get("mineru_device")) or "cuda:0"
+        max_concurrent = values.get("mineru_max_concurrent_files")
+        if isinstance(max_concurrent, int):
+            values["mineru_max_concurrent_files"] = max(1, min(max_concurrent, 8))
         return values

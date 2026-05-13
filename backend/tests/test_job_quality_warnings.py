@@ -136,6 +136,69 @@ async def test_job_quality_warnings_exposes_persisted_parser_warning_details(cli
 
 
 @pytest.mark.asyncio
+async def test_job_quality_warnings_keeps_suppressed_recovery_visible_but_uncounted(client):
+    app = client._transport.app
+    accepted_recovery = {
+        "code": "recovered_text_from_misclassified_block",
+        "message": "Used parser-provided recovered text.",
+        "block_type": "equation",
+        "severity": "info",
+        "quality_gate_action": "accepted_recovery",
+        "suppressed_from_counts": True,
+    }
+
+    async with app.state.session_factory() as session:
+        document = Document(
+            id="doc-quality-info",
+            filename="quality-info.pdf",
+            content_type="application/pdf",
+            sha256="quality-info-sha",
+            artifact_path=str(app.state.settings.data_dir / "quality-info.pdf"),
+            status=StageStatus.SUCCEEDED.value,
+        )
+        session.add(document)
+        session.add(
+            Job(
+                id="job-quality-info",
+                type="index_document",
+                target_id=document.id,
+                status=StageStatus.SUCCEEDED.value,
+                progress=100,
+                logs=[],
+                result={
+                    "parser_quality": {
+                        "warning_counts": {},
+                        "affected_chunks": 0,
+                    },
+                },
+            )
+        )
+        session.add(
+            Chunk(
+                id="chunk-quality-info",
+                document_id=document.id,
+                text="Verse 18:30 Tafseer commentary.",
+                source_location={"page": 809},
+                extraction_quality={"parser_warnings": [accepted_recovery]},
+                metadata_json={
+                    "parser_metadata": {"artifact_ref": "content_list.json"},
+                    "extraction_quality": {"parser_warnings": [accepted_recovery]},
+                },
+            )
+        )
+        await session.commit()
+
+    response = await client.get("/api/jobs/job-quality-info/quality-warnings")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["warning_counts"] == {}
+    assert payload["affected_chunks"] == 0
+    assert payload["total"] == 1
+    assert payload["items"][0]["warning"]["quality_gate_action"] == "accepted_recovery"
+
+
+@pytest.mark.asyncio
 async def test_job_quality_warnings_reads_index_report_from_existing_index_record(client):
     app = client._transport.app
 

@@ -1,3 +1,6 @@
+from pathlib import Path
+
+import pytest
 from ragstudio.schemas.parsing import DomainMetadata
 from ragstudio.services.parser_normalization import (
     EQUATION_BLOCK_TYPES,
@@ -75,6 +78,47 @@ def test_recovered_text_is_used_with_recovery_warning():
             "recovery_source": "recovered_text",
         }
     ]
+
+
+def test_image_only_equation_recovers_overlapping_pdf_text_layer(tmp_path: Path):
+    fitz = pytest.importorskip("fitz")
+    pdf_path = tmp_path / "source_origin.pdf"
+    document = fitz.open()
+    page = document.new_page(width=612, height=792)
+    page.insert_text((146, 420), "Recovered PDF text layer line", fontsize=12)
+    document.save(pdf_path)
+    document.close()
+
+    content_list = tmp_path / "source_content_list.json"
+    content_list.write_text("[]", encoding="utf-8")
+    data = [
+        {
+            "type": "equation",
+            "img_path": "images/ayah.jpg",
+            "bbox": [232, 515, 903, 546],
+            "page_idx": 0,
+        }
+    ]
+    metadata = DomainMetadata(
+        domain="quran_tafseer",
+        script="mixed",
+        tags=["quran", "arabic", "english"],
+        reference_pattern="surah_number:verse_number",
+    )
+
+    blocks = MinerUContentNormalizer().normalize_content_list(
+        data,
+        domain_metadata=metadata,
+        artifact_root=tmp_path,
+        content_list_path=content_list,
+    )
+
+    assert blocks[0].text == "Recovered PDF text layer line"
+    assert blocks[0].recovery is not None
+    assert blocks[0].recovery.source == "pdf_text_layer:source_origin.pdf"
+    warning = blocks[0].warning_metadata()[0]
+    assert warning["code"] == "recovered_text_from_misclassified_block"
+    assert warning["recovery_source"] == "pdf_text_layer:source_origin.pdf"
 
 
 def test_arabic_hadith_misclassified_as_equation_is_flagged_outside_quran_examples():

@@ -65,6 +65,13 @@ def _ensure_runtime_columns(connection) -> None:
                 "mineru_timeout_ms": "INTEGER DEFAULT 14400000 NOT NULL",
                 "mineru_poll_interval_ms": "INTEGER DEFAULT 1000 NOT NULL",
                 "mineru_require_hpc": _bool_column(connection, True),
+                "mineru_backend": "VARCHAR DEFAULT 'pipeline' NOT NULL",
+                "mineru_device": "VARCHAR DEFAULT 'cuda:0' NOT NULL",
+                "mineru_lang": "VARCHAR",
+                "mineru_formula": _bool_column(connection, True),
+                "mineru_table": _bool_column(connection, True),
+                "mineru_source": "VARCHAR",
+                "mineru_max_concurrent_files": "INTEGER DEFAULT 1 NOT NULL",
                 "runtime_mode": "VARCHAR DEFAULT 'runtime' NOT NULL",
                 "vision_model": "VARCHAR",
                 "vision_base_url": "VARCHAR",
@@ -450,6 +457,54 @@ def _normalize_settings_profile_values(connection) -> None:
             UPDATE settings_profiles
             SET mineru_require_hpc = TRUE
             WHERE mineru_require_hpc IS NULL
+            """
+        )
+    )
+    connection.execute(
+        text(
+            """
+            UPDATE settings_profiles
+            SET mineru_backend = 'pipeline'
+            WHERE mineru_backend IS NULL
+               OR mineru_backend = ''
+            """
+        )
+    )
+    connection.execute(
+        text(
+            """
+            UPDATE settings_profiles
+            SET mineru_device = 'cuda:0'
+            WHERE mineru_device IS NULL
+               OR mineru_device = ''
+            """
+        )
+    )
+    connection.execute(
+        text(
+            """
+            UPDATE settings_profiles
+            SET mineru_formula = TRUE
+            WHERE mineru_formula IS NULL
+            """
+        )
+    )
+    connection.execute(
+        text(
+            """
+            UPDATE settings_profiles
+            SET mineru_table = TRUE
+            WHERE mineru_table IS NULL
+            """
+        )
+    )
+    connection.execute(
+        text(
+            """
+            UPDATE settings_profiles
+            SET mineru_max_concurrent_files = 1
+            WHERE mineru_max_concurrent_files IS NULL
+               OR mineru_max_concurrent_files < 1
             """
         )
     )

@@ -25,6 +25,7 @@ type NumberFieldName = Extract<
   | "llm_timeout_ms"
   | "mineru_timeout_ms"
   | "mineru_poll_interval_ms"
+  | "mineru_max_concurrent_files"
   | "chunk_token_size"
   | "chunk_overlap_token_size"
   | "context_window"
@@ -63,6 +64,7 @@ const NUMBER_CONSTRAINTS: Record<NumberFieldName, NumberConstraints> = {
   llm_timeout_ms: { min: MIN_RUNTIME_TIMEOUT_MS, max: MAX_RUNTIME_TIMEOUT_MS },
   mineru_timeout_ms: { min: 1, max: DEFAULT_MINERU_TIMEOUT_MS },
   mineru_poll_interval_ms: { min: 100, max: 60_000 },
+  mineru_max_concurrent_files: { min: 1, max: 8 },
   chunk_token_size: { min: 1, max: 128_000 },
   chunk_overlap_token_size: { min: 0, max: 128_000 },
   context_window: { min: 0, max: 100 },
@@ -100,6 +102,13 @@ const DEFAULT_FORM_VALUES: SettingsProfileIn = {
   mineru_timeout_ms: DEFAULT_MINERU_TIMEOUT_MS,
   mineru_poll_interval_ms: 1_000,
   mineru_require_hpc: true,
+  mineru_backend: "pipeline",
+  mineru_device: "cuda:0",
+  mineru_lang: "",
+  mineru_formula: true,
+  mineru_table: true,
+  mineru_source: "",
+  mineru_max_concurrent_files: 1,
   runtime_mode: "runtime",
   vision_model: "",
   vision_base_url: "",
@@ -304,6 +313,16 @@ export function SettingsPage() {
         NUMBER_CONSTRAINTS.mineru_poll_interval_ms,
       ),
       mineru_require_hpc: formValues.mineru_require_hpc ?? true,
+      mineru_backend: formValues.mineru_backend || "pipeline",
+      mineru_device: formValues.mineru_device || "cuda:0",
+      mineru_lang: formValues.mineru_lang || null,
+      mineru_formula: formValues.mineru_formula ?? true,
+      mineru_table: formValues.mineru_table ?? true,
+      mineru_source: formValues.mineru_source || null,
+      mineru_max_concurrent_files: constrainNumber(
+        formValues.mineru_max_concurrent_files ?? 1,
+        NUMBER_CONSTRAINTS.mineru_max_concurrent_files,
+      ),
       runtime_mode: formValues.runtime_mode ?? "runtime",
       storage_backend: formValues.storage_backend ?? "postgres_pgvector_neo4j",
       vision_timeout_ms: constrainNumber(
@@ -452,10 +471,22 @@ export function SettingsPage() {
         : rerankerUsesLlm && settingsQuery.data?.has_llm_api_key
           ? "Saved LLM API key present"
         : "";
+  const mineruOptimization = testMinerU.data?.optimization ?? {};
+  const mineruOptimizationMessage = [
+    mineruOptimization.backend ? `backend=${String(mineruOptimization.backend)}` : "",
+    mineruOptimization.device ? `device=${String(mineruOptimization.device)}` : "",
+    mineruOptimization.max_concurrent_files
+      ? `maxConcurrentFiles=${String(mineruOptimization.max_concurrent_files)}`
+      : "",
+  ]
+    .filter(Boolean)
+    .join("; ");
   const mineruTestMessage = testMinerU.error
     ? testMinerU.error.message
     : testMinerU.data
-      ? `${testMinerU.data.ok ? "Connected" : "Failed"}: ${testMinerU.data.detail}`
+      ? `${testMinerU.data.ok ? "Connected" : "Failed"}: ${testMinerU.data.detail}${
+          mineruOptimizationMessage ? ` ${mineruOptimizationMessage}` : ""
+        }`
       : "";
 
   const busy = updateSettings.isPending || !formValues;
@@ -883,6 +914,65 @@ export function SettingsPage() {
               checked={formValues?.mineru_require_hpc ?? true}
               disabled={busy}
               onChange={(checked) => updateField("mineru_require_hpc", checked)}
+            />
+            <Field
+              label="MinerU backend"
+              name="mineru_backend"
+              value={formValues?.mineru_backend ?? "pipeline"}
+              placeholder="pipeline"
+              disabled={busy}
+              onChange={(value) => updateField("mineru_backend", value)}
+            />
+            <Field
+              label="MinerU device"
+              name="mineru_device"
+              value={formValues?.mineru_device ?? "cuda:0"}
+              placeholder="cuda:0"
+              disabled={busy}
+              onChange={(value) => updateField("mineru_device", value)}
+            />
+            <Field
+              label="MinerU language"
+              name="mineru_lang"
+              value={formValues?.mineru_lang ?? ""}
+              placeholder="arabic"
+              disabled={busy}
+              required={false}
+              onChange={(value) => updateField("mineru_lang", value)}
+            />
+            <Field
+              label="MinerU source"
+              name="mineru_source"
+              value={formValues?.mineru_source ?? ""}
+              placeholder="huggingface"
+              disabled={busy}
+              required={false}
+              onChange={(value) => updateField("mineru_source", value)}
+            />
+            <Field
+              label="MinerU max concurrent files"
+              name="mineru_max_concurrent_files"
+              value={numberValue("mineru_max_concurrent_files", 1)}
+              placeholder="1"
+              disabled={busy}
+              type="number"
+              {...NUMBER_CONSTRAINTS.mineru_max_concurrent_files}
+              onChange={(value) => updateNumberField("mineru_max_concurrent_files", value)}
+              onBlur={() => commitNumberField("mineru_max_concurrent_files", 1)}
+            />
+            <CheckboxField
+              label="Parse formulas"
+              name="mineru_formula"
+              checked={formValues?.mineru_formula ?? true}
+              disabled={busy}
+              onChange={(checked) => updateField("mineru_formula", checked)}
+            />
+            <CheckboxField
+              label="Parse tables"
+              name="mineru_table"
+              checked={formValues?.mineru_table ?? true}
+              disabled={busy}
+              onChange={(checked) => updateField("mineru_table", checked)}
             />
           </div>
           <div className="mt-5 flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -1443,6 +1533,13 @@ function settingsToFormValues(settings: SettingsProfileOut): SettingsProfileIn {
     mineru_timeout_ms: settings.mineru_timeout_ms,
     mineru_poll_interval_ms: settings.mineru_poll_interval_ms,
     mineru_require_hpc: settings.mineru_require_hpc,
+    mineru_backend: settings.mineru_backend,
+    mineru_device: settings.mineru_device,
+    mineru_lang: settings.mineru_lang ?? "",
+    mineru_formula: settings.mineru_formula,
+    mineru_table: settings.mineru_table,
+    mineru_source: settings.mineru_source ?? "",
+    mineru_max_concurrent_files: settings.mineru_max_concurrent_files,
     runtime_mode: settings.runtime_mode,
     vision_model: settings.vision_model ?? "",
     vision_base_url: settings.vision_base_url ?? "",

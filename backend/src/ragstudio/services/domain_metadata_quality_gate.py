@@ -9,11 +9,12 @@ from ragstudio.schemas.parsing import DomainMetadata
 from ragstudio.services.adapter import AdapterChunk
 from ragstudio.services.arabic_text import arabic_tokens
 from ragstudio.services.parser_normalization import ExpectedContentProfile
+from ragstudio.services.parser_quality_intelligent_gate import ParserQualityIntelligentGate
 from ragstudio.services.reference_metadata import ReferenceSemantics
 from ragstudio.services.reference_unit_assembler import provenance_only_quality_policy
 
 SCRIPT_PATTERNS = {
-    "arabic": re.compile(r"[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]"),
+    "arabic": re.compile(r"[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]"),
     "latin": re.compile(r"[A-Za-z]"),
     "cyrillic": re.compile(r"[\u0400-\u04FF]"),
     "greek": re.compile(r"[\u0370-\u03FF]"),
@@ -45,6 +46,10 @@ class DomainMetadataQualityGateError(RuntimeError):
 class MetadataQualityProfile:
     domain: str
     expected_scripts: frozenset[str]
+    required_scripts: frozenset[str]
+    optional_scripts: frozenset[str]
+    required_scripts_by_unit_role: dict[str, frozenset[str]]
+    optional_scripts_by_unit_role: dict[str, frozenset[str]]
     reference_patterns: tuple[str, ...]
     parser_strictness: str
     preserve_parallel_text: bool
@@ -52,6 +57,9 @@ class MetadataQualityProfile:
     reference_type: str | None
     equation_blocks_allowed: bool
     structured_references: bool
+    missing_required_script_action: str
+    missing_optional_script_action: str
+    materialization_policy: str
 
 
 class DomainMetadataQualityGate:
@@ -70,6 +78,7 @@ class DomainMetadataQualityGate:
         custom_json = (
             domain_metadata.custom_json if isinstance(domain_metadata.custom_json, dict) else {}
         )
+        quality_policy = _dict_value(custom_json, "quality_policy") or {}
         chunking = _dict_value(custom_json, "chunking") or {}
         reference_schema = _dict_value(custom_json, "reference_schema") or {}
         semantics = ReferenceSemantics.from_metadata(domain_metadata)
@@ -83,13 +92,33 @@ class DomainMetadataQualityGate:
         reference_patterns = list(expected_profile.reference_patterns)
         if semantics.reference_pattern and semantics.reference_pattern not in reference_patterns:
             reference_patterns.append(semantics.reference_pattern)
+        expected_scripts = frozenset(
+            script for script in expected_profile.expected_scripts if script in SCRIPT_PATTERNS
+        )
+        required_scripts = _script_policy_set(quality_policy.get("required_scripts"))
+        optional_scripts = _script_policy_set(quality_policy.get("optional_scripts"))
+        required_scripts_by_unit_role = _script_policy_map(
+            quality_policy.get("required_scripts_by_unit_role")
+        )
+        optional_scripts_by_unit_role = _script_policy_map(
+            quality_policy.get("optional_scripts_by_unit_role")
+        )
+        required_scripts_configured = isinstance(quality_policy.get("required_scripts"), list)
+        if not required_scripts and not required_scripts_configured:
+            required_scripts = expected_scripts
+        all_policy_scripts = (
+            required_scripts
+            | optional_scripts
+            | _script_map_values(required_scripts_by_unit_role)
+            | _script_map_values(optional_scripts_by_unit_role)
+        )
         return MetadataQualityProfile(
             domain=str(domain_metadata.domain or "generic").strip().casefold(),
-            expected_scripts=frozenset(
-                script
-                for script in expected_profile.expected_scripts
-                if script in SCRIPT_PATTERNS
-            ),
+            expected_scripts=frozenset(sorted(all_policy_scripts)),
+            required_scripts=frozenset(sorted(required_scripts)),
+            optional_scripts=frozenset(sorted(optional_scripts)),
+            required_scripts_by_unit_role=required_scripts_by_unit_role,
+            optional_scripts_by_unit_role=optional_scripts_by_unit_role,
             reference_patterns=tuple(reference_patterns),
             parser_strictness=expected_profile.parser_strictness,
             preserve_parallel_text=preserve_parallel_text,
@@ -97,6 +126,17 @@ class DomainMetadataQualityGate:
             reference_type=reference_type,
             equation_blocks_allowed=expected_profile.allows_equations_as_content(),
             structured_references=semantics.profile_name != "generic",
+            missing_required_script_action=_quality_action(
+                quality_policy.get("missing_required_script_action"),
+                default="warn",
+            ),
+            missing_optional_script_action=_quality_action(
+                quality_policy.get("missing_optional_script_action"),
+                default="no_warning",
+            ),
+            materialization_policy=_materialization_policy(
+                quality_policy.get("materialization_policy")
+            ),
         )
 
     def warnings_for_text(
@@ -108,13 +148,13 @@ class DomainMetadataQualityGate:
         metadata: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         profile = self.profile_for(domain_metadata, expected_profile=expected_profile)
-        if not profile.expected_scripts:
+        if not profile.required_scripts and not profile.optional_scripts:
             return []
         if not self._has_reference(text, metadata, profile):
             return []
 
         warnings: list[dict[str, Any]] = []
-        for script in sorted(profile.expected_scripts):
+        for script in sorted(profile.required_scripts):
             pattern = SCRIPT_PATTERNS.get(script)
             if pattern is None or pattern.search(text):
                 continue
@@ -129,6 +169,27 @@ class DomainMetadataQualityGate:
                     "expected_script": script,
                 }
             )
+        if profile.missing_optional_script_action != "no_warning":
+            for script in sorted(profile.optional_scripts):
+                pattern = SCRIPT_PATTERNS.get(script)
+                if pattern is None or pattern.search(text):
+                    continue
+                script_label = script.capitalize()
+                severity = profile.missing_optional_script_action
+                warnings.append(
+                    {
+                        "code": "reference_unit_missing_optional_script",
+                        "message": (
+                            "Reference-bearing chunk can include optional "
+                            f"{script_label} script, but no {script_label} letters were detected."
+                        ),
+                        "expected_script": script,
+                        "script_requirement": "optional",
+                        "action": self._optional_script_action([script], profile),
+                        "severity": severity,
+                        "suppressed_from_counts": severity == "info",
+                    }
+                )
         return warnings
 
     def validate_adapter_chunks(
@@ -168,6 +229,8 @@ class DomainMetadataQualityGate:
                     expected_profile=expected_profile,
                 )
             index_quality_report = self.index_quality_report_from_chunks(chunks)
+        self._apply_intelligent_parser_gate(chunks, domain_metadata=domain_metadata)
+        self._apply_parser_quality_action_policy(chunks)
         quality_summary = self.parser_quality_summary(chunks)
         status = "passed_with_warnings" if quality_summary["warning_counts"] else "passed"
         return {
@@ -177,6 +240,8 @@ class DomainMetadataQualityGate:
             "quality_profile": {
                 "domain": profile.domain,
                 "expected_scripts": sorted(profile.expected_scripts),
+                "required_scripts": sorted(profile.required_scripts),
+                "optional_scripts": sorted(profile.optional_scripts),
                 "preserve_parallel_text": profile.preserve_parallel_text,
                 "reference_unit": profile.reference_unit,
                 "reference_type": profile.reference_type,
@@ -310,6 +375,7 @@ class DomainMetadataQualityGate:
                 "reference_unit_count": 0,
                 "reference_units_with_expected_script": 0,
                 "reference_units_missing_expected_script": 0,
+                "reference_units_missing_optional_script": 0,
                 "reference_script_coverage_ratio": None,
                 "reference_unit_unresolved_count": 0,
                 "quality_unknown_document_count": 1,
@@ -322,11 +388,99 @@ class DomainMetadataQualityGate:
             report["runtime_profile_id"] = runtime_profile_id
         return report
 
+    def _apply_intelligent_parser_gate(
+        self,
+        chunks: list[Any],
+        *,
+        domain_metadata: DomainMetadata | None,
+    ) -> None:
+        gate = ParserQualityIntelligentGate()
+        for chunk in chunks:
+            metadata = self._chunk_metadata(chunk)
+            extraction_quality = metadata.get("extraction_quality")
+            if not isinstance(extraction_quality, dict):
+                extraction_quality = getattr(chunk, "extraction_quality", None)
+            if not isinstance(extraction_quality, dict):
+                continue
+            warnings = extraction_quality.get("parser_warnings")
+            if not isinstance(warnings, list):
+                continue
+            classified = gate.classify_warnings(
+                [warning for warning in warnings if isinstance(warning, dict)],
+                domain_metadata=domain_metadata,
+            )
+            extraction_quality["parser_warnings"] = classified
+            metadata["extraction_quality"] = extraction_quality
+            if hasattr(chunk, "metadata") and isinstance(chunk.metadata, dict):
+                chunk.metadata["extraction_quality"] = extraction_quality
+
+    def _apply_parser_quality_action_policy(self, chunks: list[Any]) -> None:
+        for chunk in chunks:
+            blocking_warnings = [
+                warning
+                for warning in self.parser_warnings_for_chunk(chunk)
+                if self._parser_warning_blocks_materialization(warning)
+            ]
+            if not blocking_warnings:
+                continue
+            metadata = self._chunk_metadata(chunk)
+            existing = metadata.get("quality_action_policy")
+            policy = dict(existing) if isinstance(existing, dict) else {}
+            existing_flags = policy.get("quality_flags")
+            flags = (
+                [
+                    str(flag)
+                    for flag in existing_flags
+                    if isinstance(flag, str) and flag
+                ]
+                if isinstance(existing_flags, list)
+                else []
+            )
+            for warning in blocking_warnings:
+                code = warning.get("code")
+                if isinstance(code, str) and code:
+                    flags.append(f"parser_quality_block:{code}")
+            quality_flags = sorted(dict.fromkeys(flags))
+            policy.update(
+                {
+                    "persist_chunk": policy.get("persist_chunk", True),
+                    "index_vector": False,
+                    "index_exact_arabic": False,
+                    "project_graph": False,
+                    "graph_confidence": "blocked",
+                    "quality_flags": quality_flags,
+                    "status": "parser_quality_blocked",
+                    "action": "block_parser_quality_materialization",
+                }
+            )
+            metadata["quality_action_policy"] = policy
+            metadata["quality_flags"] = quality_flags
+            if hasattr(chunk, "metadata") and isinstance(chunk.metadata, dict):
+                chunk.metadata["quality_action_policy"] = policy
+                chunk.metadata["quality_flags"] = quality_flags
+
+    def _parser_warning_blocks_materialization(self, warning: dict[str, Any]) -> bool:
+        severity = str(warning.get("severity") or "").strip().casefold()
+        action = str(
+            warning.get("quality_gate_action") or warning.get("action") or ""
+        ).strip().casefold()
+        reason = str(warning.get("quality_gate_reason") or "")
+        return action == "block" or (
+            severity == "block" and reason.startswith("layout_quality_policy.")
+        )
+
     def parser_quality_summary(self, chunks: list[Any]) -> dict[str, Any]:
         warning_counts: dict[str, int] = {}
         affected_chunks = 0
         for chunk in chunks:
-            codes = sorted(set(self.parser_warning_codes_for_chunk(chunk)))
+            codes = sorted(
+                {
+                    warning.get("code")
+                    for warning in self.parser_warnings_for_chunk(chunk)
+                    if isinstance(warning.get("code"), str)
+                    and not bool(warning.get("suppressed_from_counts"))
+                }
+            )
             if not codes:
                 continue
             affected_chunks += 1
@@ -443,6 +597,7 @@ class DomainMetadataQualityGate:
             for code in (
                 warning.get("code")
                 for warning in self.parser_warnings_for_chunk(chunk)
+                if not bool(warning.get("suppressed_from_counts"))
             )
             if isinstance(code, str) and code
         ]
@@ -457,6 +612,8 @@ class DomainMetadataQualityGate:
         codes: list[str] = []
         for warning in warnings:
             if not isinstance(warning, dict):
+                continue
+            if bool(warning.get("suppressed_from_counts")):
                 continue
             code = warning.get("code")
             if isinstance(code, str) and code:
@@ -579,6 +736,7 @@ class DomainMetadataQualityGate:
                     source_location=chunk.source_location,
                     parser_warning_codes=self.parser_warning_codes_for_chunk(chunk),
                     profile=profile,
+                    unit_role=self._unit_role(unit, chunk.metadata),
                 )
             )
         return records
@@ -590,6 +748,27 @@ class DomainMetadataQualityGate:
         domain_metadata: DomainMetadata,
         profile: MetadataQualityProfile,
     ) -> list[dict[str, Any]]:
+        semantics = ReferenceSemantics.from_metadata(domain_metadata)
+        if (
+            semantics.inline_reference_policy == "cross_reference_only"
+            and semantics.primary_anchor_pattern
+        ):
+            anchor_units = self._primary_anchor_reference_units(text, semantics)
+            if anchor_units:
+                return anchor_units
+            references = self._metadata_references(metadata)
+            if len(references) == 1:
+                return [
+                    {
+                        "reference": references[0],
+                        "text": text,
+                        "start": 0,
+                        "end": len(text),
+                    }
+                ]
+            if len(references) > 1:
+                return []
+
         label_units = self._labelled_reference_units(text)
         if label_units:
             return label_units
@@ -607,7 +786,6 @@ class DomainMetadataQualityGate:
         if len(references) > 1:
             return []
 
-        semantics = ReferenceSemantics.from_metadata(domain_metadata)
         semantic_refs = semantics.extract_chunk_references(text)
         if len(semantic_refs) == 1:
             return [
@@ -621,6 +799,34 @@ class DomainMetadataQualityGate:
         if profile.structured_references:
             return []
         return []
+
+    def _primary_anchor_reference_units(
+        self,
+        text: str,
+        semantics: ReferenceSemantics,
+    ) -> list[dict[str, Any]]:
+        pattern = semantics._primary_anchor_regex()
+        if pattern is None:
+            return []
+        matches = list(pattern.finditer(text))
+        if not matches:
+            return []
+        units: list[dict[str, Any]] = []
+        for index, match in enumerate(matches):
+            start = match.start()
+            end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+            reference = semantics._match_to_reference(match).get("ref")
+            if reference is None:
+                continue
+            units.append(
+                {
+                    "reference": str(reference),
+                    "text": text[start:end].strip(),
+                    "start": start,
+                    "end": end,
+                }
+            )
+        return units
 
     def _labelled_reference_units(self, text: str) -> list[dict[str, Any]]:
         matches = list(CHAPTER_VERSE_PATTERN.finditer(text))
@@ -651,46 +857,112 @@ class DomainMetadataQualityGate:
         source_location: dict[str, Any] | None,
         parser_warning_codes: list[str],
         profile: MetadataQualityProfile,
+        unit_role: str | None = None,
     ) -> dict[str, Any]:
-        expected_scripts = sorted(profile.expected_scripts)
+        required_scripts_set = self._scripts_for_unit_role(
+            profile.required_scripts,
+            profile.required_scripts_by_unit_role,
+            unit_role,
+        )
+        optional_scripts_set = self._scripts_for_unit_role(
+            profile.optional_scripts,
+            profile.optional_scripts_by_unit_role,
+            unit_role,
+        )
+        expected_scripts = sorted(required_scripts_set | optional_scripts_set)
+        required_scripts = sorted(required_scripts_set)
+        optional_scripts = sorted(optional_scripts_set)
         observed_scripts = [
             script for script in expected_scripts if SCRIPT_PATTERNS[script].search(text)
         ]
-        missing_scripts = [
-            script for script in expected_scripts if script not in set(observed_scripts)
+        observed_set = set(observed_scripts)
+        missing_required_scripts = [
+            script for script in required_scripts if script not in observed_set
         ]
-        flags = [
-            f"missing_expected_script:{script}" for script in missing_scripts
+        missing_optional_scripts = [
+            script for script in optional_scripts if script not in observed_set
         ]
-        status = "missing_expected_script" if missing_scripts else "passed"
-        action = (
-            "block_reference_materialization"
-            if missing_scripts and profile.preserve_parallel_text
-            else "warn_reference_quality"
-            if missing_scripts
-            else "allow_materialization"
+        actionable_optional_scripts = (
+            missing_optional_scripts
+            if profile.missing_optional_script_action != "no_warning"
+            else []
         )
+        flags = [
+            f"missing_expected_script:{script}" for script in missing_required_scripts
+        ]
+        flags.extend(
+            f"missing_optional_script:{script}" for script in actionable_optional_scripts
+        )
+        if missing_required_scripts:
+            status = "missing_expected_script"
+            action = self._missing_script_action(missing_required_scripts, profile)
+        elif actionable_optional_scripts:
+            status = "missing_optional_script"
+            action = self._optional_script_action(actionable_optional_scripts, profile)
+        else:
+            status = "passed"
+            action = "allow_materialization"
         materialization = self._reference_materialization_policy(
             status=status,
             flags=flags,
-            missing_scripts=missing_scripts,
+            missing_scripts=missing_required_scripts,
             action=action,
         )
         return {
             "reference": reference,
             "text_span": text_span,
             "source_location": dict(source_location or {}),
+            "unit_role": unit_role,
             "arabic_token_count": len(arabic_tokens(text)),
             "latin_token_count": len(_latin_tokens(text)),
             "expected_scripts": expected_scripts,
             "observed_scripts": observed_scripts,
-            "missing_scripts": missing_scripts,
+            "missing_scripts": missing_required_scripts,
+            "missing_optional_scripts": missing_optional_scripts,
+            "actionable_optional_scripts": actionable_optional_scripts,
             "parser_warning_codes": sorted(set(parser_warning_codes)),
             "status": status,
             "action": action,
+            "optional_script_action": profile.missing_optional_script_action,
             "quality_flags": flags,
             "materialization": materialization,
         }
+
+    def _unit_role(
+        self,
+        unit: dict[str, Any],
+        metadata: dict[str, Any] | None,
+    ) -> str | None:
+        for key in ("unit_role", "role"):
+            value = unit.get(key)
+            if isinstance(value, str) and value.strip():
+                return _normalize_role(value)
+        if not isinstance(metadata, dict):
+            return None
+        for key in ("unit_role", "quality_unit_role", "role"):
+            value = metadata.get(key)
+            if isinstance(value, str) and value.strip():
+                return _normalize_role(value)
+        canonical_unit = metadata.get("canonical_reference_unit")
+        if isinstance(canonical_unit, dict):
+            for key in ("unit_role", "role", "unit"):
+                value = canonical_unit.get(key)
+                if isinstance(value, str) and value.strip():
+                    return _normalize_role(value)
+        return None
+
+    def _scripts_for_unit_role(
+        self,
+        base_scripts: frozenset[str],
+        role_scripts: dict[str, frozenset[str]],
+        unit_role: str | None,
+    ) -> frozenset[str]:
+        scripts = set(base_scripts)
+        for fallback_role in ("*", "all", "default", "reference_unit"):
+            scripts.update(role_scripts.get(fallback_role, frozenset()))
+        if unit_role:
+            scripts.update(role_scripts.get(unit_role, frozenset()))
+        return frozenset(scripts)
 
     def _unresolved_reference_record(
         self,
@@ -749,6 +1021,41 @@ class DomainMetadataQualityGate:
             "status": status,
             "action": action,
         }
+
+    def _missing_script_action(
+        self,
+        missing_scripts: list[str],
+        profile: MetadataQualityProfile,
+    ) -> str:
+        if not missing_scripts:
+            return "allow_materialization"
+        if profile.materialization_policy in {
+            "allow",
+            "allow_if_required_scripts_present",
+            "warn_if_required_scripts_missing",
+        }:
+            return "warn_reference_quality"
+        if profile.missing_required_script_action == "block":
+            return "block_reference_materialization"
+        if (
+            profile.preserve_parallel_text
+            and profile.materialization_policy != "allow_if_required_scripts_present"
+        ):
+            return "block_reference_materialization"
+        return "warn_reference_quality"
+
+    def _optional_script_action(
+        self,
+        missing_scripts: list[str],
+        profile: MetadataQualityProfile,
+    ) -> str:
+        if not missing_scripts or profile.missing_optional_script_action == "no_warning":
+            return "allow_materialization"
+        if profile.missing_optional_script_action == "block":
+            return "block_reference_materialization"
+        if profile.missing_optional_script_action == "info":
+            return "info_reference_quality"
+        return "warn_reference_quality"
 
     def _quality_action_policy(self, records: list[dict[str, Any]]) -> dict[str, Any] | None:
         if not records:
@@ -825,7 +1132,38 @@ class DomainMetadataQualityGate:
                         "action": record.get("action"),
                     }
                 )
+            elif status == "missing_optional_script":
+                severity = self._optional_warning_severity(record)
+                for script in record.get("actionable_optional_scripts", []):
+                    if not isinstance(script, str):
+                        continue
+                    warnings.append(
+                        {
+                            "code": "reference_unit_missing_optional_script",
+                            "message": (
+                                "Reference unit can include optional "
+                                f"{script.capitalize()} script, but no "
+                                f"{script.capitalize()} letters were detected."
+                            ),
+                            "reference": record.get("reference"),
+                            "expected_script": script,
+                            "script_requirement": "optional",
+                            "source_location": record.get("source_location"),
+                            "action": record.get("action"),
+                            "severity": severity,
+                            "suppressed_from_counts": severity == "info",
+                        }
+                    )
         return warnings
+
+    def _optional_warning_severity(self, record: dict[str, Any]) -> str:
+        action = record.get("optional_script_action")
+        if action in {"info", "warn", "block"}:
+            return str(action)
+        materialization = record.get("materialization")
+        if isinstance(materialization, dict) and not materialization.get("index_vector", True):
+            return "block"
+        return "warn"
 
     def _index_quality_report(
         self,
@@ -849,6 +1187,11 @@ class DomainMetadataQualityGate:
             for record in reference_records
             if record.get("status") == "missing_expected_script"
         )
+        optional_missing_count = sum(
+            1
+            for record in reference_records
+            if record.get("status") == "missing_optional_script"
+        )
         passed_count = sum(1 for record in reference_records if record.get("status") == "passed")
         total = len(reference_records)
         blocked_count = sum(
@@ -856,7 +1199,7 @@ class DomainMetadataQualityGate:
             for record in [*reference_records, *unresolved_records]
             if not record.get("materialization", {}).get("index_vector", True)
         )
-        if unresolved_records or missing_count:
+        if unresolved_records or missing_count or optional_missing_count:
             status = "ready_with_warnings"
         else:
             status = "passed"
@@ -871,6 +1214,7 @@ class DomainMetadataQualityGate:
                 "reference_unit_count": total,
                 "reference_units_with_expected_script": passed_count,
                 "reference_units_missing_expected_script": missing_count,
+                "reference_units_missing_optional_script": optional_missing_count,
                 "reference_script_coverage_ratio": (
                     round(passed_count / total, 6) if total else None
                 ),
@@ -889,14 +1233,18 @@ class DomainMetadataQualityGate:
                 "reference",
                 "text_span",
                 "source_location",
+                "unit_role",
                 "arabic_token_count",
                 "latin_token_count",
                 "expected_scripts",
                 "observed_scripts",
                 "missing_scripts",
+                "missing_optional_scripts",
+                "actionable_optional_scripts",
                 "parser_warning_codes",
                 "status",
                 "action",
+                "optional_script_action",
                 "quality_flags",
                 "materialization",
                 "unresolved_reason",
@@ -918,7 +1266,9 @@ class DomainMetadataQualityGate:
             return True
         if not chunk.text.strip():
             return False
-        return bool(profile.reference_unit in {"verse", "reference", "hadith", "section"})
+        return bool(
+            profile.reference_unit in {"verse", "verse_section", "reference", "hadith", "section"}
+        )
 
     def _is_provenance_only_chunk(self, chunk: AdapterChunk) -> bool:
         if chunk.content_type == "reference_provenance":
@@ -927,10 +1277,18 @@ class DomainMetadataQualityGate:
         return isinstance(parser_metadata, dict) and bool(parser_metadata.get("provenance_only"))
 
     def _requires_reference_quality(self, profile: MetadataQualityProfile) -> bool:
+        has_optional_policy = profile.missing_optional_script_action != "no_warning" and bool(
+            profile.optional_scripts or profile.optional_scripts_by_unit_role
+        )
         return bool(
             profile.structured_references
-            and profile.reference_unit in {"verse", "reference", "hadith", "section"}
-            and profile.expected_scripts
+            and profile.reference_unit
+            in {"verse", "verse_section", "reference", "hadith", "section"}
+            and (
+                profile.required_scripts
+                or profile.required_scripts_by_unit_role
+                or has_optional_policy
+            )
         )
 
     def _has_reference(
@@ -983,7 +1341,7 @@ class DomainMetadataQualityGate:
         profile: MetadataQualityProfile,
     ) -> bool:
         normalized_language = str(language or "").strip().casefold()
-        return normalized_language in {"arabic", "quran"} or "arabic" in profile.expected_scripts
+        return normalized_language in {"arabic", "quran"} or "arabic" in profile.required_scripts
 
     @staticmethod
     def merge_parser_warnings(
@@ -1020,6 +1378,57 @@ class DomainMetadataQualityGate:
 def _dict_value(value: dict[str, Any], key: str) -> dict[str, Any] | None:
     candidate = value.get(key)
     return candidate if isinstance(candidate, dict) else None
+
+
+def _script_policy_set(value: Any) -> frozenset[str]:
+    if not isinstance(value, list | tuple | set | frozenset):
+        return frozenset()
+    return frozenset(
+        str(item).strip().casefold()
+        for item in value
+        if isinstance(item, str) and str(item).strip().casefold() in SCRIPT_PATTERNS
+    )
+
+
+def _script_policy_map(value: Any) -> dict[str, frozenset[str]]:
+    if not isinstance(value, dict):
+        return {}
+    mapped: dict[str, frozenset[str]] = {}
+    for role, scripts in value.items():
+        if not isinstance(role, str):
+            continue
+        clean_scripts = _script_policy_set(scripts)
+        if clean_scripts:
+            mapped[_normalize_role(role)] = clean_scripts
+    return mapped
+
+
+def _script_map_values(value: dict[str, frozenset[str]]) -> frozenset[str]:
+    scripts: set[str] = set()
+    for items in value.values():
+        scripts.update(items)
+    return frozenset(scripts)
+
+
+def _normalize_role(value: str) -> str:
+    return re.sub(r"[\s-]+", "_", value.strip().casefold())
+
+
+def _quality_action(value: Any, *, default: str) -> str:
+    if value in {"no_warning", "info", "warn", "block"}:
+        return str(value)
+    return default
+
+
+def _materialization_policy(value: Any) -> str:
+    if value in {
+        "allow",
+        "allow_if_required_scripts_present",
+        "warn_if_required_scripts_missing",
+        "block_if_required_scripts_missing",
+    }:
+        return str(value)
+    return "block_if_required_scripts_missing"
 
 
 def _string_value(value: Any) -> str | None:

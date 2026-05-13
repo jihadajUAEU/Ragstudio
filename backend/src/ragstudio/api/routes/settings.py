@@ -83,6 +83,17 @@ def _legacy_profile_detail(exc: ValueError) -> str:
     )
 
 
+def _mineru_optimization_detail(optimization: dict[str, object]) -> str:
+    parts: list[str] = []
+    if optimization.get("backend"):
+        parts.append(f"backend={optimization['backend']}")
+    if optimization.get("device"):
+        parts.append(f"device={optimization['device']}")
+    if optimization.get("max_concurrent_files"):
+        parts.append(f"maxConcurrentFiles={optimization['max_concurrent_files']}")
+    return "; ".join(parts)
+
+
 @router.post("/default/test-embedding", response_model=EmbeddingConnectionTestOut)
 async def test_embedding_settings(
     payload: SettingsProfileIn,
@@ -156,11 +167,17 @@ async def test_mineru_settings(payload: SettingsProfileIn) -> MinerUConnectionTe
             if health.is_hpc_coordinator
             else f"{health.hpc_mode or 'unknown'} mode"
         )
+        optimization = health.optimization
+        optimization_detail = _mineru_optimization_detail(optimization)
+        detail_suffix = (
+            f"{mode_detail}; {optimization_detail}" if optimization_detail else mode_detail
+        )
         return MinerUConnectionTestOut(
             ok=True,
             base_url=base_url,
             latency_ms=latency_ms,
-            detail=f"{health.detail or 'MinerU health check succeeded.'} ({mode_detail}).",
+            detail=f"{health.detail or 'MinerU health check succeeded.'} ({detail_suffix}).",
+            optimization=optimization,
         )
     except httpx.HTTPError as exc:
         latency_ms = int((time.perf_counter() - started) * 1000)

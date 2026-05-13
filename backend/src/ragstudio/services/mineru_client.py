@@ -26,6 +26,37 @@ class MinerUJobResult:
 
 
 @dataclass(frozen=True)
+class MinerUParseOptions:
+    parser: str = "mineru"
+    parse_method: str = "auto"
+    backend: str = "pipeline"
+    device: str = "cuda:0"
+    lang: str | None = None
+    formula: bool = True
+    table: bool = True
+    source: str | None = None
+    max_concurrent_files: int = 1
+
+    def to_metadata(self) -> dict[str, Any]:
+        parser_kwargs: dict[str, Any] = {
+            "backend": self.backend or "pipeline",
+            "device": self.device or "cuda:0",
+            "formula": self.formula,
+            "table": self.table,
+        }
+        if self.lang:
+            parser_kwargs["lang"] = self.lang
+        if self.source:
+            parser_kwargs["source"] = self.source
+        return {
+            "parser": self.parser or "mineru",
+            "parseMethod": self.parse_method or "auto",
+            "parserKwargs": parser_kwargs,
+            "maxConcurrentFiles": max(1, min(self.max_concurrent_files, 8)),
+        }
+
+
+@dataclass(frozen=True)
 class MinerUSidecarHealth:
     ready: bool
     detail: str
@@ -37,6 +68,24 @@ class MinerUSidecarHealth:
     @property
     def is_hpc_coordinator(self) -> bool:
         return self.ready and self.hpc_enabled and self.hpc_mode == "coordinator"
+
+    @property
+    def optimization(self) -> dict[str, object]:
+        hpc = self.raw.get("hpcMineru")
+        if not isinstance(hpc, dict):
+            return {}
+
+        result: dict[str, object] = {}
+        backend = hpc.get("backend")
+        device = hpc.get("device")
+        max_concurrent = hpc.get("maxConcurrentFiles")
+        if isinstance(backend, str) and backend:
+            result["backend"] = backend
+        if isinstance(device, str) and device:
+            result["device"] = device
+        if isinstance(max_concurrent, int) and not isinstance(max_concurrent, bool):
+            result["max_concurrent_files"] = max_concurrent
+        return result
 
 
 MinerUStatusCallback = Callable[[dict[str, Any]], Awaitable[None]]
@@ -57,6 +106,7 @@ class MinerUClient:
         content_type: str = "application/octet-stream",
         sha256: str | None = None,
         domain_metadata: dict[str, Any] | None = None,
+        parse_options: MinerUParseOptions | None = None,
         on_status: MinerUStatusCallback | None = None,
     ) -> MinerUJobResult:
         parse_job_id = await self.submit_parse(
@@ -65,6 +115,7 @@ class MinerUClient:
             content_type=content_type,
             sha256=sha256,
             domain_metadata=domain_metadata,
+            parse_options=parse_options,
         )
         if on_status is not None:
             await on_status({"jobId": parse_job_id, "status": "submitted", "progress": 0})
@@ -83,12 +134,15 @@ class MinerUClient:
         content_type: str = "application/octet-stream",
         sha256: str | None = None,
         domain_metadata: dict[str, Any] | None = None,
+        parse_options: MinerUParseOptions | None = None,
     ) -> str:
         path = Path(artifact_path)
         metadata = {
             "mimeType": content_type,
             "domainMetadata": domain_metadata or {},
         }
+        if parse_options is not None:
+            metadata["ragAnything"] = parse_options.to_metadata()
         form_data = {
             "sourceId": document_id,
             "sourceType": "uploaded_document",

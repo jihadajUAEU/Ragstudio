@@ -211,6 +211,8 @@ class ChunkSplitter:
             data,
             domain_metadata=domain_metadata,
             expected_profile=expected_profile,
+            artifact_root=root,
+            content_list_path=target,
         )
         canonical_pieces = self._canonical_reference_pieces(
             chunk,
@@ -399,12 +401,19 @@ class ChunkSplitter:
         if profile.semantics is None or profile.semantics.chunk_unit not in {
             "hadith",
             "verse",
+            "verse_section",
             "reference",
             "section",
         }:
             return []
 
-        units = profile.semantics.split_reference_units(chunk.text)
+        if (
+            profile.semantics.inline_reference_policy == "cross_reference_only"
+            and profile.semantics.primary_anchor_pattern
+        ):
+            units = profile.semantics.split_primary_anchor_units(chunk.text)
+        else:
+            units = profile.semantics.split_reference_units(chunk.text)
         if len(units) <= 1:
             return []
 

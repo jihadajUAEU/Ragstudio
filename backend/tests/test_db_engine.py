@@ -338,7 +338,8 @@ async def test_init_db_backfills_runtime_columns_for_existing_postgres_tables(
                         """
                     SELECT runtime_mode, storage_backend, pgvector_schema,
                            enable_image_processing, mineru_timeout_ms,
-                           mineru_require_hpc
+                           mineru_require_hpc, mineru_backend, mineru_device,
+                           mineru_formula, mineru_table, mineru_max_concurrent_files
                     FROM settings_profiles WHERE id = 'default'
                     """
                     )
@@ -395,6 +396,11 @@ async def test_init_db_backfills_runtime_columns_for_existing_postgres_tables(
     assert settings_row["enable_image_processing"] is True
     assert settings_row["mineru_timeout_ms"] == 14400000
     assert settings_row["mineru_require_hpc"] is True
+    assert settings_row["mineru_backend"] == "pipeline"
+    assert settings_row["mineru_device"] == "cuda:0"
+    assert settings_row["mineru_formula"] is True
+    assert settings_row["mineru_table"] is True
+    assert settings_row["mineru_max_concurrent_files"] == 1
     assert chunk_row["content_type"] == "text"
     assert run_row["document_ids"] == []
     assert run_row["query_config"] == {}

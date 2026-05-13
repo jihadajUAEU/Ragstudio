@@ -53,6 +53,13 @@ const settings: SettingsProfileOut = {
   mineru_timeout_ms: 1800000,
   mineru_poll_interval_ms: 1000,
   mineru_require_hpc: true,
+  mineru_backend: "pipeline",
+  mineru_device: "cuda:0",
+  mineru_lang: null,
+  mineru_formula: true,
+  mineru_table: true,
+  mineru_source: null,
+  mineru_max_concurrent_files: 1,
   runtime_mode: "runtime",
   vision_model: "vision-model",
   vision_base_url: "http://127.0.0.1:8004/v1",
@@ -110,6 +117,17 @@ describe("SettingsPage provider sync", () => {
     vi.clearAllMocks();
     vi.mocked(apiClient.defaultSettings).mockResolvedValue(settings);
     vi.mocked(apiClient.updateDefaultSettings).mockResolvedValue(settings);
+    vi.mocked(apiClient.testMinerUSettings).mockResolvedValue({
+      ok: true,
+      base_url: "http://127.0.0.1:8765",
+      latency_ms: 12,
+      detail: "RAG-Anything sidecar ready (HPC coordinator mode).",
+      optimization: {
+        backend: "pipeline",
+        device: "cuda:0",
+        max_concurrent_files: 2,
+      },
+    });
     vi.mocked(apiClient.syncProviderPreview).mockResolvedValue({
       ok: true,
       manifest_url: "https://updates.jihadaj.com/providers.json",
@@ -129,6 +147,13 @@ describe("SettingsPage provider sync", () => {
         mineru_enabled: true,
         mineru_base_url: "http://10.10.9.19:8765",
         mineru_timeout_ms: 1800000,
+        mineru_backend: "pipeline",
+        mineru_device: "cuda:0",
+        mineru_lang: "arabic",
+        mineru_formula: false,
+        mineru_table: false,
+        mineru_source: "huggingface",
+        mineru_max_concurrent_files: 2,
         enable_rerank: true,
         reranker_provider: "generic_http",
         reranker_model: "Qwen/Qwen3-Reranker-8B",
@@ -165,6 +190,10 @@ describe("SettingsPage provider sync", () => {
     expect(screen.getByRole("button", { name: /Test LLM/i })).toBeVisible();
     expect(await screen.findByDisplayValue("http://127.0.0.1:8765")).toBeVisible();
     expect(screen.getByLabelText("Require HPC MinerU coordinator")).toBeChecked();
+    expect(screen.getByLabelText("MinerU backend")).toHaveValue("pipeline");
+    expect(screen.getByLabelText("MinerU device")).toHaveValue("cuda:0");
+    expect(screen.getByLabelText("MinerU source")).toHaveValue("");
+    expect(screen.getByLabelText("MinerU max concurrent files")).toHaveValue(1);
   });
 
   it("previews provider sync changes without saving", async () => {
@@ -180,6 +209,8 @@ describe("SettingsPage provider sync", () => {
     expect(screen.getByDisplayValue("QuantTrio/Qwen3-VL-32B-Instruct-AWQ")).toBeVisible();
     expect(screen.getByDisplayValue("http://10.10.9.192:8001/v1")).toBeVisible();
     expect(screen.getByDisplayValue("http://10.10.9.19:8765")).toBeVisible();
+    expect(screen.getByDisplayValue("arabic")).toBeVisible();
+    expect(screen.getByLabelText("Parse formulas")).not.toBeChecked();
     expect(screen.getByDisplayValue("Qwen/Qwen3-Reranker-8B")).toBeVisible();
     expect(screen.getByDisplayValue("http://10.10.9.193:8005/v1/rerank")).toBeVisible();
     expect(screen.getByText("Vision")).toBeVisible();
@@ -209,6 +240,10 @@ describe("SettingsPage provider sync", () => {
         embedding_provider: "vllm_openai",
         embedding_base_url: "http://10.10.9.192:8001/v1",
         mineru_base_url: "http://10.10.9.19:8765",
+        mineru_lang: "arabic",
+        mineru_formula: false,
+        mineru_table: false,
+        mineru_max_concurrent_files: 2,
         enable_rerank: true,
         reranker_provider: "generic_http",
         reranker_model: "Qwen/Qwen3-Reranker-8B",
@@ -233,6 +268,17 @@ describe("SettingsPage provider sync", () => {
     expect(vi.mocked(apiClient.updateDefaultSettings).mock.calls[0][0]).toEqual(
       expect.objectContaining({ mineru_require_hpc: false }),
     );
+  });
+
+  it("shows MinerU sidecar optimization details after test", async () => {
+    renderSettings();
+
+    await screen.findByDisplayValue("gpt-4.1");
+    fireEvent.click(screen.getByRole("button", { name: /Test MinerU/i }));
+
+    expect(await screen.findByText(/backend=pipeline/)).toBeVisible();
+    expect(screen.getByText(/device=cuda:0/)).toBeVisible();
+    expect(screen.getByText(/maxConcurrentFiles=2/)).toBeVisible();
   });
 
   it("keeps runtime mode and storage backend pairings explicit", async () => {

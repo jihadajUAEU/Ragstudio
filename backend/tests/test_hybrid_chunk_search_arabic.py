@@ -52,3 +52,54 @@ def test_arabic_query_does_not_match_quarantined_exact_policy():
 
     assert score.score == 0.0
     assert score.breakdown["quality_blocked_arabic"] == 1.0
+
+
+def test_cross_reference_only_inline_reference_does_not_get_reference_exact_boost():
+    domain_metadata = {
+        "domain": "quran_tafseer",
+        "document_type": "commentary",
+        "citation_style": "surah_ayah",
+        "custom_json": {
+            "reference_schema": {
+                "type": "chapter_verse",
+                "canonical_ref_template": "{chapter}:{verse}",
+            },
+            "domain_structure": {
+                "primary_anchor": {
+                    "regex": r"\bVerse\s+(?P<chapter>\d{1,4})\s*:\s*(?P<verse>\d{1,4})\b",
+                    "unit": "verse_section",
+                },
+                "inline_references": {
+                    "regex": r"(?P<chapter>\d{1,4})\s*:\s*(?P<verse>\d{1,4})",
+                    "policy": "cross_reference_only",
+                },
+            },
+            "retrieval": {"exact_reference_top1": True},
+        },
+    }
+    chunk = Chunk(
+        id="chunk-1",
+        document_id="doc-1",
+        text=(
+            "Verse 18:30 Indeed, those who believe are rewarded. "
+            "The commentary mentions 25:75-76."
+        ),
+        source_location={"page": 1},
+        metadata_json={
+            "domain_metadata": domain_metadata,
+            "reference_metadata": {
+                "references": ["18:30"],
+                "cross_references": ["25:75"],
+                "chapter_start": 18,
+                "chapter_end": 18,
+                "verse_start": 30,
+                "verse_end": 30,
+            },
+        },
+    )
+
+    inline_score = HybridChunkSearch().score("25:75", chunk)
+    primary_score = HybridChunkSearch().score("18:30", chunk)
+
+    assert inline_score.breakdown["reference_exact"] == 0.0
+    assert primary_score.breakdown["reference_exact"] == 100.0

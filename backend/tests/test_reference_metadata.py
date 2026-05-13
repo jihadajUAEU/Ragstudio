@@ -259,6 +259,44 @@ def test_derive_reference_metadata_omits_neighbors_when_not_configured():
     assert "next_ref" not in metadata
 
 
+def test_derive_reference_metadata_keeps_cross_reference_only_mentions_non_primary():
+    semantics = ReferenceSemantics.from_metadata(
+        DomainMetadata(
+            custom_json={
+                "reference_schema": {
+                    "type": "chapter_verse",
+                    "canonical_ref_template": "{chapter}:{verse}",
+                },
+                "domain_structure": {
+                    "primary_anchor": {
+                        "regex": r"\bVerse\s+(?P<chapter>\d{1,4})\s*:\s*(?P<verse>\d{1,4})\b",
+                        "unit": "verse_section",
+                    },
+                    "inline_references": {
+                        "regex": r"(?P<chapter>\d{1,4})\s*:\s*(?P<verse>\d{1,4})",
+                        "policy": "cross_reference_only",
+                    },
+                },
+            }
+        )
+    )
+
+    metadata = semantics.derive_reference_metadata(
+        "Commentary heading\n\nVerse 18:30 body mentions 25:75-76.",
+        {"page": 809},
+    )
+
+    assert semantics.extract_primary_anchor_references(
+        "Commentary heading\n\nVerse 18:30 body."
+    )[0]["ref"] == "18:30"
+    assert metadata["references"] == ["18:30"]
+    assert metadata["cross_references"] == ["25:75"]
+    assert metadata["chapter_start"] == 18
+    assert metadata["chapter_end"] == 18
+    assert metadata["verse_start"] == 30
+    assert metadata["verse_end"] == 30
+
+
 def test_chunk_reference_metadata_aliases_derive_reference_metadata():
     semantics = ReferenceSemantics.from_metadata(quran_metadata())
 

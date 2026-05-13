@@ -244,7 +244,7 @@ Supported manifest sections:
 
 - `reasoning`: updates the OpenAI-compatible LLM endpoint, model, timeout, and read-only capability badges.
 - `embeddings`: updates embedding provider, model, base URL, dimensions, and timeout.
-- `hpcMineru`: updates MinerU enabled state, base URL, and timeout.
+- `hpcMineru`: updates MinerU enabled state, base URL, timeout, parser backend, CUDA device, language hint, formula/table parsing, model source, and max concurrent files.
 
 LLM generation fields:
 
@@ -272,6 +272,15 @@ MinerU parser fields:
 - `MinerU base URL`: URL for an already running MinerU/RAG-Anything service, normally `http://127.0.0.1:8765` through a local sidecar or SSH tunnel.
 - `MinerU timeout (ms)`: total parse polling timeout.
 - `MinerU poll interval (ms)`: delay between parse job status checks.
+- `MinerU backend`: parser backend passed to the RAG-Anything/MinerU sidecar. For A100 GPU parsing use `pipeline`.
+- `MinerU device`: inference device passed to MinerU. For one A100 use `cuda:0`; for another GPU slot use the matching CUDA device such as `cuda:1`.
+- `MinerU language`: optional OCR language hint passed as `lang`.
+- `MinerU source`: optional model source hint such as `huggingface`, `modelscope`, or `local`.
+- `MinerU max concurrent files`: sidecar capacity hint for parallel document parsing. Start with `1` for large PDFs and increase only after GPU memory is stable.
+- `Parse formulas`: passes MinerU `formula=true` or `formula=false`.
+- `Parse tables`: passes MinerU `table=true` or `table=false`.
+
+For A100-backed parsing, keep `MinerU backend` set to `pipeline`, set `MinerU device` to the CUDA device used by the sidecar, and start `MinerU max concurrent files` at `1` for large PDFs. If GPU memory remains stable and jobs spend time waiting, raise it to `2`; larger values should be tested with the same document size mix you expect in production.
 
 Controls:
 

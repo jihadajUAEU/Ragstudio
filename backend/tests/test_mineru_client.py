@@ -2,7 +2,11 @@ import json
 from zipfile import ZipFile
 
 import pytest
-from ragstudio.services.mineru_client import MinerUArtifactError, MinerUClient
+from ragstudio.services.mineru_client import (
+    MinerUArtifactError,
+    MinerUClient,
+    MinerUParseOptions,
+)
 
 
 @pytest.mark.asyncio
@@ -194,6 +198,17 @@ async def test_mineru_client_submits_pdf_mime_and_metadata(tmp_path, monkeypatch
         content_type="application/pdf",
         sha256="abc123",
         domain_metadata={"domain": "research"},
+        parse_options=MinerUParseOptions(
+            parser="mineru",
+            parse_method="auto",
+            backend="pipeline",
+            device="cuda:0",
+            lang="en",
+            formula=True,
+            table=True,
+            source="huggingface",
+            max_concurrent_files=2,
+        ),
     )
 
     assert job_id == "job-1"
@@ -202,6 +217,19 @@ async def test_mineru_client_submits_pdf_mime_and_metadata(tmp_path, monkeypatch
     metadata = json.loads(requests[0]["data"]["metadata"])
     assert metadata["mimeType"] == "application/pdf"
     assert metadata["domainMetadata"]["domain"] == "research"
+    assert metadata["ragAnything"] == {
+        "parser": "mineru",
+        "parseMethod": "auto",
+        "parserKwargs": {
+            "backend": "pipeline",
+            "device": "cuda:0",
+            "formula": True,
+            "table": True,
+            "lang": "en",
+            "source": "huggingface",
+        },
+        "maxConcurrentFiles": 2,
+    }
 
 
 @pytest.mark.asyncio

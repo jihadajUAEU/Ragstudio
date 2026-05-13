@@ -13,6 +13,13 @@ def test_normalize_unifies_alef_and_ya_variants():
     assert normalize_arabic_text("إِنَّ ٱلْهُدَىٰ") == "ان الهدي"
 
 
+def test_normalize_converts_arabic_presentation_forms_from_pdf_text_layer():
+    text = "ﻭﭐﺗﻞ ﻣﺎ ﺃﻭﺣﻰ ﺇﻟﻴﻚ"
+
+    assert normalize_arabic_text(text) == "واتل ما اوحي اليك"
+    assert arabic_tokens(text) == ["واتل", "اتل", "ما", "اوحي", "اليك"]
+
+
 def test_tokens_include_prefix_stripped_waw_variant():
     tokens = arabic_tokens("وَحَنَانًا مِّن لَّدُنَّا")
 

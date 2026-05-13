@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import pytest
 from ragstudio.db.engine import init_db, make_engine, make_session_factory
 from ragstudio.db.models import Document, SettingsProfile
-from ragstudio.schemas.parsing import IndexDocumentIn
+from ragstudio.schemas.parsing import DomainMetadata, IndexDocumentIn
 from ragstudio.services.adapter import AdapterChunk
 from ragstudio.services.document_parser_service import DocumentParserService
 from ragstudio.services.mineru_client import MinerUJobResult, MinerUSidecarHealth
@@ -62,6 +62,15 @@ class EventSession:
             mineru_enabled=True,
             mineru_base_url="http://10.10.9.19:8765",
             mineru_require_hpc=True,
+            parser="mineru",
+            parse_method="auto",
+            mineru_backend="pipeline",
+            mineru_device="cuda:0",
+            mineru_lang="en",
+            mineru_formula=True,
+            mineru_table=True,
+            mineru_source="huggingface",
+            mineru_max_concurrent_files=2,
         )
 
     async def get(self, model, key):
@@ -88,7 +97,7 @@ class EventMinerUClient:
         )
 
     async def parse_document(self, **kwargs):
-        self.events.append("parse")
+        self.events.append(("parse", kwargs["parse_options"].to_metadata()))
         return MinerUJobResult(parse_job_id="job-1", artifact_zip=Path("artifact.zip"))
 
     def normalize_artifact_zip(self, **kwargs):
@@ -223,6 +232,76 @@ async def test_commit_before_remote_parse_releases_session_before_parse(tmp_path
         "get:SettingsProfile:default",
         "health",
         "commit",
-        "parse",
+        (
+            "parse",
+            {
+                "parser": "mineru",
+                "parseMethod": "auto",
+                "parserKwargs": {
+                    "backend": "pipeline",
+                    "device": "cuda:0",
+                    "formula": True,
+                    "table": True,
+                    "lang": "en",
+                    "source": "huggingface",
+                },
+                "maxConcurrentFiles": 2,
+            },
+        ),
         "normalize",
     ]
+
+
+def test_mineru_parse_options_use_ai_metadata_overrides(tmp_path):
+    settings = SettingsProfile(
+        id="default",
+        provider="openai-compatible",
+        llm_model="gpt-4o",
+        embedding_model="fallback",
+        storage_backend="postgres_pgvector_neo4j",
+        runtime_mode="runtime",
+        mineru_enabled=True,
+        mineru_base_url="http://10.10.9.19:8765",
+        mineru_backend="pipeline",
+        mineru_device="cuda:0",
+        mineru_formula=True,
+        mineru_table=True,
+    )
+    metadata = DomainMetadata(
+        domain="quran_tafseer",
+        document_type="commentary",
+        language="mixed",
+        script="mixed",
+        tags=["quran", "arabic", "tafseer"],
+        custom_json={
+            "parser_normalization": {
+                "allow_equations_as_content": False,
+                "recover_text_bearing_blocks_as_prose": True,
+                "preserve_original_block_type": True,
+            },
+            "mineru_parse_options": {
+                "parse_method": "ocr",
+                "lang": "arabic",
+                "formula": False,
+                "table": False,
+            },
+        },
+    )
+
+    parse_options = DocumentParserService(EventSession(), tmp_path)._mineru_parse_options(
+        settings,
+        metadata,
+    )
+
+    assert parse_options.to_metadata() == {
+        "parser": "mineru",
+        "parseMethod": "ocr",
+        "parserKwargs": {
+            "backend": "pipeline",
+            "device": "cuda:0",
+            "formula": False,
+            "table": False,
+            "lang": "arabic",
+        },
+        "maxConcurrentFiles": 1,
+    }

@@ -1,7 +1,7 @@
 from typing import Literal, Self
 from urllib.parse import urlparse
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, ValidationInfo, field_validator, model_validator
 
 from ragstudio.schemas.common import StudioModel
 from ragstudio.schemas.runtime import (
@@ -52,6 +52,13 @@ class SettingsProfileIn(StudioModel):
     mineru_timeout_ms: int = Field(default=MINERU_DEFAULT_TIMEOUT_MS, ge=100, le=28_800_000)
     mineru_poll_interval_ms: int = Field(default=1_000, ge=100, le=60_000)
     mineru_require_hpc: bool = True
+    mineru_backend: str = "pipeline"
+    mineru_device: str = "cuda:0"
+    mineru_lang: str | None = None
+    mineru_formula: bool = True
+    mineru_table: bool = True
+    mineru_source: str | None = None
+    mineru_max_concurrent_files: int = Field(default=1, ge=1, le=8)
     runtime_mode: RuntimeMode = DEFAULT_RUNTIME_MODE
     vision_model: str | None = None
     vision_base_url: str | None = None
@@ -127,6 +134,24 @@ class SettingsProfileIn(StudioModel):
     @classmethod
     def validate_mineru_base_url(cls, value: str | None) -> str | None:
         return cls._validate_http_base_url(value, "MinerU base URL")
+
+    @field_validator("mineru_backend", "mineru_device", "mineru_lang", "mineru_source")
+    @classmethod
+    def normalize_mineru_parser_text(
+        cls, value: str | None, info: ValidationInfo
+    ) -> str | None:
+        if value is None:
+            return "pipeline" if info.field_name == "mineru_backend" else (
+                "cuda:0" if info.field_name == "mineru_device" else None
+            )
+        normalized = value.strip()
+        if normalized:
+            return normalized
+        if info.field_name == "mineru_backend":
+            return "pipeline"
+        if info.field_name == "mineru_device":
+            return "cuda:0"
+        return None
 
     @field_validator("neo4j_uri")
     @classmethod
@@ -209,6 +234,13 @@ class SettingsProfileOut(StudioModel):
     mineru_timeout_ms: int
     mineru_poll_interval_ms: int
     mineru_require_hpc: bool
+    mineru_backend: str
+    mineru_device: str
+    mineru_lang: str | None
+    mineru_formula: bool
+    mineru_table: bool
+    mineru_source: str | None
+    mineru_max_concurrent_files: int
     runtime_mode: RuntimeMode
     vision_model: str | None
     vision_base_url: str | None
@@ -274,6 +306,7 @@ class MinerUConnectionTestOut(StudioModel):
     base_url: str
     latency_ms: int
     detail: str
+    optimization: dict[str, object] = Field(default_factory=dict)
 
 
 class RerankerConnectionTestOut(StudioModel):

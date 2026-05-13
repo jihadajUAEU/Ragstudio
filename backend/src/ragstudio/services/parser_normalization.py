@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from ragstudio.schemas.parsing import DomainMetadata
@@ -127,6 +128,8 @@ class MinerUContentNormalizer:
         *,
         domain_metadata: DomainMetadata | None = None,
         expected_profile: ExpectedContentProfile | None = None,
+        artifact_root: Path | str | None = None,
+        content_list_path: Path | str | None = None,
     ) -> list[NormalizedBlock]:
         if expected_profile is None:
             expected_profile = ExpectedContentProfile.from_domain_metadata(
@@ -134,6 +137,9 @@ class MinerUContentNormalizer:
             )
         if not isinstance(data, list):
             return []
+
+        artifact_root_path = Path(artifact_root).resolve() if artifact_root else None
+        content_list_file = Path(content_list_path).resolve() if content_list_path else None
 
         normalized: list[NormalizedBlock] = []
         for item in data:
@@ -143,7 +149,12 @@ class MinerUContentNormalizer:
             block_type = _block_type(item)
             page = _page_number(item)
             text = self._extract_text(item, block_type=block_type).replace("\x00", "").strip()
-            recovery = self._extract_recovery(item)
+            recovery = self._extract_recovery(
+                item,
+                block_type=block_type,
+                artifact_root=artifact_root_path,
+                content_list_path=content_list_file,
+            )
 
             if (
                 block_type in EQUATION_BLOCK_TYPES
@@ -242,7 +253,14 @@ class MinerUContentNormalizer:
             return " ".join(part for part in parts if part)
         return ""
 
-    def _extract_recovery(self, item: dict[str, Any]) -> BlockRecovery | None:
+    def _extract_recovery(
+        self,
+        item: dict[str, Any],
+        *,
+        block_type: str,
+        artifact_root: Path | None,
+        content_list_path: Path | None,
+    ) -> BlockRecovery | None:
         recovered_text = item.get("recovered_text")
         if isinstance(recovered_text, str) and recovered_text.strip():
             return BlockRecovery(text=_clean_text(recovered_text), source="recovered_text")
@@ -253,7 +271,71 @@ class MinerUContentNormalizer:
             source = recovery.get("source") or "recovery.text"
             if isinstance(text, str) and text.strip() and isinstance(source, str):
                 return BlockRecovery(text=_clean_text(text), source=source)
+        pdf_recovery = self._extract_pdf_text_layer_recovery(
+            item,
+            block_type=block_type,
+            artifact_root=artifact_root,
+            content_list_path=content_list_path,
+        )
+        if pdf_recovery is not None:
+            return pdf_recovery
         return None
+
+    def _extract_pdf_text_layer_recovery(
+        self,
+        item: dict[str, Any],
+        *,
+        block_type: str,
+        artifact_root: Path | None,
+        content_list_path: Path | None,
+    ) -> BlockRecovery | None:
+        if block_type not in EQUATION_BLOCK_TYPES:
+            return None
+        if not (item.get("img_path") or item.get("image_path")):
+            return None
+        bbox = _bbox(item.get("bbox"))
+        if bbox is None:
+            return None
+        pdf_path = _source_pdf_path(
+            artifact_root=artifact_root,
+            content_list_path=content_list_path,
+        )
+        if pdf_path is None:
+            return None
+
+        try:
+            import fitz  # type: ignore[import-not-found]
+        except Exception:
+            return None
+
+        try:
+            with fitz.open(pdf_path) as document:
+                page_index = _page_index(item)
+                if page_index is None:
+                    page_index = 0
+                if page_index < 0 or page_index >= document.page_count:
+                    if document.page_count == 1:
+                        page_index = 0
+                    else:
+                        return None
+                page = document[page_index]
+                target = _scaled_bbox_to_page_rect(bbox, page.rect, fitz)
+                text = _overlapping_pdf_line_text(page, target, fitz)
+        except Exception:
+            return None
+
+        if not text:
+            return None
+        source = "pdf_text_layer"
+        if content_list_path is not None:
+            try:
+                relative_pdf_path = pdf_path.resolve().relative_to(
+                    content_list_path.parent.resolve()
+                )
+                source = f"pdf_text_layer:{relative_pdf_path.as_posix()}"
+            except ValueError:
+                source = "pdf_text_layer"
+        return BlockRecovery(text=_clean_text(text), source=source)
 
     def _warning_for_misclassified_equation(
         self,
@@ -409,3 +491,108 @@ def _page_number(item: dict[str, Any]) -> int | None:
         return page_idx + 1
     page = item.get("page")
     return page if type(page) is int else None
+
+
+def _page_index(item: dict[str, Any]) -> int | None:
+    page_idx = item.get("page_idx")
+    if type(page_idx) is int:
+        return page_idx
+    page = item.get("page")
+    if type(page) is int and page > 0:
+        return page - 1
+    return None
+
+
+def _bbox(value: Any) -> tuple[float, float, float, float] | None:
+    if not isinstance(value, list | tuple) or len(value) != 4:
+        return None
+    coords: list[float] = []
+    for item in value:
+        if not isinstance(item, int | float):
+            return None
+        coords.append(float(item))
+    x0, y0, x1, y1 = coords
+    if x1 <= x0 or y1 <= y0:
+        return None
+    return x0, y0, x1, y1
+
+
+def _source_pdf_path(
+    *,
+    artifact_root: Path | None,
+    content_list_path: Path | None,
+) -> Path | None:
+    candidates: list[Path] = []
+    if content_list_path is not None:
+        candidates.extend(
+            [
+                content_list_path.parent / "source_origin.pdf",
+                content_list_path.parent / "source.pdf",
+            ]
+        )
+    if artifact_root is not None:
+        candidates.extend(sorted(artifact_root.rglob("source_origin.pdf")))
+        candidates.extend(sorted(artifact_root.rglob("source.pdf")))
+
+    seen: set[Path] = set()
+    for candidate in candidates:
+        try:
+            resolved = candidate.resolve()
+        except OSError:
+            continue
+        if resolved in seen or not resolved.is_file():
+            continue
+        seen.add(resolved)
+        if artifact_root is not None:
+            root = artifact_root.resolve()
+            if resolved != root and root not in resolved.parents:
+                continue
+        return resolved
+    return None
+
+
+def _scaled_bbox_to_page_rect(
+    bbox: tuple[float, float, float, float],
+    page_rect: Any,
+    fitz: Any,
+) -> Any:
+    x0, y0, x1, y1 = bbox
+    target = fitz.Rect(
+        x0 * page_rect.width / 1000,
+        y0 * page_rect.height / 1000,
+        x1 * page_rect.width / 1000,
+        y1 * page_rect.height / 1000,
+    )
+    return fitz.Rect(
+        max(page_rect.x0, target.x0 - 4),
+        max(page_rect.y0, target.y0 - 6),
+        min(page_rect.x1, target.x1 + 4),
+        min(page_rect.y1, target.y1 + 6),
+    )
+
+
+def _overlapping_pdf_line_text(page: Any, target: Any, fitz: Any) -> str:
+    best_text = ""
+    best_score = 0.0
+    text_dict = page.get_text("dict")
+    for block in text_dict.get("blocks", []):
+        if not isinstance(block, dict) or block.get("type") != 0:
+            continue
+        for line in block.get("lines", []):
+            if not isinstance(line, dict) or "bbox" not in line:
+                continue
+            line_rect = fitz.Rect(line["bbox"])
+            overlap = line_rect & target
+            score = max(0.0, overlap.width) * max(0.0, overlap.height)
+            if score <= best_score:
+                continue
+            text = "".join(
+                str(span.get("text") or "")
+                for span in line.get("spans", [])
+                if isinstance(span, dict)
+            ).strip()
+            if not text:
+                continue
+            best_score = score
+            best_text = text
+    return best_text

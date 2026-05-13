@@ -19,6 +19,45 @@ def parser_warnings(chunk: AdapterChunk) -> list[dict[str, str]]:
     return chunk.metadata.get("extraction_quality", {}).get("parser_warnings", [])
 
 
+def tafseer_cross_reference_metadata() -> DomainMetadata:
+    return DomainMetadata(
+        domain="quran_tafseer",
+        document_type="commentary",
+        language="mixed",
+        content_role="tafseer",
+        tags=["quran", "tafseer", "english"],
+        citation_style="surah_ayah",
+        custom_json={
+            "reference_schema": {
+                "type": "chapter_verse",
+                "canonical_ref_template": "{chapter}:{verse}",
+            },
+            "chunking": {"unit": "verse_section", "preserve_parallel_text": True},
+            "domain_structure": {
+                "primary_anchor": {
+                    "type": "chapter_verse",
+                    "regex": r"\bVerse\s+(?P<chapter>\d{1,4})\s*:\s*(?P<verse>\d{1,4})\b",
+                    "unit": "verse_section",
+                },
+                "inline_references": {
+                    "type": "chapter_verse",
+                    "regex": r"(?P<chapter>\d{1,4})\s*:\s*(?P<verse>\d{1,4})",
+                    "policy": "cross_reference_only",
+                },
+            },
+            "reference_resolution": {
+                "enabled": True,
+                "build_canonical_units": True,
+                "carry_forward_body_blocks": True,
+                "header_only_policy": "provenance_only",
+                "continuation_policy": "until_next_reference",
+                "max_page_gap": 1,
+                "require_single_reference_per_answerable_chunk": True,
+            },
+        },
+    )
+
+
 def test_chunk_splitter_splits_tafseer_book_markdown_under_hard_cap():
     text = "\n\n".join(
         [
@@ -896,6 +935,139 @@ def test_chunk_splitter_allows_mixed_arabic_english_reference_chunk():
     )
 
     assert "reference_unit_missing_expected_script" not in parser_warning_codes(split[0])
+
+
+def test_chunk_splitter_keeps_tafseer_inline_cross_references_inside_primary_anchor(
+    tmp_path: Path,
+):
+    content_list = tmp_path / "source_content_list.json"
+    content_list.write_text(
+        json.dumps(
+            [
+                {"type": "text", "text": "Verse 18:30", "page_idx": 808},
+                {
+                    "type": "text",
+                    "text": "Indeed, those who have believed and done righteous deeds.",
+                    "page_idx": 808,
+                },
+                {
+                    "type": "text",
+                    "text": (
+                        "The Reward of those Who believe and do Righteous Deeds. "
+                        "In a similar way, He contrasts the two in 25:75-76."
+                    ),
+                    "page_idx": 808,
+                },
+                {"type": "text", "text": "Verse 18:32", "page_idx": 808},
+                {
+                    "type": "text",
+                    "text": "And present to them an example of two men.",
+                    "page_idx": 808,
+                },
+            ],
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    chunk = AdapterChunk(
+        text="fallback markdown should not be used",
+        source_location={"artifact": "source/ocr/source.md"},
+        metadata={
+            "parser_metadata": {
+                "backend": "mineru",
+                "artifact_extract_dir": str(tmp_path),
+                "content_list_ref": "source_content_list.json",
+            }
+        },
+    )
+    metadata = tafseer_cross_reference_metadata()
+
+    split = ChunkSplitter(max_words=1500).split(
+        [chunk],
+        domain_metadata=metadata,
+        parser_mode="mineru_strict",
+    )
+
+    answerable = [piece for piece in split if piece.content_type != "reference_provenance"]
+    assert [piece.preview_ref for piece in answerable] == ["18:30", "18:32"]
+    assert "25:75-76" in answerable[0].text
+    assert "The Reward of those Who believe" in answerable[0].text
+    assert answerable[0].metadata["reference_metadata"]["references"] == ["18:30"]
+    assert answerable[0].metadata["reference_metadata"]["cross_references"] == ["25:75"]
+    assert not any(piece.preview_ref == "25:75" for piece in split)
+
+
+def test_chunk_splitter_keeps_primary_anchor_after_heading_in_content_list(
+    tmp_path: Path,
+):
+    content_list = tmp_path / "source_content_list.json"
+    content_list.write_text(
+        json.dumps(
+            [
+                {
+                    "type": "text",
+                    "text": (
+                        "Commentary heading\n\n"
+                        "Verse 18:30 Indeed, those who believe are rewarded. "
+                        "The commentary mentions 25:75-76."
+                    ),
+                    "page_idx": 808,
+                }
+            ],
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    chunk = AdapterChunk(
+        text="fallback markdown should not be used",
+        source_location={"artifact": "source/ocr/source.md"},
+        metadata={
+            "parser_metadata": {
+                "backend": "mineru",
+                "artifact_extract_dir": str(tmp_path),
+                "content_list_ref": "source_content_list.json",
+            }
+        },
+    )
+
+    split = ChunkSplitter(max_words=1500).split(
+        [chunk],
+        domain_metadata=tafseer_cross_reference_metadata(),
+        parser_mode="mineru_strict",
+    )
+
+    assert len(split) == 1
+    assert split[0].content_type != "reference_provenance"
+    assert split[0].preview_ref == "18:30"
+    assert split[0].metadata["reference_metadata"]["references"] == ["18:30"]
+    assert split[0].metadata["reference_metadata"]["cross_references"] == ["25:75"]
+    assert split[0].text.startswith("Commentary heading")
+
+
+def test_chunk_splitter_fallback_uses_primary_anchor_policy_for_inline_references():
+    chunk = AdapterChunk(
+        text=(
+            "Commentary heading\n\n"
+            "Verse 18:30 Indeed, those who believe are rewarded. "
+            "The commentary mentions 25:75-76.\n\n"
+            "Verse 18:32 And present to them an example of two men."
+        ),
+        source_location={"artifact": "source/auto/source.md", "page_start": 809},
+        metadata={"parser_metadata": {"backend": "mineru", "chunk_index": 0}},
+    )
+
+    split = ChunkSplitter(max_words=1500).split(
+        [chunk],
+        domain_metadata=tafseer_cross_reference_metadata(),
+        parser_mode="mineru_strict",
+    )
+
+    assert [item.metadata["reference_metadata"]["references"] for item in split] == [
+        ["18:30"],
+        ["18:32"],
+    ]
+    assert split[0].metadata["reference_metadata"]["cross_references"] == ["25:75"]
+    assert "25:75" not in split[1].metadata["reference_metadata"]["references"]
 
 
 def test_chunk_splitter_preserves_real_math_content_list_equation(tmp_path: Path):

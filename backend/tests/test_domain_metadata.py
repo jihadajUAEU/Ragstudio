@@ -83,6 +83,16 @@ def test_builtin_hadith_profile_has_book_hadith_reference_semantics(tmp_path):
             "recover_text_bearing_blocks_as_prose": True,
             "preserve_original_block_type": True,
         },
+        "mineru_parse_options": {
+            "parser": "mineru",
+            "parse_method": "ocr",
+            "backend": "pipeline",
+            "device": "cuda:0",
+            "lang": "arabic",
+            "formula": False,
+            "table": False,
+            "max_concurrent_files": 1,
+        },
         "retrieval": {
             "exact_reference_top1": True,
             "boost_same_chapter": True,
@@ -125,6 +135,16 @@ def test_builtin_quran_profile_has_chapter_verse_reference_semantics(tmp_path):
         "allow_equations_as_content": False,
         "recover_text_bearing_blocks_as_prose": True,
         "preserve_original_block_type": True,
+    }
+    assert profile.metadata.custom_json["mineru_parse_options"] == {
+        "parser": "mineru",
+        "parse_method": "ocr",
+        "backend": "pipeline",
+        "device": "cuda:0",
+        "lang": "arabic",
+        "formula": False,
+        "table": False,
+        "max_concurrent_files": 1,
     }
     assert profile.metadata.custom_json["graph"]["node_types"] == [
         "surah",
@@ -299,6 +319,100 @@ def test_validate_custom_json_rejects_invalid_parser_normalization_contract():
 
     with pytest.raises(ValueError, match=r"parser_normalization\.allowed_block_types"):
         validate_custom_json({"parser_normalization": {"allowed_block_types": ["text", 42]}})
+
+
+def test_validate_custom_json_accepts_mineru_parse_options():
+    payload = {
+        "mineru_parse_options": {
+            "parser": "mineru",
+            "parse_method": "ocr",
+            "backend": "pipeline",
+            "device": "cuda:0",
+            "lang": "arabic",
+            "formula": False,
+            "table": False,
+            "max_concurrent_files": 1,
+        }
+    }
+
+    assert validate_custom_json(payload) == payload
+
+
+def test_validate_custom_json_rejects_invalid_mineru_parse_options():
+    with pytest.raises(ValueError, match=r"mineru_parse_options\.formula"):
+        validate_custom_json({"mineru_parse_options": {"formula": "false"}})
+
+    with pytest.raises(ValueError, match=r"mineru_parse_options\.max_concurrent_files"):
+        validate_custom_json({"mineru_parse_options": {"max_concurrent_files": 9}})
+
+
+def test_validate_custom_json_accepts_domain_structure_quality_and_layout_policy():
+    payload = {
+        "domain_structure": {
+            "primary_anchor": {
+                "type": "chapter_verse",
+                "regex": r"\bVerse\s+(?P<chapter>\d{1,4})\s*:\s*(?P<verse>\d{1,4})\b",
+                "unit": "verse_section",
+            },
+            "inline_references": {
+                "type": "chapter_verse",
+                "regex": r"(?P<chapter>\d{1,4})\s*:\s*(?P<verse>\d{1,4})",
+                "policy": "cross_reference_only",
+            },
+        },
+        "quality_policy": {
+            "document_role": "commentary",
+            "observed_scripts": ["arabic", "latin"],
+            "required_scripts": ["latin"],
+            "optional_scripts": ["arabic"],
+            "missing_required_script_action": "warn",
+            "missing_optional_script_action": "no_warning",
+            "materialization_policy": "allow_if_required_scripts_present",
+            "evidence": [{"page": 809, "observation": "Arabic is optional."}],
+            "confidence": 0.91,
+        },
+        "layout_quality_policy": {
+            "expected_block_roles": {"verse_text": ["text", "equation_recovered"]},
+            "misclassified_block_policy": {
+                "equation_with_recovered_text": {
+                    "treat_as": "prose_or_verse_text",
+                    "action": "recover_as_text",
+                    "warning_level": "info",
+                }
+            },
+            "disallowed_block_policy": {
+                "text_bearing_disallowed_block": {
+                    "action": "recover_as_text",
+                    "warning_level": "info",
+                }
+            },
+        },
+    }
+
+    assert validate_custom_json(payload) == payload
+
+
+def test_validate_custom_json_rejects_invalid_domain_quality_policy_values():
+    with pytest.raises(ValueError, match=r"domain_structure\.inline_references\.policy"):
+        validate_custom_json(
+            {"domain_structure": {"inline_references": {"policy": "answerable"}}}
+        )
+
+    with pytest.raises(ValueError, match=r"quality_policy\.missing_optional_script_action"):
+        validate_custom_json(
+            {"quality_policy": {"missing_optional_script_action": "silently_delete"}}
+        )
+
+    with pytest.raises(ValueError, match=r"layout_quality_policy.*warning_level"):
+        validate_custom_json(
+            {
+                "layout_quality_policy": {
+                    "misclassified_block_policy": {
+                        "equation_with_recovered_text": {"warning_level": "quiet"}
+                    }
+                }
+            }
+        )
 
 
 def test_validate_custom_json_rejects_invalid_reference_regex():
@@ -588,6 +702,12 @@ async def test_ai_domain_metadata_suggester_preserves_reference_custom_json(monk
                                     "include_neighbors": 1,
                                     "preserve_parallel_text": true
                                   },
+                                  "mineru_parse_options": {
+                                    "parse_method": "ocr",
+                                    "lang": "arabic",
+                                    "formula": false,
+                                    "table": false
+                                  },
                                   "retrieval": {
                                     "exact_reference_top1": true,
                                     "boost_neighbor_verses": true
@@ -651,12 +771,20 @@ async def test_ai_domain_metadata_suggester_preserves_reference_custom_json(monk
     assert "custom_json.reference_schema" in prompt
     assert "custom_json.relationships" in prompt
     assert "custom_json.chunking" in prompt
+    assert "custom_json.domain_structure" in prompt
+    assert "custom_json.quality_policy" in prompt
+    assert "custom_json.layout_quality_policy" in prompt
+    assert "custom_json.mineru_parse_options" in prompt
     assert "custom_json.retrieval" in prompt
+    assert "primary answerable units" in prompt
+    assert "inline cross-references" in prompt
+    assert "missing optional script" in prompt
+    assert "misclassified as equations" in prompt
     assert "legal sections/subsections" in prompt
     assert "page-line references" in prompt
     assert "Page 4 text excerpt" in prompt
-    assert "Page 5 text excerpt" not in prompt
-    assert len(calls[0]["json"]["messages"][0]["content"]) == 5
+    assert "Page 5 text excerpt" in prompt
+    assert len(calls[0]["json"]["messages"][0]["content"]) == 6
 
     custom_json = result.domain_metadata.custom_json
     assert custom_json["reference_schema"]["type"] == "chapter_verse"
@@ -664,6 +792,12 @@ async def test_ai_domain_metadata_suggester_preserves_reference_custom_json(monk
     assert custom_json["relationships"]["next"] == ["same_chapter", "verse + 1"]
     assert custom_json["chunking"]["unit"] == "verse"
     assert custom_json["chunking"]["include_neighbors"] == 1
+    assert custom_json["mineru_parse_options"] == {
+        "parse_method": "ocr",
+        "lang": "arabic",
+        "formula": False,
+        "table": False,
+    }
     assert custom_json["retrieval"]["exact_reference_top1"] is True
     assert custom_json["retrieval"]["boost_neighbor_verses"] is True
     assert result.domain_metadata.metadata_sources == ["ai_vision"]
@@ -1030,6 +1164,12 @@ def test_ai_metadata_merge_deep_merges_custom_json():
                 "allow_equations_as_content": False,
                 "recover_text_bearing_blocks_as_prose": True,
             },
+            "mineru_parse_options": {
+                "parser": "mineru",
+                "parse_method": "ocr",
+                "lang": "arabic",
+                "formula": False,
+            },
             "retrieval": {"exact_reference_top1": True},
             "graph": {
                 "node_types": ["collection", "book", "chapter", "hadith", "chunk"],
@@ -1047,6 +1187,7 @@ def test_ai_metadata_merge_deep_merges_custom_json():
             },
             "chunking": {"preserve_parallel_text": True},
             "parser_normalization": {"preserve_original_block_type": True},
+            "mineru_parse_options": {"table": False},
             "retrieval": {"boost_same_chapter": True},
             "graph": {"edge_types": ["same_chapter"]},
         }
@@ -1074,6 +1215,13 @@ def test_ai_metadata_merge_deep_merges_custom_json():
             "recover_text_bearing_blocks_as_prose": True,
             "preserve_original_block_type": True,
         },
+        "mineru_parse_options": {
+            "parser": "mineru",
+            "parse_method": "ocr",
+            "lang": "arabic",
+            "formula": False,
+            "table": False,
+        },
         "retrieval": {
             "exact_reference_top1": True,
             "boost_same_chapter": True,
@@ -1087,6 +1235,42 @@ def test_ai_metadata_merge_deep_merges_custom_json():
     }
 
 
+def test_ai_metadata_merge_preserves_quality_policy_evidence_lists():
+    suggester = DomainMetadataAiSuggester()
+    baseline = DomainMetadata(
+        custom_json={
+            "quality_policy": {
+                "document_role": "commentary",
+                "required_scripts": ["latin"],
+                "optional_scripts": ["arabic"],
+                "missing_optional_script_action": "warn",
+                "evidence": [
+                    {"page": 1, "observation": "Baseline saw English commentary."}
+                ],
+            }
+        }
+    )
+    ai = DomainMetadata(
+        custom_json={
+            "quality_policy": {
+                "evidence": [
+                    {"page": 2, "observation": "AI saw optional Arabic citations."}
+                ],
+                "confidence": 0.86,
+            }
+        }
+    )
+
+    merged = suggester.merge_with_baseline(ai, baseline)
+
+    assert merged.custom_json["quality_policy"]["evidence"] == [
+        {"page": 1, "observation": "Baseline saw English commentary."},
+        {"page": 2, "observation": "AI saw optional Arabic citations."},
+    ]
+    assert merged.custom_json["quality_policy"]["required_scripts"] == ["latin"]
+    assert merged.custom_json["quality_policy"]["confidence"] == 0.86
+
+
 def test_ai_metadata_merge_prunes_partial_graph_without_baseline():
     suggester = DomainMetadataAiSuggester()
     normalized = suggester._normalize_custom_json(
@@ -1097,6 +1281,72 @@ def test_ai_metadata_merge_prunes_partial_graph_without_baseline():
     )
 
     assert normalized == {"chunking": {"unit": "paragraph"}}
+    validate_custom_json(normalized)
+
+
+def test_ai_metadata_normalizes_document_specific_quality_policies():
+    suggester = DomainMetadataAiSuggester()
+    normalized = suggester._normalize_custom_json(
+        {
+            "domain_structure": {
+                "primary_anchor": {
+                    "type": "chapter_verse",
+                    "regex": r"\bVerse\s+(?P<chapter>\d{1,4})\s*:\s*(?P<verse>\d{1,4})\b",
+                    "unit": "verse_section",
+                    "ignored": 42,
+                },
+                "inline_references": {
+                    "type": "chapter_verse",
+                    "regex": r"(?P<chapter>\d{1,4})\s*:\s*(?P<verse>\d{1,4})",
+                    "policy": "cross_reference_only",
+                },
+            },
+            "quality_policy": {
+                "document_role": "commentary",
+                "observed_scripts": ["arabic", "latin", 7],
+                "required_scripts": ["latin"],
+                "optional_scripts": ["arabic"],
+                "missing_required_script_action": "warn",
+                "missing_optional_script_action": "no_warning",
+                "materialization_policy": "allow_if_required_scripts_present",
+                "confidence": 0.91,
+                "evidence": [
+                    {"page": 809, "observation": "Arabic is optional for commentary."},
+                    {"page": "bad", "observation": 42},
+                ],
+            },
+            "layout_quality_policy": {
+                "expected_block_roles": {"verse_text": ["text", "equation_recovered", 3]},
+                "misclassified_block_policy": {
+                    "equation_with_recovered_text": {
+                        "treat_as": "prose_or_verse_text",
+                        "action": "recover_as_text",
+                        "warning_level": "info",
+                        "ignored": 42,
+                    }
+                },
+            },
+        }
+    )
+
+    assert normalized["domain_structure"]["inline_references"]["policy"] == (
+        "cross_reference_only"
+    )
+    assert normalized["quality_policy"]["required_scripts"] == ["latin"]
+    assert normalized["quality_policy"]["optional_scripts"] == ["arabic"]
+    assert normalized["quality_policy"]["evidence"] == [
+        {"page": 809, "observation": "Arabic is optional for commentary."}
+    ]
+    assert normalized["layout_quality_policy"] == {
+        "expected_block_roles": {"verse_text": ["text", "equation_recovered"]},
+        "misclassified_block_policy": {
+            "equation_with_recovered_text": {
+                "treat_as": "prose_or_verse_text",
+                "action": "recover_as_text",
+                "warning_level": "info",
+            }
+        },
+    }
     validate_custom_json(normalized)
 
 

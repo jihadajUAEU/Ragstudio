@@ -1111,6 +1111,8 @@ class JobQualityWarningService:
     ) -> dict[str, int]:
         counts: dict[str, int] = {}
         for item in items:
+            if bool(item.warning.get("suppressed_from_counts")):
+                continue
             if item.code:
                 counts[item.code] = counts.get(item.code, 0) + 1
         return dict(sorted(counts.items()))
@@ -1123,7 +1125,13 @@ class JobQualityWarningService:
         affected = parser_quality.get("affected_chunks")
         if isinstance(affected, int):
             return affected
-        return len({item.chunk_id for item in items})
+        return len(
+            {
+                item.chunk_id
+                for item in items
+                if not bool(item.warning.get("suppressed_from_counts"))
+            }
+        )
 
     def _dict_value(self, value: Any) -> dict[str, Any]:
         return dict(value) if isinstance(value, dict) else {}

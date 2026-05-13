@@ -1,3 +1,4 @@
+import pytest
 from ragstudio.schemas.parsing import DomainMetadata
 from ragstudio.services.adapter import AdapterChunk
 from ragstudio.services.domain_metadata_quality_gate import DomainMetadataQualityGate
@@ -17,6 +18,365 @@ def _quran_metadata() -> DomainMetadata:
         reference_pattern="surah_number:verse_number",
         script="mixed",
     )
+
+
+def _tafseer_quality_policy_metadata(
+    *,
+    missing_optional_script_action: str = "no_warning",
+    layout_action: str = "recover_as_text",
+    layout_warning_level: str = "info",
+) -> DomainMetadata:
+    return DomainMetadata(
+        domain="quran_tafseer",
+        document_type="commentary",
+        language="mixed",
+        content_role="tafseer",
+        tags=["quran", "tafseer", "english"],
+        citation_style="surah_ayah",
+        expected_structure="surah_ayah_sections",
+        reference_pattern="surah_number:verse_number",
+        script="mixed",
+        custom_json={
+            "reference_schema": {"type": "chapter_verse", "display": "{chapter}:{verse}"},
+            "chunking": {"unit": "verse", "preserve_parallel_text": True},
+            "domain_structure": {
+                "primary_anchor": {
+                    "type": "chapter_verse",
+                    "regex": r"\bVerse\s+(?P<chapter>\d{1,4})\s*:\s*(?P<verse>\d{1,4})\b",
+                    "unit": "verse_section",
+                },
+                "inline_references": {
+                    "type": "chapter_verse",
+                    "regex": r"(?P<chapter>\d{1,4})\s*:\s*(?P<verse>\d{1,4})",
+                    "policy": "cross_reference_only",
+                },
+            },
+            "quality_policy": {
+                "document_role": "commentary",
+                "observed_scripts": ["arabic", "latin"],
+                "required_scripts": ["latin"],
+                "optional_scripts": ["arabic"],
+                "missing_required_script_action": "warn",
+                "missing_optional_script_action": missing_optional_script_action,
+                "materialization_policy": "allow_if_required_scripts_present",
+            },
+            "layout_quality_policy": {
+                "misclassified_block_policy": {
+                    "equation_with_recovered_text": {
+                        "action": layout_action,
+                        "warning_level": layout_warning_level,
+                    }
+                }
+            },
+        },
+    )
+
+
+def _optional_only_quality_policy_metadata() -> DomainMetadata:
+    return DomainMetadata(
+        domain="quran_tafseer",
+        document_type="commentary",
+        language="mixed",
+        content_role="tafseer",
+        tags=["quran", "tafseer", "english"],
+        citation_style="surah_ayah",
+        expected_structure="surah_ayah_sections",
+        reference_pattern="surah_number:verse_number",
+        script="mixed",
+        custom_json={
+            "reference_schema": {"type": "chapter_verse", "display": "{chapter}:{verse}"},
+            "chunking": {"unit": "verse", "preserve_parallel_text": True},
+            "quality_policy": {
+                "document_role": "commentary",
+                "required_scripts": [],
+                "optional_scripts": ["arabic"],
+                "missing_optional_script_action": "block",
+                "materialization_policy": "allow_if_required_scripts_present",
+            },
+        },
+    )
+
+
+def _role_scoped_quality_policy_metadata() -> DomainMetadata:
+    return DomainMetadata(
+        domain="quran_tafseer",
+        document_type="commentary",
+        language="mixed",
+        content_role="tafseer",
+        tags=["quran", "tafseer", "english"],
+        citation_style="surah_ayah",
+        expected_structure="surah_ayah_sections",
+        reference_pattern="surah_number:verse_number",
+        script="mixed",
+        custom_json={
+            "reference_schema": {"type": "chapter_verse", "display": "{chapter}:{verse}"},
+            "chunking": {"unit": "verse", "preserve_parallel_text": True},
+            "quality_policy": {
+                "document_role": "commentary",
+                "required_scripts": [],
+                "optional_scripts": [],
+                "required_scripts_by_unit_role": {"verse_section": ["latin"]},
+                "optional_scripts_by_unit_role": {"commentary": ["arabic"]},
+                "missing_required_script_action": "warn",
+                "missing_optional_script_action": "block",
+                "materialization_policy": "allow_if_required_scripts_present",
+            },
+        },
+    )
+
+
+def test_domain_quality_gate_allows_tafseer_commentary_when_optional_arabic_is_missing():
+    chunks = [
+        AdapterChunk(
+            text=(
+                "Verse 18:30 Indeed, those who have believed and done righteous deeds. "
+                "The Tafseer explains the reward and references 25:75-76."
+            ),
+            source_location={"page": 809},
+            metadata={"reference_metadata": {"references": ["18:30"]}},
+        )
+    ]
+
+    gate = DomainMetadataQualityGate()
+    report = gate.validate_adapter_chunks(
+        chunks,
+        domain_metadata=_tafseer_quality_policy_metadata(),
+    )
+
+    assert report["status"] == "passed"
+    assert report["parser_quality"]["warning_counts"] == {}
+    assert report["index_quality_report"]["summary"][
+        "reference_units_missing_expected_script"
+    ] == 0
+    assert "extraction_quality" not in chunks[0].metadata
+    assert chunks[0].metadata["quality_action_policy"]["index_vector"] is True
+    assert chunks[0].metadata["quality_action_policy"]["project_graph"] is True
+
+
+def test_domain_quality_gate_still_warns_when_required_latin_is_missing():
+    chunks = [
+        AdapterChunk(
+            text="18:30",
+            source_location={"page": 809},
+            metadata={"reference_metadata": {"references": ["18:30"]}},
+        )
+    ]
+
+    gate = DomainMetadataQualityGate()
+    report = gate.validate_adapter_chunks(
+        chunks,
+        domain_metadata=_tafseer_quality_policy_metadata(),
+    )
+
+    assert report["status"] == "passed_with_warnings"
+    warnings = chunks[0].metadata["extraction_quality"]["parser_warnings"]
+    assert warnings[0]["code"] == "reference_unit_missing_expected_script"
+    assert warnings[0]["expected_script"] == "latin"
+
+
+def test_domain_quality_gate_suppresses_accepted_recovered_text_warning_counts():
+    chunks = [
+        AdapterChunk(
+            text="Verse 18:30 Indeed, those who have believed.",
+            source_location={"page": 809},
+            metadata={
+                "reference_metadata": {"references": ["18:30"]},
+                "extraction_quality": {
+                    "parser_warnings": [
+                        {
+                            "code": "recovered_text_from_misclassified_block",
+                            "block_type": "equation",
+                            "message": "Used parser-provided recovered text.",
+                        }
+                    ]
+                },
+            },
+        )
+    ]
+
+    gate = DomainMetadataQualityGate()
+    report = gate.validate_adapter_chunks(
+        chunks,
+        domain_metadata=_tafseer_quality_policy_metadata(),
+    )
+
+    assert report["status"] == "passed"
+    warning = chunks[0].metadata["extraction_quality"]["parser_warnings"][0]
+    assert warning["severity"] == "info"
+    assert warning["quality_gate_action"] == "accepted_recovery"
+    assert warning["suppressed_from_counts"] is True
+    assert gate.parser_warning_codes(chunks[0].metadata) == []
+    assert gate.parser_warning_codes_for_chunk(chunks[0]) == []
+
+
+@pytest.mark.parametrize(
+    ("layout_action", "layout_warning_level"),
+    [("block", "warn"), ("block", "info"), ("recover_as_text", "block")],
+)
+def test_domain_quality_gate_blocks_layout_policy_materialization(
+    layout_action: str,
+    layout_warning_level: str,
+):
+    chunks = [
+        AdapterChunk(
+            text="Verse 18:30 Indeed, those who have believed.",
+            source_location={"page": 809},
+            metadata={
+                "reference_metadata": {"references": ["18:30"]},
+                "extraction_quality": {
+                    "parser_warnings": [
+                        {
+                            "code": "recovered_text_from_misclassified_block",
+                            "block_type": "equation",
+                            "message": "Used parser-provided recovered text.",
+                        }
+                    ]
+                },
+            },
+        )
+    ]
+
+    report = DomainMetadataQualityGate().validate_adapter_chunks(
+        chunks,
+        domain_metadata=_tafseer_quality_policy_metadata(
+            layout_action=layout_action,
+            layout_warning_level=layout_warning_level,
+        ),
+    )
+
+    warning = chunks[0].metadata["extraction_quality"]["parser_warnings"][0]
+    policy = chunks[0].metadata["quality_action_policy"]
+    assert report["status"] == "passed_with_warnings"
+    assert warning["suppressed_from_counts"] is False
+    assert policy["index_vector"] is False
+    assert policy["project_graph"] is False
+    assert policy["graph_confidence"] == "blocked"
+    assert "parser_quality_block:recovered_text_from_misclassified_block" in policy[
+        "quality_flags"
+    ]
+
+
+def test_domain_quality_gate_warns_when_optional_script_action_is_warn():
+    chunks = [
+        AdapterChunk(
+            text="Verse 18:30 Indeed, those who have believed.",
+            source_location={"page": 809},
+            metadata={"reference_metadata": {"references": ["18:30"]}},
+        )
+    ]
+
+    report = DomainMetadataQualityGate().validate_adapter_chunks(
+        chunks,
+        domain_metadata=_tafseer_quality_policy_metadata(
+            missing_optional_script_action="warn"
+        ),
+    )
+
+    warning = chunks[0].metadata["extraction_quality"]["parser_warnings"][0]
+    assert report["status"] == "passed_with_warnings"
+    assert report["index_quality_report"]["summary"][
+        "reference_units_missing_optional_script"
+    ] == 1
+    assert warning["code"] == "reference_unit_missing_optional_script"
+    assert warning["expected_script"] == "arabic"
+    assert warning["severity"] == "warn"
+    assert warning["suppressed_from_counts"] is False
+    assert chunks[0].metadata["quality_action_policy"]["index_vector"] is True
+    assert chunks[0].metadata["quality_action_policy"]["project_graph"] is True
+
+
+def test_domain_quality_gate_blocks_when_optional_script_action_is_block():
+    chunks = [
+        AdapterChunk(
+            text="Verse 18:30 Indeed, those who have believed.",
+            source_location={"page": 809},
+            metadata={"reference_metadata": {"references": ["18:30"]}},
+        )
+    ]
+
+    report = DomainMetadataQualityGate().validate_adapter_chunks(
+        chunks,
+        domain_metadata=_tafseer_quality_policy_metadata(
+            missing_optional_script_action="block"
+        ),
+    )
+
+    warning = chunks[0].metadata["extraction_quality"]["parser_warnings"][0]
+    policy = chunks[0].metadata["quality_action_policy"]
+    assert report["status"] == "passed_with_warnings"
+    assert warning["code"] == "reference_unit_missing_optional_script"
+    assert warning["severity"] == "block"
+    assert policy["index_vector"] is False
+    assert policy["project_graph"] is False
+    assert "missing_optional_script:arabic" in policy["quality_flags"]
+
+
+def test_domain_quality_gate_blocks_optional_only_policy_without_required_scripts():
+    chunks = [
+        AdapterChunk(
+            text="Verse 18:30 Indeed, those who have believed.",
+            source_location={"page": 809},
+            metadata={"reference_metadata": {"references": ["18:30"]}},
+        )
+    ]
+
+    report = DomainMetadataQualityGate().validate_adapter_chunks(
+        chunks,
+        domain_metadata=_optional_only_quality_policy_metadata(),
+    )
+
+    warning = chunks[0].metadata["extraction_quality"]["parser_warnings"][0]
+    policy = chunks[0].metadata["quality_action_policy"]
+    summary = report["index_quality_report"]["summary"]
+    assert report["status"] == "passed_with_warnings"
+    assert summary["reference_units_missing_expected_script"] == 0
+    assert summary["reference_units_missing_optional_script"] == 1
+    assert summary["materialization_blocked_reference_count"] == 1
+    assert warning["code"] == "reference_unit_missing_optional_script"
+    assert warning["severity"] == "block"
+    assert warning["suppressed_from_counts"] is False
+    assert policy["index_vector"] is False
+    assert policy["project_graph"] is False
+    assert policy["graph_confidence"] == "blocked"
+
+
+def test_domain_quality_gate_consumes_role_scoped_script_policies():
+    chunks = [
+        AdapterChunk(
+            text="18:30",
+            source_location={"page": 809},
+            metadata={
+                "reference_metadata": {"references": ["18:30"]},
+                "canonical_reference_unit": {"unit": "verse_section"},
+            },
+        ),
+        AdapterChunk(
+            text="18:31 Commentary in English only.",
+            source_location={"page": 810},
+            metadata={
+                "reference_metadata": {"references": ["18:31"]},
+                "canonical_reference_unit": {"unit_role": "commentary"},
+            },
+        ),
+    ]
+
+    report = DomainMetadataQualityGate().validate_adapter_chunks(
+        chunks,
+        domain_metadata=_role_scoped_quality_policy_metadata(),
+    )
+
+    records = {
+        record["reference"]: record
+        for record in report["index_quality_report"]["references"]
+    }
+    assert records["18:30"]["unit_role"] == "verse_section"
+    assert records["18:30"]["expected_scripts"] == ["latin"]
+    assert records["18:30"]["status"] == "missing_expected_script"
+    assert records["18:31"]["unit_role"] == "commentary"
+    assert records["18:31"]["expected_scripts"] == ["arabic"]
+    assert records["18:31"]["status"] == "missing_optional_script"
+    assert chunks[1].metadata["quality_action_policy"]["index_vector"] is False
+    assert chunks[1].metadata["quality_action_policy"]["project_graph"] is False
 
 
 def test_domain_quality_gate_uses_reference_metadata_when_text_lacks_reference_label():

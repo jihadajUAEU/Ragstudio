@@ -71,6 +71,13 @@ export interface SettingsProfileIn {
   mineru_timeout_ms?: number;
   mineru_poll_interval_ms?: number;
   mineru_require_hpc?: boolean;
+  mineru_backend?: string;
+  mineru_device?: string;
+  mineru_lang?: string | null;
+  mineru_formula?: boolean;
+  mineru_table?: boolean;
+  mineru_source?: string | null;
+  mineru_max_concurrent_files?: number;
   runtime_mode?: RuntimeMode;
   vision_model?: string | null;
   vision_base_url?: string | null;
@@ -137,6 +144,13 @@ export interface SettingsProfileOut {
   mineru_timeout_ms: number;
   mineru_poll_interval_ms: number;
   mineru_require_hpc: boolean;
+  mineru_backend: string;
+  mineru_device: string;
+  mineru_lang: string | null;
+  mineru_formula: boolean;
+  mineru_table: boolean;
+  mineru_source: string | null;
+  mineru_max_concurrent_files: number;
   runtime_mode: RuntimeMode;
   vision_model: string | null;
   vision_base_url: string | null;
@@ -202,6 +216,7 @@ export interface MinerUConnectionTestOut {
   base_url: string;
   latency_ms: number;
   detail: string;
+  optimization: Record<string, unknown>;
 }
 
 export interface RerankerConnectionTestOut {

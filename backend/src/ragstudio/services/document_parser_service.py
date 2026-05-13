@@ -1,4 +1,5 @@
 from collections.abc import Awaitable, Callable
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -6,7 +7,7 @@ import httpx
 from ragstudio.db.models import Document, SettingsProfile
 from ragstudio.schemas.parsing import IndexDocumentIn
 from ragstudio.services.adapter import AdapterChunk, RAGAnythingAdapter
-from ragstudio.services.mineru_client import MinerUClient
+from ragstudio.services.mineru_client import MinerUClient, MinerUParseOptions
 from ragstudio.services.mineru_extraction_validator import MinerUExtractionValidator
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -92,7 +93,7 @@ class DocumentParserService:
         *,
         on_mineru_status: MinerUStatusCallback | None = None,
     ) -> list[AdapterChunk]:
-        _, client = await self.validated_mineru_client()
+        settings, client = await self.validated_mineru_client()
         artifact_dir = self.data_dir / "mineru-artifacts" / document.id
         if self.commit_before_remote_parse:
             await self.session.commit()
@@ -103,6 +104,7 @@ class DocumentParserService:
             content_type=document.content_type,
             sha256=document.sha256,
             domain_metadata=options.domain_metadata.model_dump(exclude_none=True),
+            parse_options=self._mineru_parse_options(settings, options.domain_metadata),
             on_status=on_mineru_status,
         )
         chunks = client.normalize_artifact_zip(
@@ -127,6 +129,121 @@ class DocumentParserService:
                 }
             )
         return chunks
+
+    def _mineru_parse_options(
+        self,
+        settings: SettingsProfile,
+        domain_metadata: Any | None = None,
+    ) -> MinerUParseOptions:
+        mineru_formula = getattr(settings, "mineru_formula", None)
+        mineru_table = getattr(settings, "mineru_table", None)
+        options = MinerUParseOptions(
+            parser=getattr(settings, "parser", None) or "mineru",
+            parse_method=getattr(settings, "parse_method", None) or "auto",
+            backend=getattr(settings, "mineru_backend", None) or "pipeline",
+            device=getattr(settings, "mineru_device", None) or "cuda:0",
+            lang=getattr(settings, "mineru_lang", None),
+            formula=True if mineru_formula is None else bool(mineru_formula),
+            table=True if mineru_table is None else bool(mineru_table),
+            source=getattr(settings, "mineru_source", None),
+            max_concurrent_files=getattr(settings, "mineru_max_concurrent_files", None) or 1,
+        )
+        overrides = self._mineru_parse_overrides(domain_metadata)
+        if overrides:
+            options = replace(options, **overrides)
+
+        metadata_defaults = self._metadata_inferred_mineru_overrides(
+            domain_metadata,
+            explicit_keys=set(overrides),
+            current=options,
+        )
+        if metadata_defaults:
+            options = replace(options, **metadata_defaults)
+        return options
+
+    def _mineru_parse_overrides(self, domain_metadata: Any | None) -> dict[str, Any]:
+        custom_json = getattr(domain_metadata, "custom_json", None)
+        if not isinstance(custom_json, dict):
+            return {}
+        raw = custom_json.get("mineru_parse_options")
+        if not isinstance(raw, dict):
+            return {}
+
+        overrides: dict[str, Any] = {}
+        for key in ("parser", "parse_method", "backend", "device", "lang", "source"):
+            value = raw.get(key)
+            if isinstance(value, str) and value.strip():
+                overrides[key] = value.strip()
+        for key in ("formula", "table"):
+            value = raw.get(key)
+            if isinstance(value, bool):
+                overrides[key] = value
+        max_concurrent_files = raw.get("max_concurrent_files")
+        if isinstance(max_concurrent_files, int) and not isinstance(max_concurrent_files, bool):
+            overrides["max_concurrent_files"] = max(1, min(max_concurrent_files, 8))
+        return overrides
+
+    def _metadata_inferred_mineru_overrides(
+        self,
+        domain_metadata: Any | None,
+        *,
+        explicit_keys: set[str],
+        current: MinerUParseOptions,
+    ) -> dict[str, Any]:
+        if domain_metadata is None or not self._metadata_prefers_arabic_ocr(domain_metadata):
+            return {}
+
+        inferred: dict[str, Any] = {}
+        if "lang" not in explicit_keys and not current.lang:
+            inferred["lang"] = "arabic"
+        if "parse_method" not in explicit_keys and current.parse_method == "auto":
+            inferred["parse_method"] = "ocr"
+        if "formula" not in explicit_keys:
+            inferred["formula"] = False
+        if "table" not in explicit_keys and not self._metadata_mentions_tables(domain_metadata):
+            inferred["table"] = False
+        return inferred
+
+    def _metadata_prefers_arabic_ocr(self, domain_metadata: Any) -> bool:
+        custom_json = getattr(domain_metadata, "custom_json", None)
+        parser_normalization = (
+            custom_json.get("parser_normalization")
+            if isinstance(custom_json, dict)
+            else None
+        )
+        equations_as_content = (
+            parser_normalization.get("allow_equations_as_content")
+            if isinstance(parser_normalization, dict)
+            else None
+        )
+        tokens = self._metadata_tokens(domain_metadata)
+        return (
+            "arabic" in tokens
+            and bool(tokens & {"quran", "tafseer", "hadith", "islamic", "religious_text"})
+            and equations_as_content is not True
+        )
+
+    def _metadata_mentions_tables(self, domain_metadata: Any) -> bool:
+        return bool(self._metadata_tokens(domain_metadata) & {"table", "tables", "spreadsheet"})
+
+    def _metadata_tokens(self, domain_metadata: Any) -> set[str]:
+        values: list[str] = []
+        for field in (
+            "domain",
+            "document_type",
+            "language",
+            "script",
+            "content_role",
+            "expected_structure",
+        ):
+            value = getattr(domain_metadata, field, None)
+            if isinstance(value, str):
+                values.extend(value.replace("-", "_").split("_"))
+                values.append(value)
+        tags = getattr(domain_metadata, "tags", None)
+        if isinstance(tags, list):
+            values.extend(tag for tag in tags if isinstance(tag, str))
+        return {value.strip().casefold() for value in values if value.strip()}
 
     def _expected_language(self, options: IndexDocumentIn) -> str:
         metadata = options.domain_metadata

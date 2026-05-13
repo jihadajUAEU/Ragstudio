@@ -57,7 +57,7 @@ class ReferenceUnitAssembler:
         current: _OpenReferenceUnit | None = None
         for block in self._expand_multi_reference_blocks(blocks, semantics):
             text = block.text.strip()
-            references = semantics.extract_chunk_references(text) if text else []
+            references = semantics.extract_primary_anchor_references(text) if text else []
             if references:
                 if current is not None:
                     units.append(
@@ -301,10 +301,13 @@ class ReferenceUnitAssembler:
     ) -> list[ReferenceSourceBlock]:
         expanded: list[ReferenceSourceBlock] = []
         for block in blocks:
-            if len(semantics.extract_chunk_references(block.text)) <= 1:
-                expanded.append(block)
-                continue
-            units = semantics.split_reference_units(block.text)
+            if semantics.inline_reference_policy == "cross_reference_only":
+                units = semantics.split_primary_anchor_units(block.text)
+            else:
+                if len(semantics.extract_chunk_references(block.text)) <= 1:
+                    expanded.append(block)
+                    continue
+                units = semantics.split_reference_units(block.text)
             if len(units) <= 1:
                 expanded.append(block)
                 continue

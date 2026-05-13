@@ -143,7 +143,7 @@ class DomainMetadataAiSuggester:
         pages: list[SampledPage],
         baseline_profile: DomainMetadata | None = None,
     ) -> dict[str, object]:
-        sampled_pages = pages[:4]
+        sampled_pages = pages[:10]
         content: list[dict[str, object]] = [
             {
                 "type": "text",
@@ -168,7 +168,7 @@ class DomainMetadataAiSuggester:
             "model": target.model,
             "messages": [{"role": "user", "content": content}],
             "temperature": 0,
-            "max_tokens": 900,
+            "max_tokens": 1400,
             "response_format": {"type": "json_object"},
         }
 
@@ -226,11 +226,13 @@ class DomainMetadataAiSuggester:
         return f"""You classify documents for a RAG indexing system.
 Be honest. Use only the sampled pages and filename as evidence.
 Do not guess a specific collection unless the pages show it.
-Review the 3-4 sampled pages/images when available. If the samples show structured
+Review up to 10 sampled pages/images when available. If the samples show structured
 references that users may need to edit or tune, propose generic reference semantics
-in custom_json instead of relying on a hardcoded local strategy. Examples include
-Quran chapter:verse references, legal sections/subsections, page-line references,
-case or article citations, and similar cited corpora.
+in custom_json instead of relying on a hardcoded local strategy. Separate primary answerable units
+from inline cross-references, and provide a document-specific quality/script policy
+and layout/block recovery policy instead of only broad domain metadata.
+Examples include Quran chapter:verse references, legal sections/subsections,
+page-line references, case or article citations, and similar cited corpora.
 Return JSON only with this shape:
 {{
   "domain_metadata": {{
@@ -247,6 +249,52 @@ Return JSON only with this shape:
       "reference_schema": null,
       "relationships": null,
       "chunking": null,
+      "domain_structure": {{
+        "primary_anchor": {{
+          "type": null,
+          "regex": null,
+          "unit": null
+        }},
+        "inline_references": {{
+          "type": null,
+          "regex": null,
+          "policy": "cross_reference_only|starts_unit|ignore"
+        }}
+      }},
+      "quality_policy": {{
+        "document_role": null,
+        "observed_scripts": [],
+        "required_scripts": [],
+        "optional_scripts": [],
+        "required_scripts_by_unit_role": {{}},
+        "optional_scripts_by_unit_role": {{}},
+        "missing_required_script_action": "warn|block|info|no_warning",
+        "missing_optional_script_action": "no_warning|info|warn|block",
+        "materialization_policy": "allow_if_required_scripts_present",
+        "evidence": [{{"page": 1, "observation": "short evidence"}}],
+        "confidence": 0.0
+      }},
+      "layout_quality_policy": {{
+        "expected_block_roles": {{}},
+        "misclassified_block_policy": {{
+          "equation_with_recovered_text": {{
+            "treat_as": null,
+            "action": "recover_as_text|ignore|block",
+            "warning_level": "info|warn|block"
+          }}
+        }},
+        "disallowed_block_policy": {{
+          "text_bearing_disallowed_block": {{
+            "action": "recover_as_text|ignore|block",
+            "warning_level": "info|warn|block"
+          }}
+        }},
+        "failure_policy": {{
+          "required_text_not_recovered": "info|warn|block",
+          "unreadable_primary_anchor": "info|warn|block"
+        }}
+      }},
+      "mineru_parse_options": null,
       "retrieval": null
     }},
     "reference_pattern": null,
@@ -268,6 +316,26 @@ or strongly implied by the reference system.
 For custom_json.chunking, suggest the natural chunk unit and whether neighboring
 references, parallel text, headings, page-line spans, or section boundaries should
 be preserved.
+For custom_json.domain_structure, identify the text pattern that starts a primary
+answerable unit and distinguish it from inline cross-references. For example, a
+Tafseer page may use "Verse 18:30" as the section anchor while "25:75-76" inside
+the commentary is only a cross-reference.
+For custom_json.quality_policy, identify which scripts are visible, which scripts
+are required for answerable chunks, which scripts are optional enrichment, whether
+missing optional script should warn, and page-level evidence for each decision.
+For custom_json.layout_quality_policy, identify expected layout/block roles and
+whether recovered text from blocks misclassified as equations or disallowed block
+types is acceptable recovery, degraded quality, or a true blocker. For Arabic
+religious prose, stylized Arabic verse images may be misclassified as equations;
+classify that as info only when the visible page evidence supports it.
+If the document is commentary, translation, explanation, legal analysis, or another
+secondary-source role, do not require a primary-source script unless the sampled
+pages show that every answerable unit depends on that script.
+For custom_json.mineru_parse_options, suggest upstream MinerU/RAG-Anything parse
+overrides only when the samples justify them. Use parse_method="ocr" when the PDF
+appears scanned or when Arabic glyphs need OCR, lang="arabic" for Arabic or mixed
+Arabic religious texts, formula=false when standalone Arabic prose/verses could be
+misclassified as formulas, and table=false when tables are not part of the evidence.
 For custom_json.retrieval, suggest honest retrieval hints such as exact reference
 top result, same-section boosting, neighbor expansion, or page-line matching only
 when the samples justify them. Leave these custom_json keys null or omit details
@@ -464,11 +532,25 @@ Content type: {content_type}
             and value.metadata_sources == []
         )
 
-    def _merge_unique_strings(self, first: list[str], second: list[str]) -> list[str]:
+    def _merge_unique_strings(self, first: list[object], second: list[object]) -> list[str]:
         merged: list[str] = []
         for item in [*first, *second]:
             if isinstance(item, str) and item and item not in merged:
                 merged.append(item)
+        return merged
+
+    def _merge_lists(self, first: list[object], second: list[object]) -> list[object]:
+        if all(isinstance(item, str) for item in [*first, *second]):
+            return self._merge_unique_strings(first, second)
+
+        merged: list[object] = []
+        seen: set[str] = set()
+        for item in [*first, *second]:
+            key = json.dumps(item, sort_keys=True, default=str)
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(item)
         return merged
 
     def _merge_custom_json(
@@ -482,9 +564,13 @@ Content type: {content_type}
             "reference_schema",
             "relationships",
             "chunking",
+            "domain_structure",
+            "quality_policy",
+            "layout_quality_policy",
             "reference_resolution",
             "provenance",
             "parser_normalization",
+            "mineru_parse_options",
             "retrieval",
             "graph",
         ):
@@ -509,7 +595,7 @@ Content type: {content_type}
             if isinstance(existing, dict) and isinstance(value, dict):
                 merged[key] = self._deep_merge_dicts(existing, value)
             elif isinstance(existing, list) and isinstance(value, list):
-                merged[key] = self._merge_unique_strings(existing, value)
+                merged[key] = self._merge_lists(existing, value)
             elif key not in merged or self._is_empty_metadata_value(existing):
                 merged[key] = value
         return merged
@@ -577,6 +663,22 @@ Content type: {content_type}
             if chunking_values:
                 normalized["chunking"] = chunking_values
 
+        domain_structure_values = self._normalize_domain_structure(
+            value.get("domain_structure")
+        )
+        if domain_structure_values:
+            normalized["domain_structure"] = domain_structure_values
+
+        quality_policy_values = self._normalize_quality_policy(value.get("quality_policy"))
+        if quality_policy_values:
+            normalized["quality_policy"] = quality_policy_values
+
+        layout_quality_policy_values = self._normalize_layout_quality_policy(
+            value.get("layout_quality_policy")
+        )
+        if layout_quality_policy_values:
+            normalized["layout_quality_policy"] = layout_quality_policy_values
+
         reference_resolution = value.get("reference_resolution")
         if isinstance(reference_resolution, dict):
             reference_resolution_values: dict[str, object] = {}
@@ -639,6 +741,29 @@ Content type: {content_type}
             if parser_values:
                 normalized["parser_normalization"] = parser_values
 
+        mineru_parse_options = value.get("mineru_parse_options")
+        if isinstance(mineru_parse_options, dict):
+            mineru_values: dict[str, object] = {}
+            for key in ("parser", "parse_method", "backend", "device", "lang", "source"):
+                item = mineru_parse_options.get(key)
+                if isinstance(item, str) and item.strip():
+                    mineru_values[key] = item.strip()
+            for key in ("formula", "table"):
+                item = mineru_parse_options.get(key)
+                if isinstance(item, bool):
+                    mineru_values[key] = item
+            max_concurrent_files = mineru_parse_options.get("max_concurrent_files")
+            if (
+                isinstance(max_concurrent_files, int)
+                and not isinstance(max_concurrent_files, bool)
+            ):
+                mineru_values["max_concurrent_files"] = max(
+                    1,
+                    min(max_concurrent_files, 8),
+                )
+            if mineru_values:
+                normalized["mineru_parse_options"] = mineru_values
+
         retrieval = value.get("retrieval")
         if isinstance(retrieval, dict):
             retrieval_values = {
@@ -668,6 +793,157 @@ Content type: {content_type}
 
         return normalized
 
+    def _normalize_domain_structure(self, value: object) -> dict[str, object]:
+        if not isinstance(value, dict):
+            return {}
+        normalized: dict[str, object] = {}
+        for key in ("primary_anchor", "inline_references"):
+            section = value.get(key)
+            if not isinstance(section, dict):
+                continue
+            section_values: dict[str, object] = {}
+            for string_key in ("type", "unit", "pattern", "display"):
+                item = section.get(string_key)
+                if isinstance(item, str) and item.strip():
+                    section_values[string_key] = item.strip()
+            regex = section.get("regex")
+            if isinstance(regex, str) and self._is_valid_domain_structure_regex(regex):
+                section_values["regex"] = regex
+            policy = section.get("policy")
+            if key == "inline_references" and policy in {
+                "cross_reference_only",
+                "starts_unit",
+                "ignore",
+            }:
+                section_values["policy"] = policy
+            if section_values:
+                normalized[key] = section_values
+        return normalized
+
+    def _normalize_quality_policy(self, value: object) -> dict[str, object]:
+        if not isinstance(value, dict):
+            return {}
+        normalized: dict[str, object] = {}
+        document_role = value.get("document_role")
+        if isinstance(document_role, str) and document_role.strip():
+            normalized["document_role"] = document_role.strip()
+        for key in ("observed_scripts", "required_scripts", "optional_scripts"):
+            items = value.get(key)
+            if not isinstance(items, list):
+                continue
+            scripts = [
+                item.strip().casefold()
+                for item in items
+                if isinstance(item, str) and item.strip()
+            ]
+            if scripts:
+                normalized[key] = list(dict.fromkeys(scripts))
+        for key in ("required_scripts_by_unit_role", "optional_scripts_by_unit_role"):
+            role_map = value.get(key)
+            if not isinstance(role_map, dict):
+                continue
+            clean_map: dict[str, list[str]] = {}
+            for role, scripts in role_map.items():
+                if not isinstance(role, str) or not isinstance(scripts, list):
+                    continue
+                clean_scripts = [
+                    script.strip().casefold()
+                    for script in scripts
+                    if isinstance(script, str) and script.strip()
+                ]
+                clean_map[role.strip()] = list(dict.fromkeys(clean_scripts))
+            if clean_map:
+                normalized[key] = clean_map
+        for key in ("missing_required_script_action", "missing_optional_script_action"):
+            action = value.get(key)
+            if action in {"no_warning", "info", "warn", "block"}:
+                normalized[key] = action
+        materialization_policy = value.get("materialization_policy")
+        if materialization_policy in {
+            "allow",
+            "allow_if_required_scripts_present",
+            "warn_if_required_scripts_missing",
+            "block_if_required_scripts_missing",
+        }:
+            normalized["materialization_policy"] = materialization_policy
+        evidence = value.get("evidence")
+        if isinstance(evidence, list):
+            clean_evidence: list[dict[str, object]] = []
+            for entry in evidence:
+                if not isinstance(entry, dict):
+                    continue
+                page = entry.get("page")
+                observation = entry.get("observation")
+                if (
+                    isinstance(page, int)
+                    and not isinstance(page, bool)
+                    and isinstance(observation, str)
+                    and observation.strip()
+                ):
+                    clean_evidence.append(
+                        {"page": page, "observation": observation.strip()[:300]}
+                    )
+            if clean_evidence:
+                normalized["evidence"] = clean_evidence[:10]
+        confidence = value.get("confidence")
+        if isinstance(confidence, int | float) and not isinstance(confidence, bool):
+            normalized["confidence"] = min(max(float(confidence), 0.0), 1.0)
+        return normalized
+
+    def _normalize_layout_quality_policy(self, value: object) -> dict[str, object]:
+        if not isinstance(value, dict):
+            return {}
+        normalized: dict[str, object] = {}
+        expected_block_roles = value.get("expected_block_roles")
+        if isinstance(expected_block_roles, dict):
+            role_values: dict[str, list[str]] = {}
+            for role, block_types in expected_block_roles.items():
+                if not isinstance(role, str) or not isinstance(block_types, list):
+                    continue
+                clean_types = [
+                    block_type.strip().casefold()
+                    for block_type in block_types
+                    if isinstance(block_type, str) and block_type.strip()
+                ]
+                if clean_types:
+                    role_values[role.strip()] = list(dict.fromkeys(clean_types))
+            if role_values:
+                normalized["expected_block_roles"] = role_values
+
+        for section_name in ("misclassified_block_policy", "disallowed_block_policy"):
+            section = value.get(section_name)
+            if not isinstance(section, dict):
+                continue
+            section_values: dict[str, dict[str, str]] = {}
+            for policy_name, policy in section.items():
+                if not isinstance(policy_name, str) or not isinstance(policy, dict):
+                    continue
+                policy_values: dict[str, str] = {}
+                treat_as = policy.get("treat_as")
+                if isinstance(treat_as, str) and treat_as.strip():
+                    policy_values["treat_as"] = treat_as.strip()
+                action = policy.get("action")
+                if action in {"recover_as_text", "ignore", "block"}:
+                    policy_values["action"] = action
+                warning_level = policy.get("warning_level")
+                if warning_level in {"info", "warn", "block"}:
+                    policy_values["warning_level"] = warning_level
+                if policy_values:
+                    section_values[policy_name.strip()] = policy_values
+            if section_values:
+                normalized[section_name] = section_values
+
+        failure_policy = value.get("failure_policy")
+        if isinstance(failure_policy, dict):
+            clean_failures = {
+                key.strip(): action
+                for key, action in failure_policy.items()
+                if isinstance(key, str) and action in {"info", "warn", "block"}
+            }
+            if clean_failures:
+                normalized["failure_policy"] = clean_failures
+        return normalized
+
     def _has_required_graph_policy(self, value: object) -> bool:
         return (
             isinstance(value, dict)
@@ -677,6 +953,13 @@ Content type: {content_type}
     def _is_valid_reference_pattern(self, key: str, value: str) -> bool:
         try:
             validate_custom_json({"reference_schema": {key: value}})
+        except ValueError:
+            return False
+        return True
+
+    def _is_valid_domain_structure_regex(self, value: str) -> bool:
+        try:
+            validate_custom_json({"domain_structure": {"primary_anchor": {"regex": value}}})
         except ValueError:
             return False
         return True
