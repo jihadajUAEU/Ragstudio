@@ -19,10 +19,11 @@ The packet includes these JSON Schema 2020-12 contracts:
 
 ## Runtime Expectations
 
-Phase 1 has no executable runtime dependency. The JSON files should parse with a
-current Node.js runtime, but schema validation is intentionally pending Phase 2.
+The packet has no live runtime dependency. The JSON files parse with a current
+Node.js runtime, and `./scripts/proof.sh` performs executable schema, hash,
+claim, screenshot signoff, and redaction validation.
 
-The future `./scripts/proof.sh` path should run from a fresh checkout without:
+`./scripts/proof.sh` runs from a fresh checkout without:
 
 - Docker,
 - secrets,

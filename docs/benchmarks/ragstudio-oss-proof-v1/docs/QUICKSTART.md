@@ -2,9 +2,8 @@
 
 ## What This Packet Is
 
-This Phase 1 packet is inspect-only. It gives reviewers a safe, static proof trail
-under `docs/benchmarks/ragstudio-oss-proof-v1/` before executable validation and
-the public site exist.
+This packet gives reviewers a safe, static proof trail under
+`docs/benchmarks/ragstudio-oss-proof-v1/` and a fresh-checkout validation command.
 
 Open these files first:
 
@@ -27,16 +26,21 @@ Open these files first:
 - Screenshots are excluded unless `screenshots/signoff.json` marks them safe to
   publish.
 
-## What Arrives In Phase 2
+## Validate The Packet
 
-Executable `./scripts/proof.sh` validation arrives in Phase 2. Until then, this
-packet can be inspected with normal file, JSON, and text checks:
+From the repository root:
 
 ```bash
-node -e 'for (const f of process.argv.slice(1)) JSON.parse(require("fs").readFileSync(f,"utf8"));' \
-  docs/benchmarks/ragstudio-oss-proof-v1/manifest.json \
-  docs/benchmarks/ragstudio-oss-proof-v1/claims/claims.registry.json
+./scripts/proof.sh
 ```
 
-Phase 2 will turn these contracts into a fresh-checkout validation path that does
-not require Docker, secrets, live providers, a running backend, or private files.
+Expected result: `Status: passed`.
+
+For automation, CI, or future site import gates:
+
+```bash
+./scripts/proof.sh --strict --json
+```
+
+The command validates only static fixtures and public packet files. It does not
+require Docker, secrets, live providers, a running backend, or private files.
