@@ -11,10 +11,10 @@ Requirements for the initial public proof-system release. Each requirement maps 
 
 - [x] **PROOF-01**: Maintainer can find the public proof packet under `docs/benchmarks/ragstudio-oss-proof-v1/` with schemas, fixtures, artifacts, screenshots, run notes, corpus notes, claims registry, and claims matrix.
 - [x] **PROOF-02**: Proof packet uses a deterministic synthetic multilingual and reference-heavy corpus that is safe to redistribute publicly.
-- [ ] **PROOF-03**: Proof packet includes canonical JSON Schema 2020-12 files for claims, artifacts, manifests, validation results, and site import fixtures.
-- [ ] **PROOF-04**: Claims registry records each public claim with status, source commit or tag, evidence links, code paths, artifact paths, and screenshot references where applicable.
-- [ ] **PROOF-05**: Each `proven` claim maps to at least one raw artifact and one human-readable explanation.
-- [ ] **PROOF-06**: `roadmap` and `disabled` claims remain visible with reasons and without implied proof.
+- [x] **PROOF-03**: Proof packet includes canonical JSON Schema 2020-12 files for claims, artifacts, manifests, validation results, and site import fixtures.
+- [x] **PROOF-04**: Claims registry records each public claim with status, source commit or tag, evidence links, code paths, artifact paths, and screenshot references where applicable.
+- [x] **PROOF-05**: Each `proven` claim maps to at least one raw artifact and one human-readable explanation.
+- [x] **PROOF-06**: `roadmap` and `disabled` claims remain visible with reasons and without implied proof.
 
 ### Replay And Validation
 
@@ -50,7 +50,7 @@ Requirements for the initial public proof-system release. Each requirement maps 
 - [ ] **DOCS-02**: `REPLAY` explains static fixture validation and clearly labels live capture as optional.
 - [ ] **DOCS-03**: `CLAIMS` explains claim statuses, claims matrix, and how evidence links prove or limit each claim.
 - [ ] **DOCS-04**: `ERRORS` documents structured proof, export, and import errors with recovery guidance.
-- [ ] **DOCS-05**: `COMPATIBILITY` records schema version, supported Node runtime, packet version, and site import compatibility.
+- [x] **DOCS-05**: `COMPATIBILITY` records schema version, supported Node runtime, packet version, and site import compatibility.
 
 ### Launch Quality Gates
 
@@ -105,10 +105,10 @@ Roadmap creation fills the phase mapping. Every v1 requirement must map to exact
 |-------------|-------|--------|
 | PROOF-01 | Phase 1 | Complete |
 | PROOF-02 | Phase 1 | Complete |
-| PROOF-03 | Phase 1 | Pending |
-| PROOF-04 | Phase 1 | Pending |
-| PROOF-05 | Phase 1 | Pending |
-| PROOF-06 | Phase 1 | Pending |
+| PROOF-03 | Phase 1 | Complete |
+| PROOF-04 | Phase 1 | Complete |
+| PROOF-05 | Phase 1 | Complete |
+| PROOF-06 | Phase 1 | Complete |
 | VAL-01 | Phase 2 | Pending |
 | VAL-02 | Phase 2 | Pending |
 | VAL-03 | Phase 2 | Pending |
@@ -132,7 +132,7 @@ Roadmap creation fills the phase mapping. Every v1 requirement must map to exact
 | DOCS-02 | Phase 2 | Pending |
 | DOCS-03 | Phase 1 | Pending |
 | DOCS-04 | Phase 2 | Pending |
-| DOCS-05 | Phase 1 | Pending |
+| DOCS-05 | Phase 1 | Complete |
 | QA-01 | Phase 5 | Pending |
 | QA-02 | Phase 5 | Pending |
 | QA-03 | Phase 5 | Pending |
