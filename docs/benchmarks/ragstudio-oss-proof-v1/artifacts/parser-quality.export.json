@@ -1,0 +1,49 @@
+{
+  "artifact_id": "parser-quality.export",
+  "artifact_type": "parser_quality_report",
+  "source": {
+    "document_id": "synthetic-reference-guide",
+    "capture_mode": "static-fixtures",
+    "source_commit": "ad1febe626fd96afff414bf5c425b4a672213a14",
+    "fixture_path": "fixtures/parser-warnings.synthetic.json"
+  },
+  "redaction_status": "passed",
+  "redaction_checks": [
+    "no_api_keys",
+    "no_private_hosts",
+    "no_local_absolute_paths",
+    "no_lan_ips",
+    "no_private_content"
+  ],
+  "quality_report_version": 1,
+  "status": "passed_with_warnings",
+  "domain_profile": "synthetic_religious_reference",
+  "summary": {
+    "chunk_count": 3,
+    "affected_chunks": 1,
+    "warning_counts": {
+      "reference_unit_missing_expected_script": 1
+    },
+    "materialization_blocked_reference_count": 1
+  },
+  "warnings": [
+    {
+      "chunk_id": "chunk-srg-003",
+      "display_reference": "Synthetic Book 1, Unit 3",
+      "code": "reference_unit_missing_expected_script",
+      "message": "Reference-bearing chunk is expected to contain Arabic script, but no Arabic letters were detected.",
+      "expected_script": "arabic",
+      "severity": "warn",
+      "quality_gate_action": "block",
+      "quality_gate_reason": "layout_quality_policy.expected_script_missing",
+      "source_location": {
+        "page": 3,
+        "block": "p3-b1"
+      }
+    }
+  ],
+  "limitations": [
+    "Synthetic parser output demonstrates warning and policy shape only.",
+    "This artifact is intentionally small and is not a benchmark of parser recall."
+  ]
+}

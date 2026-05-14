@@ -1,0 +1,43 @@
+{
+  "artifact_id": "reranker-trace.export",
+  "artifact_type": "reranker_trace",
+  "source": {
+    "document_id": "synthetic-reference-guide",
+    "capture_mode": "static-fixtures",
+    "source_commit": "ad1febe626fd96afff414bf5c425b4a672213a14",
+    "fixture_path": "fixtures/graph-reranker.synthetic.json"
+  },
+  "redaction_status": "passed",
+  "reranker_traces": [
+    {
+      "trace_id": "rerank-srg-001",
+      "query_id": "query-srg-reference-quality",
+      "model_label": "static-fixture-reranker",
+      "candidates": [
+        {
+          "chunk_id": "chunk-srg-003",
+          "initial_rank": 1,
+          "reranked_rank": 1,
+          "score": 0.91,
+          "evidence": [
+            "artifacts/parser-quality.export.json",
+            "artifacts/chunks.export.json"
+          ]
+        },
+        {
+          "chunk_id": "chunk-srg-001",
+          "initial_rank": 2,
+          "reranked_rank": 2,
+          "score": 0.42,
+          "evidence": [
+            "artifacts/chunks.export.json"
+          ]
+        }
+      ]
+    }
+  ],
+  "limitations": [
+    "Reranker scores are fixture values and not model-performance measurements.",
+    "The trace proves data shape and evidence linking only."
+  ]
+}

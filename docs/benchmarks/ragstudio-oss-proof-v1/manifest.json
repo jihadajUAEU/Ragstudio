@@ -72,8 +72,34 @@
       "Screenshot publication remains blocked until screenshots/signoff.json records manual approval."
     ]
   },
-  "artifact_hashes": {},
-  "hash_status": "pending_artifacts",
+  "artifact_hashes": {
+    "artifacts/chunks.export.json": {
+      "algorithm": "sha256",
+      "value": "76bf85b1c8c369fbb7ad2453c54855f00bc456a728d07f0a4a6103438387f8e0",
+      "redaction_status": "passed"
+    },
+    "artifacts/graph-projection.export.json": {
+      "algorithm": "sha256",
+      "value": "dd8d4c305fdef0f42538226efd037151609beed2d15247141d795a0fa9902e87",
+      "redaction_status": "passed"
+    },
+    "artifacts/parser-quality.export.json": {
+      "algorithm": "sha256",
+      "value": "68142f482efae7c0e264ab2640fbc9eff8ea9bacf94fa8a40d14ec8706a33a56",
+      "redaction_status": "passed"
+    },
+    "artifacts/reranker-trace.export.json": {
+      "algorithm": "sha256",
+      "value": "17cf9c23537853bcbcd5e0370629e5087ca425c31fe893b7e8c636de78d10e31",
+      "redaction_status": "passed"
+    },
+    "artifacts/retrieval-run.export.json": {
+      "algorithm": "sha256",
+      "value": "fe1d36ff652f09969876851e3e8879050b3019caf23c8b104c6fb562e28b7292",
+      "redaction_status": "passed"
+    }
+  },
+  "hash_status": "complete_for_current_artifacts",
   "excluded_artifacts": [
     {
       "path": "screenshots/*.png",

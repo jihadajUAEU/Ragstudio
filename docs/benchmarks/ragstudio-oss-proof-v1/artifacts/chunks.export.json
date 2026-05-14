@@ -1,0 +1,95 @@
+{
+  "artifact_id": "chunks.export",
+  "artifact_type": "chunk_export",
+  "source": {
+    "document_id": "synthetic-reference-guide",
+    "capture_mode": "static-fixtures",
+    "source_commit": "ad1febe626fd96afff414bf5c425b4a672213a14",
+    "fixture_path": "fixtures/corpus.synthetic.json"
+  },
+  "redaction_status": "passed",
+  "chunks": [
+    {
+      "chunk_id": "chunk-srg-001",
+      "text": "\u0646\u0635 \u0639\u0631\u0628\u064a \u062a\u0631\u0643\u064a\u0628\u064a \u064a\u0635\u0641 \u0643\u064a\u0641 \u064a\u062a\u0645 \u0631\u0628\u0637 \u0627\u0644\u0648\u062d\u062f\u0629 \u0628\u0627\u0644\u0645\u0631\u062c\u0639 \u062f\u0648\u0646 \u0627\u0633\u062a\u062e\u062f\u0627\u0645 \u0645\u0627\u062f\u0629 \u062d\u0642\u064a\u0642\u064a\u0629.",
+      "display_reference": "Synthetic Book 1, Unit 1",
+      "source_location": {
+        "page": 1,
+        "block": "p1-b1"
+      },
+      "metadata": {
+        "language": "ar",
+        "content_type": "reference_unit",
+        "preview_ref": "Synthetic Book 1, Unit 1",
+        "quality_action_policy": {
+          "persist_chunk": true,
+          "index_vector": true,
+          "index_exact_arabic": true,
+          "project_graph": true,
+          "graph_confidence": "high",
+          "quality_flags": [],
+          "status": "passed"
+        }
+      }
+    },
+    {
+      "chunk_id": "chunk-srg-002",
+      "text": "Synthetic English reference unit that carries source and chunk metadata for the public proof packet.",
+      "display_reference": "Synthetic Book 1, Unit 2",
+      "source_location": {
+        "page": 2,
+        "block": "p2-b1"
+      },
+      "metadata": {
+        "language": "en",
+        "content_type": "reference_unit",
+        "preview_ref": "Synthetic Book 1, Unit 2",
+        "quality_action_policy": {
+          "persist_chunk": true,
+          "index_vector": true,
+          "index_exact_arabic": false,
+          "project_graph": true,
+          "graph_confidence": "medium",
+          "quality_flags": [],
+          "status": "passed"
+        }
+      }
+    },
+    {
+      "chunk_id": "chunk-srg-003",
+      "text": "Synthetic reference marker without the expected Arabic script so the quality gate can show a warning.",
+      "display_reference": "Synthetic Book 1, Unit 3",
+      "source_location": {
+        "page": 3,
+        "block": "p3-b1"
+      },
+      "metadata": {
+        "language": "mixed",
+        "content_type": "reference_unit",
+        "preview_ref": "Synthetic Book 1, Unit 3",
+        "parser_warnings": [
+          {
+            "code": "reference_unit_missing_expected_script",
+            "expected_script": "arabic"
+          }
+        ],
+        "quality_action_policy": {
+          "persist_chunk": true,
+          "index_vector": false,
+          "index_exact_arabic": false,
+          "project_graph": false,
+          "graph_confidence": "blocked",
+          "quality_flags": [
+            "parser_quality_block:reference_unit_missing_expected_script"
+          ],
+          "status": "parser_quality_blocked",
+          "action": "block_parser_quality_materialization"
+        }
+      }
+    }
+  ],
+  "limitations": [
+    "Chunk text is synthetic and short.",
+    "This export models public evidence shape, not production storage volume."
+  ]
+}

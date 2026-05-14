@@ -1,0 +1,50 @@
+{
+  "artifact_id": "retrieval-run.export",
+  "artifact_type": "retrieval_run",
+  "source": {
+    "document_id": "synthetic-reference-guide",
+    "capture_mode": "static-fixtures",
+    "source_commit": "ad1febe626fd96afff414bf5c425b4a672213a14",
+    "fixture_path": "fixtures/retrieval-traces.synthetic.json"
+  },
+  "redaction_status": "passed",
+  "run": {
+    "run_id": "run-srg-reference-quality",
+    "query_id": "query-srg-reference-quality",
+    "question": "Which synthetic reference unit was blocked by parser quality policy?",
+    "answer": "Synthetic Book 1, Unit 3 was blocked because it carried a reference marker but lacked the expected Arabic script.",
+    "sources": [
+      {
+        "source_id": "source-srg-003",
+        "chunk_id": "chunk-srg-003",
+        "display_reference": "Synthetic Book 1, Unit 3",
+        "artifact_path": "artifacts/chunks.export.json",
+        "score": 0.91
+      }
+    ],
+    "chunk_traces": [
+      {
+        "chunk_id": "chunk-srg-003",
+        "stage": "quality_gate",
+        "warning_code": "reference_unit_missing_expected_script",
+        "policy_status": "parser_quality_blocked"
+      }
+    ],
+    "timings": {
+      "retrieval_ms": 12,
+      "rerank_ms": 4,
+      "total_ms": 21
+    },
+    "token_metadata": {
+      "static_fixture": true,
+      "prompt_tokens": 0,
+      "completion_tokens": 0
+    },
+    "error": null,
+    "error_type": null
+  },
+  "limitations": [
+    "No live query backend or provider is called.",
+    "Timing values are synthetic fixture metadata and must not be used as performance claims."
+  ]
+}
