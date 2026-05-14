@@ -1,0 +1,95 @@
+{
+  "packet_id": "ragstudio-oss-proof-v1",
+  "packet_version": "0.1.0",
+  "schema_version": "2020-12",
+  "source_commit": "ad1febe626fd96afff414bf5c425b4a672213a14",
+  "generated_at": "2026-05-14T09:30:02Z",
+  "generated_from": {
+    "repository": "Ragstudio",
+    "workspace": "public-proof-packet",
+    "capture_mode": "static-fixtures",
+    "corpus_policy": "synthetic-public-safe"
+  },
+  "folders": [
+    "schemas",
+    "fixtures",
+    "artifacts",
+    "screenshots",
+    "claims",
+    "docs"
+  ],
+  "schemas": {
+    "manifest": "schemas/manifest.schema.json",
+    "claim": "schemas/claim.schema.json",
+    "artifact": "schemas/artifact.schema.json",
+    "screenshot_signoff": "schemas/screenshot-signoff.schema.json",
+    "validation_result": "schemas/validation-result.schema.json"
+  },
+  "fixtures": [
+    "fixtures/corpus.synthetic.json",
+    "fixtures/parser-warnings.synthetic.json",
+    "fixtures/retrieval-traces.synthetic.json",
+    "fixtures/graph-reranker.synthetic.json"
+  ],
+  "artifacts": [
+    "artifacts/parser-quality.export.json",
+    "artifacts/chunks.export.json",
+    "artifacts/retrieval-run.export.json",
+    "artifacts/graph-projection.export.json",
+    "artifacts/reranker-trace.export.json"
+  ],
+  "screenshots": {
+    "signoff": "screenshots/signoff.json",
+    "approved_count": 0,
+    "pending_count": 0
+  },
+  "claims": {
+    "registry": "claims/claims.registry.json",
+    "matrix": "claims/claims.matrix.md"
+  },
+  "claim_counts": {
+    "proven": 0,
+    "roadmap": 0,
+    "disabled": 0,
+    "total": 0
+  },
+  "redaction_status": {
+    "overall": "pending_phase_1_completion",
+    "policy": "fail_closed",
+    "checked_for": [
+      "api_keys",
+      "tokens",
+      "private_hosts",
+      "private_hostnames",
+      "local_absolute_paths",
+      "lan_ips",
+      "unpublished_model_endpoints",
+      "private_content_snippets",
+      "unapproved_screenshots"
+    ],
+    "notes": [
+      "This packet is synthetic and intentionally avoids private corpora, live providers, and local runtime exports.",
+      "Screenshot publication remains blocked until screenshots/signoff.json records manual approval."
+    ]
+  },
+  "artifact_hashes": {},
+  "hash_status": "pending_artifacts",
+  "excluded_artifacts": [
+    {
+      "path": "screenshots/*.png",
+      "reason": "Screenshots require manual no-private-content signoff before public publication.",
+      "affected_claims": []
+    },
+    {
+      "path": "live-provider-exports/*",
+      "reason": "Live provider artifacts are outside Phase 1 and may contain private endpoints or provider metadata.",
+      "affected_claims": []
+    }
+  ],
+  "limitations": [
+    "Phase 1 is a static public proof packet contract and baseline evidence package; it does not implement proof replay tooling.",
+    "Synthetic fixtures demonstrate parser quality, reference metadata, retrieval trace, graph projection, and reranker evidence shapes without using restricted real corpus text.",
+    "Artifact hashes are populated after exported artifacts are created in this phase.",
+    "Claims are populated in the claims registry before Phase 1 closes."
+  ]
+}
