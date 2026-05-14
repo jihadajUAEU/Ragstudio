@@ -54,11 +54,11 @@ Requirements for the initial public proof-system release. Each requirement maps 
 
 ### Launch Quality Gates
 
-- [ ] **QA-01**: Public site and proof viewer meet WCAG 2.2 Level AA for implemented surfaces.
-- [ ] **QA-02**: Automated Playwright and axe checks cover the main proof-viewer flow.
-- [ ] **QA-03**: Manual launch checks cover keyboard navigation, mobile layout, text overflow, raw artifact fallbacks, and no incoherent overlap.
-- [ ] **QA-04**: Fixture size, lazy loading, and raw artifact fallback behavior keep the proof viewer usable on desktop and mobile.
-- [ ] **QA-05**: Launch checklist blocks release until proof validation, redaction, site import, accessibility, domain connection, and README/profile links pass.
+- [x] **QA-01**: Public site and proof viewer meet WCAG 2.2 Level AA for implemented surfaces.
+- [x] **QA-02**: Automated Playwright and axe checks cover the main proof-viewer flow.
+- [x] **QA-03**: Manual launch checks cover keyboard navigation, mobile layout, text overflow, raw artifact fallbacks, and no incoherent overlap.
+- [x] **QA-04**: Fixture size, lazy loading, and raw artifact fallback behavior keep the proof viewer usable on desktop and mobile.
+- [x] **QA-05**: Launch checklist blocks release until proof validation, redaction, site import, accessibility, domain connection, and README/profile links pass.
 
 ## v2 Requirements
 
@@ -133,11 +133,11 @@ Roadmap creation fills the phase mapping. Every v1 requirement must map to exact
 | DOCS-03 | Phase 1 | Complete |
 | DOCS-04 | Phase 2 | Pending |
 | DOCS-05 | Phase 1 | Complete |
-| QA-01 | Phase 5 | Pending |
-| QA-02 | Phase 5 | Pending |
-| QA-03 | Phase 5 | Pending |
-| QA-04 | Phase 5 | Pending |
-| QA-05 | Phase 5 | Pending |
+| QA-01 | Phase 5 | Complete |
+| QA-02 | Phase 5 | Complete |
+| QA-03 | Phase 5 | Complete |
+| QA-04 | Phase 5 | Complete |
+| QA-05 | Phase 5 | Complete |
 
 **Coverage:**
 - v1 requirements: 35 total
