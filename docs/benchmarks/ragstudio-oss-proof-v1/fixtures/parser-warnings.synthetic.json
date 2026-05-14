@@ -1,0 +1,67 @@
+{
+  "fixture_id": "parser-warnings.synthetic",
+  "fixture_version": "0.1.0",
+  "document_id": "synthetic-reference-guide",
+  "parser": {
+    "mode": "mineru_strict_synthetic_fixture",
+    "source": "static-fixtures",
+    "host_example": "example.com",
+    "ip_example": "192.0.2.10"
+  },
+  "quality_profile": {
+    "domain": "synthetic_religious_reference",
+    "expected_scripts": [
+      "arabic",
+      "latin"
+    ],
+    "required_scripts": [
+      "arabic"
+    ],
+    "reference_unit": "unit",
+    "reference_type": "synthetic_book_unit"
+  },
+  "quality_warnings": [
+    {
+      "chunk_id": "chunk-srg-003",
+      "display_reference": "Synthetic Book 1, Unit 3",
+      "code": "reference_unit_missing_expected_script",
+      "message": "Reference-bearing chunk is expected to contain Arabic script, but no Arabic letters were detected.",
+      "expected_script": "arabic",
+      "severity": "warn",
+      "quality_gate_action": "block",
+      "quality_gate_reason": "layout_quality_policy.expected_script_missing",
+      "source_location": {
+        "page": 3,
+        "block": "p3-b1"
+      },
+      "recovery_note": "Review parser output and only allow vector or graph materialization after the expected script appears in the reference-bearing unit."
+    }
+  ],
+  "quality_action_policy": {
+    "chunk-srg-001": {
+      "persist_chunk": true,
+      "index_vector": true,
+      "index_exact_arabic": true,
+      "project_graph": true,
+      "graph_confidence": "high",
+      "quality_flags": [],
+      "status": "passed"
+    },
+    "chunk-srg-003": {
+      "persist_chunk": true,
+      "index_vector": false,
+      "index_exact_arabic": false,
+      "project_graph": false,
+      "graph_confidence": "blocked",
+      "quality_flags": [
+        "parser_quality_block:reference_unit_missing_expected_script"
+      ],
+      "status": "parser_quality_blocked",
+      "action": "block_parser_quality_materialization"
+    }
+  },
+  "limitations": [
+    "Warning data is synthetic and intentionally minimal.",
+    "Reserved example host and TEST-NET IP values are used only to demonstrate redaction-safe metadata slots."
+  ]
+}

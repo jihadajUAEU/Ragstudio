@@ -1,0 +1,63 @@
+{
+  "fixture_id": "retrieval-traces.synthetic",
+  "fixture_version": "0.1.0",
+  "document_id": "synthetic-reference-guide",
+  "query": {
+    "query_id": "query-srg-reference-quality",
+    "text": "Which synthetic reference unit was blocked by parser quality policy?",
+    "scope": "static-fixtures"
+  },
+  "answer": "Synthetic Book 1, Unit 3 was blocked because it carried a reference marker but lacked the expected Arabic script.",
+  "sources": [
+    {
+      "source_id": "source-srg-003",
+      "chunk_id": "chunk-srg-003",
+      "display_reference": "Synthetic Book 1, Unit 3",
+      "artifact_path": "artifacts/chunks.export.json",
+      "score": 0.91
+    }
+  ],
+  "chunk_traces": [
+    {
+      "chunk_id": "chunk-srg-003",
+      "stage": "quality_gate",
+      "display_reference": "Synthetic Book 1, Unit 3",
+      "source_location": {
+        "page": 3,
+        "block": "p3-b1"
+      },
+      "retrieval_state": "available_for_exact_reference",
+      "quality_action_policy": {
+        "persist_chunk": true,
+        "index_vector": false,
+        "index_exact_arabic": false,
+        "project_graph": false,
+        "graph_confidence": "blocked",
+        "quality_flags": [
+          "parser_quality_block:reference_unit_missing_expected_script"
+        ],
+        "status": "parser_quality_blocked"
+      },
+      "evidence": {
+        "warning_code": "reference_unit_missing_expected_script",
+        "artifact_path": "artifacts/parser-quality.export.json"
+      }
+    }
+  ],
+  "timings": {
+    "retrieval_ms": 12,
+    "rerank_ms": 4,
+    "total_ms": 21
+  },
+  "token_metadata": {
+    "prompt_tokens": 0,
+    "completion_tokens": 0,
+    "static_fixture": true
+  },
+  "error": null,
+  "error_type": null,
+  "limitations": [
+    "Trace values are small fixture values and are not performance claims.",
+    "No live model, embedding provider, or backend endpoint is called by this fixture."
+  ]
+}

@@ -1,0 +1,70 @@
+{
+  "fixture_id": "graph-reranker.synthetic",
+  "fixture_version": "0.1.0",
+  "document_id": "synthetic-reference-guide",
+  "graph_projection_state": {
+    "status": "partial_by_quality_policy",
+    "nodes_projected": [
+      {
+        "node_id": "ref-srg-001",
+        "type": "reference_unit",
+        "display_reference": "Synthetic Book 1, Unit 1",
+        "artifact_path": "artifacts/graph-projection.export.json"
+      },
+      {
+        "node_id": "ref-srg-002",
+        "type": "reference_unit",
+        "display_reference": "Synthetic Book 1, Unit 2",
+        "artifact_path": "artifacts/graph-projection.export.json"
+      }
+    ],
+    "nodes_blocked": [
+      {
+        "node_id": "ref-srg-003",
+        "type": "reference_unit",
+        "display_reference": "Synthetic Book 1, Unit 3",
+        "reason": "parser_quality_blocked",
+        "quality_flags": [
+          "parser_quality_block:reference_unit_missing_expected_script"
+        ]
+      }
+    ],
+    "edges_projected": [
+      {
+        "from": "ref-srg-001",
+        "to": "ref-srg-002",
+        "type": "follows"
+      }
+    ]
+  },
+  "reranker_traces": [
+    {
+      "trace_id": "rerank-srg-001",
+      "query_id": "query-srg-reference-quality",
+      "model_label": "static-fixture-reranker",
+      "candidates": [
+        {
+          "chunk_id": "chunk-srg-003",
+          "initial_rank": 1,
+          "reranked_rank": 1,
+          "score": 0.91,
+          "reason": "Matches quality warning and blocked materialization policy."
+        },
+        {
+          "chunk_id": "chunk-srg-001",
+          "initial_rank": 2,
+          "reranked_rank": 2,
+          "score": 0.42,
+          "reason": "Related synthetic Arabic unit, but no warning evidence."
+        }
+      ],
+      "limitations": [
+        "Static fixture scores are illustrative and not benchmark measurements."
+      ]
+    }
+  ],
+  "limitations": [
+    "Graph state demonstrates quality-policy projection behavior over a tiny synthetic corpus.",
+    "Reranker state demonstrates trace shape and evidence linking only."
+  ]
+}

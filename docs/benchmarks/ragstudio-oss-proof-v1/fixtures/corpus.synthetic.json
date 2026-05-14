@@ -1,0 +1,112 @@
+{
+  "fixture_id": "corpus.synthetic",
+  "fixture_version": "0.1.0",
+  "language_pair": [
+    "ar",
+    "en"
+  ],
+  "public_safety": {
+    "corpus_origin": "synthetic",
+    "redistribution": "safe",
+    "contains_restricted_real_corpus": false,
+    "contains_private_content": false
+  },
+  "document": {
+    "document_id": "synthetic-reference-guide",
+    "title": "Synthetic Reference Guide",
+    "domain": "synthetic_religious_reference",
+    "source_location": {
+      "uri": "https://example.com/ragstudio/synthetic-reference-guide",
+      "page_count": 3
+    },
+    "limitations": [
+      "The content is artificial and demonstrates evidence shape only.",
+      "No Quran, Hadith, customer, provider, or private infrastructure text is included."
+    ]
+  },
+  "reference_units": [
+    {
+      "unit_id": "srg-001",
+      "display_reference": "Synthetic Book 1, Unit 1",
+      "language": "ar",
+      "text": "\u0646\u0635 \u0639\u0631\u0628\u064a \u062a\u0631\u0643\u064a\u0628\u064a \u064a\u0635\u0641 \u0643\u064a\u0641 \u064a\u062a\u0645 \u0631\u0628\u0637 \u0627\u0644\u0648\u062d\u062f\u0629 \u0628\u0627\u0644\u0645\u0631\u062c\u0639 \u062f\u0648\u0646 \u0627\u0633\u062a\u062e\u062f\u0627\u0645 \u0645\u0627\u062f\u0629 \u062d\u0642\u064a\u0642\u064a\u0629.",
+      "expected_scripts": [
+        "arabic"
+      ],
+      "source_location": {
+        "page": 1,
+        "block": "p1-b1"
+      },
+      "quality_warnings": [],
+      "quality_action_policy": {
+        "persist_chunk": true,
+        "index_vector": true,
+        "index_exact_arabic": true,
+        "project_graph": true,
+        "graph_confidence": "high",
+        "quality_flags": [],
+        "status": "passed"
+      }
+    },
+    {
+      "unit_id": "srg-002",
+      "display_reference": "Synthetic Book 1, Unit 2",
+      "language": "en",
+      "text": "Synthetic English reference unit that carries source and chunk metadata for the public proof packet.",
+      "expected_scripts": [
+        "latin"
+      ],
+      "source_location": {
+        "page": 2,
+        "block": "p2-b1"
+      },
+      "quality_warnings": [],
+      "quality_action_policy": {
+        "persist_chunk": true,
+        "index_vector": true,
+        "index_exact_arabic": false,
+        "project_graph": true,
+        "graph_confidence": "medium",
+        "quality_flags": [],
+        "status": "passed"
+      }
+    },
+    {
+      "unit_id": "srg-003",
+      "display_reference": "Synthetic Book 1, Unit 3",
+      "language": "mixed",
+      "text": "Synthetic reference marker without the expected Arabic script so the quality gate can show a warning.",
+      "expected_scripts": [
+        "arabic"
+      ],
+      "source_location": {
+        "page": 3,
+        "block": "p3-b1"
+      },
+      "quality_warnings": [
+        {
+          "code": "reference_unit_missing_expected_script",
+          "message": "Reference-bearing chunk is expected to contain Arabic script, but no Arabic letters were detected.",
+          "expected_script": "arabic",
+          "severity": "warn"
+        }
+      ],
+      "quality_action_policy": {
+        "persist_chunk": true,
+        "index_vector": false,
+        "index_exact_arabic": false,
+        "project_graph": false,
+        "graph_confidence": "blocked",
+        "quality_flags": [
+          "parser_quality_block:reference_unit_missing_expected_script"
+        ],
+        "status": "parser_quality_blocked",
+        "action": "block_parser_quality_materialization"
+      }
+    }
+  ],
+  "limitations": [
+    "This fixture proves packet shape and warning semantics, not retrieval quality over a real corpus.",
+    "The Arabic content is synthetic and intentionally short."
+  ]
+}
