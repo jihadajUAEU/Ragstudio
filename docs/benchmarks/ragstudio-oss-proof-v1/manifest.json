@@ -41,7 +41,7 @@
   "screenshots": {
     "signoff": "screenshots/signoff.json",
     "approved_count": 0,
-    "pending_count": 0
+    "pending_count": 1
   },
   "claims": {
     "registry": "claims/claims.registry.json",
@@ -104,7 +104,18 @@
     {
       "path": "screenshots/*.png",
       "reason": "Screenshots require manual no-private-content signoff before public publication.",
-      "affected_claims": []
+      "affected_claims": [
+        "RAGSTUDIO-PARSER-GATE",
+        "RAGSTUDIO-TRACE-VISIBILITY"
+      ]
+    },
+    {
+      "path": "screenshots/documents-page-desktop-empty-state.png",
+      "reason": "Planned screenshot remains excluded until human safety checkpoint approval.",
+      "affected_claims": [
+        "RAGSTUDIO-PARSER-GATE",
+        "RAGSTUDIO-TRACE-VISIBILITY"
+      ]
     },
     {
       "path": "live-provider-exports/*",

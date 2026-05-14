@@ -30,10 +30,11 @@
       "required": [
         "screenshot_id",
         "source_path",
-        "public_path",
+        "screenshot_path",
         "reviewer",
         "reviewed_at",
         "safe_to_publish",
+        "affected_claim_ids",
         "checks"
       ],
       "properties": {
@@ -44,21 +45,33 @@
         "source_path": {
           "type": "string"
         },
-        "public_path": {
-          "type": "string"
+        "screenshot_path": {
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "reviewer": {
           "type": "string"
         },
         "reviewed_at": {
-          "type": "string",
+          "type": [
+            "string",
+            "null"
+          ],
           "format": "date-time"
         },
         "safe_to_publish": {
           "type": "boolean"
         },
+        "affected_claim_ids": {
+          "$ref": "#/$defs/string_list"
+        },
         "checks": {
           "$ref": "#/$defs/string_list"
+        },
+        "exclusion_reason": {
+          "type": "string"
         },
         "blocked_reason": {
           "type": "string"

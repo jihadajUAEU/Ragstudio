@@ -1,0 +1,32 @@
+{
+  "packet_id": "ragstudio-oss-proof-v1",
+  "signoff_version": "0.1.0",
+  "screenshots": [
+    {
+      "screenshot_id": "documents-page-desktop-empty-state",
+      "source_path": ".planning/ui-reviews/documents-20260512-140426/desktop.png",
+      "screenshot_path": null,
+      "reviewer": "pending-human-review",
+      "reviewed_at": null,
+      "safe_to_publish": false,
+      "affected_claim_ids": [
+        "RAGSTUDIO-PARSER-GATE",
+        "RAGSTUDIO-TRACE-VISIBILITY"
+      ],
+      "checks": [
+        "no_api_keys",
+        "no_private_hosts",
+        "no_lan_ips",
+        "no_local_absolute_paths",
+        "no_private_content",
+        "no_unpublished_model_endpoints"
+      ],
+      "exclusion_reason": "Screenshot is not copied into the public packet until the human safety checkpoint approves publication.",
+      "notes": [
+        "Source is a repository-relative UI review capture, not a public artifact path.",
+        "The visible screen shows an empty Documents page state with no uploaded document content.",
+        "This entry must be updated before any screenshot can support a proven public claim."
+      ]
+    }
+  ]
+}
