@@ -103,47 +103,47 @@ Roadmap creation fills the phase mapping. Every v1 requirement must map to exact
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| PROOF-01 | TBD | Pending |
-| PROOF-02 | TBD | Pending |
-| PROOF-03 | TBD | Pending |
-| PROOF-04 | TBD | Pending |
-| PROOF-05 | TBD | Pending |
-| PROOF-06 | TBD | Pending |
-| VAL-01 | TBD | Pending |
-| VAL-02 | TBD | Pending |
-| VAL-03 | TBD | Pending |
-| VAL-04 | TBD | Pending |
-| VAL-05 | TBD | Pending |
-| VAL-06 | TBD | Pending |
-| VAL-07 | TBD | Pending |
-| SITE-01 | TBD | Pending |
-| SITE-02 | TBD | Pending |
-| SITE-03 | TBD | Pending |
-| SITE-04 | TBD | Pending |
-| SITE-05 | TBD | Pending |
-| VIEW-01 | TBD | Pending |
-| VIEW-02 | TBD | Pending |
-| VIEW-03 | TBD | Pending |
-| VIEW-04 | TBD | Pending |
-| VIEW-05 | TBD | Pending |
-| VIEW-06 | TBD | Pending |
-| VIEW-07 | TBD | Pending |
-| DOCS-01 | TBD | Pending |
-| DOCS-02 | TBD | Pending |
-| DOCS-03 | TBD | Pending |
-| DOCS-04 | TBD | Pending |
-| DOCS-05 | TBD | Pending |
-| QA-01 | TBD | Pending |
-| QA-02 | TBD | Pending |
-| QA-03 | TBD | Pending |
-| QA-04 | TBD | Pending |
-| QA-05 | TBD | Pending |
+| PROOF-01 | Phase 1 | Pending |
+| PROOF-02 | Phase 1 | Pending |
+| PROOF-03 | Phase 1 | Pending |
+| PROOF-04 | Phase 1 | Pending |
+| PROOF-05 | Phase 1 | Pending |
+| PROOF-06 | Phase 1 | Pending |
+| VAL-01 | Phase 2 | Pending |
+| VAL-02 | Phase 2 | Pending |
+| VAL-03 | Phase 2 | Pending |
+| VAL-04 | Phase 2 | Pending |
+| VAL-05 | Phase 2 | Pending |
+| VAL-06 | Phase 3 | Pending |
+| VAL-07 | Phase 2 | Pending |
+| SITE-01 | Phase 3 | Pending |
+| SITE-02 | Phase 5 | Pending |
+| SITE-03 | Phase 5 | Pending |
+| SITE-04 | Phase 3 | Pending |
+| SITE-05 | Phase 5 | Pending |
+| VIEW-01 | Phase 4 | Pending |
+| VIEW-02 | Phase 4 | Pending |
+| VIEW-03 | Phase 4 | Pending |
+| VIEW-04 | Phase 4 | Pending |
+| VIEW-05 | Phase 4 | Pending |
+| VIEW-06 | Phase 4 | Pending |
+| VIEW-07 | Phase 4 | Pending |
+| DOCS-01 | Phase 2 | Pending |
+| DOCS-02 | Phase 2 | Pending |
+| DOCS-03 | Phase 1 | Pending |
+| DOCS-04 | Phase 2 | Pending |
+| DOCS-05 | Phase 1 | Pending |
+| QA-01 | Phase 5 | Pending |
+| QA-02 | Phase 5 | Pending |
+| QA-03 | Phase 5 | Pending |
+| QA-04 | Phase 5 | Pending |
+| QA-05 | Phase 5 | Pending |
 
 **Coverage:**
 - v1 requirements: 35 total
-- Mapped to phases: 0
-- Unmapped: 35
+- Mapped to phases: 35
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-05-14*
-*Last updated: 2026-05-14 after research scope approval*
+*Last updated: 2026-05-14 after roadmap creation*
