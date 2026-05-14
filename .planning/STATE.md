@@ -2,7 +2,7 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: verifying
+status: ready_to_plan
 stopped_at: Completed 01-03-PLAN.md
 last_updated: "2026-05-14T10:14:25.549Z"
 last_activity: 2026-05-14
@@ -11,7 +11,7 @@ progress:
   completed_phases: 1
   total_plans: 3
   completed_plans: 3
-  percent: 100
+  percent: 20
 ---
 
 # Project State
@@ -21,30 +21,30 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-14)
 
 **Core value:** Every public Ragstudio claim must be inspectable from claim text to replayable evidence, source commit, raw artifact, and known limitation.
-**Current focus:** Phase 01 — Proof Contract and Baseline Packet
+**Current focus:** Phase 2 - Replay and Export Tooling
 
 ## Current Position
 
-Phase: 01 (Proof Contract and Baseline Packet) — EXECUTING
-Plan: 3 of 3
-Status: Phase complete — ready for verification
+Phase: 2 of 5 (Replay and Export Tooling)
+Plan: 0 of 3 in current phase
+Status: Ready to plan
 Last activity: 2026-05-14
 
-Progress: [██████████] 100%
+Progress: [██░░░░░░░░] 20%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 0
-- Average duration: n/a
-- Total execution time: 0.0 hours
+- Total plans completed: 3
+- Average duration: 15 min
+- Total execution time: 0.75 hours
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| 1. Proof Contract and Baseline Packet | 0/3 | n/a | n/a |
+| 1. Proof Contract and Baseline Packet | 3/3 | 45 min | 15 min |
 | 2. Replay and Export Tooling | 0/3 | n/a | n/a |
 | 3. `ragstudio-site` Scaffold and Import Pipeline | 0/2 | n/a | n/a |
 | 4. Static Proof Viewer and Public Site UX | 0/3 | n/a | n/a |
@@ -52,8 +52,8 @@ Progress: [██████████] 100%
 
 **Recent Trend:**
 
-- Last 5 plans: none
-- Trend: n/a
+- Last 5 plans: P01 3 min, P02 4 min, P03 38 min
+- Trend: Phase 1 complete; Phase 2 ready to plan.
 
 | Phase 01 P01 | 3 min | 3 tasks | 10 files |
 | Phase 01 P02 | 4 min | 3 tasks | 8 files |

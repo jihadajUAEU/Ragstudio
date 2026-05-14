@@ -36,12 +36,13 @@ evidence, source commit, raw artifact, and known limitation.
   experiments, comparison, optimizer, and pipeline status.
 - Existing test suite covers many backend services, runtime behavior, frontend
   pages, and selected Playwright flows.
+- Phase 1 validated the public proof packet under
+  `docs/benchmarks/ragstudio-oss-proof-v1/` with schemas, synthetic fixtures,
+  redacted artifacts, approved screenshot signoff, claims registry, claims
+  matrix, compatibility docs, limitations, and redaction status.
 
 ### Active
 
-- [ ] Create a public proof packet under
-  `docs/benchmarks/ragstudio-oss-proof-v1/` with schemas, fixtures, artifacts,
-  screenshots, run notes, corpus notes, claims registry, and claims matrix.
 - [ ] Implement shared proof-packet validation code under
   `backend/src/ragstudio/proof_packet/` for schema loading, redaction, hashing,
   manifests, structured errors, replay validation, and export validation.
