@@ -70,8 +70,8 @@ Plans:
 **Plans**: 2 plans
 
 Plans:
-- [ ] 03-01: Scaffold `ragstudio-site` with React/Vite, fixture layout, and static-only build constraints.
-- [ ] 03-02: Implement packet import validation, fixture generation, and import failure tests.
+- [x] 03-01: Scaffold `ragstudio-site` with React/Vite, fixture layout, and static-only build constraints.
+- [x] 03-02: Implement packet import validation, fixture generation, and import failure tests.
 
 ### Phase 4: Static Proof Viewer and Public Site UX
 **Goal**: A skeptical visitor can land on the public story, click `Inspect the proof trail`, and inspect claim-to-artifact evidence through an accessible static viewer.

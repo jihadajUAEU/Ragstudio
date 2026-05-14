@@ -1,9 +1,9 @@
 ---
 phase: 03
 slug: ragstudio-site-scaffold-and-import-pipeline
-status: draft
-nyquist_compliant: false
-wave_0_complete: false
+status: passed
+nyquist_compliant: true
+wave_0_complete: true
 created: 2026-05-14
 ---
 
@@ -40,11 +40,11 @@ created: 2026-05-14
 
 | Task ID | Plan | Wave | Requirement | Threat Ref | Secure Behavior | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|------------|-----------------|-----------|-------------------|-------------|--------|
-| 03-01-01 | 01 | 1 | SITE-01 | T-03-01 | Sibling site folder exists outside the Ragstudio app repo and is initialized independently. | filesystem/git | `test -d /Users/meet/Documents/ragstudio-site && git -C /Users/meet/Documents/ragstudio-site status --short --branch` | W0 | pending |
-| 03-01-02 | 01 | 1 | SITE-04 | T-03-02 | Scaffold builds from local static React code and does not import Ragstudio app frontend. | build/test | `cd /Users/meet/Documents/ragstudio-site && npm test && npm run build` | W0 | pending |
-| 03-02-01 | 02 | 2 | VAL-06 | T-03-03 | Importer rejects packets when Ragstudio proof validation rejects them. | import/test | `cd /Users/meet/Documents/ragstudio-site && npm test` | W0 | pending |
-| 03-02-02 | 02 | 2 | SITE-04 | T-03-04 | Generated fixture outputs are static and build-time only. | import/build | `cd /Users/meet/Documents/ragstudio-site && npm run import:proof && npm run build` | W0 | pending |
-| 03-02-03 | 02 | 2 | SITE-04 | T-03-05 | Guardrails fail on backend/API/upload/auth/provider patterns. | guard/test | `cd /Users/meet/Documents/ragstudio-site && npm run check:static && npm test` | W0 | pending |
+| 03-01-01 | 01 | 1 | SITE-01 | T-03-01 | Sibling site folder exists outside the Ragstudio app repo and is initialized independently. | filesystem/git | `test -d /Users/meet/Documents/ragstudio-site && git -C /Users/meet/Documents/ragstudio-site status --short --branch` | W0 | green |
+| 03-01-02 | 01 | 1 | SITE-04 | T-03-02 | Scaffold builds from local static React code and does not import Ragstudio app frontend. | build/test | `cd /Users/meet/Documents/ragstudio-site && npm test && npm run build` | W0 | green |
+| 03-02-01 | 02 | 2 | VAL-06 | T-03-03 | Importer rejects packets when Ragstudio proof validation rejects them. | import/test | `cd /Users/meet/Documents/ragstudio-site && npm test` | W0 | green |
+| 03-02-02 | 02 | 2 | SITE-04 | T-03-04 | Generated fixture outputs are static and build-time only. | import/build | `cd /Users/meet/Documents/ragstudio-site && npm run import:proof && npm run build` | W0 | green |
+| 03-02-03 | 02 | 2 | SITE-04 | T-03-05 | Guardrails fail on backend/API/upload/auth/provider patterns. | guard/test | `cd /Users/meet/Documents/ragstudio-site && npm run check:static && npm test` | W0 | green |
 
 *Status: pending - green - red - flaky*
 
@@ -52,10 +52,10 @@ created: 2026-05-14
 
 ## Wave 0 Requirements
 
-- [ ] `/Users/meet/Documents/ragstudio-site/package.json` - independent site package scripts.
-- [ ] `/Users/meet/Documents/ragstudio-site/scripts/import-proof-packet.mjs` - import gate that shells out to `proof.sh`.
-- [ ] `/Users/meet/Documents/ragstudio-site/scripts/check-static-boundary.mjs` - static-only guardrail.
-- [ ] `/Users/meet/Documents/ragstudio-site/tests/` - import and guardrail coverage.
+- [x] `/Users/meet/Documents/ragstudio-site/package.json` - independent site package scripts.
+- [x] `/Users/meet/Documents/ragstudio-site/scripts/import-proof-packet.mjs` - import gate that shells out to `proof.sh`.
+- [x] `/Users/meet/Documents/ragstudio-site/scripts/check-static-boundary.mjs` - static-only guardrail.
+- [x] `/Users/meet/Documents/ragstudio-site/tests/` - import and guardrail coverage.
 
 ---
 
@@ -68,11 +68,11 @@ accessibility manual review are deferred to Phases 4 and 5.
 
 ## Validation Sign-Off
 
-- [ ] All tasks have automated verification or Wave 0 dependencies
-- [ ] Sampling continuity: no 3 consecutive tasks without automated verify
-- [ ] Wave 0 covers all MISSING references
-- [ ] No watch-mode flags
-- [ ] Full phase command passes from `/Users/meet/Documents/ragstudio-site`
-- [ ] `nyquist_compliant: true` set in frontmatter after implementation
+- [x] All tasks have automated verification or Wave 0 dependencies
+- [x] Sampling continuity: no 3 consecutive tasks without automated verify
+- [x] Wave 0 covers all MISSING references
+- [x] No watch-mode flags
+- [x] Full phase command passes from `/Users/meet/Documents/ragstudio-site`
+- [x] `nyquist_compliant: true` set in frontmatter after implementation
 
-**Approval:** pending
+**Approval:** passed

@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: executing
-stopped_at: Phase 3 planned; ready to execute
-last_updated: "2026-05-14T13:29:58.836Z"
-last_activity: 2026-05-14 -- Phase 03 planning complete
+status: ready_to_plan
+stopped_at: Phase 3 complete; ready to plan Phase 4
+last_updated: "2026-05-14T13:37:03.300Z"
+last_activity: 2026-05-14 -- Phase 03 complete; Phase 04 ready to plan
 progress:
   total_phases: 5
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 8
   completed_plans: 6
-  percent: 75
+  percent: 60
 ---
 
 # Project State
@@ -21,22 +21,22 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-14)
 
 **Core value:** Every public Ragstudio claim must be inspectable from claim text to replayable evidence, source commit, raw artifact, and known limitation.
-**Current focus:** Phase 3 - `ragstudio-site` Scaffold and Import Pipeline
+**Current focus:** Phase 04 — static-proof-viewer-and-public-site-ux
 
 ## Current Position
 
-Phase: 3
-Plan: 0 of 2 in current phase
-Status: Ready to execute
-Last activity: 2026-05-14 -- Phase 03 planning complete
+Phase: 4
+Plan: Not started
+Status: Ready to plan
+Last activity: 2026-05-14
 
-Progress: [███████░░░] 75%
+Progress: [██████░░░░] 60%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 6
+- Total plans completed: 8
 - Average duration: 15 min
 - Total execution time: 0.75 hours
 
@@ -46,14 +46,14 @@ Progress: [███████░░░] 75%
 |-------|-------|-------|----------|
 | 1. Proof Contract and Baseline Packet | 3/3 | 45 min | 15 min |
 | 2. Replay and Export Tooling | 3/3 | n/a | n/a |
-| 3. `ragstudio-site` Scaffold and Import Pipeline | 0/2 | n/a | n/a |
+| 3. `ragstudio-site` Scaffold and Import Pipeline | 2/2 | n/a | n/a |
 | 4. Static Proof Viewer and Public Site UX | 0/3 | n/a | n/a |
 | 5. Launch Hardening and Domain Release | 0/3 | n/a | n/a |
 
 **Recent Trend:**
 
 - Last 5 plans: P01 3 min, P02 4 min, P03 38 min
-- Trend: Phase 2 complete; Phase 3 ready to plan.
+- Trend: Phase 3 complete; Phase 4 ready to plan.
 
 | Phase 01 P01 | 3 min | 3 tasks | 10 files |
 | Phase 01 P02 | 4 min | 3 tasks | 8 files |
@@ -78,7 +78,6 @@ None yet.
 ### Blockers/Concerns
 
 - Launch blocker: exact public domain name must be chosen before Phase 5 release.
-- Repo blocker: exact `ragstudio-site` repository location/owner must be confirmed before Phase 3 implementation.
 - Review concern: screenshots require manual no-private-content signoff.
 
 ## Deferred Items
