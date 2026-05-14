@@ -88,9 +88,9 @@ Plans:
 **Plans**: 3 plans
 
 Plans:
-- [ ] 04-01: Build first viewport, navigation, claim list, status model, and static routing.
-- [ ] 04-02: Build claim detail panels, evidence views, raw artifact links, and feedback deep links.
-- [ ] 04-03: Add demo screenshots, screenshot signoff records, responsive polish, and fixture loading behavior.
+- [x] 04-01: Build first viewport, navigation, claim list, status model, and static routing.
+- [x] 04-02: Build claim detail panels, evidence views, raw artifact links, and feedback deep links.
+- [x] 04-03: Add demo screenshots, screenshot signoff records, responsive polish, and fixture loading behavior.
 
 ### Phase 5: Launch Hardening and Domain Release
 **Goal**: The proof system is publicly launched through Cloudflare Pages on the required domain with accessibility, validation, and release gates passing.
@@ -120,8 +120,8 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 |-------|----------------|--------|-----------|
 | 1. Proof Contract and Baseline Packet | 3/3 | Complete | 2026-05-14 |
 | 2. Replay and Export Tooling | 3/3 | Complete | 2026-05-14 |
-| 3. `ragstudio-site` Scaffold and Import Pipeline | 0/2 | Not started | - |
-| 4. Static Proof Viewer and Public Site UX | 0/3 | Not started | - |
+| 3. `ragstudio-site` Scaffold and Import Pipeline | 2/2 | Complete | 2026-05-14 |
+| 4. Static Proof Viewer and Public Site UX | 3/3 | Complete | 2026-05-14 |
 | 5. Launch Hardening and Domain Release | 0/3 | Not started | - |
 
 ## Coverage

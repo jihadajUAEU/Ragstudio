@@ -1,9 +1,9 @@
 ---
 phase: 04
 slug: static-proof-viewer-and-public-site-ux
-status: draft
+status: passed
 nyquist_compliant: true
-wave_0_complete: false
+wave_0_complete: true
 created: 2026-05-14
 ---
 
@@ -38,14 +38,14 @@ created: 2026-05-14
 
 | Task ID | Plan | Wave | Requirement | Threat Ref | Secure Behavior | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|------------|-----------------|-----------|-------------------|-------------|--------|
-| 04-01-01 | 01 | 1 | VIEW-01 | T-04-01 | First viewport uses exact proof-first copy and CTA. | render/test | `npm test` | W0 | pending |
-| 04-01-02 | 01 | 1 | VIEW-02 | T-04-02 | Viewer reads imported static fixtures only. | guard/build | `npm run check:static && npm run build` | W0 | pending |
-| 04-01-03 | 01 | 1 | VIEW-03 | T-04-03 | Claim list shows proven, roadmap, and disabled groups. | render/test | `npm test` | W0 | pending |
-| 04-02-01 | 02 | 2 | VIEW-04 | T-04-04 | Claim detail exposes evidence type panels and non-proven language. | render/test | `npm test` | W0 | pending |
-| 04-02-02 | 02 | 2 | VIEW-05 | T-04-05 | Deep links and feedback URLs include required proof context. | render/test | `npm test` | W0 | pending |
-| 04-03-01 | 03 | 3 | VIEW-06 | T-04-06 | Screenshots come only from approved signoff records. | render/source | `npm test` | W0 | pending |
-| 04-03-02 | 03 | 3 | VIEW-07 | T-04-07 | Screenshot signoff metadata is visible or fallback-safe. | render/source | `npm test` | W0 | pending |
-| 04-03-03 | 03 | 3 | VIEW-02 | T-04-08 | Responsive polish preserves static-only build and no broken artifacts. | full/build | `npm run check:static && npm run lint && npm test && npm run build` | W0 | pending |
+| 04-01-01 | 01 | 1 | VIEW-01 | T-04-01 | First viewport uses exact proof-first copy and CTA. | render/test | `npm test` | W0 | green |
+| 04-01-02 | 01 | 1 | VIEW-02 | T-04-02 | Viewer reads imported static fixtures only. | guard/build | `npm run check:static && npm run build` | W0 | green |
+| 04-01-03 | 01 | 1 | VIEW-03 | T-04-03 | Claim list shows proven, roadmap, and disabled groups. | render/test | `npm test` | W0 | green |
+| 04-02-01 | 02 | 2 | VIEW-04 | T-04-04 | Claim detail exposes evidence type panels and non-proven language. | render/test | `npm test` | W0 | green |
+| 04-02-02 | 02 | 2 | VIEW-05 | T-04-05 | Deep links and feedback URLs include required proof context. | render/test | `npm test` | W0 | green |
+| 04-03-01 | 03 | 3 | VIEW-06 | T-04-06 | Screenshots come only from approved signoff records. | render/source | `npm test` | W0 | green |
+| 04-03-02 | 03 | 3 | VIEW-07 | T-04-07 | Screenshot signoff metadata is visible or fallback-safe. | render/source | `npm test` | W0 | green |
+| 04-03-03 | 03 | 3 | VIEW-02 | T-04-08 | Responsive polish preserves static-only build and no broken artifacts. | full/build | `npm run check:static && npm run lint && npm test && npm run build` | W0 | green |
 
 *Status: pending - green - red - flaky*
 
@@ -53,27 +53,27 @@ created: 2026-05-14
 
 ## Wave 0 Requirements
 
-- [ ] `/Users/meet/Documents/ragstudio-site/src/App.tsx` renders the complete Phase 4 flow.
-- [ ] `/Users/meet/Documents/ragstudio-site/src/styles.css` implements UI-SPEC spacing, typography, color, focus, and responsive rules.
-- [ ] `/Users/meet/Documents/ragstudio-site/tests/app.test.tsx` covers first viewport, claim groups, dossiers, feedback, screenshot/fallback states.
-- [ ] `/Users/meet/Documents/ragstudio-site/scripts/check-static-boundary.mjs` still passes.
+- [x] `/Users/meet/Documents/ragstudio-site/src/App.tsx` renders the complete Phase 4 flow.
+- [x] `/Users/meet/Documents/ragstudio-site/src/styles.css` implements UI-SPEC spacing, typography, color, focus, and responsive rules.
+- [x] `/Users/meet/Documents/ragstudio-site/tests/app.test.tsx` covers first viewport, claim groups, dossiers, feedback, screenshot/fallback states.
+- [x] `/Users/meet/Documents/ragstudio-site/scripts/check-static-boundary.mjs` still passes.
 
 ---
 
 ## Manual-Only Verifications
 
-- Desktop visual smoke review after Phase 4 UI exists.
-- Mobile visual smoke review at 320px and a common phone width.
-- Focus ring and keyboard navigation spot check.
+- Desktop visual smoke review after Phase 4 UI exists: covered by Playwright smoke at 1440px.
+- Mobile visual smoke review at 320px and a common phone width: responsive rules are implemented; formal visual audit remains for Phase 5 gates.
+- Focus ring and keyboard navigation spot check: CSS focus ring is present and covered by source review.
 
 ---
 
 ## Validation Sign-Off
 
-- [ ] All tasks have automated verification or manual visual smoke coverage
-- [ ] Sampling continuity: no 3 consecutive tasks without automated verify
-- [ ] Wave 0 covers all missing UI references
-- [ ] No watch-mode flags
-- [ ] Full phase command passes from `/Users/meet/Documents/ragstudio-site`
+- [x] All tasks have automated verification or manual visual smoke coverage
+- [x] Sampling continuity: no 3 consecutive tasks without automated verify
+- [x] Wave 0 covers all missing UI references
+- [x] No watch-mode flags
+- [x] Full phase command passes from `/Users/meet/Documents/ragstudio-site`
 
-**Approval:** pending
+**Approval:** passed

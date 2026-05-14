@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: executing
-stopped_at: Phase 4 UI-SPEC approved
+status: ready_to_plan
+stopped_at: Phase 04 complete; ready to plan Phase 05
 last_updated: "2026-05-14T13:58:30.363Z"
-last_activity: 2026-05-14 -- Phase 04 planning complete
+last_activity: 2026-05-14 -- Phase 04 execution complete
 progress:
   total_phases: 5
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 11
-  completed_plans: 8
-  percent: 73
+  completed_plans: 11
+  percent: 80
 ---
 
 # Project State
@@ -21,22 +21,22 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-14)
 
 **Core value:** Every public Ragstudio claim must be inspectable from claim text to replayable evidence, source commit, raw artifact, and known limitation.
-**Current focus:** Phase 04 — static-proof-viewer-and-public-site-ux
+**Current focus:** Phase 05 — launch-hardening-and-domain-release
 
 ## Current Position
 
-Phase: 4
+Phase: 5
 Plan: Not started
-Status: Ready to execute
-Last activity: 2026-05-14 -- Phase 04 planning complete
+Status: Ready to plan
+Last activity: 2026-05-14
 
-Progress: [██████░░░░] 60%
+Progress: [████████░░] 80%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 8
+- Total plans completed: 11
 - Average duration: 15 min
 - Total execution time: 0.75 hours
 
@@ -47,13 +47,13 @@ Progress: [██████░░░░] 60%
 | 1. Proof Contract and Baseline Packet | 3/3 | 45 min | 15 min |
 | 2. Replay and Export Tooling | 3/3 | n/a | n/a |
 | 3. `ragstudio-site` Scaffold and Import Pipeline | 2/2 | n/a | n/a |
-| 4. Static Proof Viewer and Public Site UX | 0/3 | n/a | n/a |
+| 4. Static Proof Viewer and Public Site UX | 3/3 | n/a | n/a |
 | 5. Launch Hardening and Domain Release | 0/3 | n/a | n/a |
 
 **Recent Trend:**
 
 - Last 5 plans: P01 3 min, P02 4 min, P03 38 min
-- Trend: Phase 3 complete; Phase 4 ready to plan.
+- Trend: Phase 4 complete; Phase 5 ready to plan.
 
 | Phase 01 P01 | 3 min | 3 tasks | 10 files |
 | Phase 01 P02 | 4 min | 3 tasks | 8 files |
@@ -91,5 +91,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-05-14T13:55:03.721Z
-Stopped at: Phase 4 UI-SPEC approved
-Resume file: .planning/phases/04-static-proof-viewer-and-public-site-ux/04-UI-SPEC.md
+Stopped at: Phase 04 complete; ready to plan Phase 05
+Resume file: .planning/phases/04-static-proof-viewer-and-public-site-ux/04-VERIFICATION.md
