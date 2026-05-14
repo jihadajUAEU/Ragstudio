@@ -52,9 +52,9 @@ Plans:
 **Plans**: 3 plans
 
 Plans:
-- [ ] 02-01: Implement proof validator, schema loading, hashing, and redaction checks.
-- [ ] 02-02: Add `./scripts/proof.sh`, export manifest generation, and structured proof errors.
-- [ ] 02-03: Add replay/export tests and QUICKSTART, REPLAY, and ERRORS docs.
+- [x] 02-01: Implement proof validator, schema loading, hashing, and redaction checks.
+- [x] 02-02: Add `./scripts/proof.sh`, export manifest generation, and structured proof errors.
+- [x] 02-03: Add replay/export tests and QUICKSTART, REPLAY, and ERRORS docs.
 
 ### Phase 3: `ragstudio-site` Scaffold and Import Pipeline
 **Goal**: The separate `ragstudio-site` repository can import only validated proof packets and build a static site without Ragstudio backend dependencies.

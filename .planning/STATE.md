@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: executing
-stopped_at: Phase 2 planned; ready to execute
+status: ready_to_plan
+stopped_at: Phase 2 complete; Phase 3 ready to plan
 last_updated: "2026-05-14T13:16:02.860Z"
-last_activity: 2026-05-14 -- Phase 02 execution started
+last_activity: 2026-05-14 -- Phase 02 complete
 progress:
   total_phases: 5
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 6
-  completed_plans: 3
-  percent: 50
+  completed_plans: 6
+  percent: 40
 ---
 
 # Project State
@@ -21,22 +21,22 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-14)
 
 **Core value:** Every public Ragstudio claim must be inspectable from claim text to replayable evidence, source commit, raw artifact, and known limitation.
-**Current focus:** Phase 02 — replay-and-export-tooling
+**Current focus:** Phase 3 - `ragstudio-site` Scaffold and Import Pipeline
 
 ## Current Position
 
-Phase: 02 (replay-and-export-tooling) — EXECUTING
-Plan: 1 of 3
-Status: Executing Phase 02
-Last activity: 2026-05-14 -- Phase 02 execution started
+Phase: 3
+Plan: Not started
+Status: Ready to plan
+Last activity: 2026-05-14
 
-Progress: [█████░░░░░] 50%
+Progress: [████░░░░░░] 40%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 3
+- Total plans completed: 6
 - Average duration: 15 min
 - Total execution time: 0.75 hours
 
@@ -45,7 +45,7 @@ Progress: [█████░░░░░] 50%
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 1. Proof Contract and Baseline Packet | 3/3 | 45 min | 15 min |
-| 2. Replay and Export Tooling | 0/3 | n/a | n/a |
+| 2. Replay and Export Tooling | 3/3 | n/a | n/a |
 | 3. `ragstudio-site` Scaffold and Import Pipeline | 0/2 | n/a | n/a |
 | 4. Static Proof Viewer and Public Site UX | 0/3 | n/a | n/a |
 | 5. Launch Hardening and Domain Release | 0/3 | n/a | n/a |
@@ -53,7 +53,7 @@ Progress: [█████░░░░░] 50%
 **Recent Trend:**
 
 - Last 5 plans: P01 3 min, P02 4 min, P03 38 min
-- Trend: Phase 1 complete; Phase 2 ready to execute.
+- Trend: Phase 2 complete; Phase 3 ready to plan.
 
 | Phase 01 P01 | 3 min | 3 tasks | 10 files |
 | Phase 01 P02 | 4 min | 3 tasks | 8 files |
@@ -92,5 +92,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-05-14T13:05:23.353Z
-Stopped at: Phase 2 planned; ready to execute
-Resume file: .planning/phases/02-replay-and-export-tooling/02-01-PLAN.md
+Stopped at: Phase 2 complete; Phase 3 ready to plan
+Resume file: .planning/phases/02-replay-and-export-tooling/02-VERIFICATION.md
