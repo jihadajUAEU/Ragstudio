@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/ragstudio/schemas/screenshot-signoff.schema.json",
+  "title": "Ragstudio Screenshot Signoff",
+  "type": "object",
+  "required": [
+    "packet_id",
+    "signoff_version",
+    "screenshots"
+  ],
+  "properties": {
+    "packet_id": {
+      "const": "ragstudio-oss-proof-v1"
+    },
+    "signoff_version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "screenshots": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/screenshot"
+      }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "screenshot": {
+      "type": "object",
+      "required": [
+        "screenshot_id",
+        "source_path",
+        "public_path",
+        "reviewer",
+        "reviewed_at",
+        "safe_to_publish",
+        "checks"
+      ],
+      "properties": {
+        "screenshot_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_path": {
+          "type": "string"
+        },
+        "public_path": {
+          "type": "string"
+        },
+        "reviewer": {
+          "type": "string"
+        },
+        "reviewed_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "safe_to_publish": {
+          "type": "boolean"
+        },
+        "checks": {
+          "$ref": "#/$defs/string_list"
+        },
+        "blocked_reason": {
+          "type": "string"
+        },
+        "notes": {
+          "$ref": "#/$defs/string_list"
+        }
+      },
+      "additionalProperties": false
+    },
+    "string_list": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  }
+}

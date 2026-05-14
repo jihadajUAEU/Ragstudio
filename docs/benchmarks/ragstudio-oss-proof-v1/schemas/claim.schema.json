@@ -1,0 +1,214 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/ragstudio/schemas/claim.schema.json",
+  "title": "Ragstudio Proof Claim Registry",
+  "type": "object",
+  "required": [
+    "packet_id",
+    "registry_version",
+    "source_commit",
+    "claim_counts",
+    "claims"
+  ],
+  "properties": {
+    "packet_id": {
+      "const": "ragstudio-oss-proof-v1"
+    },
+    "registry_version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "source_commit": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{40}$"
+    },
+    "claim_counts": {
+      "$ref": "manifest.schema.json#/$defs/claim_counts"
+    },
+    "claims": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/claim"
+      },
+      "minItems": 1
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "claim": {
+      "type": "object",
+      "required": [
+        "claim_id",
+        "title",
+        "status",
+        "summary",
+        "source",
+        "evidence",
+        "limitations"
+      ],
+      "properties": {
+        "claim_id": {
+          "type": "string",
+          "pattern": "^RAGSTUDIO-[A-Z0-9-]+$"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "enum": [
+            "proven",
+            "roadmap",
+            "disabled"
+          ]
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source": {
+          "$ref": "#/$defs/source"
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/evidence"
+          }
+        },
+        "explanation": {
+          "type": "string"
+        },
+        "limitations": {
+          "$ref": "#/$defs/string_list"
+        },
+        "missing_evidence": {
+          "$ref": "#/$defs/string_list"
+        },
+        "planned_proof_path": {
+          "$ref": "#/$defs/string_list"
+        },
+        "disabled_reason": {
+          "type": "string"
+        },
+        "requirements_to_prove": {
+          "$ref": "#/$defs/string_list"
+        },
+        "screenshots": {
+          "$ref": "#/$defs/string_list"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "proven"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "explanation"
+            ],
+            "properties": {
+              "evidence": {
+                "minItems": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "roadmap"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "missing_evidence",
+              "planned_proof_path"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "disabled"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "disabled_reason",
+              "requirements_to_prove"
+            ]
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "source": {
+      "type": "object",
+      "required": [
+        "source_commit",
+        "code_paths"
+      ],
+      "properties": {
+        "source_commit": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{40}$"
+        },
+        "code_paths": {
+          "$ref": "#/$defs/string_list"
+        }
+      },
+      "additionalProperties": false
+    },
+    "evidence": {
+      "type": "object",
+      "required": [
+        "artifact_path",
+        "evidence_type",
+        "public",
+        "redaction_status"
+      ],
+      "properties": {
+        "artifact_path": {
+          "type": "string",
+          "pattern": "^artifacts/"
+        },
+        "evidence_type": {
+          "enum": [
+            "parser_quality",
+            "chunk_export",
+            "retrieval_trace",
+            "graph_projection",
+            "reranker_trace",
+            "screenshot",
+            "documentation"
+          ]
+        },
+        "public": {
+          "const": true
+        },
+        "redaction_status": {
+          "const": "passed"
+        },
+        "description": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "string_list": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  }
+}

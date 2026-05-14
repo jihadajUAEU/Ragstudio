@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/ragstudio/schemas/artifact.schema.json",
+  "title": "Ragstudio Proof Artifact",
+  "type": "object",
+  "required": [
+    "artifact_id",
+    "artifact_type",
+    "source",
+    "redaction_status",
+    "limitations"
+  ],
+  "properties": {
+    "artifact_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "artifact_type": {
+      "enum": [
+        "parser_quality_report",
+        "chunk_export",
+        "retrieval_run",
+        "graph_projection",
+        "reranker_trace"
+      ]
+    },
+    "source": {
+      "$ref": "#/$defs/source"
+    },
+    "redaction_status": {
+      "enum": [
+        "passed",
+        "blocked",
+        "pending"
+      ]
+    },
+    "redaction_checks": {
+      "$ref": "#/$defs/string_list"
+    },
+    "quality_report_version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "status": {
+      "type": "string"
+    },
+    "domain_profile": {
+      "type": "string"
+    },
+    "summary": {
+      "type": "object"
+    },
+    "warnings": {
+      "type": "array"
+    },
+    "chunks": {
+      "type": "array"
+    },
+    "run": {
+      "type": "object"
+    },
+    "projection": {
+      "type": "object"
+    },
+    "reranker_traces": {
+      "type": "array"
+    },
+    "limitations": {
+      "$ref": "#/$defs/string_list"
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "source": {
+      "type": "object",
+      "required": [
+        "document_id",
+        "capture_mode",
+        "source_commit",
+        "fixture_path"
+      ],
+      "properties": {
+        "document_id": {
+          "type": "string"
+        },
+        "capture_mode": {
+          "enum": [
+            "static-fixtures",
+            "optional-live-capture"
+          ]
+        },
+        "source_commit": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{40}$"
+        },
+        "fixture_path": {
+          "type": "string",
+          "pattern": "^fixtures/"
+        }
+      },
+      "additionalProperties": false
+    },
+    "string_list": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  }
+}

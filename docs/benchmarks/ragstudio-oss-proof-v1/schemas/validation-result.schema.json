@@ -1,0 +1,143 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/ragstudio/schemas/validation-result.schema.json",
+  "title": "Ragstudio Proof Validation Result",
+  "type": "object",
+  "required": [
+    "validation_id",
+    "packet_id",
+    "status",
+    "validated_at",
+    "validator_version",
+    "summary",
+    "errors",
+    "warnings",
+    "artifact_results"
+  ],
+  "properties": {
+    "validation_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "packet_id": {
+      "const": "ragstudio-oss-proof-v1"
+    },
+    "status": {
+      "enum": [
+        "passed",
+        "failed",
+        "blocked"
+      ]
+    },
+    "validated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "validator_version": {
+      "type": "string"
+    },
+    "summary": {
+      "$ref": "#/$defs/summary"
+    },
+    "errors": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/finding"
+      }
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/finding"
+      }
+    },
+    "artifact_results": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/artifact_result"
+      }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "summary": {
+      "type": "object",
+      "required": [
+        "schema_valid",
+        "hashes_valid",
+        "redaction_valid",
+        "claims_valid"
+      ],
+      "properties": {
+        "schema_valid": {
+          "type": "boolean"
+        },
+        "hashes_valid": {
+          "type": "boolean"
+        },
+        "redaction_valid": {
+          "type": "boolean"
+        },
+        "claims_valid": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "finding": {
+      "type": "object",
+      "required": [
+        "code",
+        "message",
+        "path"
+      ],
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "recovery": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "artifact_result": {
+      "type": "object",
+      "required": [
+        "artifact_path",
+        "status",
+        "hash_valid",
+        "redaction_status"
+      ],
+      "properties": {
+        "artifact_path": {
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "passed",
+            "failed",
+            "blocked"
+          ]
+        },
+        "hash_valid": {
+          "type": "boolean"
+        },
+        "redaction_status": {
+          "enum": [
+            "passed",
+            "blocked",
+            "pending"
+          ]
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

@@ -1,0 +1,304 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/ragstudio/schemas/manifest.schema.json",
+  "title": "Ragstudio Proof Packet Manifest",
+  "type": "object",
+  "required": [
+    "packet_id",
+    "packet_version",
+    "schema_version",
+    "source_commit",
+    "generated_at",
+    "claim_counts",
+    "redaction_status",
+    "artifact_hashes",
+    "excluded_artifacts",
+    "limitations"
+  ],
+  "properties": {
+    "packet_id": {
+      "type": "string",
+      "const": "ragstudio-oss-proof-v1"
+    },
+    "packet_version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "schema_version": {
+      "type": "string",
+      "const": "2020-12"
+    },
+    "source_commit": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{40}$"
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "generated_from": {
+      "$ref": "#/$defs/generated_from"
+    },
+    "folders": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "schemas",
+          "fixtures",
+          "artifacts",
+          "screenshots",
+          "claims",
+          "docs"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "schemas": {
+      "$ref": "#/$defs/schema_paths"
+    },
+    "fixtures": {
+      "$ref": "#/$defs/path_list"
+    },
+    "artifacts": {
+      "$ref": "#/$defs/path_list"
+    },
+    "screenshots": {
+      "$ref": "#/$defs/screenshots"
+    },
+    "claims": {
+      "$ref": "#/$defs/claim_paths"
+    },
+    "claim_counts": {
+      "$ref": "#/$defs/claim_counts"
+    },
+    "redaction_status": {
+      "$ref": "#/$defs/redaction_status"
+    },
+    "artifact_hashes": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/hash_record"
+      }
+    },
+    "hash_status": {
+      "type": "string"
+    },
+    "excluded_artifacts": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/excluded_artifact"
+      }
+    },
+    "limitations": {
+      "$ref": "#/$defs/non_empty_strings"
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "generated_from": {
+      "type": "object",
+      "required": [
+        "repository",
+        "workspace",
+        "capture_mode",
+        "corpus_policy"
+      ],
+      "properties": {
+        "repository": {
+          "type": "string"
+        },
+        "workspace": {
+          "type": "string"
+        },
+        "capture_mode": {
+          "enum": [
+            "static-fixtures",
+            "optional-live-capture"
+          ]
+        },
+        "corpus_policy": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "schema_paths": {
+      "type": "object",
+      "required": [
+        "manifest",
+        "claim",
+        "artifact",
+        "screenshot_signoff",
+        "validation_result"
+      ],
+      "properties": {
+        "manifest": {
+          "const": "schemas/manifest.schema.json"
+        },
+        "claim": {
+          "const": "schemas/claim.schema.json"
+        },
+        "artifact": {
+          "const": "schemas/artifact.schema.json"
+        },
+        "screenshot_signoff": {
+          "const": "schemas/screenshot-signoff.schema.json"
+        },
+        "validation_result": {
+          "const": "schemas/validation-result.schema.json"
+        }
+      },
+      "additionalProperties": false
+    },
+    "claim_paths": {
+      "type": "object",
+      "required": [
+        "registry",
+        "matrix"
+      ],
+      "properties": {
+        "registry": {
+          "const": "claims/claims.registry.json"
+        },
+        "matrix": {
+          "const": "claims/claims.matrix.md"
+        }
+      },
+      "additionalProperties": false
+    },
+    "screenshots": {
+      "type": "object",
+      "required": [
+        "signoff",
+        "approved_count",
+        "pending_count"
+      ],
+      "properties": {
+        "signoff": {
+          "const": "screenshots/signoff.json"
+        },
+        "approved_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "pending_count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "claim_counts": {
+      "type": "object",
+      "required": [
+        "proven",
+        "roadmap",
+        "disabled",
+        "total"
+      ],
+      "properties": {
+        "proven": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "roadmap": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "disabled": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "total": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "redaction_status": {
+      "type": "object",
+      "required": [
+        "overall",
+        "policy",
+        "checked_for",
+        "notes"
+      ],
+      "properties": {
+        "overall": {
+          "type": "string"
+        },
+        "policy": {
+          "const": "fail_closed"
+        },
+        "checked_for": {
+          "$ref": "#/$defs/non_empty_strings"
+        },
+        "notes": {
+          "$ref": "#/$defs/non_empty_strings"
+        }
+      },
+      "additionalProperties": false
+    },
+    "hash_record": {
+      "type": "object",
+      "required": [
+        "algorithm",
+        "value",
+        "redaction_status"
+      ],
+      "properties": {
+        "algorithm": {
+          "const": "sha256"
+        },
+        "value": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "redaction_status": {
+          "enum": [
+            "passed",
+            "blocked",
+            "pending"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "excluded_artifact": {
+      "type": "object",
+      "required": [
+        "path",
+        "reason",
+        "affected_claims"
+      ],
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "affected_claims": {
+          "$ref": "#/$defs/path_list"
+        }
+      },
+      "additionalProperties": false
+    },
+    "path_list": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "non_empty_strings": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  }
+}
