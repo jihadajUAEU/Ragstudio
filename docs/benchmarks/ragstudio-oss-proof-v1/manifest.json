@@ -48,10 +48,10 @@
     "matrix": "claims/claims.matrix.md"
   },
   "claim_counts": {
-    "proven": 0,
-    "roadmap": 0,
-    "disabled": 0,
-    "total": 0
+    "proven": 2,
+    "roadmap": 1,
+    "disabled": 1,
+    "total": 4
   },
   "redaction_status": {
     "overall": "pending_phase_1_completion",
@@ -116,6 +116,6 @@
     "Phase 1 is a static public proof packet contract and baseline evidence package; it does not implement proof replay tooling.",
     "Synthetic fixtures demonstrate parser quality, reference metadata, retrieval trace, graph projection, and reranker evidence shapes without using restricted real corpus text.",
     "Artifact hashes are populated after exported artifacts are created in this phase.",
-    "Claims are populated in the claims registry before Phase 1 closes."
+    "Claims registry contains proven, roadmap, and disabled statuses; screenshot-backed claims remain deferred until manual signoff."
   ]
 }
