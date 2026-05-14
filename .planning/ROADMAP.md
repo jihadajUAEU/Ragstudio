@@ -107,7 +107,7 @@ Plans:
 **Plans**: 3 plans
 
 Plans:
-- [ ] 05-01: Configure Cloudflare Pages Git deployment and required domain release gate.
+- [x] 05-01: Configure Cloudflare Pages Git deployment and required domain release gate.
 - [ ] 05-02: Add Playwright/axe checks, manual launch checklist, performance/fixture-size checks, and release blocking behavior.
 - [ ] 05-03: Update README/profile links, run final proof/import/site launch verification, and record release proof.
 
@@ -122,7 +122,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 | 2. Replay and Export Tooling | 3/3 | Complete | 2026-05-14 |
 | 3. `ragstudio-site` Scaffold and Import Pipeline | 2/2 | Complete | 2026-05-14 |
 | 4. Static Proof Viewer and Public Site UX | 3/3 | Complete | 2026-05-14 |
-| 5. Launch Hardening and Domain Release | 0/3 | Not started | - |
+| 5. Launch Hardening and Domain Release | 1/3 | In Progress | - |
 
 ## Coverage
 

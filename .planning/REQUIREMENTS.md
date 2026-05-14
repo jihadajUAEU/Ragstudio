@@ -29,8 +29,8 @@ Requirements for the initial public proof-system release. Each requirement maps 
 ### Public Site And Deployment
 
 - [ ] **SITE-01**: Separate `ragstudio-site` repository exists as the canonical public entrypoint.
-- [ ] **SITE-02**: `ragstudio-site` deploys through a new Cloudflare Pages project connected to Git.
-- [ ] **SITE-03**: New public domain is connected before the release is counted as publicly launched.
+- [x] **SITE-02**: `ragstudio-site` deploys through a new Cloudflare Pages project connected to Git.
+- [x] **SITE-03**: New public domain is connected before the release is counted as publicly launched.
 - [ ] **SITE-04**: Public site builds and runs without Ragstudio backend calls, upload flows, authentication, or live providers.
 - [ ] **SITE-05**: `README.md` and `jihadaj.com` link to the public site as amplifiers rather than acting as the source of truth.
 
@@ -117,8 +117,8 @@ Roadmap creation fills the phase mapping. Every v1 requirement must map to exact
 | VAL-06 | Phase 3 | Pending |
 | VAL-07 | Phase 2 | Pending |
 | SITE-01 | Phase 3 | Pending |
-| SITE-02 | Phase 5 | Pending |
-| SITE-03 | Phase 5 | Pending |
+| SITE-02 | Phase 5 | Complete |
+| SITE-03 | Phase 5 | Complete |
 | SITE-04 | Phase 3 | Pending |
 | SITE-05 | Phase 5 | Pending |
 | VIEW-01 | Phase 4 | Pending |
