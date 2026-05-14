@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: planning
-stopped_at: Phase 5 context gathered
-last_updated: "2026-05-14T15:43:51.757Z"
+stopped_at: Phase 5 UI-SPEC approved
+last_updated: "2026-05-14T15:45:29.316Z"
 last_activity: 2026-05-14
 progress:
   total_phases: 5
@@ -90,6 +90,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-05-14T15:43:51.750Z
-Stopped at: Phase 5 context gathered
-Resume file: .planning/phases/05-launch-hardening-and-domain-release/05-CONTEXT.md
+Last session: 2026-05-14T15:45:29.309Z
+Stopped at: Phase 5 UI-SPEC approved
+Resume file: .planning/phases/05-launch-hardening-and-domain-release/05-UI-SPEC.md
