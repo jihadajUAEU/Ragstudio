@@ -9,8 +9,8 @@ Requirements for the initial public proof-system release. Each requirement maps 
 
 ### Proof Packet
 
-- [ ] **PROOF-01**: Maintainer can find the public proof packet under `docs/benchmarks/ragstudio-oss-proof-v1/` with schemas, fixtures, artifacts, screenshots, run notes, corpus notes, claims registry, and claims matrix.
-- [ ] **PROOF-02**: Proof packet uses a deterministic synthetic multilingual and reference-heavy corpus that is safe to redistribute publicly.
+- [x] **PROOF-01**: Maintainer can find the public proof packet under `docs/benchmarks/ragstudio-oss-proof-v1/` with schemas, fixtures, artifacts, screenshots, run notes, corpus notes, claims registry, and claims matrix.
+- [x] **PROOF-02**: Proof packet uses a deterministic synthetic multilingual and reference-heavy corpus that is safe to redistribute publicly.
 - [ ] **PROOF-03**: Proof packet includes canonical JSON Schema 2020-12 files for claims, artifacts, manifests, validation results, and site import fixtures.
 - [ ] **PROOF-04**: Claims registry records each public claim with status, source commit or tag, evidence links, code paths, artifact paths, and screenshot references where applicable.
 - [ ] **PROOF-05**: Each `proven` claim maps to at least one raw artifact and one human-readable explanation.
@@ -103,8 +103,8 @@ Roadmap creation fills the phase mapping. Every v1 requirement must map to exact
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| PROOF-01 | Phase 1 | Pending |
-| PROOF-02 | Phase 1 | Pending |
+| PROOF-01 | Phase 1 | Complete |
+| PROOF-02 | Phase 1 | Complete |
 | PROOF-03 | Phase 1 | Pending |
 | PROOF-04 | Phase 1 | Pending |
 | PROOF-05 | Phase 1 | Pending |
