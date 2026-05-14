@@ -1,0 +1,142 @@
+{
+  "packet_id": "ragstudio-oss-proof-v1",
+  "registry_version": "0.1.0",
+  "source_commit": "ad1febe626fd96afff414bf5c425b4a672213a14",
+  "claim_counts": {
+    "proven": 2,
+    "roadmap": 1,
+    "disabled": 1,
+    "total": 4
+  },
+  "claims": [
+    {
+      "claim_id": "RAGSTUDIO-PARSER-GATE",
+      "title": "Parser-quality warnings can block unsafe materialization",
+      "status": "proven",
+      "summary": "The proof packet shows a reference-bearing synthetic chunk with a missing expected script warning and a quality action policy that blocks vector and graph materialization.",
+      "source": {
+        "source_commit": "ad1febe626fd96afff414bf5c425b4a672213a14",
+        "code_paths": [
+          "backend/src/ragstudio/services/domain_metadata_quality_gate.py",
+          "docs/benchmarks/ragstudio-oss-proof-v1/artifacts/parser-quality.export.json",
+          "docs/benchmarks/ragstudio-oss-proof-v1/artifacts/chunks.export.json"
+        ]
+      },
+      "evidence": [
+        {
+          "artifact_path": "artifacts/parser-quality.export.json",
+          "evidence_type": "parser_quality",
+          "public": true,
+          "redaction_status": "passed",
+          "description": "Warning count and warning details include reference_unit_missing_expected_script."
+        },
+        {
+          "artifact_path": "artifacts/chunks.export.json",
+          "evidence_type": "chunk_export",
+          "public": true,
+          "redaction_status": "passed",
+          "description": "The affected chunk carries quality_action_policy with vector and graph projection disabled."
+        }
+      ],
+      "explanation": "The public artifacts are enough to inspect the warning, affected reference, and materialization policy without relying on private local data.",
+      "limitations": [
+        "The corpus is synthetic and demonstrates behavior shape, not parser recall over a real corpus."
+      ],
+      "screenshots": []
+    },
+    {
+      "claim_id": "RAGSTUDIO-TRACE-VISIBILITY",
+      "title": "Retrieval, graph, and reranker evidence remain inspectable as public artifacts",
+      "status": "proven",
+      "summary": "The proof packet includes retrieval traces, graph projection state, and reranker traces linked back to synthetic source chunks and warning evidence.",
+      "source": {
+        "source_commit": "ad1febe626fd96afff414bf5c425b4a672213a14",
+        "code_paths": [
+          "backend/src/ragstudio/services/trace_normalizer.py",
+          "docs/benchmarks/ragstudio-oss-proof-v1/artifacts/retrieval-run.export.json",
+          "docs/benchmarks/ragstudio-oss-proof-v1/artifacts/graph-projection.export.json",
+          "docs/benchmarks/ragstudio-oss-proof-v1/artifacts/reranker-trace.export.json"
+        ]
+      },
+      "evidence": [
+        {
+          "artifact_path": "artifacts/retrieval-run.export.json",
+          "evidence_type": "retrieval_trace",
+          "public": true,
+          "redaction_status": "passed",
+          "description": "Retrieval run includes sources, chunk traces, timings, and static-fixture token metadata."
+        },
+        {
+          "artifact_path": "artifacts/graph-projection.export.json",
+          "evidence_type": "graph_projection",
+          "public": true,
+          "redaction_status": "passed",
+          "description": "Graph projection artifact shows projected and blocked reference nodes."
+        },
+        {
+          "artifact_path": "artifacts/reranker-trace.export.json",
+          "evidence_type": "reranker_trace",
+          "public": true,
+          "redaction_status": "passed",
+          "description": "Reranker trace artifact links candidates to parser-quality and chunk artifacts."
+        }
+      ],
+      "explanation": "The public packet carries the evidence states a static viewer can render later, with each state tied to redacted artifact paths.",
+      "limitations": [
+        "Trace scores and timings are fixture values and are not benchmark or model-performance claims."
+      ],
+      "screenshots": []
+    },
+    {
+      "claim_id": "RAGSTUDIO-SCALE-2000P",
+      "title": "Ragstudio handles 2000+ page scale benchmarks",
+      "status": "roadmap",
+      "summary": "Large-scale document performance remains a future benchmark until measured with public artifacts.",
+      "source": {
+        "source_commit": "ad1febe626fd96afff414bf5c425b4a672213a14",
+        "code_paths": [
+          "docs/benchmarks/ragstudio-oss-proof-v1/docs/LIMITATIONS.md"
+        ]
+      },
+      "evidence": [],
+      "limitations": [
+        "No 2000+ page public run artifact exists in Phase 1."
+      ],
+      "missing_evidence": [
+        "A measured 2000+ page run with redacted parser, chunk, retrieval, graph, and reranker artifacts.",
+        "A validation result that proves artifact hashes and redaction status for the scale packet."
+      ],
+      "planned_proof_path": [
+        "Create a separate public scale proof packet after the v1 static packet is stable.",
+        "Run validator and publish measured artifacts before changing this claim to proven."
+      ],
+      "screenshots": []
+    },
+    {
+      "claim_id": "RAGSTUDIO-PUBLIC-UPLOAD",
+      "title": "Visitors can upload documents to a public Ragstudio demo",
+      "status": "disabled",
+      "summary": "Public upload is intentionally disabled for v1 because it needs abuse, cost, provider, and private-content controls beyond this launch.",
+      "source": {
+        "source_commit": "ad1febe626fd96afff414bf5c425b4a672213a14",
+        "code_paths": [
+          ".planning/REQUIREMENTS.md",
+          ".planning/PROJECT.md"
+        ]
+      },
+      "evidence": [],
+      "limitations": [
+        "The v1 public site is static and must not call a live backend."
+      ],
+      "disabled_reason": "A public upload sandbox would introduce authentication, quota, provider-egress, abuse, and private-content risks that are explicitly out of scope for v1.",
+      "requirements_to_prove": [
+        "Authentication and quota controls",
+        "Abuse and cost limits",
+        "Provider egress controls",
+        "Private-content handling and deletion policy",
+        "Public security review"
+      ],
+      "screenshots": []
+    }
+  ]
+}
