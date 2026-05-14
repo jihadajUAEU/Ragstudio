@@ -8,14 +8,15 @@ from typing import Any
 
 from ragstudio.config import AppSettings
 from ragstudio.db.engine import make_engine, make_session_factory
-from ragstudio.db.models import Chunk, Document, Job
+from ragstudio.db.models import Chunk, Document, IndexRecord, Job
 from ragstudio.schemas.common import StageStatus, now_utc
 from ragstudio.schemas.parsing import IndexDocumentIn
 from ragstudio.services.document_service import DocumentService
+from ragstudio.services.domain_metadata_quality_gate import DomainMetadataQualityGate
 from ragstudio.services.graph_projection_runner import GraphProjectionRunner
 from ragstudio.services.index_progress import IndexStage, update_job_stage
 from ragstudio.services.job_queue_service import JobLeaseLostError, JobQueueService
-from sqlalchemy import func, select, update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
@@ -76,13 +77,22 @@ class IndexJobRunner:
         ).materialize_pending(document.id)
         status = str(result.get("status") or "unknown")
         graph_warning = self._graph_materialization_warning(result)
-        chunk_count = await self._chunk_count(document.id)
+        chunks = await self._chunks(document.id)
+        chunk_count = len(chunks)
+        quality_gate = DomainMetadataQualityGate()
+        parser_quality = quality_gate.parser_quality_summary(chunks)
+        parser_quality_details = quality_gate.parser_quality_details(chunks)
+        index_quality_report = quality_gate.index_quality_report_from_chunks(chunks)
+        await self._mark_index_records_succeeded(document.id, chunk_count)
 
         job.result = {
             **(job.result or {}),
             "document_id": document.id,
             "chunk_count": chunk_count,
             "graph_materialization": result,
+            "parser_quality": parser_quality,
+            "parser_quality_details": parser_quality_details,
+            "index_quality_report": index_quality_report,
         }
         job.logs = [*(job.logs or []), f"Graph projection materialization {status}."][-20:]
         if graph_warning:
@@ -255,11 +265,25 @@ class IndexJobRunner:
         await self.session.flush()
         await self.session.commit()
 
-    async def _chunk_count(self, document_id: str) -> int:
-        count = await self.session.scalar(
-            select(func.count()).select_from(Chunk).where(Chunk.document_id == document_id)
+    async def _chunks(self, document_id: str) -> list[Chunk]:
+        result = await self.session.execute(
+            select(Chunk)
+            .where(Chunk.document_id == document_id)
+            .order_by(Chunk.created_at.asc(), Chunk.id.asc())
         )
-        return int(count or 0)
+        return list(result.scalars().all())
+
+    async def _mark_index_records_succeeded(self, document_id: str, chunk_count: int) -> None:
+        await self.session.execute(
+            update(IndexRecord)
+            .where(IndexRecord.document_id == document_id)
+            .values(
+                status=StageStatus.SUCCEEDED.value,
+                chunk_count=chunk_count,
+                error=None,
+            )
+            .execution_options(synchronize_session=False)
+        )
 
     def _graph_materialization_warning(self, result: dict[str, Any]) -> str | None:
         status = result.get("status")

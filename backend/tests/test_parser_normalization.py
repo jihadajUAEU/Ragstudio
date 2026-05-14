@@ -7,7 +7,19 @@ from ragstudio.services.parser_normalization import (
     TEXT_BLOCK_TYPES,
     ExpectedContentProfile,
     MinerUContentNormalizer,
+    VisionRecoveryConfig,
+    _parse_vision_recovery_text,
 )
+
+
+class FakeVisionRecoveryClient:
+    def __init__(self, text: str):
+        self.text = text
+        self.calls = []
+
+    def recover_text(self, **kwargs):
+        self.calls.append(kwargs)
+        return self.text
 
 
 def test_text_blocks_preserved_by_page():
@@ -119,6 +131,335 @@ def test_image_only_equation_recovers_overlapping_pdf_text_layer(tmp_path: Path)
     warning = blocks[0].warning_metadata()[0]
     assert warning["code"] == "recovered_text_from_misclassified_block"
     assert warning["recovery_source"] == "pdf_text_layer:source_origin.pdf"
+
+
+def test_image_block_recovers_overlapping_pdf_text_layer(tmp_path: Path):
+    fitz = pytest.importorskip("fitz")
+    pdf_path = tmp_path / "source_origin.pdf"
+    document = fitz.open()
+    page = document.new_page(width=612, height=792)
+    page.insert_text((206, 246), "Recovered PDF text layer image line", fontsize=12)
+    document.save(pdf_path)
+    document.close()
+
+    content_list = tmp_path / "source_content_list.json"
+    content_list.write_text("[]", encoding="utf-8")
+    data = [
+        {
+            "type": "image",
+            "img_path": "images/ayah.jpg",
+            "bbox": [341, 284, 905, 318],
+            "page_idx": 0,
+        }
+    ]
+    metadata = DomainMetadata(
+        domain="quran_tafseer",
+        script="mixed",
+        tags=["quran", "arabic", "english"],
+        reference_pattern="surah_number:verse_number",
+    )
+
+    blocks = MinerUContentNormalizer().normalize_content_list(
+        data,
+        domain_metadata=metadata,
+        artifact_root=tmp_path,
+        content_list_path=content_list,
+    )
+
+    assert blocks[0].text == "Recovered PDF text layer image line"
+    assert blocks[0].recovery is not None
+    assert blocks[0].recovery.source == "pdf_text_layer:source_origin.pdf"
+    warning = blocks[0].warning_metadata()[0]
+    assert warning["code"] == "recovered_text_from_disallowed_block"
+    assert warning["block_type"] == "image"
+    assert warning["recovery_source"] == "pdf_text_layer:source_origin.pdf"
+
+
+def test_image_block_uses_targeted_vision_recovery_when_text_layer_missing(tmp_path: Path):
+    image_dir = tmp_path / "images"
+    image_dir.mkdir()
+    image_path = image_dir / "ayah.png"
+    image_path.write_bytes(b"\x89PNG\r\n\x1a\nfake-image")
+    content_list = tmp_path / "source_content_list.json"
+    content_list.write_text("[]", encoding="utf-8")
+    client = FakeVisionRecoveryClient("إنما التوبة على الله")
+    config = VisionRecoveryConfig(
+        base_url="http://vision.test/v1",
+        model="vision-ocr",
+        enabled=True,
+        target_block_types=frozenset({"image", "equation"}),
+        triggers=frozenset({"missing_pdf_text_layer", "missing_required_script"}),
+        languages=frozenset({"arabic"}),
+        max_blocks_per_page=2,
+        max_total_blocks=4,
+    )
+    metadata = DomainMetadata(
+        domain="quran_tafseer",
+        script="mixed",
+        tags=["arabic", "english"],
+        custom_json={"quality_policy": {"required_scripts": ["arabic"]}},
+    )
+    data = [
+        {
+            "type": "image",
+            "img_path": "images/ayah.png",
+            "text": "The repentance accepted by Allah",
+            "page_idx": 0,
+        }
+    ]
+
+    blocks = MinerUContentNormalizer(vision_recovery_client=client).normalize_content_list(
+        data,
+        domain_metadata=metadata,
+        artifact_root=tmp_path,
+        content_list_path=content_list,
+        vision_recovery_config=config,
+    )
+
+    assert len(client.calls) == 1
+    assert client.calls[0]["triggers"] == ["missing_required_script"]
+    assert client.calls[0]["config"] is config
+    assert blocks[0].text == "إنما التوبة على الله"
+    assert blocks[0].recovery is not None
+    assert blocks[0].recovery.source == "vision_model:vision-ocr"
+    warning = blocks[0].warning_metadata()[0]
+    assert warning["code"] == "recovered_text_from_disallowed_block"
+    assert warning["recovery_source"] == "vision_model:vision-ocr"
+
+
+def test_vision_recovery_does_not_replace_existing_required_script_text(tmp_path: Path):
+    image_dir = tmp_path / "images"
+    image_dir.mkdir()
+    (image_dir / "ayah.png").write_bytes(b"\x89PNG\r\n\x1a\nfake-image")
+    content_list = tmp_path / "source_content_list.json"
+    content_list.write_text("[]", encoding="utf-8")
+    client = FakeVisionRecoveryClient("Wrong replacement")
+    config = VisionRecoveryConfig(
+        base_url="http://vision.test/v1",
+        model="vision-ocr",
+        enabled=True,
+    )
+    metadata = DomainMetadata(
+        custom_json={"quality_policy": {"required_scripts": ["arabic"]}}
+    )
+    data = [
+        {
+            "type": "image",
+            "img_path": "images/ayah.png",
+            "text": "إنما التوبة على الله",
+            "page_idx": 0,
+        }
+    ]
+
+    blocks = MinerUContentNormalizer(vision_recovery_client=client).normalize_content_list(
+        data,
+        domain_metadata=metadata,
+        artifact_root=tmp_path,
+        content_list_path=content_list,
+        vision_recovery_config=config,
+    )
+
+    assert client.calls == []
+    assert blocks[0].text == ""
+    assert blocks[0].warning_metadata()[0]["code"] == "disallowed_block_type_quarantined"
+
+
+def test_vision_recovery_keeps_pdf_text_layer_when_required_script_present(tmp_path: Path):
+    fitz = pytest.importorskip("fitz")
+    pdf_path = tmp_path / "source_origin.pdf"
+    document = fitz.open()
+    page = document.new_page(width=612, height=792)
+    page.insert_text((206, 246), "Recovered PDF text layer image line", fontsize=12)
+    document.save(pdf_path)
+    document.close()
+    content_list = tmp_path / "source_content_list.json"
+    content_list.write_text("[]", encoding="utf-8")
+    client = FakeVisionRecoveryClient("Wrong replacement")
+    config = VisionRecoveryConfig(
+        base_url="http://vision.test/v1",
+        model="vision-ocr",
+        enabled=True,
+    )
+    metadata = DomainMetadata(
+        custom_json={"quality_policy": {"required_scripts": ["latin"]}}
+    )
+    data = [
+        {
+            "type": "image",
+            "img_path": "images/ayah.jpg",
+            "bbox": [341, 284, 905, 318],
+            "page_idx": 0,
+        }
+    ]
+
+    blocks = MinerUContentNormalizer(vision_recovery_client=client).normalize_content_list(
+        data,
+        domain_metadata=metadata,
+        artifact_root=tmp_path,
+        content_list_path=content_list,
+        vision_recovery_config=config,
+    )
+
+    assert client.calls == []
+    assert blocks[0].text == "Recovered PDF text layer image line"
+    assert blocks[0].recovery is not None
+    assert blocks[0].recovery.source == "pdf_text_layer:source_origin.pdf"
+
+
+def test_vision_recovery_rejects_plain_text_or_refusal_payloads():
+    assert (
+        _parse_vision_recovery_text(
+            {"choices": [{"message": {"content": "I cannot read this image."}}]}
+        )
+        is None
+    )
+    assert (
+        _parse_vision_recovery_text(
+            {"choices": [{"message": {"content": '{"text": "Recovered"}'}}]}
+        )
+        == "Recovered"
+    )
+
+
+def test_vision_recovery_respects_total_and_per_page_caps(tmp_path: Path):
+    image_dir = tmp_path / "images"
+    image_dir.mkdir()
+    for index in range(3):
+        (image_dir / f"block-{index}.png").write_bytes(b"\x89PNG\r\n\x1a\nfake-image")
+    content_list = tmp_path / "source_content_list.json"
+    content_list.write_text("[]", encoding="utf-8")
+    client = FakeVisionRecoveryClient("إنما التوبة على الله")
+    config = VisionRecoveryConfig(
+        base_url="http://vision.test/v1",
+        model="vision-ocr",
+        enabled=True,
+        max_blocks_per_page=1,
+        max_total_blocks=1,
+    )
+    metadata = DomainMetadata(
+        custom_json={"quality_policy": {"required_scripts": ["arabic"]}}
+    )
+    data = [
+        {
+            "type": "image",
+            "img_path": f"images/block-{index}.png",
+            "text": "English only",
+            "page_idx": 0,
+        }
+        for index in range(3)
+    ]
+
+    blocks = MinerUContentNormalizer(vision_recovery_client=client).normalize_content_list(
+        data,
+        domain_metadata=metadata,
+        artifact_root=tmp_path,
+        content_list_path=content_list,
+        vision_recovery_config=config,
+    )
+
+    assert len(client.calls) == 1
+    assert [block.text for block in blocks] == ["إنما التوبة على الله", "", ""]
+    assert blocks[1].warning_metadata()[0]["code"] == "disallowed_block_type_quarantined"
+
+
+def test_image_block_recovers_multiline_pdf_text_layer_band(tmp_path: Path):
+    fitz = pytest.importorskip("fitz")
+    pdf_path = tmp_path / "source_origin.pdf"
+    document = fitz.open()
+    page = document.new_page(width=612, height=792)
+    page.insert_text((206, 220), "Verse 4:17", fontsize=12)
+    page.insert_text((206, 246), "Recovered first text layer line", fontsize=12)
+    page.insert_text((206, 266), "Recovered second text layer line", fontsize=12)
+    document.save(pdf_path)
+    document.close()
+
+    content_list = tmp_path / "source_content_list.json"
+    content_list.write_text("[]", encoding="utf-8")
+    data = [
+        {
+            "type": "image",
+            "img_path": "images/ayah.jpg",
+            "bbox": [341, 284, 905, 350],
+            "page_idx": 0,
+        }
+    ]
+    metadata = DomainMetadata(
+        domain="quran_tafseer",
+        script="mixed",
+        tags=["quran", "arabic", "english"],
+        reference_pattern="surah_number:verse_number",
+    )
+
+    blocks = MinerUContentNormalizer().normalize_content_list(
+        data,
+        domain_metadata=metadata,
+        artifact_root=tmp_path,
+        content_list_path=content_list,
+    )
+
+    assert blocks[0].text == (
+        "Recovered first text layer line\nRecovered second text layer line"
+    )
+    assert "Verse 4:17" not in blocks[0].text
+    assert blocks[0].recovery is not None
+    assert blocks[0].recovery.source == "pdf_text_layer:source_origin.pdf"
+
+
+def test_reference_header_gap_recovers_pdf_text_layer_between_header_and_translation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    fitz = pytest.importorskip("fitz")
+    from ragstudio.services import parser_normalization
+
+    arabic_text = "كمثل الذي استوقد نارا فلما أضاءت ما حوله"
+    monkeypatch.setattr(
+        parser_normalization,
+        "_pdf_arabic_lines_text_in_region",
+        lambda context, *, page_number, content_bbox: arabic_text,
+    )
+    pdf_path = tmp_path / "source_origin.pdf"
+    document = fitz.open()
+    document.new_page(width=612, height=792)
+    document.save(pdf_path)
+    document.close()
+
+    content_list = tmp_path / "source_content_list.json"
+    content_list.write_text("[]", encoding="utf-8")
+    data = [
+        {"type": "text", "text": "Verse 2:17", "bbox": [93, 444, 179, 459], "page_idx": 0},
+        {
+            "type": "text",
+            "text": "Their example is that of one who kindled a fire.",
+            "bbox": [89, 535, 887, 569],
+            "page_idx": 0,
+        },
+    ]
+    metadata = DomainMetadata(
+        domain="quran_tafseer",
+        script="mixed",
+        tags=["quran", "arabic", "english"],
+        reference_pattern="surah_number:verse_number",
+    )
+
+    blocks = MinerUContentNormalizer().normalize_content_list(
+        data,
+        domain_metadata=metadata,
+        artifact_root=tmp_path,
+        content_list_path=content_list,
+    )
+
+    assert [block.text for block in blocks] == [
+        "Verse 2:17",
+        arabic_text,
+        "Their example is that of one who kindled a fire.",
+    ]
+    assert blocks[1].block_type == "pdf_text_gap"
+    assert blocks[1].recovery is not None
+    assert blocks[1].recovery.source == "pdf_text_layer:source_origin.pdf"
+    warning = blocks[1].warning_metadata()[0]
+    assert warning["code"] == "recovered_text_from_disallowed_block"
+    assert warning["block_type"] == "pdf_text_gap"
 
 
 def test_arabic_hadith_misclassified_as_equation_is_flagged_outside_quran_examples():
@@ -350,3 +691,59 @@ def test_nested_content_paragraph_content_and_null_character_cleanup():
 
     assert [block.text for block in blocks] == ["First second third", "Nested text"]
     assert [block.page for block in blocks] == [1, 2]
+
+
+def test_reference_header_gap_recovery_stays_inside_header_column(
+    tmp_path: Path,
+    monkeypatch,
+):
+    import fitz
+    from ragstudio.services import parser_normalization
+
+    pdf_path = tmp_path / "source_origin.pdf"
+    document = fitz.open()
+    document.new_page(width=612, height=792)
+    document.save(pdf_path)
+    document.close()
+
+    recovered_text = "إنما التوبة على الله"
+
+    def fake_pdf_recovery(context, *, page_number, content_bbox):
+        del context, page_number
+        assert content_bbox[0] < 80
+        assert content_bbox[2] < 540
+        return recovered_text
+
+    monkeypatch.setattr(
+        parser_normalization,
+        "_pdf_arabic_lines_text_in_region",
+        fake_pdf_recovery,
+    )
+    content_list = tmp_path / "source_content_list.json"
+    data = [
+        {
+            "type": "text",
+            "text": "Verse 4:17",
+            "bbox": [90, 100, 175, 120],
+            "page_idx": 0,
+        },
+        {
+            "type": "text",
+            "text": "The repentance accepted by Allah is only for those who do wrong.",
+            "bbox": [90, 200, 470, 235],
+            "page_idx": 0,
+        },
+    ]
+
+    blocks = MinerUContentNormalizer().normalize_content_list(
+        data,
+        domain_metadata=DomainMetadata(domain="quran_tafseer"),
+        artifact_root=tmp_path,
+        content_list_path=content_list,
+    )
+
+    assert [block.text for block in blocks] == [
+        "Verse 4:17",
+        recovered_text,
+        "The repentance accepted by Allah is only for those who do wrong.",
+    ]

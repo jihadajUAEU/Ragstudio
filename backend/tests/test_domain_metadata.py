@@ -124,6 +124,18 @@ def test_builtin_quran_profile_has_chapter_verse_reference_semantics(tmp_path):
     )
     assert profile.metadata.custom_json["chunking"]["unit"] == "verse"
     assert profile.metadata.custom_json["chunking"]["merge_reference_header_with_body"] is True
+    assert profile.metadata.custom_json["domain_structure"] == {
+        "primary_anchor": {
+            "type": "chapter_verse",
+            "regex": r"\bVerse\s+(?P<chapter>\d{1,4})\s*:\s*(?P<verse>\d{1,4})\b",
+            "unit": "verse_section",
+        },
+        "inline_references": {
+            "type": "chapter_verse",
+            "regex": r"(?P<chapter>\d{1,4})\s*:\s*(?P<verse>\d{1,4})",
+            "policy": "cross_reference_only",
+        },
+    }
     assert (
         profile.metadata.custom_json["reference_resolution"]["build_canonical_units"] is True
     )
@@ -387,6 +399,18 @@ def test_validate_custom_json_accepts_domain_structure_quality_and_layout_policy
                 }
             },
         },
+        "vision_recovery_policy": {
+            "enabled": True,
+            "target_block_types": ["image", "equation"],
+            "triggers": ["missing_pdf_text_layer", "missing_required_script"],
+            "languages": ["arabic", "latin"],
+            "max_blocks_per_page": 4,
+            "max_total_blocks": 40,
+            "failure_action": "warn",
+            "prompt_hint": "Read visible Arabic and English text exactly.",
+            "evidence": [{"page": 809, "observation": "Verse text is visible in images."}],
+            "confidence": 0.84,
+        },
     }
 
     assert validate_custom_json(payload) == payload
@@ -413,6 +437,15 @@ def test_validate_custom_json_rejects_invalid_domain_quality_policy_values():
                 }
             }
         )
+
+    with pytest.raises(ValueError, match=r"vision_recovery_policy\.failure_action"):
+        validate_custom_json({"vision_recovery_policy": {"failure_action": "retry_forever"}})
+
+    with pytest.raises(ValueError, match=r"vision_recovery_policy\.max_blocks_per_page"):
+        validate_custom_json({"vision_recovery_policy": {"max_blocks_per_page": 30}})
+
+    with pytest.raises(ValueError, match=r"vision_recovery_policy\.max_total_blocks"):
+        validate_custom_json({"vision_recovery_policy": {"max_total_blocks": 600}})
 
 
 def test_validate_custom_json_rejects_invalid_reference_regex():
@@ -517,7 +550,9 @@ async def test_ai_domain_metadata_suggester_uses_vision_model(monkeypatch):
     assert calls[0]["json"]["model"] == "vision-model"
     assert calls[0]["json"]["temperature"] == 0
     assert calls[0]["json"]["response_format"] == {"type": "json_object"}
-    assert calls[0]["json"]["messages"][0]["content"][1]["type"] == "image_url"
+    content = calls[0]["json"]["messages"][0]["content"]
+    assert content[1] == {"type": "text", "text": "Page 1 image:"}
+    assert content[2]["type"] == "image_url"
 
 
 @pytest.mark.asyncio
@@ -593,7 +628,9 @@ async def test_ai_domain_metadata_suggester_uses_images_for_vision_capable_llm(m
     assert result.domain_metadata.metadata_sources == ["ai_vision"]
     assert result.evidence_pages == [2]
     assert calls[0]["url"] == "http://llm.test/v1/chat/completions"
-    assert calls[0]["json"]["messages"][0]["content"][1]["type"] == "image_url"
+    content = calls[0]["json"]["messages"][0]["content"]
+    assert content[1] == {"type": "text", "text": "Page 2 image:"}
+    assert content[2]["type"] == "image_url"
 
 
 @pytest.mark.asyncio
@@ -774,17 +811,25 @@ async def test_ai_domain_metadata_suggester_preserves_reference_custom_json(monk
     assert "custom_json.domain_structure" in prompt
     assert "custom_json.quality_policy" in prompt
     assert "custom_json.layout_quality_policy" in prompt
+    assert "custom_json.vision_recovery_policy" in prompt
     assert "custom_json.mineru_parse_options" in prompt
     assert "custom_json.retrieval" in prompt
     assert "primary answerable units" in prompt
     assert "inline cross-references" in prompt
+    assert "Quran-style parenthetical references" in prompt
+    assert "vision OCR model" in prompt
     assert "missing optional script" in prompt
     assert "misclassified as equations" in prompt
     assert "legal sections/subsections" in prompt
     assert "page-line references" in prompt
     assert "Page 4 text excerpt" in prompt
     assert "Page 5 text excerpt" in prompt
-    assert len(calls[0]["json"]["messages"][0]["content"]) == 6
+    content = calls[0]["json"]["messages"][0]["content"]
+    assert len(content) == 11
+    assert content[1] == {"type": "text", "text": "Page 1 image:"}
+    assert content[2]["image_url"]["url"] == "data:image/png;base64,page1"
+    assert content[9] == {"type": "text", "text": "Page 5 image:"}
+    assert content[10]["image_url"]["url"] == "data:image/png;base64,page5"
 
     custom_json = result.domain_metadata.custom_json
     assert custom_json["reference_schema"]["type"] == "chapter_verse"
@@ -1326,6 +1371,21 @@ def test_ai_metadata_normalizes_document_specific_quality_policies():
                     }
                 },
             },
+            "vision_recovery_policy": {
+                "enabled": True,
+                "target_block_types": ["Image", "equation", 3, "image"],
+                "triggers": ["missing_pdf_text_layer", "missing_required_script", ""],
+                "languages": ["Arabic", "latin"],
+                "max_blocks_per_page": 99,
+                "max_total_blocks": 999,
+                "failure_action": "warn",
+                "prompt_hint": "Read visible Arabic and English text exactly." * 20,
+                "confidence": 1.4,
+                "evidence": [
+                    {"page": 809, "observation": "Visible page image has Arabic text."},
+                    {"page": "bad", "observation": 42},
+                ],
+            },
         }
     )
 
@@ -1347,6 +1407,63 @@ def test_ai_metadata_normalizes_document_specific_quality_policies():
             }
         },
     }
+    assert normalized["vision_recovery_policy"] == {
+        "enabled": True,
+        "target_block_types": ["image", "equation"],
+        "triggers": ["missing_pdf_text_layer", "missing_required_script"],
+        "languages": ["arabic", "latin"],
+        "max_blocks_per_page": 20,
+        "max_total_blocks": 500,
+        "failure_action": "warn",
+        "prompt_hint": ("Read visible Arabic and English text exactly." * 20)[:500],
+        "evidence": [{"page": 809, "observation": "Visible page image has Arabic text."}],
+        "confidence": 1.0,
+    }
+    validate_custom_json(normalized)
+
+
+def test_ai_metadata_autosuggest_backfills_hadith_reference_defaults():
+    suggester = DomainMetadataAiSuggester()
+    metadata = DomainMetadata(
+        domain="hadith",
+        document_type="collection",
+        tags=["hadith", "english"],
+        citation_style="book_hadith",
+        custom_json={
+            "reference_schema": {"type": "book_hadith"},
+            "domain_structure": {
+                "primary_anchor": {"type": "book_hadith", "unit": "hadith"},
+                "inline_references": {
+                    "type": "quran_verse",
+                    "policy": "cross_reference_only",
+                },
+            },
+            "quality_policy": {
+                "observed_scripts": ["Arabic", "English"],
+                "required_scripts": ["English"],
+                "optional_scripts": ["Arabic"],
+            },
+        },
+    )
+
+    normalized = suggester._apply_autosuggest_reference_defaults(metadata)
+
+    assert normalized["domain_structure"]["primary_anchor"] == {
+        "type": "book_hadith",
+        "unit": "hadith",
+        "regex": (
+            r"\bBook\s+(?P<book>\d{1,4})\s*,?\s*Hadith\s+"
+            r"(?P<hadith>\d{1,6})\b"
+        ),
+    }
+    assert normalized["domain_structure"]["inline_references"] == {
+        "type": "chapter_verse",
+        "policy": "cross_reference_only",
+        "regex": r"(?P<chapter>\d{1,4})\s*:\s*(?P<verse>\d{1,4})",
+    }
+    assert normalized["quality_policy"]["observed_scripts"] == ["arabic", "latin"]
+    assert normalized["quality_policy"]["required_scripts"] == ["latin"]
+    assert normalized["quality_policy"]["optional_scripts"] == ["arabic"]
     validate_custom_json(normalized)
 
 
@@ -1538,6 +1655,21 @@ async def test_ai_domain_metadata_suggester_merges_partial_graph_into_baseline(
     )
 
     assert result.domain_metadata.custom_json == {
+        "domain_structure": {
+            "primary_anchor": {
+                "type": "book_hadith",
+                "regex": (
+                    r"\bBook\s+(?P<book>\d{1,4})\s*,?\s*Hadith\s+"
+                    r"(?P<hadith>\d{1,6})\b"
+                ),
+                "unit": "hadith",
+            },
+            "inline_references": {
+                "type": "chapter_verse",
+                "regex": r"(?P<chapter>\d{1,4})\s*:\s*(?P<verse>\d{1,4})",
+                "policy": "cross_reference_only",
+            },
+        },
         "graph": {
             "edge_types": ["references", "same_chapter"],
             "materialize_from": ["reference_metadata"],

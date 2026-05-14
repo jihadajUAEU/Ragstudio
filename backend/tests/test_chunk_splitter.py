@@ -4,6 +4,7 @@ from pathlib import Path
 from ragstudio.schemas.parsing import DomainMetadata
 from ragstudio.services.adapter import AdapterChunk
 from ragstudio.services.chunk_splitter import ChunkSplitter
+from ragstudio.services.domain_metadata_service import DomainMetadataService
 
 
 def words(count: int, prefix: str = "word") -> str:
@@ -995,6 +996,333 @@ def test_chunk_splitter_keeps_tafseer_inline_cross_references_inside_primary_anc
     assert answerable[0].metadata["reference_metadata"]["references"] == ["18:30"]
     assert answerable[0].metadata["reference_metadata"]["cross_references"] == ["25:75"]
     assert not any(piece.preview_ref == "25:75" for piece in split)
+
+
+def test_chunk_splitter_recovers_tafseer_verse_image_text_from_pdf_layer(
+    tmp_path: Path,
+    monkeypatch,
+):
+    import fitz
+    from ragstudio.services import parser_normalization
+
+    arabic_text = "إن الذين ءامنوا وعملوا الصالحات إنا لا نضيع أجر من أحسن عملا"
+    pdf_path = tmp_path / "source_origin.pdf"
+    document = fitz.open()
+    page = document.new_page(width=612, height=792)
+    page.insert_text((206, 246), "placeholder text layer", fontsize=12)
+    document.save(pdf_path)
+    document.close()
+    monkeypatch.setattr(
+        parser_normalization,
+        "_overlapping_pdf_line_text",
+        lambda page, target, fitz_module: arabic_text,
+    )
+
+    content_list = tmp_path / "source_content_list.json"
+    content_list.write_text(
+        json.dumps(
+            [
+                {"type": "text", "text": "Verse 18:30", "page_idx": 0},
+                {
+                    "type": "image",
+                    "img_path": "images/ayah.jpg",
+                    "bbox": [341, 284, 905, 318],
+                    "page_idx": 0,
+                },
+                {
+                    "type": "text",
+                    "text": (
+                        "Indeed, those who have believed and done righteous deeds - "
+                        "indeed, We will not allow to be lost the reward of any who "
+                        "did well in deeds."
+                    ),
+                    "page_idx": 0,
+                },
+            ],
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    chunk = AdapterChunk(
+        text="fallback markdown should not be used",
+        source_location={"artifact": "source/ocr/source.md"},
+        metadata={
+            "parser_metadata": {
+                "backend": "mineru",
+                "artifact_extract_dir": str(tmp_path),
+                "content_list_ref": "source_content_list.json",
+            }
+        },
+    )
+    split = ChunkSplitter(max_words=1500).split(
+        [chunk],
+        domain_metadata=tafseer_cross_reference_metadata(),
+        parser_mode="mineru_strict",
+    )
+
+    assert len(split) == 1
+    assert split[0].preview_ref == "18:30"
+    assert arabic_text in split[0].text
+    assert "Indeed, those who have believed" in split[0].text
+    assert split[0].metadata["reference_metadata"]["references"] == ["18:30"]
+    warnings = parser_warnings(split[0])
+    assert [warning["code"] for warning in warnings] == [
+        "recovered_text_from_disallowed_block"
+    ]
+    assert warnings[0]["block_type"] == "image"
+    assert warnings[0]["recovery_source"] == "pdf_text_layer:source_origin.pdf"
+    assert "reference_unit_missing_expected_script" not in parser_warning_codes(split[0])
+
+
+def test_chunk_splitter_preserves_mixed_geometry_order_for_recovered_image_text(
+    tmp_path: Path,
+):
+    arabic_text = "للذين يعملون السوء بجهالة ثم يتوبون من قريب"
+    content_list = tmp_path / "source_content_list.json"
+    content_list.write_text(
+        json.dumps(
+            [
+                {"type": "text", "text": "Verse 4:15", "page_idx": 0},
+                {
+                    "type": "image",
+                    "recovered_text": arabic_text,
+                    "bbox": [102, 724, 906, 790],
+                    "page_idx": 0,
+                },
+                {
+                    "type": "text",
+                    "text": "Those who commit unlawful sexual intercourse of your women.",
+                    "page_idx": 0,
+                },
+                {"type": "text", "text": "Verse 4:17", "page_idx": 0},
+                {
+                    "type": "text",
+                    "text": "The repentance accepted by Allah is only for those who do wrong.",
+                    "page_idx": 0,
+                },
+            ],
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    chunk = AdapterChunk(
+        text="fallback markdown should not be used",
+        source_location={"artifact": "source/ocr/source.md"},
+        metadata={
+            "parser_metadata": {
+                "backend": "mineru",
+                "artifact_extract_dir": str(tmp_path),
+                "content_list_ref": "source_content_list.json",
+            }
+        },
+    )
+
+    split = ChunkSplitter(max_words=1500).split(
+        [chunk],
+        domain_metadata=tafseer_cross_reference_metadata(),
+        parser_mode="mineru_strict",
+    )
+
+    by_ref = {piece.preview_ref: piece for piece in split if piece.preview_ref}
+    assert arabic_text in by_ref["4:15"].text
+    assert arabic_text not in by_ref["4:17"].text
+    assert "reference_unit_missing_expected_script" not in parser_warning_codes(by_ref["4:15"])
+
+
+def test_chunk_splitter_reorders_recovered_verse_image_by_page_geometry(tmp_path: Path):
+    content_list = tmp_path / "source_content_list.json"
+    arabic_text = "للذين يعملون السوء بجهالة ثم يتوبون من قريب"
+    content_list.write_text(
+        json.dumps(
+            [
+                {"type": "text", "text": "Verse 4:15", "bbox": [91, 120, 179, 140], "page_idx": 0},
+                {
+                    "type": "text",
+                    "text": "Those who commit unlawful sexual intercourse of your women.",
+                    "bbox": [91, 150, 864, 180],
+                    "page_idx": 0,
+                },
+                {
+                    "type": "image",
+                    "recovered_text": arabic_text,
+                    "bbox": [102, 724, 906, 790],
+                    "page_idx": 1,
+                },
+                {
+                    "type": "text",
+                    "text": "The previous verse commentary continues on this page.",
+                    "bbox": [89, 74, 908, 678],
+                    "page_idx": 1,
+                },
+                {
+                    "type": "text",
+                    "text": "Verse 4:17",
+                    "bbox": [91, 708, 179, 724],
+                    "page_idx": 1,
+                },
+                {
+                    "type": "text",
+                    "text": "The repentance accepted by Allah is only for those who do wrong.",
+                    "bbox": [91, 799, 864, 835],
+                    "page_idx": 1,
+                },
+            ],
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    chunk = AdapterChunk(
+        text="fallback markdown should not be used",
+        source_location={"artifact": "source/ocr/source.md"},
+        metadata={
+            "parser_metadata": {
+                "backend": "mineru",
+                "artifact_extract_dir": str(tmp_path),
+                "content_list_ref": "source_content_list.json",
+            }
+        },
+    )
+    split = ChunkSplitter(max_words=1500).split(
+        [chunk],
+        domain_metadata=tafseer_cross_reference_metadata(),
+        parser_mode="mineru_strict",
+    )
+
+    by_ref = {piece.preview_ref: piece for piece in split if piece.preview_ref}
+    assert arabic_text not in by_ref["4:15"].text
+    assert arabic_text in by_ref["4:17"].text
+    assert "The repentance accepted by Allah" in by_ref["4:17"].text
+    assert "reference_unit_missing_expected_script" not in parser_warning_codes(by_ref["4:17"])
+
+
+def test_chunk_splitter_downgrades_builtin_tafseer_dangling_inline_refs(
+    tmp_path: Path,
+):
+    arabic_text = "إن الذين آمنوا وعملوا الصالحات إنا لا نضيع أجر من أحسن عملا"
+    content_list = tmp_path / "source_content_list.json"
+    content_list.write_text(
+        json.dumps(
+            [
+                {"type": "text", "text": "69:18).", "page_idx": 0},
+                {"type": "text", "text": "Verse 18:30", "page_idx": 0},
+                {"type": "text", "text": arabic_text, "page_idx": 0},
+                {
+                    "type": "text",
+                    "text": "Indeed, those who have believed and done righteous deeds.",
+                    "page_idx": 0,
+                },
+            ],
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    chunk = AdapterChunk(
+        text="fallback markdown should not be used",
+        source_location={"artifact": "source/ocr/source.md"},
+        metadata={
+            "parser_metadata": {
+                "backend": "mineru",
+                "artifact_extract_dir": str(tmp_path),
+                "content_list_ref": "source_content_list.json",
+            }
+        },
+    )
+    profile = DomainMetadataService(tmp_path).get_profile("quran_tafseer")
+    assert profile is not None
+
+    split = ChunkSplitter(max_words=1500).split(
+        [chunk],
+        domain_metadata=profile.metadata,
+        parser_mode="mineru_strict",
+    )
+
+    answerable = [piece for piece in split if piece.content_type != "reference_provenance"]
+    provenance = [piece for piece in split if piece.content_type == "reference_provenance"]
+    assert [piece.preview_ref for piece in answerable] == ["18:30"]
+    assert not any(piece.preview_ref == "69:18" for piece in split)
+    assert provenance[0].text == "69:18)."
+    assert provenance[0].metadata["canonical_reference_unit"]["answerable"] is False
+
+
+def test_chunk_splitter_recovers_cross_page_verse_header_gap_from_pdf_layer(
+    tmp_path: Path,
+    monkeypatch,
+):
+    import fitz
+    from ragstudio.services import parser_normalization
+
+    arabic_text = "أو كصيب من السماء فيه ظلمات ورعد وبرق"
+    monkeypatch.setattr(
+        parser_normalization,
+        "_pdf_arabic_lines_text_in_region",
+        lambda context, *, page_number, content_bbox: arabic_text if page_number == 1 else "",
+    )
+    pdf_path = tmp_path / "source_origin.pdf"
+    document = fitz.open()
+    document.new_page(width=612, height=792)
+    document.new_page(width=612, height=792)
+    document.save(pdf_path)
+    document.close()
+
+    content_list = tmp_path / "source_content_list.json"
+    content_list.write_text(
+        json.dumps(
+            [
+                {
+                    "type": "footer",
+                    "text": "Verse 2:19",
+                    "bbox": [93, 896, 178, 911],
+                    "page_idx": 0,
+                },
+                {
+                    "type": "text",
+                    "text": (
+                        "Or it is like a rainstorm from the sky within which is "
+                        "darkness, thunder and lightning."
+                    ),
+                    "bbox": [89, 145, 888, 181],
+                    "page_idx": 1,
+                },
+            ],
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    chunk = AdapterChunk(
+        text="fallback markdown should not be used",
+        source_location={"artifact": "source/ocr/source.md"},
+        metadata={
+            "parser_metadata": {
+                "backend": "mineru",
+                "artifact_extract_dir": str(tmp_path),
+                "content_list_ref": "source_content_list.json",
+            }
+        },
+    )
+
+    metadata = tafseer_cross_reference_metadata()
+    metadata = metadata.model_copy(
+        update={
+            "custom_json": {
+                **metadata.custom_json,
+                "parser_normalization": {
+                    "recover_text_bearing_blocks_as_prose": True,
+                },
+            }
+        }
+    )
+
+    split = ChunkSplitter(max_words=1500).split(
+        [chunk],
+        domain_metadata=metadata,
+        parser_mode="mineru_strict",
+    )
+
+    assert len(split) == 1
+    assert split[0].preview_ref == "2:19"
+    assert arabic_text in split[0].text
+    assert "rainstorm from the sky" in split[0].text
+    assert "reference_unit_missing_expected_script" not in parser_warning_codes(split[0])
 
 
 def test_chunk_splitter_keeps_primary_anchor_after_heading_in_content_list(

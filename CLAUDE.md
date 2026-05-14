@@ -15,3 +15,10 @@ Key routing rules:
 - Ship/deploy/PR -> invoke /ship or /land-and-deploy
 - Save progress -> invoke /context-save
 - Resume context -> invoke /context-restore
+
+## Design System
+
+Always read DESIGN.md before making any visual or UI decisions.
+All font choices, colors, spacing, and aesthetic direction are defined there.
+Do not deviate without explicit user approval.
+In QA mode, flag any code that does not match DESIGN.md.

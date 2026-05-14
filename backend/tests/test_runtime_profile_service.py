@@ -80,8 +80,12 @@ async def test_runtime_profile_service_normalizes_index_shape(tmp_path, database
     assert profile.reranker_api_key == "reranker-secret"
     assert profile.neo4j_password == "neo4j-secret"
     assert profile.index_shape == {
+        "runtime_profile_id": "default",
+        "embedding_provider": "vllm_openai",
         "embedding_model": "text-embedding-3-large",
         "embedding_dimensions": 3072,
+        "pgvector_schema": "public",
+        "pgvector_table_prefix": "ragstudio",
         "parser": "mineru",
         "parse_method": "auto",
         "chunk_token_size": 1200,

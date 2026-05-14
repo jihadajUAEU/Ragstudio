@@ -16,6 +16,7 @@ QUALITY_MATERIALIZATION_POLICIES = {
 }
 LAYOUT_WARNING_LEVELS = {"info", "warn", "block"}
 LAYOUT_RECOVERY_ACTIONS = {"recover_as_text", "ignore", "block"}
+VISION_RECOVERY_FAILURE_ACTIONS = {"info", "warn", "block"}
 
 
 REFERENCE_CUSTOM_JSON_EXAMPLE: dict[str, Any] = {
@@ -40,6 +41,18 @@ REFERENCE_CUSTOM_JSON_EXAMPLE: dict[str, Any] = {
         "include_neighbors": 1,
         "preserve_parallel_text": True,
         "merge_reference_header_with_body": True,
+    },
+    "domain_structure": {
+        "primary_anchor": {
+            "type": "chapter_verse",
+            "regex": r"\bVerse\s+(?P<chapter>\d{1,4})\s*:\s*(?P<verse>\d{1,4})\b",
+            "unit": "verse_section",
+        },
+        "inline_references": {
+            "type": "chapter_verse",
+            "regex": r"(?P<chapter>\d{1,4})\s*:\s*(?P<verse>\d{1,4})",
+            "policy": "cross_reference_only",
+        },
     },
     "reference_resolution": {
         "enabled": True,
@@ -70,6 +83,22 @@ REFERENCE_CUSTOM_JSON_EXAMPLE: dict[str, Any] = {
         "table": False,
         "max_concurrent_files": 1,
     },
+    "vision_recovery_policy": {
+        "enabled": False,
+        "target_block_types": ["image", "figure", "equation"],
+        "triggers": [
+            "missing_pdf_text_layer",
+            "suspected_text_misclassified_as_equation",
+            "missing_required_script",
+        ],
+        "languages": ["arabic", "latin"],
+        "max_blocks_per_page": 3,
+        "max_total_blocks": 40,
+        "failure_action": "warn",
+        "prompt_hint": "Read visible text exactly and preserve line order.",
+        "evidence": [{"page": 1, "observation": "Enable only when page images show text."}],
+        "confidence": 0.0,
+    },
     "retrieval": {
         "exact_reference_top1": True,
         "boost_same_chapter": True,
@@ -98,6 +127,7 @@ def validate_custom_json(value: dict[str, Any]) -> dict[str, Any]:
     _validate_provenance(value.get("provenance"))
     _validate_parser_normalization(value.get("parser_normalization"))
     _validate_mineru_parse_options(value.get("mineru_parse_options"))
+    _validate_vision_recovery_policy(value.get("vision_recovery_policy"))
     _validate_retrieval(value.get("retrieval"))
     _validate_graph(value.get("graph"))
     return value
@@ -501,6 +531,82 @@ def _validate_mineru_parse_options(value: Any) -> None:
         if max_concurrent_files < 1 or max_concurrent_files > 8:
             raise ValueError(
                 "custom_json.mineru_parse_options.max_concurrent_files must be between 1 and 8."
+            )
+
+
+def _validate_vision_recovery_policy(value: Any) -> None:
+    if value is None:
+        return
+    if not isinstance(value, dict):
+        raise ValueError("custom_json.vision_recovery_policy must be an object.")
+
+    enabled = value.get("enabled")
+    if enabled is not None and not isinstance(enabled, bool):
+        raise ValueError("custom_json.vision_recovery_policy.enabled must be a boolean.")
+
+    for key in ("target_block_types", "triggers", "languages"):
+        _validate_string_list(value.get(key), f"custom_json.vision_recovery_policy.{key}")
+
+    max_blocks_per_page = value.get("max_blocks_per_page")
+    if max_blocks_per_page is not None:
+        if isinstance(max_blocks_per_page, bool) or not isinstance(max_blocks_per_page, int):
+            raise ValueError(
+                "custom_json.vision_recovery_policy.max_blocks_per_page must be an integer."
+            )
+        if max_blocks_per_page < 1 or max_blocks_per_page > 20:
+            raise ValueError(
+                "custom_json.vision_recovery_policy.max_blocks_per_page must be between 1 and 20."
+            )
+
+    max_total_blocks = value.get("max_total_blocks")
+    if max_total_blocks is not None:
+        if isinstance(max_total_blocks, bool) or not isinstance(max_total_blocks, int):
+            raise ValueError(
+                "custom_json.vision_recovery_policy.max_total_blocks must be an integer."
+            )
+        if max_total_blocks < 1 or max_total_blocks > 500:
+            raise ValueError(
+                "custom_json.vision_recovery_policy.max_total_blocks must be between 1 and 500."
+            )
+
+    failure_action = value.get("failure_action")
+    if failure_action is not None and failure_action not in VISION_RECOVERY_FAILURE_ACTIONS:
+        raise ValueError(
+            "custom_json.vision_recovery_policy.failure_action must be one of: "
+            f"{', '.join(sorted(VISION_RECOVERY_FAILURE_ACTIONS))}."
+        )
+
+    prompt_hint = value.get("prompt_hint")
+    if prompt_hint is not None and not isinstance(prompt_hint, str):
+        raise ValueError("custom_json.vision_recovery_policy.prompt_hint must be a string.")
+
+    evidence = value.get("evidence")
+    if evidence is not None:
+        if not isinstance(evidence, list):
+            raise ValueError("custom_json.vision_recovery_policy.evidence must be a list.")
+        for entry in evidence:
+            if not isinstance(entry, dict):
+                raise ValueError(
+                    "custom_json.vision_recovery_policy.evidence entries must be objects."
+                )
+            page = entry.get("page")
+            observation = entry.get("observation")
+            if page is not None and (isinstance(page, bool) or not isinstance(page, int)):
+                raise ValueError(
+                    "custom_json.vision_recovery_policy.evidence.page must be an integer."
+                )
+            if observation is not None and not isinstance(observation, str):
+                raise ValueError(
+                    "custom_json.vision_recovery_policy.evidence.observation must be a string."
+                )
+
+    confidence = value.get("confidence")
+    if confidence is not None:
+        if isinstance(confidence, bool) or not isinstance(confidence, int | float):
+            raise ValueError("custom_json.vision_recovery_policy.confidence must be a number.")
+        if confidence < 0 or confidence > 1:
+            raise ValueError(
+                "custom_json.vision_recovery_policy.confidence must be between 0 and 1."
             )
 
 

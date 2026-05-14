@@ -14,6 +14,7 @@ from ragstudio.services.parser_normalization import (
     ExpectedContentProfile,
     MinerUContentNormalizer,
     NormalizedBlock,
+    VisionRecoveryConfig,
 )
 from ragstudio.services.reference_metadata import ReferenceSemantics
 from ragstudio.services.reference_unit_assembler import (
@@ -48,8 +49,14 @@ class ContentListSplitResult:
 
 
 class ChunkSplitter:
-    def __init__(self, *, max_words: int = 1500) -> None:
+    def __init__(
+        self,
+        *,
+        max_words: int = 1500,
+        vision_recovery_config: VisionRecoveryConfig | None = None,
+    ) -> None:
         self.max_words = max_words
+        self.vision_recovery_config = vision_recovery_config
         self.content_normalizer = MinerUContentNormalizer()
         self.reference_unit_assembler = ReferenceUnitAssembler()
 
@@ -213,6 +220,7 @@ class ChunkSplitter:
             expected_profile=expected_profile,
             artifact_root=root,
             content_list_path=target,
+            vision_recovery_config=self.vision_recovery_config,
         )
         canonical_pieces = self._canonical_reference_pieces(
             chunk,
@@ -333,7 +341,7 @@ class ChunkSplitter:
             return []
 
         blocks: list[ReferenceSourceBlock] = []
-        for index, block in enumerate(normalized_blocks):
+        for index, block in self._canonical_block_order(normalized_blocks):
             warning_metadata = tuple(block.warning_metadata())
             warning_codes = tuple(
                 warning["code"]
@@ -366,6 +374,66 @@ class ChunkSplitter:
             preview_ref=chunk.preview_ref,
         )
         return [self._piece_from_assembled(unit) for unit in assembled_units]
+
+    def _canonical_block_order(
+        self,
+        normalized_blocks: list[NormalizedBlock],
+    ) -> list[tuple[int, NormalizedBlock]]:
+        indexed_blocks = list(enumerate(normalized_blocks))
+        if not any(self._source_bbox(block) is not None for _, block in indexed_blocks):
+            return indexed_blocks
+
+        grouped: dict[int | None, list[tuple[int, NormalizedBlock]]] = {}
+        for item in indexed_blocks:
+            grouped.setdefault(item[1].page, []).append(item)
+
+        ordered: list[tuple[int, NormalizedBlock]] = []
+        for page_blocks in sorted(
+            grouped.values(),
+            key=lambda blocks: (
+                blocks[0][1].page is None,
+                blocks[0][1].page if blocks[0][1].page is not None else blocks[0][0],
+                blocks[0][0],
+            ),
+        ):
+            if all(self._source_bbox(block) is not None for _, block in page_blocks):
+                ordered.extend(
+                    sorted(
+                        page_blocks,
+                        key=lambda item: self._visual_order_key(item[0], item[1]),
+                    )
+                )
+                continue
+            ordered.extend(page_blocks)
+        return ordered
+
+    def _visual_order_key(
+        self,
+        index: int,
+        block: NormalizedBlock,
+    ) -> tuple[int, int, float, float, int]:
+        page = block.page
+        if page is None:
+            return (1, index, 0.0, 0.0, index)
+        bbox = self._source_bbox(block)
+        if bbox is None:
+            return (0, page, float(index), 0.0, index)
+        x0, y0, _x1, _y1 = bbox
+        return (0, page, y0, x0, index)
+
+    def _source_bbox(self, block: NormalizedBlock) -> tuple[float, float, float, float] | None:
+        value = block.source_item.get("bbox")
+        if not isinstance(value, list | tuple) or len(value) != 4:
+            return None
+        coords: list[float] = []
+        for item in value:
+            if not isinstance(item, int | float):
+                return None
+            coords.append(float(item))
+        x0, y0, x1, y1 = coords
+        if x1 <= x0 or y1 <= y0:
+            return None
+        return x0, y0, x1, y1
 
     def _piece_from_assembled(self, unit: AssembledReferenceUnit) -> SplitPiece:
         return SplitPiece(

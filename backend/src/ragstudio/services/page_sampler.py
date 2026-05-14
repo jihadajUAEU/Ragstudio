@@ -111,7 +111,21 @@ class PageSampler:
     def _representative_indexes(self, page_count: int) -> list[int]:
         if page_count <= 0:
             return []
-        candidates = [0, 1, page_count // 2, page_count - 1]
+        if self.max_pages <= 4:
+            candidates = [0, 1, page_count // 2, page_count - 1]
+        else:
+            candidates = [
+                0,
+                1,
+                2,
+                3,
+                4,
+                page_count // 4,
+                page_count // 2,
+                (page_count * 3) // 4,
+                page_count - 2,
+                page_count - 1,
+            ]
         indexes: list[int] = []
         for candidate in candidates:
             bounded = min(max(candidate, 0), page_count - 1)

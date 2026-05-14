@@ -18,6 +18,7 @@ def reference_custom_json(
     fields: dict[str, str] | None = None,
     relationships: dict[str, list[str]] | None = None,
     chunking: dict[str, object] | None = None,
+    domain_structure: dict[str, object] | None = None,
     reference_resolution: dict[str, object] | None = None,
     provenance: dict[str, object] | None = None,
     parser_normalization: dict[str, object] | None = None,
@@ -41,6 +42,8 @@ def reference_custom_json(
         value["relationships"] = relationships
     if chunking:
         value["chunking"] = chunking
+    if domain_structure:
+        value["domain_structure"] = domain_structure
     if reference_resolution:
         value["reference_resolution"] = reference_resolution
     if provenance:
@@ -266,6 +269,18 @@ BUILTIN_PROFILES: list[DomainProfileOut] = [
                     "include_neighbors": 1,
                     "preserve_parallel_text": True,
                     "merge_reference_header_with_body": True,
+                },
+                domain_structure={
+                    "primary_anchor": {
+                        "type": "chapter_verse",
+                        "regex": r"\bVerse\s+(?P<chapter>\d{1,4})\s*:\s*(?P<verse>\d{1,4})\b",
+                        "unit": "verse_section",
+                    },
+                    "inline_references": {
+                        "type": "chapter_verse",
+                        "regex": r"(?P<chapter>\d{1,4})\s*:\s*(?P<verse>\d{1,4})",
+                        "policy": "cross_reference_only",
+                    },
                 },
                 reference_resolution={
                     "enabled": True,

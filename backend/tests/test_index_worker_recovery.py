@@ -1,7 +1,14 @@
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from ragstudio.db.models import Chunk, Document, GraphProjectionRecord, Job, SettingsProfile
+from ragstudio.db.models import (
+    Chunk,
+    Document,
+    GraphProjectionRecord,
+    IndexRecord,
+    Job,
+    SettingsProfile,
+)
 from ragstudio.schemas.common import StageStatus
 from ragstudio.schemas.parsing import IndexDocumentIn
 from ragstudio.services.document_service import DocumentService
@@ -232,6 +239,15 @@ async def test_index_job_runner_resumes_graph_projection_without_reindex(
             )
         )
         session.add(
+            IndexRecord(
+                document_id=document.id,
+                runtime_profile_id="default",
+                status=StageStatus.RUNNING.value,
+                chunk_count=1,
+                index_shape={},
+            )
+        )
+        session.add(
             Job(
                 id="job-resume-graph",
                 type="index_document",
@@ -271,6 +287,9 @@ async def test_index_job_runner_resumes_graph_projection_without_reindex(
                 GraphProjectionRecord.document_id == document_id,
             )
         )
+        index_record = await session.scalar(
+            select(IndexRecord).where(IndexRecord.document_id == document_id)
+        )
 
     assert FakeGraphProjectionRunner.calls == [document_id]
     assert refreshed.status == StageStatus.SUCCEEDED.value
@@ -284,9 +303,13 @@ async def test_index_job_runner_resumes_graph_projection_without_reindex(
         "edge_count": 1,
         "reason": None,
     }
+    assert refreshed.result["parser_quality"] == {"warning_counts": {}, "affected_chunks": 0}
+    quality_summary = refreshed.result["index_quality_report"]["summary"]
+    assert quality_summary["quality_unknown_document_count"] == 1
     assert refreshed.result["indexing_stage"]["stage"] == "ready"
     assert refreshed.result["indexing_stage"]["chunk_count"] == 1
     assert projection.status == "succeeded"
+    assert index_record.status == StageStatus.SUCCEEDED.value
 
 
 @pytest.mark.asyncio

@@ -28,6 +28,12 @@ BOOK_HADITH_PATTERN = re.compile(
     r"\bBook\s+(?P<book>\d+)\s*,?\s*Hadith\s+(?P<hadith>\d+)\b",
     flags=re.IGNORECASE,
 )
+TAFSEER_PRIMARY_ANCHOR_PATTERN = (
+    r"\bVerse\s+(?P<chapter>\d{1,4})\s*:\s*(?P<verse>\d{1,4})\b"
+)
+CHAPTER_VERSE_INLINE_REFERENCE_PATTERN = (
+    r"(?P<chapter>\d{1,4})\s*:\s*(?P<verse>\d{1,4})"
+)
 
 
 @dataclass(frozen=True)
@@ -100,6 +106,27 @@ class ReferenceSemantics:
         )
         if chunk_unit == "section" and structured_reference:
             chunk_unit = "verse"
+        default_primary_anchor = cls._default_primary_anchor_pattern(
+            metadata,
+            reference_type=reference_type,
+            primary_anchor=primary_anchor,
+        )
+        primary_anchor_pattern = cls._string_value(
+            primary_anchor.get("regex"),
+            default=default_primary_anchor,
+        )
+        inline_reference_policy = cls._string_value(
+            inline_references.get("policy"),
+            default="cross_reference_only" if default_primary_anchor else "starts_unit",
+        )
+        inline_reference_pattern = cls._string_value(
+            inline_references.get("regex"),
+            default=(
+                CHAPTER_VERSE_INLINE_REFERENCE_PATTERN
+                if default_primary_anchor
+                else None
+            ),
+        )
 
         return cls(
             profile_name=profile_name,
@@ -177,22 +204,13 @@ class ReferenceSemantics:
                 provenance.get("store_text_hash"),
                 default=False,
             ),
-            primary_anchor_pattern=cls._string_value(
-                primary_anchor.get("regex"),
-                default=None,
-            ),
+            primary_anchor_pattern=primary_anchor_pattern,
             primary_anchor_unit=cls._string_value(
                 primary_anchor.get("unit"),
-                default=None,
+                default="verse_section" if default_primary_anchor else None,
             ),
-            inline_reference_pattern=cls._string_value(
-                inline_references.get("regex"),
-                default=None,
-            ),
-            inline_reference_policy=cls._string_value(
-                inline_references.get("policy"),
-                default="starts_unit",
-            ),
+            inline_reference_pattern=inline_reference_pattern,
+            inline_reference_policy=inline_reference_policy,
         )
 
     def extract_query_reference(self, query: str) -> dict[str, int | str] | None:
@@ -563,6 +581,33 @@ class ReferenceSemantics:
             for value in values
         ):
             return "book_hadith"
+        return None
+
+    @classmethod
+    def _default_primary_anchor_pattern(
+        cls,
+        metadata: DomainMetadata,
+        *,
+        reference_type: str | None,
+        primary_anchor: dict[str, Any],
+    ) -> str | None:
+        if cls._string_value(primary_anchor.get("regex"), default=None):
+            return None
+        if (reference_type or "").casefold() not in {"surah_ayah", "chapter_verse"}:
+            return None
+        role_tokens = {
+            value.casefold()
+            for value in (
+                metadata.domain if metadata.domain in {"tafseer", "tafsir"} else None,
+                metadata.document_type,
+                metadata.expected_structure,
+                metadata.content_role,
+                *metadata.tags,
+            )
+            if isinstance(value, str)
+        }
+        if any(cls._token_mentions(value, "tafseer", "tafsir") for value in role_tokens):
+            return TAFSEER_PRIMARY_ANCHOR_PATTERN
         return None
 
     @staticmethod

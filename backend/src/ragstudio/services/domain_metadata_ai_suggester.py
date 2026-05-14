@@ -85,6 +85,7 @@ class DomainMetadataAiSuggester:
         else:
             metadata.custom_json = self._normalize_custom_json(metadata.custom_json)
             should_merge_baseline = False
+        metadata.custom_json = self._apply_autosuggest_reference_defaults(metadata)
         validate_custom_json(metadata.custom_json)
         ai_source = "ai_vision" if target.supports_images else "ai_llm"
         if should_merge_baseline:
@@ -158,6 +159,12 @@ class DomainMetadataAiSuggester:
         if target.supports_images:
             for page in sampled_pages:
                 if page.image_data_url:
+                    content.append(
+                        {
+                            "type": "text",
+                            "text": f"Page {page.page_number} image:",
+                        }
+                    )
                     content.append(
                         {
                             "type": "image_url",
@@ -294,6 +301,22 @@ Return JSON only with this shape:
           "unreadable_primary_anchor": "info|warn|block"
         }}
       }},
+      "vision_recovery_policy": {{
+        "enabled": false,
+        "target_block_types": ["image", "figure", "equation"],
+        "triggers": [
+          "missing_pdf_text_layer",
+          "suspected_text_misclassified_as_equation",
+          "missing_required_script"
+        ],
+        "languages": [],
+        "max_blocks_per_page": 3,
+        "max_total_blocks": 40,
+        "failure_action": "info|warn|block",
+        "prompt_hint": null,
+        "evidence": [{{"page": 1, "observation": "short evidence"}}],
+        "confidence": 0.0
+      }},
       "mineru_parse_options": null,
       "retrieval": null
     }},
@@ -320,14 +343,25 @@ For custom_json.domain_structure, identify the text pattern that starts a primar
 answerable unit and distinguish it from inline cross-references. For example, a
 Tafseer page may use "Verse 18:30" as the section anchor while "25:75-76" inside
 the commentary is only a cross-reference.
+For hadith collections, Book N, Hadith N usually starts the primary answerable
+hadith unit. Quran-style parenthetical references such as (6:83), (31:13), or
+(3:64) inside a hadith explanation are cross-references/provenance only unless
+the page visibly uses them as the primary heading pattern.
 For custom_json.quality_policy, identify which scripts are visible, which scripts
 are required for answerable chunks, which scripts are optional enrichment, whether
 missing optional script should warn, and page-level evidence for each decision.
+If sampled pages show English-only translations alongside Arabic-bearing hadith
+records, do not require Arabic for every English-only translation unit; make Arabic
+optional or role-scoped instead of globally required.
 For custom_json.layout_quality_policy, identify expected layout/block roles and
 whether recovered text from blocks misclassified as equations or disallowed block
 types is acceptable recovery, degraded quality, or a true blocker. For Arabic
 religious prose, stylized Arabic verse images may be misclassified as equations;
 classify that as info only when the visible page evidence supports it.
+For custom_json.vision_recovery_policy, enable it only when sampled page images show
+important visible text that the extracted page text may miss or distort. Use it to
+describe which block types should later be cropped and sent to a vision OCR model
+when PDF text-layer recovery fails or a required script is missing.
 If the document is commentary, translation, explanation, legal analysis, or another
 secondary-source role, do not require a primary-source script unless the sampled
 pages show that every answerable unit depends on that script.
@@ -443,6 +477,79 @@ Content type: {content_type}
             ai_metadata.custom_json,
         )
         return merged
+
+    def _apply_autosuggest_reference_defaults(
+        self,
+        metadata: DomainMetadata,
+    ) -> dict[str, object]:
+        custom_json = self._normalize_custom_json(
+            metadata.custom_json if isinstance(metadata.custom_json, dict) else {},
+            require_graph_policy=False,
+        )
+        if not self._looks_like_hadith_metadata(metadata, custom_json):
+            return custom_json
+
+        domain_structure = dict(custom_json.get("domain_structure") or {})
+        primary_anchor = dict(domain_structure.get("primary_anchor") or {})
+        primary_type = str(primary_anchor.get("type") or "").casefold()
+        if primary_type in {"", "book_hadith", "hadith"} and not primary_anchor.get("regex"):
+            primary_anchor = {
+                **primary_anchor,
+                "type": "book_hadith",
+                "regex": (
+                    r"\bBook\s+(?P<book>\d{1,4})\s*,?\s*Hadith\s+"
+                    r"(?P<hadith>\d{1,6})\b"
+                ),
+                "unit": primary_anchor.get("unit") or "hadith",
+            }
+            domain_structure["primary_anchor"] = primary_anchor
+
+        inline_references = dict(domain_structure.get("inline_references") or {})
+        inline_type = str(inline_references.get("type") or "").casefold()
+        inline_policy = inline_references.get("policy")
+        if (
+            inline_type in {"", "quran_verse", "chapter_verse", "cross_reference"}
+            or inline_policy == "cross_reference_only"
+        ) and not inline_references.get("regex"):
+            inline_references = {
+                **inline_references,
+                "type": "chapter_verse",
+                "regex": r"(?P<chapter>\d{1,4})\s*:\s*(?P<verse>\d{1,4})",
+                "policy": "cross_reference_only",
+            }
+            domain_structure["inline_references"] = inline_references
+
+        if domain_structure:
+            custom_json["domain_structure"] = domain_structure
+        return custom_json
+
+    def _looks_like_hadith_metadata(
+        self,
+        metadata: DomainMetadata,
+        custom_json: dict[str, object],
+    ) -> bool:
+        reference_schema = custom_json.get("reference_schema")
+        reference_type = (
+            reference_schema.get("type")
+            if isinstance(reference_schema, dict)
+            else None
+        )
+        tokens = {
+            str(item).casefold()
+            for item in (
+                metadata.domain,
+                metadata.document_type,
+                metadata.citation_style,
+                metadata.reference_pattern,
+                metadata.content_role,
+                reference_type,
+                *metadata.tags,
+            )
+            if item
+        }
+        return "hadith" in tokens or "book_hadith" in tokens or any(
+            "hadith" in token for token in tokens
+        )
 
     def _baseline_prompt_metadata(self, baseline: DomainMetadata) -> dict[str, object]:
         prompt_metadata: dict[str, object] = {
@@ -571,6 +678,7 @@ Content type: {content_type}
             "provenance",
             "parser_normalization",
             "mineru_parse_options",
+            "vision_recovery_policy",
             "retrieval",
             "graph",
         ):
@@ -764,6 +872,12 @@ Content type: {content_type}
             if mineru_values:
                 normalized["mineru_parse_options"] = mineru_values
 
+        vision_recovery_policy_values = self._normalize_vision_recovery_policy(
+            value.get("vision_recovery_policy")
+        )
+        if vision_recovery_policy_values:
+            normalized["vision_recovery_policy"] = vision_recovery_policy_values
+
         retrieval = value.get("retrieval")
         if isinstance(retrieval, dict):
             retrieval_values = {
@@ -791,6 +905,72 @@ Content type: {content_type}
             ):
                 normalized["graph"] = graph_values
 
+        return normalized
+
+    def _normalize_vision_recovery_policy(self, value: object) -> dict[str, object]:
+        if not isinstance(value, dict):
+            return {}
+        normalized: dict[str, object] = {}
+        enabled = value.get("enabled")
+        if isinstance(enabled, bool):
+            normalized["enabled"] = enabled
+        for key in ("target_block_types", "triggers", "languages"):
+            items = value.get(key)
+            if not isinstance(items, list):
+                continue
+            strings = []
+            for item in items:
+                if not isinstance(item, str) or not item.strip():
+                    continue
+                strings.append(
+                    self._normalize_script_label(item)
+                    if key == "languages"
+                    else item.strip().casefold()
+                )
+            if strings:
+                normalized[key] = list(dict.fromkeys(strings))
+        max_blocks_per_page = value.get("max_blocks_per_page")
+        if isinstance(max_blocks_per_page, int) and not isinstance(max_blocks_per_page, bool):
+            normalized["max_blocks_per_page"] = max(1, min(max_blocks_per_page, 20))
+        max_total_blocks = value.get("max_total_blocks")
+        if isinstance(max_total_blocks, int) and not isinstance(max_total_blocks, bool):
+            normalized["max_total_blocks"] = max(1, min(max_total_blocks, 500))
+        failure_action = value.get("failure_action")
+        if failure_action in {"info", "warn", "block"}:
+            normalized["failure_action"] = failure_action
+        prompt_hint = value.get("prompt_hint")
+        if isinstance(prompt_hint, str) and prompt_hint.strip():
+            normalized["prompt_hint"] = prompt_hint.strip()[:500]
+        evidence = value.get("evidence")
+        if isinstance(evidence, list):
+            clean_evidence: list[dict[str, object]] = []
+            for entry in evidence:
+                if not isinstance(entry, dict):
+                    continue
+                page = entry.get("page")
+                observation = entry.get("observation")
+                if (
+                    isinstance(page, int)
+                    and not isinstance(page, bool)
+                    and isinstance(observation, str)
+                    and observation.strip()
+                ):
+                    clean_evidence.append(
+                        {"page": page, "observation": observation.strip()[:300]}
+                    )
+            if clean_evidence:
+                normalized["evidence"] = clean_evidence[:10]
+        confidence = value.get("confidence")
+        if isinstance(confidence, int | float) and not isinstance(confidence, bool):
+            normalized["confidence"] = min(max(float(confidence), 0.0), 1.0)
+        return normalized
+
+    def _normalize_script_label(self, value: str) -> str:
+        normalized = value.strip().casefold()
+        if normalized in {"english", "eng", "latin_script", "roman"}:
+            return "latin"
+        if normalized in {"arab", "arabic_script"}:
+            return "arabic"
         return normalized
 
     def _normalize_domain_structure(self, value: object) -> dict[str, object]:
@@ -832,7 +1012,7 @@ Content type: {content_type}
             if not isinstance(items, list):
                 continue
             scripts = [
-                item.strip().casefold()
+                self._normalize_script_label(item)
                 for item in items
                 if isinstance(item, str) and item.strip()
             ]
@@ -847,7 +1027,7 @@ Content type: {content_type}
                 if not isinstance(role, str) or not isinstance(scripts, list):
                     continue
                 clean_scripts = [
-                    script.strip().casefold()
+                    self._normalize_script_label(script)
                     for script in scripts
                     if isinstance(script, str) and script.strip()
                 ]

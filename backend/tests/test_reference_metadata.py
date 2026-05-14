@@ -1,4 +1,5 @@
 from ragstudio.schemas.parsing import DomainMetadata
+from ragstudio.services.domain_metadata_service import DomainMetadataService
 from ragstudio.services.reference_metadata import ReferenceSemantics
 
 
@@ -295,6 +296,20 @@ def test_derive_reference_metadata_keeps_cross_reference_only_mentions_non_prima
     assert metadata["chapter_end"] == 18
     assert metadata["verse_start"] == 30
     assert metadata["verse_end"] == 30
+
+
+def test_builtin_quran_tafseer_defaults_inline_references_to_cross_references(tmp_path):
+    profile = DomainMetadataService(tmp_path).get_profile("quran_tafseer")
+    assert profile is not None
+    semantics = ReferenceSemantics.from_metadata(profile.metadata)
+
+    assert semantics.inline_reference_policy == "cross_reference_only"
+    assert semantics.extract_primary_anchor_references("See also 69:18).") == []
+    assert semantics.derive_reference_metadata("See also 69:18).") == {}
+    assert semantics.derive_reference_metadata(
+        "Verse 18:30 body mentions 25:75-76.",
+        {"page": 809},
+    )["references"] == ["18:30"]
 
 
 def test_chunk_reference_metadata_aliases_derive_reference_metadata():

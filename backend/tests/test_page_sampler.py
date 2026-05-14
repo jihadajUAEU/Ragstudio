@@ -22,6 +22,24 @@ def test_sample_pdf_renders_valid_pdf_pages():
     assert pages[0].image_data_url.startswith("data:image/png;base64,")
 
 
+def test_sample_pdf_uses_broader_samples_when_more_pages_are_requested():
+    document = fitz.open()
+    for index in range(20):
+        page = document.new_page()
+        page.insert_text((72, 72), f"Sample page {index + 1}")
+    pdf_bytes = document.tobytes()
+    document.close()
+
+    pages = PageSampler(max_pages=10).sample(
+        pdf_bytes,
+        filename="sample.pdf",
+        content_type="application/pdf",
+    )
+
+    assert [page.page_number for page in pages] == [1, 2, 3, 4, 5, 6, 11, 16, 19, 20]
+    assert "Sample page 20" in pages[-1].text
+
+
 def test_sample_text_file_uses_start_middle_end_excerpts():
     lines = [f"line {index}" for index in range(120)]
     pages = PageSampler().sample(
