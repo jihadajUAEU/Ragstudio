@@ -13,7 +13,7 @@ This roadmap turns Ragstudio's existing RAG evidence machinery into a public, re
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Proof Contract and Baseline Packet** - Create the canonical public proof packet, schemas, claims registry, and safe baseline evidence.
-- [ ] **Phase 2: Replay and Export Tooling** - Make `./scripts/proof.sh` validate the static proof packet from a fresh checkout.
+- [x] **Phase 2: Replay and Export Tooling** - Make `./scripts/proof.sh` validate the static proof packet from a fresh checkout.
 - [ ] **Phase 3: `ragstudio-site` Scaffold and Import Pipeline** - Create the separate static site repo boundary and packet import gate.
 - [ ] **Phase 4: Static Proof Viewer and Public Site UX** - Build the inspectable public proof viewer and demo screenshot experience.
 - [ ] **Phase 5: Launch Hardening and Domain Release** - Connect Cloudflare/domain, enforce accessibility and launch gates, and publish links.
@@ -119,7 +119,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Proof Contract and Baseline Packet | 3/3 | Complete | 2026-05-14 |
-| 2. Replay and Export Tooling | 0/3 | Not started | - |
+| 2. Replay and Export Tooling | 3/3 | Complete | 2026-05-14 |
 | 3. `ragstudio-site` Scaffold and Import Pipeline | 0/2 | Not started | - |
 | 4. Static Proof Viewer and Public Site UX | 0/3 | Not started | - |
 | 5. Launch Hardening and Domain Release | 0/3 | Not started | - |
