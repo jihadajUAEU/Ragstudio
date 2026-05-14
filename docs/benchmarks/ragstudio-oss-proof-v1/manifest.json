@@ -40,8 +40,8 @@
   ],
   "screenshots": {
     "signoff": "screenshots/signoff.json",
-    "approved_count": 0,
-    "pending_count": 1
+    "approved_count": 1,
+    "pending_count": 0
   },
   "claims": {
     "registry": "claims/claims.registry.json",
@@ -54,7 +54,7 @@
     "total": 4
   },
   "redaction_status": {
-    "overall": "pending_phase_1_completion",
+    "overall": "passed_human_approved",
     "policy": "fail_closed",
     "checked_for": [
       "api_keys",
@@ -69,7 +69,7 @@
     ],
     "notes": [
       "This packet is synthetic and intentionally avoids private corpora, live providers, and local runtime exports.",
-      "Screenshot publication remains blocked until screenshots/signoff.json records manual approval."
+      "Screenshot publication was approved by human checkpoint and recorded in screenshots/signoff.json."
     ]
   },
   "artifact_hashes": {
@@ -97,26 +97,15 @@
       "algorithm": "sha256",
       "value": "fe1d36ff652f09969876851e3e8879050b3019caf23c8b104c6fb562e28b7292",
       "redaction_status": "passed"
+    },
+    "screenshots/documents-page-desktop-empty-state.png": {
+      "algorithm": "sha256",
+      "value": "ad3309c3144f64990bbdfcae53a88e9c5083316217db293873439718e8fd2c2b",
+      "redaction_status": "passed"
     }
   },
   "hash_status": "complete_for_current_artifacts",
   "excluded_artifacts": [
-    {
-      "path": "screenshots/*.png",
-      "reason": "Screenshots require manual no-private-content signoff before public publication.",
-      "affected_claims": [
-        "RAGSTUDIO-PARSER-GATE",
-        "RAGSTUDIO-TRACE-VISIBILITY"
-      ]
-    },
-    {
-      "path": "screenshots/documents-page-desktop-empty-state.png",
-      "reason": "Planned screenshot remains excluded until human safety checkpoint approval.",
-      "affected_claims": [
-        "RAGSTUDIO-PARSER-GATE",
-        "RAGSTUDIO-TRACE-VISIBILITY"
-      ]
-    },
     {
       "path": "live-provider-exports/*",
       "reason": "Live provider artifacts are outside Phase 1 and may contain private endpoints or provider metadata.",

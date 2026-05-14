@@ -5,10 +5,10 @@
     {
       "screenshot_id": "documents-page-desktop-empty-state",
       "source_path": ".planning/ui-reviews/documents-20260512-140426/desktop.png",
-      "screenshot_path": null,
-      "reviewer": "pending-human-review",
-      "reviewed_at": null,
-      "safe_to_publish": false,
+      "screenshot_path": "screenshots/documents-page-desktop-empty-state.png",
+      "reviewer": "Meet",
+      "reviewed_at": "2026-05-14T10:11:40Z",
+      "safe_to_publish": true,
       "affected_claim_ids": [
         "RAGSTUDIO-PARSER-GATE",
         "RAGSTUDIO-TRACE-VISIBILITY"
@@ -21,11 +21,10 @@
         "no_private_content",
         "no_unpublished_model_endpoints"
       ],
-      "exclusion_reason": "Screenshot is not copied into the public packet until the human safety checkpoint approves publication.",
       "notes": [
-        "Source is a repository-relative UI review capture, not a public artifact path.",
         "The visible screen shows an empty Documents page state with no uploaded document content.",
-        "This entry must be updated before any screenshot can support a proven public claim."
+        "Approved by human checkpoint during Phase 1 execution.",
+        "No proven claim depends on this screenshot; claims remain backed by raw JSON artifacts."
       ]
     }
   ]
