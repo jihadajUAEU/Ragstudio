@@ -63,8 +63,28 @@ created: 2026-05-14
 ## Manual-Only Verifications
 
 - Desktop visual smoke review after Phase 4 UI exists: covered by Playwright smoke at 1440px.
-- Mobile visual smoke review at 320px and a common phone width: responsive rules are implemented; formal visual audit remains for Phase 5 gates.
+- Mobile visual smoke review at 320px and a common phone width: covered by Playwright smoke at 320px and 390px with no horizontal overflow.
 - Focus ring and keyboard navigation spot check: CSS focus ring is present and covered by source review.
+
+---
+
+## Validation Audit 2026-05-14
+
+| Metric | Count |
+|--------|-------|
+| Gaps found | 1 |
+| Resolved | 1 |
+| Escalated | 0 |
+
+**Gap resolved:** Responsive smoke initially found horizontal overflow at 320px
+on long proof metadata/source-path list items. The site CSS now applies
+`min-width: 0` to grid children and `overflow-wrap: anywhere` to inline/list
+metadata, and the responsive smoke passes at desktop, 320px, and 390px.
+
+**Commands rerun:**
+
+- `cd /Users/meet/Documents/ragstudio-site && npm run check:static && npm run lint && npm test && npm run build` - passed
+- Playwright responsive smoke for `http://127.0.0.1:5174/#claim-RAGSTUDIO-TRACE-VISIBILITY` at 1440px, 320px, and 390px - passed
 
 ---
 
