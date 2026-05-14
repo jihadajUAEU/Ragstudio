@@ -36,7 +36,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 Plans:
 - [x] 01-01: Create proof packet folder, synthetic corpus notes, and artifact layout.
 - [x] 01-02: Define JSON Schemas, claims registry, claims matrix, and compatibility metadata.
-- [ ] 01-03: Add claim docs, status rules, and baseline redaction expectations.
+- [x] 01-03: Add claim docs, status rules, and baseline redaction expectations.
 
 ### Phase 2: Replay and Export Tooling
 **Goal**: A developer can run one fresh-checkout command that validates static fixtures, rejects unsafe or stale proof packets, and reports structured failures.

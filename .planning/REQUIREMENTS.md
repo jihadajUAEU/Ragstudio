@@ -48,7 +48,7 @@ Requirements for the initial public proof-system release. Each requirement maps 
 
 - [ ] **DOCS-01**: `QUICKSTART` explains the fresh-checkout `./scripts/proof.sh` path in 2-5 minute terms.
 - [ ] **DOCS-02**: `REPLAY` explains static fixture validation and clearly labels live capture as optional.
-- [ ] **DOCS-03**: `CLAIMS` explains claim statuses, claims matrix, and how evidence links prove or limit each claim.
+- [x] **DOCS-03**: `CLAIMS` explains claim statuses, claims matrix, and how evidence links prove or limit each claim.
 - [ ] **DOCS-04**: `ERRORS` documents structured proof, export, and import errors with recovery guidance.
 - [x] **DOCS-05**: `COMPATIBILITY` records schema version, supported Node runtime, packet version, and site import compatibility.
 
@@ -130,7 +130,7 @@ Roadmap creation fills the phase mapping. Every v1 requirement must map to exact
 | VIEW-07 | Phase 4 | Pending |
 | DOCS-01 | Phase 2 | Pending |
 | DOCS-02 | Phase 2 | Pending |
-| DOCS-03 | Phase 1 | Pending |
+| DOCS-03 | Phase 1 | Complete |
 | DOCS-04 | Phase 2 | Pending |
 | DOCS-05 | Phase 1 | Complete |
 | QA-01 | Phase 5 | Pending |
