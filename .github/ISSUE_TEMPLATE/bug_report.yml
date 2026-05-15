@@ -1,0 +1,45 @@
+name: Bug report
+description: Report a reproducible Ragstudio bug
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What happened?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      description: Include commands, pages, uploaded sample type, or API calls.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Logs, screenshots, proof packet claim IDs, or exact error text.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Frontend
+        - Backend API
+        - Worker/indexing
+        - Retrieval/query
+        - Graph
+        - Settings/providers
+        - Proof packet/public site
+        - Documentation
+    validations:
+      required: true
