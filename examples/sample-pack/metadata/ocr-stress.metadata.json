@@ -1,0 +1,18 @@
+{
+  "document_id": "ocr-stress",
+  "title": "Synthetic OCR Stress Page",
+  "domain": "ocr_quality_review",
+  "synthetic": true,
+  "public_safe": true,
+  "source_inspiration": ["document_ocr_failures"],
+  "language": "multilingual",
+  "citation_style": "sensor_reference",
+  "reference_pattern": "mixed_reference_label",
+  "expected_structure": "mixed_columns_tables_headers",
+  "quality_policy": {
+    "allow_public_release": true,
+    "require_reference_labels": true,
+    "require_evidence_for_answers": true,
+    "unsupported_answer_action": "should_not_answer"
+  }
+}

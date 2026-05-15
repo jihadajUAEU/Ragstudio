@@ -1,0 +1,18 @@
+{
+  "document_id": "financial-filing",
+  "title": "Synthetic Financial Filing",
+  "domain": "financial_filing",
+  "synthetic": true,
+  "public_safe": true,
+  "source_inspiration": ["sec_edgar"],
+  "language": "english",
+  "citation_style": "risk_factor_and_table",
+  "reference_pattern": "filing_section",
+  "expected_structure": "sections_with_numeric_tables",
+  "quality_policy": {
+    "allow_public_release": true,
+    "require_reference_labels": true,
+    "require_evidence_for_answers": true,
+    "unsupported_answer_action": "should_not_answer"
+  }
+}

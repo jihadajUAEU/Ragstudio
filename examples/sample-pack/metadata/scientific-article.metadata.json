@@ -1,0 +1,18 @@
+{
+  "document_id": "scientific-article",
+  "title": "Synthetic Scientific Article",
+  "domain": "scientific_article",
+  "synthetic": true,
+  "public_safe": true,
+  "source_inspiration": ["pmc_open_access"],
+  "language": "english",
+  "citation_style": "section_figure_citation",
+  "reference_pattern": "article_section",
+  "expected_structure": "abstract_methods_figures_references",
+  "quality_policy": {
+    "allow_public_release": true,
+    "require_reference_labels": true,
+    "require_evidence_for_answers": true,
+    "unsupported_answer_action": "should_not_answer"
+  }
+}

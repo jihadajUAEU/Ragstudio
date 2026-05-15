@@ -1,0 +1,18 @@
+{
+  "document_id": "public-domain-book",
+  "title": "Synthetic Public-Domain Book Passage",
+  "domain": "literary_text",
+  "synthetic": true,
+  "public_safe": true,
+  "source_inspiration": ["project_gutenberg", "wikisource"],
+  "language": "multilingual",
+  "citation_style": "chapter_footnote",
+  "reference_pattern": "book_chapter_section",
+  "expected_structure": "chapters_with_footnotes",
+  "quality_policy": {
+    "allow_public_release": true,
+    "require_reference_labels": true,
+    "require_evidence_for_answers": true,
+    "unsupported_answer_action": "should_not_answer"
+  }
+}

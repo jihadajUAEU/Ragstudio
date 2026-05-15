@@ -1,0 +1,18 @@
+{
+  "document_id": "legal-opinion",
+  "title": "Synthetic Legal Opinion",
+  "domain": "legal_opinion",
+  "synthetic": true,
+  "public_safe": true,
+  "source_inspiration": ["courtlistener"],
+  "language": "english",
+  "citation_style": "case_citation",
+  "reference_pattern": "case_section",
+  "expected_structure": "caption_holding_citations_concurrence",
+  "quality_policy": {
+    "allow_public_release": true,
+    "require_reference_labels": true,
+    "require_evidence_for_answers": true,
+    "unsupported_answer_action": "should_not_answer"
+  }
+}

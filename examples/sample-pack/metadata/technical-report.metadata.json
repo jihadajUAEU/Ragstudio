@@ -1,0 +1,18 @@
+{
+  "document_id": "technical-report",
+  "title": "Synthetic Technical Report",
+  "domain": "technical_report",
+  "synthetic": true,
+  "public_safe": true,
+  "source_inspiration": ["nasa_ntrs"],
+  "language": "english",
+  "citation_style": "report_section",
+  "reference_pattern": "technical_report_section",
+  "expected_structure": "report_sections_tables_acronyms",
+  "quality_policy": {
+    "allow_public_release": true,
+    "require_reference_labels": true,
+    "require_evidence_for_answers": true,
+    "unsupported_answer_action": "should_not_answer"
+  }
+}
