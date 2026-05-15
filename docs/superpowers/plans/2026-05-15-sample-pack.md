@@ -134,7 +134,7 @@ def test_sample_pack_runbook_uses_configurable_public_safe_url():
     runbook = (SAMPLE_ROOT / "RUNBOOK.md").read_text(encoding="utf-8")
     assert "RAGSTUDIO_FRONTEND_URL" in runbook
     assert "http://127.0.0.1:5173" in runbook
-    assert "10.127.33.19" not in runbook
+    assert re.search(r"10\.\d{1,3}\.\d{1,3}\.\d{1,3}", runbook) is None
 
 
 def test_sample_pack_is_redaction_safe():
@@ -165,7 +165,7 @@ def test_sample_pack_is_redaction_safe():
 Run:
 
 ```bash
-PYTHONPATH=backend/src /Users/meet/Documents/Ragstudio/.venv/bin/python -m pytest backend/tests/test_sample_pack_contract.py -q
+PYTHONPATH=backend/src "${PYTHON_BIN:-python3}" -m pytest backend/tests/test_sample_pack_contract.py -q
 ```
 
 Expected: FAIL because `examples/sample-pack/` does not exist yet.
@@ -352,7 +352,7 @@ Adjust `document_id`, `title`, `domain`, `source_inspiration`, `language`, `cita
 Run:
 
 ```bash
-PYTHONPATH=backend/src /Users/meet/Documents/Ragstudio/.venv/bin/python -m pytest backend/tests/test_sample_pack_contract.py -q
+PYTHONPATH=backend/src "${PYTHON_BIN:-python3}" -m pytest backend/tests/test_sample_pack_contract.py -q
 ```
 
 Expected: still FAIL because evaluations and expected artifacts do not exist yet.
@@ -420,7 +420,7 @@ Create `screenshots/signoff.json` with:
 Run:
 
 ```bash
-PYTHONPATH=backend/src /Users/meet/Documents/Ragstudio/.venv/bin/python -m pytest backend/tests/test_sample_pack_contract.py -q
+PYTHONPATH=backend/src "${PYTHON_BIN:-python3}" -m pytest backend/tests/test_sample_pack_contract.py -q
 ```
 
 Expected: PASS.
@@ -447,7 +447,7 @@ Expected: commit succeeds.
 Run:
 
 ```bash
-PYTHONPATH=backend/src /Users/meet/Documents/Ragstudio/.venv/bin/python -m ragstudio.proof_packet.cli --strict --json
+PYTHONPATH=backend/src "${PYTHON_BIN:-python3}" -m ragstudio.proof_packet.cli --strict --json
 ```
 
 Expected: JSON output with `"status": "passed"`.
@@ -457,14 +457,14 @@ Expected: JSON output with `"status": "passed"`.
 Run:
 
 ```bash
-curl -I --max-time 10 http://10.127.33.19:5173
+curl -I --max-time 10 "${RAGSTUDIO_FRONTEND_URL:-http://127.0.0.1:5173}"
 ```
 
 Expected: `HTTP/1.1 200 OK`. If unreachable, record screenshot capture as blocked in the final report and do not create fake screenshots.
 
 - [ ] **Step 3: Capture screenshot if reachable**
 
-Use Playwright against `http://10.127.33.19:5173` and write `examples/sample-pack/screenshots/app-home.png`. The committed docs must not mention this LAN URL.
+Use Playwright against `${RAGSTUDIO_FRONTEND_URL:-http://127.0.0.1:5173}` and write `examples/sample-pack/screenshots/app-home.png`. Local operators may override the environment variable for a LAN-only verification run, but committed docs must not mention that LAN URL.
 
 - [ ] **Step 4: Update screenshot signoff if screenshot exists**
 
@@ -495,8 +495,8 @@ Use the actual UTC timestamp.
 Run:
 
 ```bash
-PYTHONPATH=backend/src /Users/meet/Documents/Ragstudio/.venv/bin/python -m pytest backend/tests/test_sample_pack_contract.py backend/tests/test_proof_packet_validator.py::test_default_packet_validates_successfully -q
-PYTHONPATH=backend/src /Users/meet/Documents/Ragstudio/.venv/bin/python -m ragstudio.proof_packet.cli --strict --json
+PYTHONPATH=backend/src "${PYTHON_BIN:-python3}" -m pytest backend/tests/test_sample_pack_contract.py backend/tests/test_proof_packet_validator.py::test_default_packet_validates_successfully -q
+PYTHONPATH=backend/src "${PYTHON_BIN:-python3}" -m ragstudio.proof_packet.cli --strict --json
 ```
 
 Expected: tests PASS and proof output has `"status": "passed"`.

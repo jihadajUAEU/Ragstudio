@@ -98,7 +98,7 @@ def test_sample_pack_runbook_uses_configurable_public_safe_url():
     runbook = (SAMPLE_ROOT / "RUNBOOK.md").read_text(encoding="utf-8")
     assert "RAGSTUDIO_FRONTEND_URL" in runbook
     assert "http://127.0.0.1:5173" in runbook
-    assert "10.127.33.19" not in runbook
+    assert re.search(r"10\.\d{1,3}\.\d{1,3}\.\d{1,3}", runbook) is None
 
 
 def test_sample_pack_is_redaction_safe():

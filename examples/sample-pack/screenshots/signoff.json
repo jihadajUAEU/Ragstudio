@@ -1,5 +1,15 @@
 {
   "pack_id": "ragstudio-sample-pack-v1",
   "policy": "fail_closed",
-  "screenshots": []
+  "screenshots": [
+    {
+      "screenshot_path": "screenshots/app-home.png",
+      "screen": "app-home",
+      "safe_to_publish": true,
+      "redaction_status": "passed",
+      "reviewer": "Codex",
+      "reviewed_at": "2026-05-15T09:35:56Z",
+      "notes": "Captured from the local verification app with live table and run values visually redacted before saving."
+    }
+  ]
 }
