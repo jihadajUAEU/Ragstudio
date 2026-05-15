@@ -1,0 +1,263 @@
+{
+  "name": "Ragstudio Synthetic Sample Pack",
+  "version": "2026-05-15",
+  "description": "Synthetic evaluation prompts for the Ragstudio public sample pack.",
+  "items": [
+    {
+      "id": "protocol-exact-1",
+      "document_id": "protocol-spec",
+      "query": "What header MUST a client send before requesting a resumable artifact?",
+      "query_type": "exact_reference",
+      "expected_behavior": "answer_with_evidence",
+      "expected_reference": "SP-1.2"
+    },
+    {
+      "id": "protocol-crossref-1",
+      "document_id": "protocol-spec",
+      "query": "Which sections connect Trace-Anchor and freshness response behavior?",
+      "query_type": "graph_citation",
+      "expected_behavior": "answer_with_evidence",
+      "expected_reference": "SP-3.1"
+    },
+    {
+      "id": "protocol-unsupported-1",
+      "document_id": "protocol-spec",
+      "query": "Which encryption algorithm does Aurora Cache Handshake require?",
+      "query_type": "unsupported",
+      "expected_behavior": "should_not_answer",
+      "expected_reference": "SP-9.9"
+    },
+    {
+      "id": "protocol-error-1",
+      "document_id": "protocol-spec",
+      "query": "What error should an unavailable artifact return?",
+      "query_type": "exact_reference",
+      "expected_behavior": "answer_with_evidence",
+      "expected_reference": "SP-2.2"
+    },
+    {
+      "id": "financial-table-1",
+      "document_id": "financial-filing",
+      "query": "What was FY2026 Calibration revenue?",
+      "query_type": "table_numeric",
+      "expected_behavior": "answer_with_evidence",
+      "expected_reference": "FIN-2026-R2"
+    },
+    {
+      "id": "financial-risk-1",
+      "document_id": "financial-filing",
+      "query": "What supplier delay threshold is described as a risk?",
+      "query_type": "exact_reference",
+      "expected_behavior": "answer_with_evidence",
+      "expected_reference": "FIN-2026-R1"
+    },
+    {
+      "id": "financial-unsupported-1",
+      "document_id": "financial-filing",
+      "query": "What was FY2027 revenue?",
+      "query_type": "unsupported",
+      "expected_behavior": "should_not_answer",
+      "expected_reference": "FIN-2026-R4"
+    },
+    {
+      "id": "financial-liquidity-1",
+      "document_id": "financial-filing",
+      "query": "How many months of operations does liquidity cover?",
+      "query_type": "exact_reference",
+      "expected_behavior": "answer_with_evidence",
+      "expected_reference": "FIN-2026-R3"
+    },
+    {
+      "id": "regulatory-agency-1",
+      "document_id": "regulatory-notice",
+      "query": "Which agency issued the proposed reporting rule?",
+      "query_type": "exact_reference",
+      "expected_behavior": "answer_with_evidence",
+      "expected_reference": "REG-1"
+    },
+    {
+      "id": "regulatory-date-1",
+      "document_id": "regulatory-notice",
+      "query": "When are comments due?",
+      "query_type": "exact_reference",
+      "expected_behavior": "answer_with_evidence",
+      "expected_reference": "REG-3"
+    },
+    {
+      "id": "regulatory-unsupported-1",
+      "document_id": "regulatory-notice",
+      "query": "Which real statute authorizes the rule?",
+      "query_type": "unsupported",
+      "expected_behavior": "should_not_answer",
+      "expected_reference": "REG-7"
+    },
+    {
+      "id": "regulatory-metadata-1",
+      "document_id": "regulatory-notice",
+      "query": "What fields would monthly calibration reports include?",
+      "query_type": "exact_reference",
+      "expected_behavior": "answer_with_evidence",
+      "expected_reference": "REG-2"
+    },
+    {
+      "id": "science-abstract-1",
+      "document_id": "scientific-article",
+      "query": "What did the synthetic study test?",
+      "query_type": "exact_reference",
+      "expected_behavior": "answer_with_evidence",
+      "expected_reference": "SCI-ABS"
+    },
+    {
+      "id": "science-method-1",
+      "document_id": "scientific-article",
+      "query": "Which moisture bands were used in the methods?",
+      "query_type": "table_numeric",
+      "expected_behavior": "answer_with_evidence",
+      "expected_reference": "SCI-METHOD-1"
+    },
+    {
+      "id": "science-figure-1",
+      "document_id": "scientific-article",
+      "query": "What does Figure 2 report about binder signal?",
+      "query_type": "exact_reference",
+      "expected_behavior": "answer_with_evidence",
+      "expected_reference": "SCI-FIG-2"
+    },
+    {
+      "id": "science-unsupported-1",
+      "document_id": "scientific-article",
+      "query": "What medical conclusion does the study prove?",
+      "query_type": "unsupported",
+      "expected_behavior": "should_not_answer",
+      "expected_reference": "SCI-LIMIT-5"
+    },
+    {
+      "id": "technical-acronym-1",
+      "document_id": "technical-report",
+      "query": "What does ATL mean?",
+      "query_type": "exact_reference",
+      "expected_behavior": "answer_with_evidence",
+      "expected_reference": "TR-2"
+    },
+    {
+      "id": "technical-table-1",
+      "document_id": "technical-report",
+      "query": "Which test point had ATL flow rate 0.6 L/min?",
+      "query_type": "table_numeric",
+      "expected_behavior": "answer_with_evidence",
+      "expected_reference": "TR-4.2"
+    },
+    {
+      "id": "technical-finding-1",
+      "document_id": "technical-report",
+      "query": "What ATL flow rate does the report recommend during simulated night operations?",
+      "query_type": "exact_reference",
+      "expected_behavior": "answer_with_evidence",
+      "expected_reference": "TR-5"
+    },
+    {
+      "id": "technical-unsupported-1",
+      "document_id": "technical-report",
+      "query": "What is the real mission launch date?",
+      "query_type": "unsupported",
+      "expected_behavior": "should_not_answer",
+      "expected_reference": "TR-8"
+    },
+    {
+      "id": "book-prose-1",
+      "document_id": "public-domain-book",
+      "query": "Where did Mara keep the lantern index?",
+      "query_type": "exact_reference",
+      "expected_behavior": "answer_with_evidence",
+      "expected_reference": "BOOK-I-1"
+    },
+    {
+      "id": "book-footnote-1",
+      "document_id": "public-domain-book",
+      "query": "What does Footnote A explain?",
+      "query_type": "exact_reference",
+      "expected_behavior": "answer_with_evidence",
+      "expected_reference": "BOOK-I-2"
+    },
+    {
+      "id": "book-multilingual-1",
+      "document_id": "public-domain-book",
+      "query": "Which Arabic phrase is paired with clear light?",
+      "query_type": "multilingual",
+      "expected_behavior": "answer_with_evidence",
+      "expected_reference": "BOOK-II-4"
+    },
+    {
+      "id": "book-unsupported-1",
+      "document_id": "public-domain-book",
+      "query": "Who was the real author of the passage?",
+      "query_type": "unsupported",
+      "expected_behavior": "should_not_answer",
+      "expected_reference": "BOOK-III-9"
+    },
+    {
+      "id": "legal-holding-1",
+      "document_id": "legal-opinion",
+      "query": "What does the panel hold about generated calibration summaries?",
+      "query_type": "exact_reference",
+      "expected_behavior": "answer_with_evidence",
+      "expected_reference": "CASE-2"
+    },
+    {
+      "id": "legal-citation-1",
+      "document_id": "legal-opinion",
+      "query": "Which synthetic cases are cited by the opinion?",
+      "query_type": "graph_citation",
+      "expected_behavior": "answer_with_evidence",
+      "expected_reference": "CASE-3"
+    },
+    {
+      "id": "legal-concurrence-1",
+      "document_id": "legal-opinion",
+      "query": "What limitation does the concurring note mention?",
+      "query_type": "exact_reference",
+      "expected_behavior": "answer_with_evidence",
+      "expected_reference": "CASE-4"
+    },
+    {
+      "id": "legal-unsupported-1",
+      "document_id": "legal-opinion",
+      "query": "Which real court issued this opinion?",
+      "query_type": "unsupported",
+      "expected_behavior": "should_not_answer",
+      "expected_reference": "CASE-8"
+    },
+    {
+      "id": "ocr-warning-1",
+      "document_id": "ocr-stress",
+      "query": "Which reference label is malformed?",
+      "query_type": "exact_reference",
+      "expected_behavior": "answer_with_evidence",
+      "expected_reference": "OCR-A7"
+    },
+    {
+      "id": "ocr-multilingual-1",
+      "document_id": "ocr-stress",
+      "query": "What Arabic note indicates manual review?",
+      "query_type": "multilingual",
+      "expected_behavior": "answer_with_evidence",
+      "expected_reference": "OCR-A2"
+    },
+    {
+      "id": "ocr-table-1",
+      "document_id": "ocr-stress",
+      "query": "Which sensor has a missing observed value?",
+      "query_type": "table_numeric",
+      "expected_behavior": "answer_with_evidence",
+      "expected_reference": "OCR-B3"
+    },
+    {
+      "id": "ocr-unsupported-1",
+      "document_id": "ocr-stress",
+      "query": "What confident observed value should be indexed for Q-18?",
+      "query_type": "unsupported",
+      "expected_behavior": "should_not_answer",
+      "expected_reference": "OCR-C9"
+    }
+  ]
+}

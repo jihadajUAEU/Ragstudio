@@ -1,0 +1,85 @@
+{
+  "pack_id": "ragstudio-sample-pack-v1",
+  "chunks": [
+    {
+      "chunk_id": "protocol-spec-SP-1.2",
+      "document_id": "protocol-spec",
+      "reference": "SP-1.2",
+      "summary": "Normative language and Cache-Intent requirement.",
+      "quality_action_policy": {
+        "vector_index": "allowed",
+        "materialization": "allowed"
+      }
+    },
+    {
+      "chunk_id": "financial-filing-FIN-2026-R2",
+      "document_id": "financial-filing",
+      "reference": "FIN-2026-R2",
+      "summary": "FY2025 and FY2026 segment revenue table.",
+      "quality_action_policy": {
+        "vector_index": "allowed",
+        "materialization": "allowed"
+      }
+    },
+    {
+      "chunk_id": "regulatory-notice-REG-2",
+      "document_id": "regulatory-notice",
+      "reference": "REG-2",
+      "summary": "Monthly calibration report fields.",
+      "quality_action_policy": {
+        "vector_index": "allowed",
+        "materialization": "allowed"
+      }
+    },
+    {
+      "chunk_id": "scientific-article-SCI-FIG-2",
+      "document_id": "scientific-article",
+      "reference": "SCI-FIG-2",
+      "summary": "Figure caption about binder signal returning to baseline.",
+      "quality_action_policy": {
+        "vector_index": "allowed",
+        "materialization": "allowed"
+      }
+    },
+    {
+      "chunk_id": "technical-report-TR-4.2",
+      "document_id": "technical-report",
+      "reference": "TR-4.2",
+      "summary": "Engineering table with ATL flow rates and radiator delta.",
+      "quality_action_policy": {
+        "vector_index": "allowed",
+        "materialization": "allowed"
+      }
+    },
+    {
+      "chunk_id": "public-domain-book-BOOK-II-4",
+      "document_id": "public-domain-book",
+      "reference": "BOOK-II-4",
+      "summary": "Multilingual clear light phrase.",
+      "quality_action_policy": {
+        "vector_index": "allowed",
+        "materialization": "allowed_with_warning"
+      }
+    },
+    {
+      "chunk_id": "legal-opinion-CASE-3",
+      "document_id": "legal-opinion",
+      "reference": "CASE-3",
+      "summary": "Synthetic citation chain.",
+      "quality_action_policy": {
+        "vector_index": "allowed",
+        "materialization": "allowed"
+      }
+    },
+    {
+      "chunk_id": "ocr-stress-OCR-B3",
+      "document_id": "ocr-stress",
+      "reference": "OCR-B3",
+      "summary": "Table row with missing Q-18 observed value.",
+      "quality_action_policy": {
+        "vector_index": "blocked",
+        "materialization": "blocked"
+      }
+    }
+  ]
+}

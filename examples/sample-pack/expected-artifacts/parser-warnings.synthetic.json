@@ -1,0 +1,38 @@
+{
+  "pack_id": "ragstudio-sample-pack-v1",
+  "warnings": [
+    {
+      "document_id": "ocr-stress",
+      "reference": "OCR-A7",
+      "warning_code": "reference_label_malformed",
+      "message": "Reference label [[SENS--17??]] contains broken delimiters and should be reviewed before materialization.",
+      "quality_action_policy": {
+        "materialization": "blocked",
+        "vector_index": "blocked",
+        "graph_projection": "blocked"
+      }
+    },
+    {
+      "document_id": "ocr-stress",
+      "reference": "OCR-B3",
+      "warning_code": "table_cell_missing",
+      "message": "Observed value for Q-18 is missing.",
+      "quality_action_policy": {
+        "materialization": "blocked",
+        "vector_index": "blocked",
+        "graph_projection": "allowed_with_warning"
+      }
+    },
+    {
+      "document_id": "public-domain-book",
+      "reference": "BOOK-II-4",
+      "warning_code": "multilingual_phrase_requires_review",
+      "message": "Mixed-script phrase should retain both English and Arabic text in the same reference unit.",
+      "quality_action_policy": {
+        "materialization": "allowed_with_warning",
+        "vector_index": "allowed",
+        "graph_projection": "allowed"
+      }
+    }
+  ]
+}

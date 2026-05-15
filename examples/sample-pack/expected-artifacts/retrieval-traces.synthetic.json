@@ -1,0 +1,57 @@
+{
+  "pack_id": "ragstudio-sample-pack-v1",
+  "traces": [
+    {
+      "trace_id": "trace-protocol-exact-1",
+      "document_id": "protocol-spec",
+      "query": "What header MUST a client send before requesting a resumable artifact?",
+      "expected_behavior": "answer_with_evidence",
+      "selected_reference": "SP-1.2",
+      "stages": [
+        {"stage": "metadata_filter", "kept": 1},
+        {"stage": "vector_search", "candidates": 3},
+        {"stage": "rerank", "selected": "protocol-spec-SP-1.2"},
+        {"stage": "answer", "grounding": "exact_reference_present"}
+      ]
+    },
+    {
+      "trace_id": "trace-financial-table-1",
+      "document_id": "financial-filing",
+      "query": "What was FY2026 Calibration revenue?",
+      "expected_behavior": "answer_with_evidence",
+      "selected_reference": "FIN-2026-R2",
+      "stages": [
+        {"stage": "metadata_filter", "kept": 1},
+        {"stage": "table_extraction", "table": "segment_revenue"},
+        {"stage": "rerank", "selected": "financial-filing-FIN-2026-R2"},
+        {"stage": "answer", "grounding": "numeric_cell_present"}
+      ]
+    },
+    {
+      "trace_id": "trace-book-multilingual-1",
+      "document_id": "public-domain-book",
+      "query": "Which Arabic phrase is paired with clear light?",
+      "expected_behavior": "answer_with_evidence",
+      "selected_reference": "BOOK-II-4",
+      "stages": [
+        {"stage": "metadata_filter", "kept": 1},
+        {"stage": "lexical_search", "script": "mixed"},
+        {"stage": "rerank", "selected": "public-domain-book-BOOK-II-4"},
+        {"stage": "answer", "grounding": "multilingual_phrase_present"}
+      ]
+    },
+    {
+      "trace_id": "trace-ocr-unsupported-1",
+      "document_id": "ocr-stress",
+      "query": "What confident observed value should be indexed for Q-18?",
+      "expected_behavior": "should_not_answer",
+      "selected_reference": "OCR-C9",
+      "stages": [
+        {"stage": "metadata_filter", "kept": 1},
+        {"stage": "parser_quality_gate", "status": "blocked"},
+        {"stage": "rerank", "selected": "ocr-stress-OCR-B3"},
+        {"stage": "answer", "grounding": "insufficient_evidence"}
+      ]
+    }
+  ]
+}

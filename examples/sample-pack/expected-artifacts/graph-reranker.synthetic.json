@@ -1,0 +1,51 @@
+{
+  "pack_id": "ragstudio-sample-pack-v1",
+  "graph_projection_state": {
+    "status": "synthetic_ready",
+    "node_count": 10,
+    "relationship_count": 8
+  },
+  "relationships": [
+    {
+      "source": "legal-opinion:CASE-3",
+      "target": "legal-opinion:River Log Trust",
+      "type": "CITES"
+    },
+    {
+      "source": "legal-opinion:CASE-3",
+      "target": "legal-opinion:Signal Archive Board",
+      "type": "CITES"
+    },
+    {
+      "source": "scientific-article:SCI-CITE-4",
+      "target": "scientific-article:Delta Wetland Markers",
+      "type": "CITES"
+    },
+    {
+      "source": "technical-report:TR-2",
+      "target": "technical-report:ATL",
+      "type": "DEFINES"
+    }
+  ],
+  "reranker_traces": [
+    {
+      "trace_id": "rerank-legal-citation-1",
+      "query": "Which synthetic cases are cited by the opinion?",
+      "candidates": [
+        {"chunk_id": "legal-opinion-CASE-3", "score": 0.94, "reason": "citation labels present"},
+        {"chunk_id": "legal-opinion-CASE-4", "score": 0.51, "reason": "concurring note only"}
+      ],
+      "selected_chunk_id": "legal-opinion-CASE-3"
+    },
+    {
+      "trace_id": "rerank-ocr-unsupported-1",
+      "query": "What confident observed value should be indexed for Q-18?",
+      "candidates": [
+        {"chunk_id": "ocr-stress-OCR-B3", "score": 0.88, "reason": "mentions Q-18 but value missing"},
+        {"chunk_id": "ocr-stress-OCR-C9", "score": 0.79, "reason": "quality gate warning"}
+      ],
+      "selected_chunk_id": "ocr-stress-OCR-C9",
+      "answer_policy": "should_not_answer"
+    }
+  ]
+}
