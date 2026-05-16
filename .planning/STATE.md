@@ -63,6 +63,10 @@ Progress: [█████████░] 93%
 
 ## Accumulated Context
 
+### Roadmap Evolution
+
+- 2026-05-16: Phase 6 added for App Evidence Viewer and Runtime Trust Banner so app UI improvements stay separate from the public proof-site launch phases.
+
 ### Decisions
 
 Decisions are logged in PROJECT.md Key Decisions table. Recent decisions affecting current work:

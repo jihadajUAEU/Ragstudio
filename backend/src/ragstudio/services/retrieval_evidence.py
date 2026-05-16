@@ -126,8 +126,14 @@ class OrchestratedAnswer:
     error_type: str | None = None
 
 
-def plan_for_query(query: str, *, document_ids: list[str], limit: int) -> RetrievalPlan:
-    understanding = understand_query(query)
+def plan_for_query(
+    query: str,
+    *,
+    document_ids: list[str],
+    limit: int,
+    domain_expansion: Any | None = None,
+) -> RetrievalPlan:
+    understanding = understand_query(query, domain_expansion=domain_expansion)
     normalized = query.casefold()
     intent: QueryIntent = "semantic"
     if re.search(r"\b(how many|count|number of|total)\b", normalized):
@@ -141,7 +147,12 @@ def plan_for_query(query: str, *, document_ids: list[str], limit: int) -> Retrie
     elif re.search(r"\b(summary|summarize|overview)\b", normalized):
         intent = "summary"
 
-    if understanding.intent in {"reference", "arabic_exact_token", "phrase_lookup"}:
+    if understanding.intent in {
+        "reference",
+        "arabic_exact_token",
+        "lexical_expanded_token",
+        "phrase_lookup",
+    }:
         intent = "reference"
     elif understanding.intent == "count":
         intent = "count"
@@ -239,6 +250,10 @@ def _score_candidate(
     ):
         boost += 10.0
         reasons.append(f"{domain_family}_exact")
+
+    if _has_lexical_expanded_evidence(candidate):
+        boost += 28.0
+        reasons.append("lexical_expanded_exact")
 
     if (
         domain_family == "tafseer_reference"

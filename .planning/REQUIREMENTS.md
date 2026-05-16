@@ -81,6 +81,11 @@ Deferred to future releases. Tracked here, but not part of the current roadmap.
 - **BENCH-01**: Public site can show measured scale benchmarks after the benchmark actually runs and publishes artifacts.
 - **BENCH-02**: Public site can show GPU performance claims after GPU path usage and measurement are proven in artifacts.
 
+### App Studio Evidence UX
+
+- **APP-UI-01**: Ragstudio operator can open query source evidence in a focused in-app viewer that shows exact chunk text, document location metadata, parser warnings, quality status, and available reranker context.
+- **APP-UI-02**: Ragstudio operator can see a compact runtime trust status in the app shell and open a detail panel that explains backend, worker, database, graph, parser, LLM, embedding, and reranker readiness from current diagnostics.
+
 ## Out of Scope
 
 Explicitly excluded from v1 to keep the launch credible, reproducible, and safe.

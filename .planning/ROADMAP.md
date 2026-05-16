@@ -17,6 +17,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [ ] **Phase 3: `ragstudio-site` Scaffold and Import Pipeline** - Create the separate static site repo boundary and packet import gate.
 - [ ] **Phase 4: Static Proof Viewer and Public Site UX** - Build the inspectable public proof viewer and demo screenshot experience.
 - [ ] **Phase 5: Launch Hardening and Domain Release** - Connect Cloudflare/domain, enforce accessibility and launch gates, and publish links.
+- [ ] **Phase 6: App Evidence Viewer and Runtime Trust Banner** - Add in-app evidence inspection and compact runtime trust visibility for Ragstudio operators.
 
 ## Phase Details
 
@@ -111,10 +112,27 @@ Plans:
 - [x] 05-02: Add Playwright/axe checks, manual launch checklist, performance/fixture-size checks, and release blocking behavior.
 - [ ] 05-03: Update README/profile links, run final proof/import/site launch verification, and record release proof.
 
+### Phase 6: App Evidence Viewer and Runtime Trust Banner
+**Goal**: Ragstudio operators can inspect the trust state of the running app and open query evidence in context without leaving the Studio shell.
+**Mode:** mvp
+**Depends on**: Phase 5
+**Requirements**: APP-UI-01, APP-UI-02
+**UI hint**: yes
+**Success Criteria** (what must be TRUE):
+  1. The app shell shows a compact runtime trust status derived from current diagnostics.
+  2. The status detail panel explains which runtime dependency or projection state is ready, degraded, or blocking.
+  3. Query result sources can open a focused evidence view with chunk text, metadata, parser warnings, quality status, and reranker context where available.
+  4. Evidence links can route back to existing Documents, Chunks, Query, Graph, and Diagnostics surfaces without duplicating those pages.
+  5. The phase does not introduce exportable investigation reports; reporting remains a later phase after the viewer and status primitives exist.
+**Plans**: 0 plans
+
+Plans:
+- [ ] TBD (run /gsd-plan-phase 6 to break down after SPEC.md)
+
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
+Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
@@ -123,6 +141,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 | 3. `ragstudio-site` Scaffold and Import Pipeline | 2/2 | Complete | 2026-05-14 |
 | 4. Static Proof Viewer and Public Site UX | 3/3 | Complete | 2026-05-14 |
 | 5. Launch Hardening and Domain Release | 2/3 | In Progress | - |
+| 6. App Evidence Viewer and Runtime Trust Banner | 0/0 | Not Planned | - |
 
 ## Coverage
 
@@ -133,6 +152,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 | Phase 3 | VAL-06, SITE-01, SITE-04 |
 | Phase 4 | VIEW-01, VIEW-02, VIEW-03, VIEW-04, VIEW-05, VIEW-06, VIEW-07 |
 | Phase 5 | SITE-02, SITE-03, SITE-05, QA-01, QA-02, QA-03, QA-04, QA-05 |
+| Phase 6 | APP-UI-01, APP-UI-02 |
 
 **Coverage:**
 - v1 requirements: 35 total

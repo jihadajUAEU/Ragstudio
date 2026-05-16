@@ -10,6 +10,7 @@ from ragstudio.services.retrieval_evidence import EvidenceCandidate
 _METADATA_PASS_NAMES = {
     "reference_exact",
     "arabic_exact_token",
+    "lexical_expanded_token",
     "phrase_exact",
     "title_count",
     "semantic_metadata",
@@ -68,6 +69,8 @@ class MetadataRetrievalService:
                     ],
                 }
             )
+            if _has_direct_evidence_candidates(retrieval_pass, pass_candidates):
+                break
 
         return candidates, {"stage": "metadata_retrieval", "passes": pass_traces}
 
@@ -133,6 +136,12 @@ class MetadataRetrievalService:
     ) -> dict[str, Any]:
         if effective_pass == "arabic_exact_token":
             return {"arabic_exact": True, "arabic_token": retrieval_pass.query}
+        if effective_pass == "lexical_expanded_token":
+            return {
+                "lexical_expanded": True,
+                "expanded_token": retrieval_pass.query,
+                "match_type": getattr(retrieval_pass, "match_type", None) or "transliteration",
+            }
         if effective_pass == "reference_exact":
             return {"reference_exact": True, "reference": retrieval_pass.query}
         if effective_pass == "phrase_exact":
@@ -202,6 +211,17 @@ def _normalize_reference(value: Any) -> str | None:
     if not isinstance(value, str) or not value.strip():
         return None
     return value.strip().casefold()
+
+
+def _has_direct_evidence_candidates(
+    retrieval_pass: RetrievalPass,
+    candidates: list[EvidenceCandidate],
+) -> bool:
+    return (
+        bool(getattr(retrieval_pass, "direct_evidence", False))
+        and retrieval_pass.name in _METADATA_PASS_NAMES
+        and any(candidate.retrieval_pass == retrieval_pass.name for candidate in candidates)
+    )
 
 
 def _elapsed_ms(started_at: float) -> float:

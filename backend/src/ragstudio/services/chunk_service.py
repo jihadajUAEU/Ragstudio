@@ -1,3 +1,4 @@
+import json
 from collections.abc import Awaitable, Callable
 from pathlib import Path, PureWindowsPath
 from typing import Any
@@ -21,6 +22,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 MinerUStatusCallback = Callable[[dict[str, Any]], Awaitable[None]]
+_SCRUBBED_DOMAIN_METADATA_VALUE = object()
+_UNSAFE_DOMAIN_METADATA_PATH_KEYS = {"artifact_path", "file_path", "path"}
 
 
 class ChunkService:
@@ -176,6 +179,59 @@ class ChunkService:
             ChunkOut.model_validate(chunks_by_id[chunk_id])
             for chunk_id in unique_ids
             if chunk_id in chunks_by_id
+        ]
+
+    async def domain_metadata_for_documents(
+        self,
+        document_ids: list[str],
+    ) -> list[dict[str, Any]]:
+        requested = list(dict.fromkeys(document_id for document_id in document_ids if document_id))
+        if not requested:
+            return []
+
+        rows = (
+            await self.session.execute(
+                select(Chunk.document_id, Chunk.metadata_json)
+                .where(Chunk.document_id.in_(requested))
+                .order_by(Chunk.created_at.asc(), Chunk.id.asc())
+            )
+        ).all()
+        metadata_by_document: dict[str, list[dict[str, Any]]] = {
+            document_id: [] for document_id in requested
+        }
+        seen_by_document: dict[str, set[str]] = {
+            document_id: set() for document_id in requested
+        }
+        for document_id, metadata_json in rows:
+            if document_id not in metadata_by_document or not isinstance(metadata_json, dict):
+                continue
+            domain_metadata = metadata_json.get("domain_metadata")
+            if not isinstance(domain_metadata, dict):
+                continue
+            metadata_copy = sanitize_db_value(domain_metadata)
+            scrubbed_metadata = self._scrub_domain_metadata_lookup_value(metadata_copy)
+            if not isinstance(scrubbed_metadata, dict):
+                continue
+            dedupe_key = json.dumps(
+                scrubbed_metadata,
+                sort_keys=True,
+                separators=(",", ":"),
+                default=str,
+            )
+            if dedupe_key in seen_by_document[document_id]:
+                continue
+            seen_by_document[document_id].add(dedupe_key)
+            metadata_by_document[document_id].append(
+                {
+                    **scrubbed_metadata,
+                    "document_id": document_id,
+                }
+            )
+
+        return [
+            metadata
+            for document_id in requested
+            for metadata in metadata_by_document[document_id]
         ]
 
     async def quality_reports_for_documents(
@@ -363,6 +419,39 @@ class ChunkService:
         if not isinstance(value, str):
             return False
         return Path(value).is_absolute() or PureWindowsPath(value).is_absolute()
+
+    def _scrub_domain_metadata_lookup_value(self, value: Any) -> Any:
+        if isinstance(value, dict):
+            scrubbed: dict[str, Any] = {}
+            for key, item in value.items():
+                if self._is_unsafe_domain_metadata_path_key(key):
+                    continue
+                scrubbed_item = self._scrub_domain_metadata_lookup_value(item)
+                if scrubbed_item is _SCRUBBED_DOMAIN_METADATA_VALUE:
+                    continue
+                scrubbed[key] = scrubbed_item
+            return scrubbed
+        if isinstance(value, list):
+            return [
+                scrubbed_item
+                for item in value
+                if (
+                    scrubbed_item := self._scrub_domain_metadata_lookup_value(item)
+                )
+                is not _SCRUBBED_DOMAIN_METADATA_VALUE
+            ]
+        if self._is_absolute_path_value(value):
+            return _SCRUBBED_DOMAIN_METADATA_VALUE
+        return value
+
+    def _is_unsafe_domain_metadata_path_key(self, key: Any) -> bool:
+        if not isinstance(key, str):
+            return False
+        normalized = key.casefold()
+        return (
+            normalized in _UNSAFE_DOMAIN_METADATA_PATH_KEYS
+            or normalized.endswith("_path")
+        )
 
     def _quality_language(self, metadata: DomainMetadata) -> str:
         values = [
