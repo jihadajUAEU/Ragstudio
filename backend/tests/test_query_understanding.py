@@ -39,3 +39,21 @@ def test_understanding_detects_phrase_lookup():
         "phrase_exact",
         "semantic_metadata",
     ]
+
+
+def test_reference_query_with_context_uses_graph_context_hybrid_strategy():
+    understanding = understand_query("Explain 1:5 and show the surrounding connected verses")
+
+    assert understanding.intent == "reference"
+    assert understanding.reference_hints == ["1:5"]
+    assert understanding.retrieval_strategy == "graph_context_hybrid"
+    assert understanding.graph_context_required is True
+    assert understanding.direct_evidence_required is True
+
+
+def test_semantic_query_uses_semantic_hybrid_strategy():
+    understanding = understand_query("What does Ibn Kathir say about guidance?")
+
+    assert understanding.intent == "semantic"
+    assert understanding.retrieval_strategy == "semantic_hybrid"
+    assert understanding.graph_context_required is False

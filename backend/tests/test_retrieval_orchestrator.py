@@ -31,6 +31,18 @@ def test_plan_for_reference_query_marks_reference_intent():
     assert plan.use_relationships is True
 
 
+def test_plan_for_reference_context_query_sets_graph_context_strategy():
+    plan = plan_for_query(
+        "Explain 1:5 and show the surrounding connected verses",
+        document_ids=["doc-tafseer"],
+        limit=5,
+    )
+
+    assert plan.intent == "reference"
+    assert plan.retrieval_strategy == "graph_context_hybrid"
+    assert plan.graph_context_required is True
+
+
 def test_plan_for_arabic_token_carries_retrieval_passes():
     plan = plan_for_query("حنانا", document_ids=["doc-quran"], limit=5)
 
@@ -130,6 +142,44 @@ def test_fusion_boosts_title_count_chunk_for_count_query():
     assert fused[0].chunk_id == "m1"
     assert "answer_bearing_count" in fused[0].reasons
     assert fused[0].final_score > weak_native.base_score
+
+
+def test_fusion_keeps_exact_reference_first_and_boosts_graph_context_neighbors():
+    plan = plan_for_query(
+        "Explain 1:5 and show the surrounding connected verses",
+        document_ids=["doc-tafseer"],
+        limit=5,
+    )
+    exact = EvidenceCandidate(
+        candidate_id="metadata:1-5",
+        text="Verse 1:5 Guide us to the straight path.",
+        document_id="doc-tafseer",
+        chunk_id="chunk-1-5",
+        source_location={"reference": "1:5"},
+        metadata={},
+        tool="metadata",
+        tool_rank=1,
+        base_score=10.0,
+        retrieval_pass="reference_exact",
+    )
+    neighbor = EvidenceCandidate(
+        candidate_id="graph:1-4",
+        text="Verse 1:4 It is You we worship and You we ask for help.",
+        document_id="doc-tafseer",
+        chunk_id="chunk-1-4",
+        source_location={"reference": "1:4"},
+        metadata={"graph_relationship": {"type": "REFERENCES", "path": "reference_hop"}},
+        tool="graph",
+        tool_rank=1,
+        base_score=10.0,
+    )
+
+    fused = fuse_candidates(plan, [neighbor, exact])
+
+    assert fused[0].chunk_id == "chunk-1-5"
+    assert fused[1].chunk_id == "chunk-1-4"
+    assert "reference_first_hybrid" in fused[0].reasons
+    assert "query_requested_graph_context" in fused[1].reasons
 
 
 def test_fusion_dedupes_by_text_and_keeps_best_candidate():

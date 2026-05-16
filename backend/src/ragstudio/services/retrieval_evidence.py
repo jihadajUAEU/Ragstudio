@@ -22,6 +22,8 @@ class RetrievalPlan:
     use_relationships: bool = True
     candidate_limit: int = 20
     understanding: QueryUnderstanding | None = None
+    retrieval_strategy: str = "semantic_hybrid"
+    graph_context_required: bool = False
 
 
 @dataclass(frozen=True)
@@ -153,6 +155,8 @@ def plan_for_query(query: str, *, document_ids: list[str], limit: int) -> Retrie
         intent=intent,
         candidate_limit=max(limit * 2, 20),
         understanding=understanding,
+        retrieval_strategy=understanding.retrieval_strategy,
+        graph_context_required=understanding.graph_context_required,
     )
 
 
@@ -208,6 +212,21 @@ def _score_candidate(
         if title and query_terms & _terms(title):
             boost += 8.0
             reasons.append("title_match")
+
+    if (
+        plan.retrieval_strategy in {"reference_first_hybrid", "graph_context_hybrid"}
+        and candidate.retrieval_pass == "reference_exact"
+    ):
+        boost += 12.0
+        reasons.append("reference_first_hybrid")
+
+    if plan.graph_context_required and candidate.tool == "graph":
+        boost += 8.0
+        reasons.append("query_requested_graph_context")
+
+    if plan.retrieval_strategy == "count_metadata_hybrid" and candidate.tool == "metadata":
+        boost += 6.0
+        reasons.append("count_metadata_hybrid")
 
     if candidate.tool == "metadata":
         boost += 3.0
