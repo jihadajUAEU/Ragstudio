@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import re
 from dataclasses import dataclass, field
 from typing import Any, Literal
@@ -83,7 +84,7 @@ def understand_query(query: str, *, domain_expansion: Any | None = None) -> Quer
             expanded_terms=expanded_terms,
             retrieval_passes=[*expansion_passes, *_semantic_passes(query)],
             direct_evidence_required=True,
-            expansion_trace=dict(getattr(domain_expansion, "trace", {}) or {}),
+            expansion_trace=copy.deepcopy(getattr(domain_expansion, "trace", {}) or {}),
         )
 
     if reference_hints:

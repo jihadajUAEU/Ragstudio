@@ -36,6 +36,28 @@ def test_understand_query_accepts_domain_expansion_passes():
     ]
 
 
+def test_understand_query_deep_copies_domain_expansion_trace():
+    expansion = DomainQueryExpansionService().expand(
+        "hanan",
+        domain_metadata=[
+            {
+                "domain": "quran_tafseer",
+                "document_type": "commentary",
+                "language": "mixed",
+                "tags": ["quran", "arabic"],
+            }
+        ],
+    )
+
+    understanding = understand_query("hanan", domain_expansion=expansion)
+
+    understanding.expansion_trace["expanded_terms"].append("leaked")
+    understanding.expansion_trace["expansions"][0]["terms"].append("also leaked")
+
+    assert expansion.trace["expanded_terms"] == ["حنان", "حنانا", "وحنانا"]
+    assert expansion.trace["expansions"][0]["terms"] == ["حنان", "حنانا", "وحنانا"]
+
+
 def test_understanding_detects_arabic_exact_token_and_variants():
     understanding = understand_query("وَحَنَانًا")
 
