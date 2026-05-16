@@ -1,5 +1,8 @@
 import pytest
+
+from ragstudio.db.models import Chunk, Document
 from ragstudio.schemas.chunks import ChunkOut
+from ragstudio.services.chunk_lexical_search_repository import ChunkLexicalSearchRepository
 from ragstudio.services.metadata_retrieval_service import MetadataRetrievalService
 from ragstudio.services.query_understanding import understand_query
 
@@ -66,3 +69,47 @@ async def test_metadata_service_runs_arabic_exact_before_semantic():
     assert trace["passes"][0]["top_candidate_ids"] == ["metadata:chunk-19-13"]
     assert trace["passes"][1]["name"] == "semantic_metadata"
     assert trace["passes"][1]["candidate_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_reference_prefilter_returns_exact_preview_ref_before_full_scan(client):
+    app = client._transport.app
+    async with app.state.session_factory() as session:
+        document = Document(
+            filename="tafseer.txt",
+            content_type="text/plain",
+            sha256="tafseer-ref-prefilter",
+            artifact_path=str(app.state.settings.data_dir / "tafseer.txt"),
+            status="succeeded",
+        )
+        session.add(document)
+        await session.flush()
+        session.add_all(
+            [
+                Chunk(
+                    document_id=document.id,
+                    text=f"Filler chunk {index}",
+                    preview_ref=None,
+                    metadata_json={},
+                    source_location={},
+                )
+                for index in range(100)
+            ]
+        )
+        exact = Chunk(
+            document_id=document.id,
+            text="Verse 1:5 Guide us to the straight path.",
+            preview_ref="1:5",
+            metadata_json={"reference_metadata": {"references": ["1:5"]}},
+            source_location={"reference": "1:5"},
+        )
+        session.add(exact)
+        await session.commit()
+
+        results = await ChunkLexicalSearchRepository(session).reference_prefilter(
+            query="Explain 1:5",
+            document_ids=[document.id],
+            limit=5,
+        )
+
+    assert [chunk.preview_ref for chunk in results] == ["1:5"]

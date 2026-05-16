@@ -120,11 +120,19 @@ class ChunkService:
             statement.order_by(Chunk.created_at.asc(), Chunk.id.asc())
         )
         chunks = list(result.scalars().all())
-        prefiltered = await ChunkLexicalSearchRepository(self.session).arabic_prefilter(
+        repository = ChunkLexicalSearchRepository(self.session)
+        prefilter_limit = max(search_in.limit, 20)
+        reference_prefiltered = await repository.reference_prefilter(
             query=search_in.query,
             document_ids=search_in.document_ids,
-            limit=max(search_in.limit, 20),
+            limit=prefilter_limit,
         )
+        arabic_prefiltered = await repository.arabic_prefilter(
+            query=search_in.query,
+            document_ids=search_in.document_ids,
+            limit=prefilter_limit,
+        )
+        prefiltered = [*reference_prefiltered, *arabic_prefiltered]
         prefiltered_ids = {chunk.id for chunk in prefiltered}
         chunks = [*prefiltered, *[chunk for chunk in chunks if chunk.id not in prefiltered_ids]]
 
