@@ -138,7 +138,7 @@ class MetadataRetrievalService:
             return {
                 "lexical_expanded": True,
                 "expanded_token": retrieval_pass.query,
-                "match_type": retrieval_pass.match_type or "transliteration",
+                "match_type": getattr(retrieval_pass, "match_type", None) or "transliteration",
             }
         if effective_pass == "reference_exact":
             return {"reference_exact": True, "reference": retrieval_pass.query}

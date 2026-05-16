@@ -92,6 +92,13 @@ class LexicalExpandedChunkService:
         return type("SearchResult", (), {"items": [], "total": 0})()
 
 
+class LegacyLexicalExpandedPass:
+    name = "lexical_expanded_token"
+    query = "حنانا"
+    limit_multiplier = 1
+    direct_evidence = True
+
+
 @pytest.mark.asyncio
 async def test_metadata_service_runs_arabic_exact_before_semantic():
     chunk_service = FakeChunkService()
@@ -172,13 +179,7 @@ async def test_metadata_service_falls_back_for_legacy_lexical_expanded_passes():
         query="hanana",
         intent="lexical_expanded_token",
         answer_type="reference",
-        retrieval_passes=[
-            RetrievalPass(
-                name="lexical_expanded_token",
-                query="حنانا",
-                direct_evidence=True,
-            )
-        ],
+        retrieval_passes=[LegacyLexicalExpandedPass()],
     )
 
     candidates, _trace = await MetadataRetrievalService(chunk_service).retrieve(
