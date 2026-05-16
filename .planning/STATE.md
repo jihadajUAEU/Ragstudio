@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 05-02-PLAN.md
-last_updated: "2026-05-16T12:36:29Z"
+stopped_at: Phase 06 context gathered
+last_updated: "2026-05-16T13:45:06.109Z"
 last_activity: 2026-05-16 -- Completed quick task 260516-n1c Task 5 lexical-expanded dedupe scoring fix
 progress:
-  total_phases: 5
+  total_phases: 6
   completed_phases: 4
   total_plans: 14
   completed_plans: 13
-  percent: 93
+  percent: 67
 ---
 
 # Project State
@@ -105,6 +105,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-05-14T16:04:53.400Z
-Stopped at: Completed 05-02-PLAN.md
-Resume file: None
+Last session: 2026-05-16T13:45:06.103Z
+Stopped at: Phase 06 context gathered
+Resume file: .planning/phases/06-app-evidence-viewer-and-runtime-trust-banner/06-CONTEXT.md
