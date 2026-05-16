@@ -1,3 +1,4 @@
+import json
 from collections.abc import Awaitable, Callable
 from pathlib import Path, PureWindowsPath
 from typing import Any
@@ -176,6 +177,58 @@ class ChunkService:
             ChunkOut.model_validate(chunks_by_id[chunk_id])
             for chunk_id in unique_ids
             if chunk_id in chunks_by_id
+        ]
+
+    async def domain_metadata_for_documents(
+        self,
+        document_ids: list[str],
+    ) -> list[dict[str, Any]]:
+        requested = list(dict.fromkeys(document_id for document_id in document_ids if document_id))
+        if not requested:
+            return []
+
+        rows = (
+            await self.session.execute(
+                select(Chunk.document_id, Chunk.metadata_json)
+                .where(Chunk.document_id.in_(requested))
+                .order_by(Chunk.created_at.asc(), Chunk.id.asc())
+            )
+        ).all()
+        metadata_by_document: dict[str, list[dict[str, Any]]] = {
+            document_id: [] for document_id in requested
+        }
+        seen_by_document: dict[str, set[str]] = {
+            document_id: set() for document_id in requested
+        }
+        for document_id, metadata_json in rows:
+            if document_id not in metadata_by_document or not isinstance(metadata_json, dict):
+                continue
+            domain_metadata = metadata_json.get("domain_metadata")
+            if not isinstance(domain_metadata, dict):
+                continue
+            metadata_copy = sanitize_db_value(domain_metadata)
+            if not isinstance(metadata_copy, dict):
+                continue
+            dedupe_key = json.dumps(
+                metadata_copy,
+                sort_keys=True,
+                separators=(",", ":"),
+                default=str,
+            )
+            if dedupe_key in seen_by_document[document_id]:
+                continue
+            seen_by_document[document_id].add(dedupe_key)
+            metadata_by_document[document_id].append(
+                {
+                    **metadata_copy,
+                    "document_id": document_id,
+                }
+            )
+
+        return [
+            metadata
+            for document_id in requested
+            for metadata in metadata_by_document[document_id]
         ]
 
     async def quality_reports_for_documents(
