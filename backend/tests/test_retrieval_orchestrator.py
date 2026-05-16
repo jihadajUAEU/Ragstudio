@@ -649,6 +649,20 @@ class SlowRuntimeTool:
         return RuntimeQueryResult(answer="late", sources=[])
 
 
+class SlowNativeRuntimeTool(FakeRuntimeTool):
+    def __init__(self):
+        self.query_called = False
+
+    async def query(self, query, *, document_ids, query_config):
+        self.query_called = True
+        await asyncio.sleep(0.05)
+        return RuntimeQueryResult(
+            answer="slow native answer",
+            sources=[],
+            timings={"runtime_query_ms": 50},
+        )
+
+
 class ExplodingNativeRuntimeTool:
     async def query(self, query, *, document_ids, query_config):
         raise RuntimeError("native query crashed")
@@ -1267,6 +1281,41 @@ async def test_orchestrator_degrades_native_timeout_to_metadata():
     assert result.timings["native_error_type"] == "native_query_timeout"
     assert "timed out" in result.timings["native_error"]
     assert result.timings["metadata_ms"] >= 0
+    assert answer_service.called is True
+
+
+@pytest.mark.asyncio
+async def test_fast_mode_uses_metadata_when_native_misses_fast_budget():
+    runtime = SlowNativeRuntimeTool()
+    answer_service = FakeAnswerService()
+    orchestrator = RetrievalOrchestrator(
+        chunk_service=FakeChunkSearchService(),
+        answer_service=answer_service,
+        reranker_service=FakeRerankerService(),
+        graph_expansion_service=FakeGraphExpansionService(),
+    )
+
+    result = await orchestrator.query(
+        "how many hadith in bukhari",
+        runtime=runtime,
+        profile=type("Profile", (), {"enable_rerank": False, "reranker_provider": "disabled"})(),
+        document_ids=["doc-1"],
+        variant_id="variant-1",
+        query_config={
+            "limit": 8,
+            "response_mode": "fast",
+            "response_budget_ms": 200,
+            "native_query_timeout_ms": 1,
+            "graph_expansion_enabled": False,
+        },
+    )
+
+    assert runtime.query_called is True
+    assert result.error is None
+    assert result.sources
+    assert result.timings["native_degraded"] is True
+    assert result.timings["native_error_type"] == "native_query_timeout"
+    assert result.timings["response_budget_ms"] == 200
     assert answer_service.called is True
 
 
