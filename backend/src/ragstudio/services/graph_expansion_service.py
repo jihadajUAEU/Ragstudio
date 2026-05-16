@@ -138,6 +138,15 @@ class GraphExpansionService:
                    [rel IN bridge_relationship | type(rel)] AS bridge_relationship_types,
                    "reference_hop" AS graph_path
         }}
+        RETURN relationship_id,
+               relationship_type,
+               relationship_properties,
+               seed_properties,
+               neighbor_id,
+               neighbor_labels,
+               neighbor_properties,
+               bridge_relationship_types,
+               graph_path
         LIMIT $limit
         """
         with driver.session() as session:

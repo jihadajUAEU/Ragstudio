@@ -94,6 +94,8 @@ async def test_graph_expansion_scopes_query_to_workspace_label():
 
     query, params = driver.session_instance.calls[0]
     assert "CALL {" in query
+    assert "RETURN relationship_id," in query
+    assert query.strip().endswith("LIMIT $limit")
     assert (
         "MATCH (seed:`ragstudio_tenant_one`)-[relationship]-"
         "(neighbor:`ragstudio_tenant_one`:RagstudioChunk)"
