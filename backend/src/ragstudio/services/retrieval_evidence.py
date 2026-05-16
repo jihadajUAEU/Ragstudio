@@ -251,10 +251,6 @@ def _score_candidate(
         boost += 10.0
         reasons.append(f"{domain_family}_exact")
 
-    if _has_lexical_expanded_evidence(candidate):
-        boost += 28.0
-        reasons.append("lexical_expanded_exact")
-
     if (
         domain_family == "tafseer_reference"
         and plan.graph_context_required
