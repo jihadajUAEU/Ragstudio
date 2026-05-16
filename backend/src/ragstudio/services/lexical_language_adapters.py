@@ -6,7 +6,12 @@ from typing import Protocol
 
 from ragstudio.services.arabic_text import arabic_query_variants, normalize_arabic_text
 
-_ARABIC_RE = re.compile(r"[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]")
+_ARABIC_RE = re.compile(
+    r"[\u0600-\u06FF\u0750-\u077F\u0870-\u089F\u08A0-\u08FF"
+    r"\uFB50-\uFDFF\uFE70-\uFEFF"
+    r"\U00010E60-\U00010E7F\U00010EC0-\U00010EFF"
+    r"\U0001EC70-\U0001ECBF\U0001ED00-\U0001ED4F\U0001EE00-\U0001EEFF]"
+)
 _LATIN_RE = re.compile(r"[A-Za-z]")
 
 _ARABIC_TRANSLITERATION_LEXICON: dict[str, list[str]] = {

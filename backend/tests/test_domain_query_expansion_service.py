@@ -44,6 +44,19 @@ def test_arabic_adapter_detects_presentation_form_arabic_as_exact_script():
     assert expansion.confidence == 1.0
 
 
+def test_arabic_adapter_detects_extended_b_arabic_as_exact_script():
+    adapter = ArabicLexicalAdapter()
+
+    expansion = adapter.expand_query("\u0870")
+
+    assert adapter.supports_query("\u0870") is True
+    assert expansion.language == "arabic"
+    assert expansion.script == "arab"
+    assert expansion.terms
+    assert expansion.match_type == "exact_script"
+    assert expansion.confidence == 1.0
+
+
 def test_arabic_transliteration_terms_are_not_shared_between_expansions():
     adapter = ArabicLexicalAdapter()
 
