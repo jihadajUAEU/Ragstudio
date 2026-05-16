@@ -12,6 +12,7 @@ from ragstudio.services.arabic_text import arabic_tokens
 from ragstudio.services.chunk_service import ChunkService
 from ragstudio.services.context_assembly_service import ContextAssemblyService
 from ragstudio.services.domain_metadata_quality_gate import DomainMetadataQualityGate
+from ragstudio.services.domain_query_expansion_service import DomainQueryExpansionService
 from ragstudio.services.evidence_first_answer_service import EvidenceFirstAnswerService
 from ragstudio.services.graph_expansion_service import GraphExpansionService
 from ragstudio.services.grounding_validator import GroundingValidator
@@ -81,6 +82,7 @@ class RetrievalOrchestrator:
         metadata_retrieval_service: MetadataRetrievalService | None = None,
         grounding_validator: GroundingValidator | None = None,
         evidence_first_answer_service: EvidenceFirstAnswerService | None = None,
+        domain_query_expansion_service: DomainQueryExpansionService | None = None,
     ):
         self.chunk_service = chunk_service
         self.answer_service = answer_service or RuntimeAnswerService()
@@ -94,6 +96,9 @@ class RetrievalOrchestrator:
         self.grounding_validator = grounding_validator or GroundingValidator()
         self.evidence_first_answer_service = (
             evidence_first_answer_service or EvidenceFirstAnswerService()
+        )
+        self.domain_query_expansion_service = (
+            domain_query_expansion_service or DomainQueryExpansionService()
         )
 
     async def query(
@@ -112,7 +117,17 @@ class RetrievalOrchestrator:
         deadline_at = _deadline_at(started, query_config)
         if deadline_at is not None:
             timings["response_budget_ms"] = _response_budget_ms(query_config)
-        plan = plan_for_query(query, document_ids=document_ids, limit=limit)
+        domain_metadata = await self._domain_metadata_for_documents(document_ids)
+        domain_expansion = self.domain_query_expansion_service.expand(
+            query,
+            domain_metadata=domain_metadata,
+        )
+        plan = plan_for_query(
+            query,
+            document_ids=document_ids,
+            limit=limit,
+            domain_expansion=domain_expansion,
+        )
         observability = RetrievalObservability()
         cache_decision = observability.cache_decision(
             query=query,
@@ -123,11 +138,19 @@ class RetrievalOrchestrator:
             {
                 "stage": "planner",
                 "intent": plan.intent,
+                "understanding_intent": plan.understanding.intent,
+                "retrieval_strategy": plan.retrieval_strategy,
+                "expanded_terms": list(plan.understanding.expanded_terms),
+                "retrieval_passes": [
+                    item.name for item in plan.understanding.retrieval_passes
+                ],
                 "tools": ["native", "metadata", "graph"],
                 "candidate_limit": plan.candidate_limit,
                 "cache": cache_decision,
             }
         ]
+        if domain_expansion.expansions or domain_expansion.retrieval_passes:
+            traces.append(dict(domain_expansion.trace))
         timings["planner_ms"] = _elapsed_ms(started)
 
         try:
@@ -418,6 +441,23 @@ class RetrievalOrchestrator:
         if isinstance(max_context_tokens, int) and max_context_tokens > 0:
             return ContextAssemblyService(max_context_tokens=max_context_tokens)
         return self.context_assembly_service
+
+    async def _domain_metadata_for_documents(
+        self,
+        document_ids: list[str],
+    ) -> list[dict[str, Any]]:
+        if not document_ids:
+            return []
+        lookup = getattr(self.chunk_service, "domain_metadata_for_documents", None)
+        if not callable(lookup):
+            return []
+        try:
+            metadata = await lookup(document_ids)
+        except Exception:
+            return []
+        if not isinstance(metadata, list):
+            return []
+        return [item for item in metadata if isinstance(item, dict)]
 
     async def _parallel_retrieval(
         self,

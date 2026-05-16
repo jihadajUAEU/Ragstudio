@@ -728,6 +728,49 @@ class FakeChunkSearchService:
         ]
 
 
+class QuranDomainMetadataChunkSearchService:
+    def __init__(self):
+        self.calls = 0
+        self.search_queries = []
+        self.domain_metadata_document_calls = []
+
+    async def domain_metadata_for_documents(self, document_ids):
+        self.domain_metadata_document_calls.append(list(document_ids))
+        return [
+            {
+                "domain": "quran_tafseer",
+                "document_type": "tafseer",
+                "content_role": "quran",
+                "language": "mixed",
+                "tags": ["quran", "tafseer", "arabic"],
+            }
+        ]
+
+    async def search(self, search_in):
+        self.calls += 1
+        self.search_queries.append(search_in.query)
+        return type(
+            "SearchResult",
+            (),
+            {
+                "items": [
+                    ChunkOut(
+                        id=f"quran-{self.calls}",
+                        document_id="doc-quran",
+                        text=f"[19:13] وَحَنَانًا مِّن لَّدُنَّا matched {search_in.query}",
+                        source_location={"page": 312, "reference": "19:13"},
+                        metadata={
+                            "domain_metadata": {"domain": "quran_tafseer"},
+                            "reference_metadata": {"references": ["19:13"]},
+                            "score": 10.0,
+                        },
+                    )
+                ],
+                "total": 1,
+            },
+        )()
+
+
 class ParserWarningChunkSearchService(FakeChunkSearchService):
     async def search(self, search_in):
         self.calls += 1
@@ -1496,6 +1539,59 @@ async def test_orchestrator_skips_native_when_metadata_only_requested():
         "reference_exact",
         "semantic_metadata",
     ]
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_uses_selected_document_domain_metadata_for_expansion():
+    answer_service = FakeAnswerService()
+    chunk_service = QuranDomainMetadataChunkSearchService()
+    orchestrator = RetrievalOrchestrator(
+        chunk_service=chunk_service,
+        answer_service=answer_service,
+        reranker_service=FakeRerankerService(),
+        graph_expansion_service=FakeGraphExpansionService(),
+    )
+
+    result = await orchestrator.query(
+        "hanan",
+        runtime=NativeSearchShouldNotRun(),
+        profile=type("Profile", (), {"enable_rerank": False, "reranker_provider": "disabled"})(),
+        document_ids=["doc-quran"],
+        variant_id="variant-1",
+        query_config={
+            "limit": 8,
+            "retrieval_mode": "metadata",
+            "graph_expansion_enabled": False,
+        },
+    )
+
+    assert result.error is None
+    assert chunk_service.domain_metadata_document_calls == [["doc-quran"]]
+    assert "native_stage_ms" not in result.timings
+
+    retrieval_trace = next(
+        trace for trace in result.chunk_traces if trace["stage"] == "retrieval"
+    )
+    assert retrieval_trace["native_status"] == "skipped"
+    lexical_passes = [
+        item
+        for item in retrieval_trace["metadata_trace"]["passes"]
+        if item["name"] == "lexical_expanded_token"
+    ]
+    assert [item["query"] for item in lexical_passes] == ["حنان", "حنانا", "وحنانا"]
+
+    expansion_trace = next(
+        trace
+        for trace in result.chunk_traces
+        if trace.get("stage") == "domain_query_expansion"
+    )
+    assert expansion_trace["expanded_terms"] == ["حنان", "حنانا", "وحنانا"]
+
+    planner_trace = next(
+        trace for trace in result.chunk_traces if trace["stage"] == "planner"
+    )
+    assert planner_trace["understanding_intent"] == "lexical_expanded_token"
+    assert planner_trace["expanded_terms"] == ["حنان", "حنانا", "وحنانا"]
 
 
 @pytest.mark.asyncio
