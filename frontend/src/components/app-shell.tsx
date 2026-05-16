@@ -1,9 +1,10 @@
 import { Activity, Menu, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import type { ReactNode } from "react";
 
 import { studioRoutes } from "../lib/routes";
 import { cn } from "../lib/utils";
+import { FocusTrapDialog } from "./focus-trap-dialog";
 import { Button } from "./ui/button";
 
 export function AppShell({
@@ -18,84 +19,19 @@ export function AppShell({
   children: ReactNode;
 }) {
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
-  const mobileNavRef = useRef<HTMLElement | null>(null);
-
-  useEffect(() => {
-    if (!isMobileNavOpen) {
-      return;
-    }
-    const previousActiveElement = document.activeElement instanceof HTMLElement
-      ? document.activeElement
-      : null;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-
-    const focusFirstControl = () => {
-      const focusable = mobileNavRef.current?.querySelector<HTMLElement>(
-        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
-      );
-      focusable?.focus();
-    };
-    focusFirstControl();
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setIsMobileNavOpen(false);
-        return;
-      }
-      if (event.key !== "Tab" || !mobileNavRef.current) {
-        return;
-      }
-      const focusable = Array.from(
-        mobileNavRef.current.querySelectorAll<HTMLElement>(
-          'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
-        ),
-      ).filter((element) => !element.hasAttribute("disabled"));
-      if (focusable.length === 0) {
-        event.preventDefault();
-        return;
-      }
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => {
-      window.removeEventListener("keydown", handleKeyDown);
-      document.body.style.overflow = previousOverflow;
-      if (previousActiveElement?.isConnected) {
-        previousActiveElement.focus();
-      }
-    };
-  }, [isMobileNavOpen]);
 
   return (
     <div className="min-h-screen bg-[#f5f7f8] text-[#24313a]">
-      {isMobileNavOpen ? (
-        <button
-          type="button"
-          className="fixed inset-0 z-20 bg-[#1f2933]/35 lg:hidden"
-          aria-label="Close navigation"
-          onClick={() => setIsMobileNavOpen(false)}
-        />
-      ) : null}
-
-      {isMobileNavOpen ? (
-        <aside
-          id="studio-mobile-navigation"
-          ref={mobileNavRef}
-          role="dialog"
-          aria-modal="true"
-          aria-label="Studio navigation"
-          className="fixed inset-y-0 left-0 z-30 w-64 border-r border-[#d6dde1] bg-[#fbfcfd] lg:hidden"
-        >
+      <FocusTrapDialog
+        open={isMobileNavOpen}
+        ariaLabel="Studio navigation"
+        overlayLabel="Close navigation"
+        panelId="studio-mobile-navigation"
+        onClose={() => setIsMobileNavOpen(false)}
+        overlayClassName="lg:hidden"
+        className="fixed inset-y-0 left-0 z-30 w-64 border-r border-[#d6dde1] bg-[#fbfcfd] lg:hidden"
+      >
+        <aside>
           <SidebarContent
             activePath={activePath}
             onClose={() => setIsMobileNavOpen(false)}
@@ -105,7 +41,7 @@ export function AppShell({
             }}
           />
         </aside>
-      ) : null}
+      </FocusTrapDialog>
 
       <aside className="fixed inset-y-0 left-0 z-20 hidden w-64 border-r border-[#d6dde1] bg-[#fbfcfd] lg:block">
         <SidebarContent activePath={activePath} onNavigate={onNavigate} />
