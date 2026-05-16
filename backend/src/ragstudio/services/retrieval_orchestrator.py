@@ -57,6 +57,15 @@ class ParallelRetrievalFailed(RuntimeError):
         super().__init__(error)
 
 
+class _ProfileWithLlmTimeout:
+    def __init__(self, profile: Any, llm_timeout_ms: int):
+        self._profile = profile
+        self.llm_timeout_ms = llm_timeout_ms
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._profile, name)
+
+
 class RetrievalOrchestrator:
     def __init__(
         self,
@@ -332,17 +341,18 @@ class RetrievalOrchestrator:
             )
             * 1000
         )
+        answer_profile = _profile_with_llm_timeout(profile, timeout_ms)
         try:
             if response_mode == "fast":
                 answer, token_metadata = await asyncio.wait_for(
-                    self.answer_service.answer(query, evidence, profile),
+                    self.answer_service.answer(query, evidence, answer_profile),
                     timeout=max(timeout_ms, 1) / 1000,
                 )
             else:
                 answer, token_metadata = await self.answer_service.answer(
                     query,
                     evidence,
-                    profile,
+                    answer_profile,
                 )
             timings["answer_ms"] = _elapsed_ms(answer_started)
             return answer, {
@@ -976,7 +986,11 @@ def _answer_budget_ms(query_config: dict[str, Any]) -> int:
         parsed = int(value)
     except (TypeError, ValueError):
         parsed = 1000
-    return min(max(parsed, 1), 8000)
+    return min(max(parsed, 1), 120_000)
+
+
+def _profile_with_llm_timeout(profile: Any, timeout_ms: int) -> Any:
+    return _ProfileWithLlmTimeout(profile, max(int(timeout_ms), 1))
 
 
 def _expected_references(plan: Any) -> set[str]:
