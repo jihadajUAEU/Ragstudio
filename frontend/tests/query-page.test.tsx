@@ -248,4 +248,115 @@ describe("QueryPage", () => {
     fireEvent.click(screen.getByText("Reranker", { selector: "summary" }));
     expect(screen.getByText("Run-level reranker summary; not source-specific")).toBeVisible();
   });
+
+  it("shows parser, quality, and source-location evidence details", async () => {
+    vi.mocked(apiClient.query).mockResolvedValue({
+      runs: [
+        {
+          id: "run-1",
+          variant_id: "variant-1",
+          experiment_id: null,
+          query: "alpha",
+          status: "succeeded",
+          answer: "answer",
+          sources: [
+            {
+              id: "source-1",
+              chunk_id: "chunk-1",
+              document_id: "doc-1",
+              text: "Book 1, Hadith 1",
+              source_location: { page: 1, reference: "Book 1, Hadith 1" },
+              parser_quality_warning_codes: ["reference_unit_missing_expected_script"],
+              quality_action_policy: "materialize",
+            },
+          ],
+          chunk_traces: [],
+          timings: {},
+          error: null,
+          runtime_profile_id: "profile-1",
+          document_ids: ["doc-1"],
+          query_config: {},
+          reranker_traces: [],
+          token_metadata: {},
+          error_type: null,
+        },
+      ],
+    });
+    renderQueryPage();
+
+    fireEvent.change(await screen.findByPlaceholderText("Ask a focused question against selected documents."), {
+      target: { value: "alpha" },
+    });
+    fireEvent.click(await screen.findByText("source.txt"));
+    fireEvent.click((await screen.findAllByText("Balanced"))[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Inspect evidence" }));
+
+    expect(await screen.findByRole("dialog", { name: "Evidence details" })).toBeVisible();
+    expect(screen.getByText("Source location", { selector: "summary" })).toBeVisible();
+    fireEvent.click(screen.getByText("Parser quality", { selector: "summary" }));
+    expect(screen.getByText("reference_unit_missing_expected_script")).toBeVisible();
+    expect(screen.getAllByText("materialize").length).toBeGreaterThan(0);
+  });
+
+  it("shows explicit missing states and restores focus after Escape", async () => {
+    vi.mocked(apiClient.query).mockResolvedValue({
+      runs: [
+        {
+          id: "run-1",
+          variant_id: "variant-1",
+          experiment_id: null,
+          query: "alpha",
+          status: "succeeded",
+          answer: "answer",
+          sources: [{ id: "source-1" }],
+          chunk_traces: [],
+          timings: {},
+          error: null,
+          runtime_profile_id: null,
+          document_ids: ["doc-1"],
+          query_config: {},
+          reranker_traces: [],
+          token_metadata: {},
+          error_type: null,
+        },
+      ],
+    });
+    renderQueryPage();
+
+    fireEvent.change(await screen.findByPlaceholderText("Ask a focused question against selected documents."), {
+      target: { value: "alpha" },
+    });
+    fireEvent.click(await screen.findByText("source.txt"));
+    fireEvent.click((await screen.findAllByText("Balanced"))[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+
+    const inspect = await screen.findByRole("button", { name: "Inspect evidence" });
+    inspect.focus();
+    fireEvent.click(inspect);
+
+    expect(await screen.findByRole("dialog", { name: "Evidence details" })).toBeVisible();
+    expectVisibleText("Parser warnings not recorded");
+    expectVisibleText("Quality policy not recorded");
+    expectVisibleText("Source location not recorded");
+
+    fireEvent.keyDown(window, { key: "Escape" });
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "Evidence details" })).not.toBeInTheDocument();
+    });
+    expect(inspect).toHaveFocus();
+  });
 });
+
+function expectVisibleText(text: string) {
+  const visibleElement = screen.getAllByText(text).find((element) => {
+    try {
+      expect(element).toBeVisible();
+      return true;
+    } catch {
+      return false;
+    }
+  });
+  expect(visibleElement).toBeTruthy();
+}
