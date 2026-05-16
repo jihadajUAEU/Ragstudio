@@ -30,6 +30,31 @@ def test_arabic_adapter_expands_known_latin_transliteration():
     assert expansion.confidence >= 0.9
 
 
+def test_arabic_adapter_detects_presentation_form_arabic_as_exact_script():
+    adapter = ArabicLexicalAdapter()
+
+    expansion = adapter.expand_query("ﻭﭐﺗﻞ")
+
+    assert adapter.supports_query("ﻭﭐﺗﻞ") is True
+    assert expansion.language == "arabic"
+    assert expansion.script == "arab"
+    assert expansion.normalized_query == "واتل"
+    assert expansion.terms == ["واتل", "اتل"]
+    assert expansion.match_type == "exact_script"
+    assert expansion.confidence == 1.0
+
+
+def test_arabic_transliteration_terms_are_not_shared_between_expansions():
+    adapter = ArabicLexicalAdapter()
+
+    expansion = adapter.expand_query("hanan")
+    expansion.terms.append("leaked")
+
+    next_expansion = adapter.expand_query("hanan")
+
+    assert next_expansion.terms == ["حنان", "حنانا", "وحنانا"]
+
+
 def test_generic_latin_adapter_does_not_invent_cross_script_terms():
     adapter = GenericLatinAdapter()
 

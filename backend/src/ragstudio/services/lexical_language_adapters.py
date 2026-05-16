@@ -6,7 +6,7 @@ from typing import Protocol
 
 from ragstudio.services.arabic_text import arabic_query_variants, normalize_arabic_text
 
-_ARABIC_RE = re.compile(r"[\u0600-\u06FF]")
+_ARABIC_RE = re.compile(r"[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]")
 _LATIN_RE = re.compile(r"[A-Za-z]")
 
 _ARABIC_TRANSLITERATION_LEXICON: dict[str, list[str]] = {
@@ -45,7 +45,7 @@ class ArabicLexicalAdapter:
     scripts = ("arab",)
 
     def supports_query(self, query: str) -> bool:
-        normalized = query.strip().casefold()
+        normalized = normalize_arabic_text(query.strip()).casefold()
         return bool(_ARABIC_RE.search(query)) or normalized in _ARABIC_TRANSLITERATION_LEXICON
 
     def expand_query(self, query: str) -> LexicalExpansion:
@@ -65,7 +65,7 @@ class ArabicLexicalAdapter:
             )
 
         normalized = stripped.casefold()
-        terms = _ARABIC_TRANSLITERATION_LEXICON.get(normalized, [])
+        terms = list(_ARABIC_TRANSLITERATION_LEXICON.get(normalized, []))
         return LexicalExpansion(
             original_query=query,
             normalized_query=normalized,
