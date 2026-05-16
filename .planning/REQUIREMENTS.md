@@ -143,12 +143,14 @@ Roadmap creation fills the phase mapping. Every v1 requirement must map to exact
 | QA-03 | Phase 5 | Complete |
 | QA-04 | Phase 5 | Complete |
 | QA-05 | Phase 5 | Complete |
+| APP-UI-01 | Phase 6 | Complete |
+| APP-UI-02 | Phase 6 | Complete |
 
 **Coverage:**
-- v1 requirements: 35 total
-- Mapped to phases: 35
+- v1 requirements: 37 total
+- Mapped to phases: 37
 - Unmapped: 0
 
 ---
 *Requirements defined: 2026-05-14*
-*Last updated: 2026-05-14 after roadmap creation*
+*Last updated: 2026-05-16 after Phase 6 completion*

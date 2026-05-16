@@ -17,7 +17,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [ ] **Phase 3: `ragstudio-site` Scaffold and Import Pipeline** - Create the separate static site repo boundary and packet import gate.
 - [ ] **Phase 4: Static Proof Viewer and Public Site UX** - Build the inspectable public proof viewer and demo screenshot experience.
 - [ ] **Phase 5: Launch Hardening and Domain Release** - Connect Cloudflare/domain, enforce accessibility and launch gates, and publish links.
-- [ ] **Phase 6: App Evidence Viewer and Runtime Trust Banner** - Add in-app evidence inspection and compact runtime trust visibility for Ragstudio operators.
+- [x] **Phase 6: App Evidence Viewer and Runtime Trust Banner** - Add in-app evidence inspection and compact runtime trust visibility for Ragstudio operators.
 
 ## Phase Details
 
@@ -143,7 +143,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6
 | 3. `ragstudio-site` Scaffold and Import Pipeline | 2/2 | Complete | 2026-05-14 |
 | 4. Static Proof Viewer and Public Site UX | 3/3 | Complete | 2026-05-14 |
 | 5. Launch Hardening and Domain Release | 2/3 | In Progress | - |
-| 6. App Evidence Viewer and Runtime Trust Banner | 0/3 | Ready to Execute | - |
+| 6. App Evidence Viewer and Runtime Trust Banner | 3/3 | Complete | 2026-05-16 |
 
 ## Coverage
 
