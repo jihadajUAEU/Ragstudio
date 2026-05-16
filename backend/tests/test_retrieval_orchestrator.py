@@ -3,6 +3,7 @@ import asyncio
 import httpx
 import pytest
 from ragstudio.schemas.chunks import ChunkOut
+from ragstudio.services.domain_query_expansion_service import DomainQueryExpansionService
 from ragstudio.services.retrieval_evidence import (
     EvidenceCandidate,
     apply_query_aware_ordering,
@@ -58,6 +59,35 @@ def test_plan_for_arabic_token_carries_retrieval_passes():
         "vector_db",
         "native_vector",
     ]
+
+
+def test_plan_for_query_carries_domain_expansion_reference_intent():
+    expansion = DomainQueryExpansionService().expand(
+        "hanan",
+        domain_metadata=[
+            {
+                "domain": "quran_tafseer",
+                "document_type": "commentary",
+                "language": "mixed",
+                "tags": ["quran", "arabic"],
+            }
+        ],
+    )
+
+    plan = plan_for_query(
+        "hanan",
+        document_ids=["doc-quran"],
+        limit=5,
+        domain_expansion=expansion,
+    )
+
+    assert plan.intent == "reference"
+    assert plan.understanding is not None
+    assert plan.understanding.intent == "lexical_expanded_token"
+    assert plan.understanding.answer_type == "reference"
+    assert plan.understanding.expanded_terms == ["حنان", "حنانا", "وحنانا"]
+    assert plan.understanding.retrieval_passes[0].name == "lexical_expanded_token"
+    assert plan.retrieval_strategy == "reference_first_hybrid"
 
 
 def test_evidence_candidate_serializes_source_and_trace():
@@ -183,6 +213,58 @@ def test_fusion_keeps_exact_reference_first_and_boosts_graph_context_neighbors()
     assert fused[1].chunk_id == "chunk-1-4"
     assert "reference_first_hybrid" in fused[0].reasons
     assert "query_requested_graph_context" in fused[1].reasons
+
+
+def test_fusion_boosts_lexical_expanded_metadata_above_semantic_candidate():
+    expansion = DomainQueryExpansionService().expand(
+        "hanan",
+        domain_metadata=[
+            {
+                "domain": "quran_tafseer",
+                "document_type": "commentary",
+                "language": "mixed",
+                "tags": ["quran", "arabic"],
+            }
+        ],
+    )
+    plan = plan_for_query(
+        "hanan",
+        document_ids=["doc-quran"],
+        limit=3,
+        domain_expansion=expansion,
+    )
+    semantic_native = EvidenceCandidate(
+        candidate_id="native:semantic-hanan",
+        text="A semantically related discussion about mercy and compassion.",
+        document_id="doc-quran",
+        chunk_id="chunk-semantic",
+        source_location={},
+        metadata={"domain_metadata": {"domain": "quran_tafseer"}},
+        tool="native",
+        tool_rank=1,
+        base_score=42.0,
+        retrieval_pass="native_vector",
+    )
+    lexical_metadata = EvidenceCandidate(
+        candidate_id="metadata:hanan-19-13",
+        text="[19:13] وَحَنَانًا مِّن لَّدُنَّا",
+        document_id="doc-quran",
+        chunk_id="chunk-19-13",
+        source_location={"reference": "19:13"},
+        metadata={"domain_metadata": {"domain": "quran_tafseer"}},
+        tool="metadata",
+        tool_rank=2,
+        base_score=18.0,
+        retrieval_pass="lexical_expanded_token",
+        match_features={"expanded_term": "حنانا", "match_type": "transliteration"},
+        canonical_reference="19:13",
+    )
+
+    fused = fuse_candidates(plan, [semantic_native, lexical_metadata])
+
+    assert fused[0].chunk_id == "chunk-19-13"
+    assert "lexical_expanded_exact" in fused[0].reasons
+    assert fused[0].final_score > fused[1].final_score
 
 
 def test_domain_aware_fusion_boosts_tafseer_exact_reference():
