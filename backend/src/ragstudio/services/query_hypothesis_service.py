@@ -37,7 +37,12 @@ _WORD_TARGET_RE = re.compile(
     r"\b(?:word|term|arabic word|arabic term)\s+['\"]?(?P<term>[A-Za-z][A-Za-z'-]{1,79})['\"]?",
     re.IGNORECASE,
 )
+_ARABIC_TARGET_RE = re.compile(
+    r"(?:كلمة|لفظ)\s+(?P<term>[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]+)"
+)
+_REFERENCE_VALUE_RE = re.compile(r"^\d{1,3}:\d{1,3}$")
 _PATH_LIKE_RE = re.compile(r"(?:^|/)(?:Users|home|var|tmp|etc|private)(?:/|$)", re.IGNORECASE)
+_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]+")
 
 
 @dataclass(frozen=True)
@@ -296,12 +301,13 @@ def _probable_answer(raw: Any) -> ProbableAnswer | None:
         return None
     if raw.get("ayah") is not None and ayah is None:
         return None
+    reference = _safe_reference(raw.get("reference"))
     return ProbableAnswer(
-        surah=_str_or_none(raw.get("surah")),
+        surah=_safe_short_text(raw.get("surah"), max_length=80),
         surah_number=surah_number,
         ayah=ayah,
-        matched_term=_str_or_none(raw.get("matched_term")),
-        reference=_str_or_none(raw.get("reference")),
+        matched_term=_safe_short_text(raw.get("matched_term"), max_length=80),
+        reference=reference,
     )
 
 
@@ -345,6 +351,25 @@ def _safe_term(value: str) -> bool:
     return True
 
 
+def _safe_short_text(value: Any, *, max_length: int) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = _CONTROL_RE.sub(" ", value)
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    if not normalized or len(normalized) > max_length:
+        return None
+    if not _safe_term(normalized):
+        return None
+    return normalized
+
+
+def _safe_reference(value: Any) -> str | None:
+    reference = _safe_short_text(value, max_length=20)
+    if reference is None:
+        return None
+    return reference if _REFERENCE_VALUE_RE.fullmatch(reference) else None
+
+
 def _allowed(value: Any, allowed: set[str], *, default: str) -> str:
     normalized = str(value or "").strip().casefold()
     return normalized if normalized in allowed else default
@@ -376,7 +401,15 @@ def _str_or_none(value: Any) -> str | None:
 
 
 def _arabic_target_terms(query: str) -> list[str]:
-    return list(dict.fromkeys(match.group(0) for match in _ARABIC_RE.finditer(query)))
+    pattern_terms = [
+        match.group("term")
+        for match in _ARABIC_TARGET_RE.finditer(query)
+        if match.group("term")
+    ]
+    if pattern_terms:
+        return list(dict.fromkeys(pattern_terms))
+    tokens = list(dict.fromkeys(match.group(0) for match in _ARABIC_RE.finditer(query)))
+    return tokens if len(tokens) == 1 else []
 
 
 def _latin_word_targets(query: str) -> list[str]:

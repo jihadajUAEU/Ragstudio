@@ -53,6 +53,7 @@ def test_verifier_confirms_probable_reference_and_matched_arabic_term():
         hypothesis,
         [candidate],
         document_ids=["doc-quran"],
+        expanded_terms=["حنانا"],
     )
 
     assert verification.status == "confirmed"
@@ -60,6 +61,38 @@ def test_verifier_confirms_probable_reference_and_matched_arabic_term():
     assert verification.surah == "Maryam"
     assert verification.matched_terms == ["حنانا"]
     assert verification.evidence_label == "S1"
+
+
+def test_verifier_prefers_section_reference_over_wrong_chunk_canonical_reference():
+    hypothesis = QueryHypothesis(
+        original_query="where is hanan",
+        target_terms=[QueryTargetTerm(surface="hanan", script="latin")],
+        valid=True,
+    )
+    candidate = EvidenceCandidate(
+        candidate_id="metadata:quran-window",
+        text="[19:10] Earlier verse\n\n[19:13] وَحَنَانًا مِّن لَّدُنَّا",
+        document_id="doc-quran",
+        chunk_id="quran-window",
+        source_location={},
+        metadata={},
+        tool="metadata",
+        tool_rank=1,
+        base_score=10,
+        retrieval_pass="lexical_expanded_token",
+        match_features={"expanded_token": "حنانا"},
+        canonical_reference="19:10",
+    )
+
+    verification = QueryHypothesisVerifier().verify(
+        hypothesis,
+        [candidate],
+        document_ids=["doc-quran"],
+        expanded_terms=["حنانا"],
+    )
+
+    assert verification.status == "confirmed"
+    assert verification.reference == "19:13"
 
 
 def test_verifier_rejects_when_reference_does_not_match_probable_answer():
@@ -87,6 +120,7 @@ def test_verifier_rejects_when_reference_does_not_match_probable_answer():
         hypothesis,
         [candidate],
         document_ids=["doc-quran"],
+        expanded_terms=["حنانا"],
     )
 
     assert verification.status == "rejected"

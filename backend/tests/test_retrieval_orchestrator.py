@@ -803,6 +803,20 @@ class HananHypothesisService:
         )
 
 
+class SemanticHypothesisService:
+    async def hypothesize(self, query, *, profile, domain_metadata, timeout_ms):
+        return QueryHypothesis(
+            original_query=query,
+            intent="semantic_question",
+            target_terms=[QueryTargetTerm(surface="hanan", script="latin")],
+            domain_hint="quran",
+            answer_shape="explanation",
+            confidence=0.8,
+            valid=True,
+            source="llm",
+        )
+
+
 class ParserWarningChunkSearchService(FakeChunkSearchService):
     async def search(self, search_in):
         self.calls += 1
@@ -1675,6 +1689,42 @@ async def test_orchestrator_uses_hypothesis_terms_and_confirmed_answer_for_word_
     )
     assert verification_trace["status"] == "confirmed"
     assert verification_trace["reference"] == "19:13"
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_does_not_shortcut_semantic_hypothesis_with_target_terms():
+    chunk_service = QuranDomainMetadataChunkSearchService()
+    answer_service = FakeAnswerService()
+    orchestrator = RetrievalOrchestrator(
+        chunk_service=chunk_service,
+        answer_service=answer_service,
+        reranker_service=FakeRerankerService(),
+        graph_expansion_service=FakeGraphExpansionService(),
+        query_hypothesis_service=SemanticHypothesisService(),
+    )
+
+    result = await orchestrator.query(
+        "explain the concept of hanan",
+        runtime=NativeSearchShouldNotRun(),
+        profile=type("Profile", (), {"enable_rerank": False, "reranker_provider": "disabled"})(),
+        document_ids=["doc-quran"],
+        variant_id="variant-1",
+        query_config={
+            "limit": 8,
+            "retrieval_mode": "metadata",
+            "graph_expansion_enabled": False,
+        },
+    )
+
+    assert result.error is None
+    assert answer_service.called is True
+    assert result.token_metadata["answer_mode"] == "full"
+    verification_trace = next(
+        trace
+        for trace in result.chunk_traces
+        if trace["stage"] == "hypothesis_verification"
+    )
+    assert verification_trace["status"] == "confirmed"
 
 
 @pytest.mark.asyncio

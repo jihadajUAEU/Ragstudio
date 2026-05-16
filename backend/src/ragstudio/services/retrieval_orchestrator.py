@@ -325,6 +325,7 @@ class RetrievalOrchestrator:
                 query_hypothesis,
                 final_evidence,
                 document_ids=document_ids,
+                expanded_terms=list(plan.understanding.expanded_terms),
             )
             traces.append(hypothesis_verification.to_trace())
             observability.record_stage(
@@ -360,6 +361,8 @@ class RetrievalOrchestrator:
                 query_config=query_config,
                 timings=timings,
                 deadline_at=deadline_at,
+                query_hypothesis=query_hypothesis,
+                domain_expansion=domain_expansion,
                 hypothesis_verification=hypothesis_verification,
             )
             expected_references = _expected_references(plan, hypothesis_verification)
@@ -392,10 +395,16 @@ class RetrievalOrchestrator:
         query_config: dict[str, Any],
         timings: dict[str, Any],
         deadline_at: float | None,
+        query_hypothesis: QueryHypothesis | None = None,
+        domain_expansion: Any | None = None,
         hypothesis_verification: QueryHypothesisVerification | None = None,
     ) -> tuple[str, dict[str, Any]]:
         answer_started = perf_counter()
-        if hypothesis_verification is not None and hypothesis_verification.confirmed:
+        if _confirmed_hypothesis_answer_allowed(
+            query_hypothesis,
+            hypothesis_verification,
+            domain_expansion=domain_expansion,
+        ):
             answer, token_metadata = (
                 self.evidence_first_answer_service.answer_confirmed_hypothesis(
                     query,
@@ -1184,6 +1193,23 @@ def _expected_references(
         return references
     references.update(str(hint) for hint in hints if hint)
     return references
+
+
+def _confirmed_hypothesis_answer_allowed(
+    hypothesis: QueryHypothesis | None,
+    verification: QueryHypothesisVerification | None,
+    *,
+    domain_expansion: Any | None,
+) -> bool:
+    if hypothesis is None or verification is None:
+        return False
+    return (
+        verification.confirmed
+        and bool(verification.reference)
+        and hypothesis.intent == "find_word_occurrence"
+        and hypothesis.answer_shape in {"surah_and_verse", "reference"}
+        and getattr(domain_expansion, "domain_family", None) == "arabic_religious"
+    )
 
 
 def _vector_candidate_count(candidates: list[EvidenceCandidate]) -> int:

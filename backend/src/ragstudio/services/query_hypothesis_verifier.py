@@ -39,6 +39,7 @@ class QueryHypothesisVerifier:
         evidence: list[EvidenceCandidate],
         *,
         document_ids: list[str],
+        expanded_terms: list[str] | None = None,
     ) -> QueryHypothesisVerification:
         if hypothesis is None or not hypothesis.valid:
             return QueryHypothesisVerification(
@@ -48,7 +49,7 @@ class QueryHypothesisVerifier:
                 matched_terms=[],
             )
 
-        target_terms = _verification_terms(hypothesis)
+        target_terms = _verification_terms(hypothesis, expanded_terms=expanded_terms)
         if not target_terms:
             return QueryHypothesisVerification(
                 status="not_applicable",
@@ -57,8 +58,9 @@ class QueryHypothesisVerifier:
                 matched_terms=[],
             )
 
+        document_id_set = set(document_ids)
         for index, candidate in enumerate(evidence, start=1):
-            if document_ids and candidate.document_id not in set(document_ids):
+            if document_id_set and candidate.document_id not in document_id_set:
                 continue
             matched_terms = _matched_terms(target_terms, candidate)
             if not matched_terms:
@@ -113,16 +115,19 @@ def _matched_terms(terms: list[str], candidate: EvidenceCandidate) -> list[str]:
         normalized = normalize_arabic_text(term)
         if normalized in haystack_arabic or term in feature_terms:
             matched.append(term)
-    if not matched and feature_terms and candidate.retrieval_pass == "lexical_expanded_token":
-        matched.extend(sorted(feature_terms))
     return list(dict.fromkeys(matched))
 
 
-def _verification_terms(hypothesis: QueryHypothesis) -> list[str]:
+def _verification_terms(
+    hypothesis: QueryHypothesis,
+    *,
+    expanded_terms: list[str] | None,
+) -> list[str]:
     terms = [term.surface for term in hypothesis.target_terms]
     answer = hypothesis.probable_answer
     if answer is not None and answer.matched_term:
         terms.append(answer.matched_term)
+    terms.extend(expanded_terms or [])
     return list(dict.fromkeys(term for term in terms if term))
 
 
@@ -138,14 +143,14 @@ def _expected_reference(hypothesis: QueryHypothesis) -> str | None:
 
 
 def _reference(candidate: EvidenceCandidate, *, matched_terms: list[str]) -> str | None:
+    section_reference = _section_reference(candidate.text, matched_terms=matched_terms)
+    if section_reference:
+        return section_reference
     if candidate.canonical_reference:
         return candidate.canonical_reference
     raw_reference = candidate.source_location.get("reference")
     if isinstance(raw_reference, str) and raw_reference:
         return raw_reference
-    section_reference = _section_reference(candidate.text, matched_terms=matched_terms)
-    if section_reference:
-        return section_reference
     match = _REFERENCE_RE.search(candidate.text)
     return match.group("reference") if match else None
 
