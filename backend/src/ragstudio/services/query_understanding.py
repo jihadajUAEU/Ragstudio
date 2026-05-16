@@ -42,6 +42,7 @@ class RetrievalPass:
     query: str
     limit_multiplier: int = 1
     direct_evidence: bool = False
+    match_type: str | None = None
 
 
 @dataclass(frozen=True)

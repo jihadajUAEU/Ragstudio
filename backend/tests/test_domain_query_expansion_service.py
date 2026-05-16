@@ -133,12 +133,30 @@ def test_domain_query_expansion_prefers_arabic_for_quran_transliteration():
     assert result.retrieval_passes[0].query == "حنان"
     assert result.retrieval_passes[0].direct_evidence is True
     assert [item.query for item in result.retrieval_passes] == ["حنان", "حنانا", "وحنانا"]
+    assert [item.match_type for item in result.retrieval_passes] == [
+        "transliteration",
+        "transliteration",
+        "transliteration",
+    ]
     assert all(
         retrieval_pass.name == "lexical_expanded_token"
         and retrieval_pass.direct_evidence is True
         for retrieval_pass in result.retrieval_passes
     )
     assert result.trace["expanded_terms"] == ["حنان", "حنانا", "وحنانا"]
+
+
+def test_domain_query_expansion_preserves_exact_script_match_type_on_passes():
+    service = DomainQueryExpansionService()
+
+    result = service.expand("وحنانا", domain_metadata=[quran_domain_metadata()])
+
+    assert result.expansions[0].match_type == "exact_script"
+    assert [item.query for item in result.retrieval_passes] == ["وحنانا", "حنانا"]
+    assert [item.match_type for item in result.retrieval_passes] == [
+        "exact_script",
+        "exact_script",
+    ]
 
 
 def test_domain_query_expansion_does_not_cross_script_expand_research_text():

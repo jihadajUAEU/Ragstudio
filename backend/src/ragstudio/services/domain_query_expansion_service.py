@@ -42,6 +42,7 @@ class DomainQueryExpansionService:
                         "lexical_expanded_token",
                         term,
                         direct_evidence=True,
+                        match_type=expansion.match_type,
                     )
                     for term in expansion.terms
                 )

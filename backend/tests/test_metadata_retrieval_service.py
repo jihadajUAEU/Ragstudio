@@ -138,6 +138,7 @@ async def test_metadata_service_runs_lexical_expanded_token_passes():
                 name="lexical_expanded_token",
                 query="حنانا",
                 direct_evidence=True,
+                match_type="exact_script",
             )
         ],
     )
@@ -157,11 +158,38 @@ async def test_metadata_service_runs_lexical_expanded_token_passes():
     assert candidates[0].match_features == {
         "lexical_expanded": True,
         "expanded_token": "حنانا",
-        "match_type": "transliteration",
+        "match_type": "exact_script",
     }
     assert trace["passes"][0]["name"] == "lexical_expanded_token"
     assert trace["passes"][0]["query"] == "حنانا"
     assert trace["passes"][0]["candidate_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_metadata_service_falls_back_for_legacy_lexical_expanded_passes():
+    chunk_service = LexicalExpandedChunkService()
+    understanding = QueryUnderstanding(
+        query="hanana",
+        intent="lexical_expanded_token",
+        answer_type="reference",
+        retrieval_passes=[
+            RetrievalPass(
+                name="lexical_expanded_token",
+                query="حنانا",
+                direct_evidence=True,
+            )
+        ],
+    )
+
+    candidates, _trace = await MetadataRetrievalService(chunk_service).retrieve(
+        "hanana",
+        understanding=understanding,
+        document_ids=["doc-quran"],
+        variant_id="variant-1",
+        limit=5,
+    )
+
+    assert candidates[0].match_features["match_type"] == "transliteration"
 
 
 @pytest.mark.asyncio

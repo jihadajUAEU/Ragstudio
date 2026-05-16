@@ -29,6 +29,11 @@ def test_understand_query_accepts_domain_expansion_passes():
         "lexical_expanded_token",
     ]
     assert understanding.retrieval_passes[0].query == "حنان"
+    assert [item.match_type for item in understanding.retrieval_passes[:3]] == [
+        "transliteration",
+        "transliteration",
+        "transliteration",
+    ]
     assert [item.name for item in understanding.retrieval_passes[3:]] == [
         "semantic_metadata",
         "vector_db",
