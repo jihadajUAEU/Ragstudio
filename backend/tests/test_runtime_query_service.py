@@ -783,3 +783,56 @@ async def test_query_service_fast_mode_caps_slow_stages(client):
     assert run.query_config["response_budget_ms"] == 7500
     assert run.query_config["enable_rerank"] is False
     assert run.query_config["native_query_timeout_ms"] == 2500
+
+
+@pytest.mark.asyncio
+async def test_query_service_marks_error_type_only_orchestrated_run_failed(client):
+    app = client._transport.app
+
+    class ErrorTypeOnlyOrchestrator:
+        async def query(self, *args, **kwargs):
+            return type(
+                "Answer",
+                (),
+                {
+                    "answer": "",
+                    "sources": [],
+                    "chunk_traces": [],
+                    "reranker_traces": [],
+                    "token_metadata": {},
+                    "error": "",
+                    "error_type": "ReadTimeout",
+                    "timings": {"answer_ms": 5000},
+                },
+            )()
+
+    async with app.state.session_factory() as session:
+        document, variant = await _create_runtime_records(session, app, indexed=False)
+        profile = await RuntimeProfileService(session, app.state.settings).get_active_profile()
+        session.add(
+            IndexRecord(
+                document_id=document.id,
+                runtime_profile_id=profile.id,
+                status=StageStatus.SUCCEEDED.value,
+                index_shape=profile.index_shape,
+                chunk_count=1,
+            )
+        )
+        await session.commit()
+
+        service = QueryService(
+            session,
+            app.state.settings.data_dir,
+            settings=app.state.settings,
+            runtime_factory=FakeFactory(),
+            health_service=FakeHealthService(),
+            retrieval_orchestrator=ErrorTypeOnlyOrchestrator(),
+        )
+        result = await service.run_query(
+            QueryIn(query="slow answer", document_ids=[document.id], variant_ids=[variant.id])
+        )
+
+    run = result.runs[0]
+    assert run.status == StageStatus.FAILED
+    assert run.error_type == "ReadTimeout"
+    assert run.error == "ReadTimeout"

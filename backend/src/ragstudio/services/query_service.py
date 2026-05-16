@@ -189,15 +189,18 @@ class QueryService:
                     variant_id=variant_id,
                     query_config=query_config,
                 )
+                has_orchestrated_error = bool(orchestrated.error or orchestrated.error_type)
                 run.status = (
-                    StageStatus.FAILED.value if orchestrated.error else StageStatus.SUCCEEDED.value
+                    StageStatus.FAILED.value
+                    if has_orchestrated_error
+                    else StageStatus.SUCCEEDED.value
                 )
                 run.answer = orchestrated.answer
                 run.sources = orchestrated.sources
                 run.chunk_traces = orchestrated.chunk_traces
                 run.reranker_traces = orchestrated.reranker_traces
                 run.token_metadata = orchestrated.token_metadata
-                run.error = orchestrated.error
+                run.error = orchestrated.error or orchestrated.error_type
                 run.error_type = orchestrated.error_type
                 run.timings = {
                     **orchestrated.timings,
