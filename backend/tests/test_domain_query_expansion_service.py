@@ -3,6 +3,7 @@ from ragstudio.services.lexical_language_adapters import (
     ArabicLexicalAdapter,
     GenericLatinAdapter,
 )
+from ragstudio.services.query_hypothesis_service import QueryHypothesis, QueryTargetTerm
 
 
 def test_arabic_adapter_preserves_existing_arabic_variants():
@@ -144,6 +145,38 @@ def test_domain_query_expansion_prefers_arabic_for_quran_transliteration():
         for retrieval_pass in result.retrieval_passes
     )
     assert result.trace["expanded_terms"] == ["حنانا", "وحنانا"]
+
+
+def test_domain_query_expansion_uses_hypothesis_target_terms_from_sentence():
+    service = DomainQueryExpansionService()
+    hypothesis = QueryHypothesis(
+        original_query="in which surah the word hanan is mentioned",
+        intent="find_word_occurrence",
+        target_terms=[
+            QueryTargetTerm(
+                surface="hanan",
+                script="latin",
+                language_hint="arabic",
+                term_type="transliteration",
+            )
+        ],
+        domain_hint="quran",
+        answer_shape="surah_and_verse",
+        confidence=0.8,
+        valid=True,
+    )
+
+    result = service.expand(
+        "in which surah the word hanan is mentioned",
+        domain_metadata=[quran_domain_metadata()],
+        query_hypothesis=hypothesis,
+    )
+
+    assert result.original_query == "in which surah the word hanan is mentioned"
+    assert result.trace["expansion_source"] == "query_hypothesis"
+    assert result.trace["expansion_input_terms"] == ["hanan"]
+    assert result.trace["expanded_terms"] == ["حنانا", "وحنانا"]
+    assert [item.query for item in result.retrieval_passes] == ["حنانا", "وحنانا"]
 
 
 def test_domain_query_expansion_preserves_exact_script_match_type_on_passes():

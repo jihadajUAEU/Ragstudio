@@ -17,6 +17,14 @@ from ragstudio.services.evidence_first_answer_service import EvidenceFirstAnswer
 from ragstudio.services.graph_expansion_service import GraphExpansionService
 from ragstudio.services.grounding_validator import GroundingValidator
 from ragstudio.services.metadata_retrieval_service import MetadataRetrievalService
+from ragstudio.services.query_hypothesis_service import (
+    QueryHypothesis,
+    QueryHypothesisService,
+)
+from ragstudio.services.query_hypothesis_verifier import (
+    QueryHypothesisVerification,
+    QueryHypothesisVerifier,
+)
 from ragstudio.services.reranker_service import RerankerService
 from ragstudio.services.retrieval_evidence import (
     EvidenceCandidate,
@@ -83,6 +91,8 @@ class RetrievalOrchestrator:
         grounding_validator: GroundingValidator | None = None,
         evidence_first_answer_service: EvidenceFirstAnswerService | None = None,
         domain_query_expansion_service: DomainQueryExpansionService | None = None,
+        query_hypothesis_service: QueryHypothesisService | None = None,
+        query_hypothesis_verifier: QueryHypothesisVerifier | None = None,
     ):
         self.chunk_service = chunk_service
         self.answer_service = answer_service or RuntimeAnswerService()
@@ -100,6 +110,8 @@ class RetrievalOrchestrator:
         self.domain_query_expansion_service = (
             domain_query_expansion_service or DomainQueryExpansionService()
         )
+        self.query_hypothesis_service = query_hypothesis_service or QueryHypothesisService()
+        self.query_hypothesis_verifier = query_hypothesis_verifier or QueryHypothesisVerifier()
 
     async def query(
         self,
@@ -118,9 +130,18 @@ class RetrievalOrchestrator:
         if deadline_at is not None:
             timings["response_budget_ms"] = _response_budget_ms(query_config)
         domain_metadata = await self._domain_metadata_for_documents(document_ids)
+        query_hypothesis = await self._safe_query_hypothesis(
+            query,
+            profile=profile,
+            domain_metadata=domain_metadata,
+            query_config=query_config,
+            timings=timings,
+            deadline_at=deadline_at,
+        )
         domain_expansion = self.domain_query_expansion_service.expand(
             query,
             domain_metadata=domain_metadata,
+            query_hypothesis=query_hypothesis,
         )
         plan = plan_for_query(
             query,
@@ -144,11 +165,15 @@ class RetrievalOrchestrator:
                 "retrieval_passes": [
                     item.name for item in plan.understanding.retrieval_passes
                 ],
+                "query_hypothesis_status": (
+                    "valid" if query_hypothesis.valid else "skipped"
+                ),
                 "tools": ["native", "metadata", "graph"],
                 "candidate_limit": plan.candidate_limit,
                 "cache": cache_decision,
             }
         ]
+        traces.append(query_hypothesis.to_trace())
         if domain_expansion.expansions or domain_expansion.retrieval_passes:
             traces.append(dict(domain_expansion.trace))
         timings["planner_ms"] = _elapsed_ms(started)
@@ -296,6 +321,12 @@ class RetrievalOrchestrator:
             final_evidence = _evidence_from_context(reranked, assembled_context)[:limit]
             if not final_evidence:
                 final_evidence = reranked[:limit]
+            hypothesis_verification = self.query_hypothesis_verifier.verify(
+                query_hypothesis,
+                final_evidence,
+                document_ids=document_ids,
+            )
+            traces.append(hypothesis_verification.to_trace())
             observability.record_stage(
                 "context_assembly",
                 candidate_count=len(final_evidence),
@@ -329,8 +360,9 @@ class RetrievalOrchestrator:
                 query_config=query_config,
                 timings=timings,
                 deadline_at=deadline_at,
+                hypothesis_verification=hypothesis_verification,
             )
-            expected_references = _expected_references(plan)
+            expected_references = _expected_references(plan, hypothesis_verification)
             validation = self.grounding_validator.validate(
                 answer=answer,
                 evidence=final_evidence,
@@ -360,8 +392,20 @@ class RetrievalOrchestrator:
         query_config: dict[str, Any],
         timings: dict[str, Any],
         deadline_at: float | None,
+        hypothesis_verification: QueryHypothesisVerification | None = None,
     ) -> tuple[str, dict[str, Any]]:
         answer_started = perf_counter()
+        if hypothesis_verification is not None and hypothesis_verification.confirmed:
+            answer, token_metadata = (
+                self.evidence_first_answer_service.answer_confirmed_hypothesis(
+                    query,
+                    evidence,
+                    verification=hypothesis_verification,
+                )
+            )
+            timings["answer_ms"] = _elapsed_ms(answer_started)
+            return answer, token_metadata
+
         response_mode = _response_mode(query_config)
         timeout_ms = int(
             _remaining_timeout_seconds(
@@ -458,6 +502,45 @@ class RetrievalOrchestrator:
         if not isinstance(metadata, list):
             return []
         return [item for item in metadata if isinstance(item, dict)]
+
+    async def _safe_query_hypothesis(
+        self,
+        query: str,
+        *,
+        profile: Any,
+        domain_metadata: list[dict[str, Any]],
+        query_config: dict[str, Any],
+        timings: dict[str, Any],
+        deadline_at: float | None,
+    ) -> QueryHypothesis:
+        hypothesis_started = perf_counter()
+        if query_config.get("enable_query_hypothesis") is False:
+            timings["query_hypothesis_ms"] = _elapsed_ms(hypothesis_started)
+            timings["query_hypothesis_status"] = "skipped"
+            return QueryHypothesis.empty(query, reason="disabled")
+
+        fallback_ms = int(query_config.get("query_hypothesis_timeout_ms") or 650)
+        timeout_ms = int(
+            _remaining_timeout_seconds(deadline_at, fallback_ms=fallback_ms) * 1000
+        )
+        try:
+            hypothesis = await asyncio.wait_for(
+                self.query_hypothesis_service.hypothesize(
+                    query,
+                    profile=profile,
+                    domain_metadata=domain_metadata,
+                    timeout_ms=timeout_ms,
+                ),
+                timeout=max(timeout_ms, 1) / 1000,
+            )
+        except Exception as exc:
+            hypothesis = QueryHypothesis.empty(
+                query,
+                reason=f"failed_{exc.__class__.__name__}",
+            )
+        timings["query_hypothesis_ms"] = _elapsed_ms(hypothesis_started)
+        timings["query_hypothesis_status"] = "valid" if hypothesis.valid else "skipped"
+        return hypothesis
 
     async def _parallel_retrieval(
         self,
@@ -1084,12 +1167,23 @@ def _profile_with_llm_timeout(profile: Any, timeout_ms: int) -> Any:
     return _ProfileWithLlmTimeout(profile, max(int(timeout_ms), 1))
 
 
-def _expected_references(plan: Any) -> set[str]:
+def _expected_references(
+    plan: Any,
+    hypothesis_verification: QueryHypothesisVerification | None = None,
+) -> set[str]:
+    references: set[str] = set()
+    if (
+        hypothesis_verification is not None
+        and hypothesis_verification.confirmed
+        and hypothesis_verification.reference
+    ):
+        references.add(hypothesis_verification.reference)
     understanding = getattr(plan, "understanding", None)
     hints = getattr(understanding, "reference_hints", None)
     if not isinstance(hints, list):
-        return set()
-    return {str(hint) for hint in hints if hint}
+        return references
+    references.update(str(hint) for hint in hints if hint)
+    return references
 
 
 def _vector_candidate_count(candidates: list[EvidenceCandidate]) -> int:

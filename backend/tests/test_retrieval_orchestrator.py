@@ -4,6 +4,11 @@ import httpx
 import pytest
 from ragstudio.schemas.chunks import ChunkOut
 from ragstudio.services.domain_query_expansion_service import DomainQueryExpansionService
+from ragstudio.services.query_hypothesis_service import (
+    ProbableAnswer,
+    QueryHypothesis,
+    QueryTargetTerm,
+)
 from ragstudio.services.retrieval_evidence import (
     EvidenceCandidate,
     apply_query_aware_ordering,
@@ -769,6 +774,33 @@ class QuranDomainMetadataChunkSearchService:
                 "total": 1,
             },
         )()
+
+
+class HananHypothesisService:
+    async def hypothesize(self, query, *, profile, domain_metadata, timeout_ms):
+        return QueryHypothesis(
+            original_query=query,
+            intent="find_word_occurrence",
+            target_terms=[
+                QueryTargetTerm(
+                    surface="hanan",
+                    script="latin",
+                    language_hint="arabic",
+                    term_type="transliteration",
+                )
+            ],
+            domain_hint="quran",
+            answer_shape="surah_and_verse",
+            probable_answer=ProbableAnswer(
+                surah="Maryam",
+                surah_number=19,
+                ayah=13,
+                matched_term="حنانا",
+            ),
+            confidence=0.86,
+            valid=True,
+            source="llm",
+        )
 
 
 class ParserWarningChunkSearchService(FakeChunkSearchService):
@@ -1592,6 +1624,57 @@ async def test_orchestrator_uses_selected_document_domain_metadata_for_expansion
     )
     assert planner_trace["understanding_intent"] == "lexical_expanded_token"
     assert planner_trace["expanded_terms"] == ["حنانا", "وحنانا"]
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_uses_hypothesis_terms_and_confirmed_answer_for_word_query():
+    chunk_service = QuranDomainMetadataChunkSearchService()
+    answer_service = FakeAnswerService()
+    orchestrator = RetrievalOrchestrator(
+        chunk_service=chunk_service,
+        answer_service=answer_service,
+        reranker_service=FakeRerankerService(),
+        graph_expansion_service=FakeGraphExpansionService(),
+        query_hypothesis_service=HananHypothesisService(),
+    )
+
+    result = await orchestrator.query(
+        "in which surah the word hanan is mentioned",
+        runtime=NativeSearchShouldNotRun(),
+        profile=type("Profile", (), {"enable_rerank": False, "reranker_provider": "disabled"})(),
+        document_ids=["doc-quran"],
+        variant_id="variant-1",
+        query_config={
+            "limit": 8,
+            "retrieval_mode": "metadata",
+            "graph_expansion_enabled": False,
+        },
+    )
+
+    assert result.error is None
+    assert answer_service.called is False
+    assert result.answer == "The word حنانا is mentioned in Surah Maryam, 19:13. [S1]"
+    assert result.token_metadata["answer_mode"] == "confirmed_hypothesis"
+    assert chunk_service.search_queries[0] == "حنانا"
+
+    hypothesis_trace = next(
+        trace for trace in result.chunk_traces if trace["stage"] == "query_hypothesis"
+    )
+    assert hypothesis_trace["status"] == "valid"
+    expansion_trace = next(
+        trace
+        for trace in result.chunk_traces
+        if trace.get("stage") == "domain_query_expansion"
+    )
+    assert expansion_trace["expansion_source"] == "query_hypothesis"
+    assert expansion_trace["expansion_input_terms"] == ["hanan"]
+    verification_trace = next(
+        trace
+        for trace in result.chunk_traces
+        if trace["stage"] == "hypothesis_verification"
+    )
+    assert verification_trace["status"] == "confirmed"
+    assert verification_trace["reference"] == "19:13"
 
 
 @pytest.mark.asyncio
