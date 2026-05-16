@@ -36,6 +36,7 @@ export interface NormalizedEvidence {
   qualityStatus?: string | null;
   retrievalReasons?: string[];
   relationshipRefs?: string[];
+  graphUnavailableDetail?: string | null;
   rerankerSummary?: EvidenceRerankerSummary | null;
   raw?: unknown;
   routeLinks?: EvidenceRouteLinks;
@@ -133,7 +134,10 @@ export function EvidenceViewer({
               {evidence.relationshipRefs?.length ? (
                 <List values={evidence.relationshipRefs} />
               ) : (
-                <MissingText>No graph relationship recorded for this evidence</MissingText>
+                <MissingText>
+                  {evidence.graphUnavailableDetail ||
+                    "No graph relationship recorded for this evidence"}
+                </MissingText>
               )}
             </EvidenceSection>
             <EvidenceSection title="Metadata">
@@ -163,11 +167,18 @@ function SummaryGrid({ evidence }: { evidence: NormalizedEvidence }) {
     <div className="grid gap-2 text-sm sm:grid-cols-2">
       <KeyValue label="Evidence id" value={evidence.id} mono />
       <KeyValue label="Kind" value={evidence.kind} />
-      <KeyValue label="Document" value={evidence.documentName || evidence.documentId || "Document link not recorded"} />
+      <KeyValue
+        label="Document"
+        value={evidence.documentName || evidence.documentId || "Document link not recorded"}
+      />
       <KeyValue label="Runtime profile" value={evidence.runtimeProfileId || "Not recorded"} />
       <KeyValue
         label="Source location"
-        value={evidence.sourceLocation ? summarizeValue(evidence.sourceLocation) : "Source location not recorded"}
+        value={
+          evidence.sourceLocation
+            ? summarizeValue(evidence.sourceLocation)
+            : "Source location not recorded"
+        }
       />
       <KeyValue label="Quality" value={evidence.qualityStatus || "Quality policy not recorded"} />
       <KeyValue
@@ -198,7 +209,7 @@ function SummaryGrid({ evidence }: { evidence: NormalizedEvidence }) {
         value={
           evidence.relationshipRefs?.length
             ? `${evidence.relationshipRefs.length} relationship refs`
-            : "No graph relationship recorded for this evidence"
+            : evidence.graphUnavailableDetail || "No graph relationship recorded for this evidence"
         }
       />
     </div>
@@ -293,7 +304,7 @@ function RouteActions({
   return (
     <div className="flex flex-wrap gap-2">
       {routeActions.map((action) =>
-        action.enabled && onNavigate ? (
+        action.enabled ? (
           <Button
             key={action.label}
             type="button"
@@ -301,7 +312,7 @@ function RouteActions({
             size="sm"
             onClick={() => {
               onClose();
-              onNavigate(action.path);
+              navigateTo(action.path, onNavigate);
             }}
           >
             <ExternalLink className="h-4 w-4" aria-hidden="true" />
@@ -321,6 +332,15 @@ function RouteActions({
       )}
     </div>
   );
+}
+
+function navigateTo(path: string, onNavigate?: (path: string) => void) {
+  if (onNavigate) {
+    onNavigate(path);
+    return;
+  }
+  window.history.pushState(null, "", path);
+  window.dispatchEvent(new PopStateEvent("popstate"));
 }
 
 function summarizeValue(value: Record<string, unknown> | string) {

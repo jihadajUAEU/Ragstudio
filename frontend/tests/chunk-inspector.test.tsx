@@ -134,5 +134,9 @@ describe("ChunkInspector metadata", () => {
     expect(within(dialog).getByText("Book 1, Hadith 1")).toBeVisible();
     fireEvent.click(within(dialog).getByText("Graph context", { selector: "summary" }));
     expect(within(dialog).getByText("neighbor: chunk-2")).toBeVisible();
+    fireEvent.click(within(dialog).getByText("Route links", { selector: "summary" }));
+    expect(within(dialog).getByRole("button", { name: "Open Chunks" })).toBeVisible();
+    expect(within(dialog).getByRole("button", { name: "Open Graph" })).toBeVisible();
+    expect(within(dialog).getByRole("button", { name: "Open Diagnostics" })).toBeVisible();
   });
 });

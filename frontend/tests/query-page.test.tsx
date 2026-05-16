@@ -128,7 +128,7 @@ describe("QueryPage", () => {
           timings: {},
           error: null,
           runtime_profile_id: null,
-          document_ids: ["doc-1"],
+          document_ids: [],
           query_config: { response_mode: "fast" },
           reranker_traces: [],
           token_metadata: {
@@ -339,6 +339,9 @@ describe("QueryPage", () => {
     expectVisibleText("Parser warnings not recorded");
     expectVisibleText("Quality policy not recorded");
     expectVisibleText("Source location not recorded");
+    expectVisibleText("No graph relationship recorded for this evidence");
+    fireEvent.click(screen.getByText("Route links", { selector: "summary" }));
+    expectVisibleText("Document link not recorded");
 
     fireEvent.keyDown(window, { key: "Escape" });
 
@@ -346,6 +349,44 @@ describe("QueryPage", () => {
       expect(screen.queryByRole("dialog", { name: "Evidence details" })).not.toBeInTheDocument();
     });
     expect(inspect).toHaveFocus();
+  });
+
+  it("shows graph unavailable detail from selected evidence", async () => {
+    vi.mocked(apiClient.query).mockResolvedValue({
+      runs: [
+        {
+          id: "run-1",
+          variant_id: "variant-1",
+          experiment_id: null,
+          query: "alpha",
+          status: "succeeded",
+          answer: "answer",
+          sources: [{ id: "source-1", graph_unavailable_detail: "Graph projection is pending" }],
+          chunk_traces: [],
+          timings: {},
+          error: null,
+          runtime_profile_id: null,
+          document_ids: ["doc-1"],
+          query_config: {},
+          reranker_traces: [],
+          token_metadata: {},
+          error_type: null,
+        },
+      ],
+    });
+    renderQueryPage();
+
+    fireEvent.change(await screen.findByPlaceholderText("Ask a focused question against selected documents."), {
+      target: { value: "alpha" },
+    });
+    fireEvent.click(await screen.findByText("source.txt"));
+    fireEvent.click((await screen.findAllByText("Balanced"))[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Inspect evidence" }));
+
+    expect(await screen.findByRole("dialog", { name: "Evidence details" })).toBeVisible();
+    fireEvent.click(screen.getByText("Graph context", { selector: "summary" }));
+    expect(screen.getAllByText("Graph projection is pending").length).toBeGreaterThan(0);
   });
 });
 

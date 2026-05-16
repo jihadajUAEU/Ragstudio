@@ -473,6 +473,8 @@ function normalizeQuerySource(
       null,
     retrievalReasons: retrievalReasonsFrom(source),
     relationshipRefs,
+    graphUnavailableDetail:
+      textValue(source.graph_unavailable_detail) ?? textValue(source.graphUnavailableDetail) ?? null,
     rerankerSummary: rerankerSummaryForSource(sourceId, source, run.reranker_traces),
     raw: source,
     routeLinks: {

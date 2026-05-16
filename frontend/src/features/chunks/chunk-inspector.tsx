@@ -334,6 +334,10 @@ function normalizeChunkEvidence(
       null,
     retrievalReasons,
     relationshipRefs,
+    graphUnavailableDetail:
+      textMetadata(chunk.metadata, ["graph_unavailable_detail"]) ??
+      textMetadata(chunk.metadata, ["graphUnavailableDetail"]) ??
+      null,
     raw: chunk,
     routeLinks: {
       documents: Boolean(chunk.document_id),
