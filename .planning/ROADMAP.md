@@ -127,7 +127,7 @@ Plans:
 **Plans**: 3 plans
 
 Plans:
-- [ ] 06-01: Add runtime trust chip, diagnostics polling, detail panel, and provider test actions.
+- [x] 06-01: Add runtime trust chip, diagnostics polling, detail panel, and provider test actions.
 - [ ] 06-02: Build the shared evidence viewer and wire Query source inspection.
 - [ ] 06-03: Add Chunk Inspector evidence entry, graph/missing-state behavior, and final accessibility/build verification.
 
