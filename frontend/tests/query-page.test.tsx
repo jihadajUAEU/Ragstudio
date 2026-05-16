@@ -243,7 +243,10 @@ describe("QueryPage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Inspect evidence" }));
 
-    expect(await screen.findByRole("dialog", { name: "Evidence details" })).toBeVisible();
+    const dialog = await screen.findByRole("dialog", { name: "Evidence details" });
+    expect(dialog).toBeVisible();
+    expect(dialog).toHaveAttribute("aria-modal", "true");
+    expect(dialog).toHaveClass("fixed", "inset-0", "overflow-hidden", "sm:right-0");
     expect(screen.getAllByText("source-1").length).toBeGreaterThan(0);
     fireEvent.click(screen.getByText("Reranker", { selector: "summary" }));
     expect(screen.getByText("Run-level reranker summary; not source-specific")).toBeVisible();

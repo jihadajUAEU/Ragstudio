@@ -307,6 +307,10 @@ describe("AppShell", () => {
     fireEvent.click(screen.getByRole("button", { name: "Test LLM" }));
 
     expect(await screen.findByText("LLM timeout")).toBeVisible();
+    expect(screen.getByText("LLM timeout").closest("[role='status']")).toHaveAttribute(
+      "aria-live",
+      "polite",
+    );
     expect(screen.getByRole("dialog", { name: "Runtime trust" })).toBeVisible();
 
     fireEvent.keyDown(window, { key: "Escape" });
