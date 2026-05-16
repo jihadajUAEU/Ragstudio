@@ -11,6 +11,7 @@ from ragstudio.services.arabic_text import arabic_tokens
 from ragstudio.services.chunk_service import ChunkService
 from ragstudio.services.context_assembly_service import ContextAssemblyService
 from ragstudio.services.domain_metadata_quality_gate import DomainMetadataQualityGate
+from ragstudio.services.evidence_first_answer_service import EvidenceFirstAnswerService
 from ragstudio.services.graph_expansion_service import GraphExpansionService
 from ragstudio.services.grounding_validator import GroundingValidator
 from ragstudio.services.metadata_retrieval_service import MetadataRetrievalService
@@ -68,6 +69,7 @@ class RetrievalOrchestrator:
         retrieval_fusion: RetrievalFusion | None = None,
         metadata_retrieval_service: MetadataRetrievalService | None = None,
         grounding_validator: GroundingValidator | None = None,
+        evidence_first_answer_service: EvidenceFirstAnswerService | None = None,
     ):
         self.chunk_service = chunk_service
         self.answer_service = answer_service or RuntimeAnswerService()
@@ -79,6 +81,9 @@ class RetrievalOrchestrator:
             metadata_retrieval_service or MetadataRetrievalService(chunk_service)
         )
         self.grounding_validator = grounding_validator or GroundingValidator()
+        self.evidence_first_answer_service = (
+            evidence_first_answer_service or EvidenceFirstAnswerService()
+        )
 
     async def query(
         self,
@@ -273,13 +278,13 @@ class RetrievalOrchestrator:
                 }
             )
             traces.extend(candidate.to_trace() for candidate in final_evidence)
-            answer_started = perf_counter()
-            answer, token_metadata = await self.answer_service.answer(
+            answer, token_metadata = await self._answer_with_budget(
                 query,
                 final_evidence,
                 profile,
+                query_config=query_config,
+                timings=timings,
             )
-            timings["answer_ms"] = _elapsed_ms(answer_started)
             expected_references = _expected_references(plan)
             validation = self.grounding_validator.validate(
                 answer=answer,
@@ -300,6 +305,52 @@ class RetrievalOrchestrator:
             )
         except Exception as exc:
             return self._failed_orchestrated_answer(exc, started, timings)
+
+    async def _answer_with_budget(
+        self,
+        query: str,
+        evidence: list[EvidenceCandidate],
+        profile: Any,
+        *,
+        query_config: dict[str, Any],
+        timings: dict[str, Any],
+    ) -> tuple[str, dict[str, Any]]:
+        answer_started = perf_counter()
+        response_mode = _response_mode(query_config)
+        timeout_ms = _answer_budget_ms(query_config)
+        try:
+            if response_mode == "fast":
+                answer, token_metadata = await asyncio.wait_for(
+                    self.answer_service.answer(query, evidence, profile),
+                    timeout=max(timeout_ms, 1) / 1000,
+                )
+            else:
+                answer, token_metadata = await self.answer_service.answer(
+                    query,
+                    evidence,
+                    profile,
+                )
+            timings["answer_ms"] = _elapsed_ms(answer_started)
+            return answer, {
+                **token_metadata,
+                "answer_mode": response_mode,
+                "generated_without_llm": False,
+            }
+        except TimeoutError as exc:
+            timings["answer_ms"] = _elapsed_ms(answer_started)
+            timings["answer_timeout_ms"] = timeout_ms
+            timings["answer_fallback"] = True
+            answer, token_metadata = self.evidence_first_answer_service.answer(
+                query,
+                evidence,
+                reason="llm_timeout",
+                llm_timeout_ms=timeout_ms,
+            )
+            return answer, {
+                **token_metadata,
+                "llm_answer_status": "timeout",
+                "llm_error_type": exc.__class__.__name__,
+            }
 
     async def _quality_diagnostics_trace(
         self,
@@ -809,6 +860,20 @@ def _metadata_only(query_config: dict[str, Any]) -> bool:
     retrieval_mode = str(query_config.get("retrieval_mode") or "").casefold()
     reference_mode = str(query_config.get("reference_query_mode") or "").casefold()
     return retrieval_mode == "metadata" or reference_mode in {"exact", "lexical"}
+
+
+def _response_mode(query_config: dict[str, Any]) -> str:
+    mode = str(query_config.get("response_mode") or "full").casefold()
+    return mode if mode in {"fast", "full"} else "full"
+
+
+def _answer_budget_ms(query_config: dict[str, Any]) -> int:
+    value = query_config.get("answer_budget_ms")
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = 1000
+    return min(max(parsed, 1), 8000)
 
 
 def _expected_references(plan: Any) -> set[str]:
