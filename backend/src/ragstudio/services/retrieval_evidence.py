@@ -240,7 +240,11 @@ def _score_candidate(
         boost += 10.0
         reasons.append(f"{domain_family}_exact")
 
-    if domain_family == "tafseer_reference" and plan.graph_context_required and candidate.tool == "graph":
+    if (
+        domain_family == "tafseer_reference"
+        and plan.graph_context_required
+        and candidate.tool == "graph"
+    ):
         boost += 5.0
         reasons.append("tafseer_graph_context")
 

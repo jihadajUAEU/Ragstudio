@@ -1,5 +1,4 @@
 import pytest
-
 from ragstudio.db.models import Chunk, Document
 from ragstudio.schemas.chunks import ChunkOut
 from ragstudio.services.chunk_lexical_search_repository import ChunkLexicalSearchRepository

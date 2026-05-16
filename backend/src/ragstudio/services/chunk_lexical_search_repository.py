@@ -3,12 +3,11 @@ from __future__ import annotations
 import json
 import re
 
+from ragstudio.db.models import Chunk
+from ragstudio.services.arabic_text import arabic_query_variants, arabic_tokens
 from sqlalchemy import cast, literal, or_, select
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
-
-from ragstudio.db.models import Chunk
-from ragstudio.services.arabic_text import arabic_query_variants, arabic_tokens
 
 
 class ChunkLexicalSearchRepository:
