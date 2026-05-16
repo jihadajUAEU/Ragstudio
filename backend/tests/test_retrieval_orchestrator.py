@@ -559,6 +559,18 @@ class FakeAnswerService:
         return "Sahih al-Bukhari contains 7277 hadith.", {"prompt_tokens": 12}
 
 
+class SlowAnswerService:
+    def __init__(self):
+        self.called = False
+
+    async def answer(self, query, evidence, profile):
+        self.called = True
+        await asyncio.sleep(0.05)
+        return "This slow LLM answer should not be returned in fast mode.", {
+            "prompt_tokens": 4000,
+        }
+
+
 class FakeRerankerService:
     async def rerank(self, query, chunks, profile):
         return chunks, [{"provider": "disabled", "status": "disabled"}]
@@ -641,6 +653,44 @@ async def test_orchestrator_fuses_native_metadata_and_graph_before_answering():
     )
     assert graph_evidence.source_location == {"page": 9}
     assert graph_evidence.metadata["graph_hydration"]["status"] == "hydrated"
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_returns_evidence_first_answer_when_fast_llm_budget_expires():
+    answer_service = SlowAnswerService()
+    orchestrator = RetrievalOrchestrator(
+        chunk_service=FakeChunkSearchService(),
+        answer_service=answer_service,
+        reranker_service=FakeRerankerService(),
+        graph_expansion_service=FakeGraphExpansionService(),
+    )
+
+    result = await orchestrator.query(
+        "how many hadith in bukhari",
+        runtime=FakeRuntimeTool(),
+        profile=type("Profile", (), {"enable_rerank": False, "reranker_provider": "disabled"})(),
+        document_ids=["doc-1"],
+        variant_id="variant-1",
+        query_config={
+            "limit": 8,
+            "response_mode": "fast",
+            "answer_budget_ms": 1,
+        },
+    )
+
+    assert answer_service.called is True
+    assert result.error is None
+    assert result.error_type is None
+    assert result.sources
+    assert any(source["metadata"]["retrieval_tool"] == "graph" for source in result.sources)
+    assert result.answer.startswith("Evidence-first result")
+    assert "Sahih al-Bukhari" in result.answer
+    assert result.token_metadata["answer_mode"] == "evidence_first"
+    assert result.token_metadata["generated_without_llm"] is True
+    assert result.token_metadata["llm_answer_status"] == "timeout"
+    assert result.token_metadata["llm_timeout_ms"] == 1
+    assert result.timings["answer_fallback"] is True
+    assert result.timings["answer_timeout_ms"] == 1
 
 
 @pytest.mark.asyncio
