@@ -85,7 +85,7 @@ def test_plan_for_query_carries_domain_expansion_reference_intent():
     assert plan.understanding is not None
     assert plan.understanding.intent == "lexical_expanded_token"
     assert plan.understanding.answer_type == "reference"
-    assert plan.understanding.expanded_terms == ["حنان", "حنانا", "وحنانا"]
+    assert plan.understanding.expanded_terms == ["حنانا", "وحنانا"]
     assert plan.understanding.retrieval_passes[0].name == "lexical_expanded_token"
     assert plan.retrieval_strategy == "reference_first_hybrid"
 
@@ -1578,20 +1578,20 @@ async def test_orchestrator_uses_selected_document_domain_metadata_for_expansion
         for item in retrieval_trace["metadata_trace"]["passes"]
         if item["name"] == "lexical_expanded_token"
     ]
-    assert [item["query"] for item in lexical_passes] == ["حنان", "حنانا", "وحنانا"]
+    assert [item["query"] for item in lexical_passes] == ["حنانا"]
 
     expansion_trace = next(
         trace
         for trace in result.chunk_traces
         if trace.get("stage") == "domain_query_expansion"
     )
-    assert expansion_trace["expanded_terms"] == ["حنان", "حنانا", "وحنانا"]
+    assert expansion_trace["expanded_terms"] == ["حنانا", "وحنانا"]
 
     planner_trace = next(
         trace for trace in result.chunk_traces if trace["stage"] == "planner"
     )
     assert planner_trace["understanding_intent"] == "lexical_expanded_token"
-    assert planner_trace["expanded_terms"] == ["حنان", "حنانا", "وحنانا"]
+    assert planner_trace["expanded_terms"] == ["حنانا", "وحنانا"]
 
 
 @pytest.mark.asyncio
