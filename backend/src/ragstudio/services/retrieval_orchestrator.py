@@ -411,17 +411,6 @@ class RetrievalOrchestrator:
     ) -> tuple[list[EvidenceCandidate], list[EvidenceCandidate], dict[str, Any]]:
         parallel_started = perf_counter()
         if document_ids:
-            if _fast_mode(query_config):
-                return await self._fast_parallel_retrieval(
-                    query,
-                    runtime,
-                    document_ids,
-                    variant_id,
-                    query_config,
-                    plan,
-                    timings,
-                    parallel_started,
-                )
             if _metadata_only(query_config):
                 metadata_result = await self._timed_metadata_candidates(
                     query,
@@ -443,6 +432,17 @@ class RetrievalOrchestrator:
                         "metadata_candidates": len(metadata_candidates),
                         "metadata_trace": metadata_trace,
                     },
+                )
+            if _fast_mode(query_config):
+                return await self._fast_parallel_retrieval(
+                    query,
+                    runtime,
+                    document_ids,
+                    variant_id,
+                    query_config,
+                    plan,
+                    timings,
+                    parallel_started,
                 )
             native_task = self._timed_native_candidates(query, runtime, document_ids, query_config)
             try:
