@@ -132,6 +132,7 @@ def test_domain_query_expansion_prefers_arabic_for_quran_transliteration():
     assert result.retrieval_passes[0].name == "lexical_expanded_token"
     assert result.retrieval_passes[0].query == "حنان"
     assert result.retrieval_passes[0].direct_evidence is True
+    assert [item.query for item in result.retrieval_passes] == ["حنان", "حنانا", "وحنانا"]
     assert all(
         retrieval_pass.name == "lexical_expanded_token"
         and retrieval_pass.direct_evidence is True
@@ -171,4 +172,5 @@ def test_domain_query_expansion_trace_terms_are_not_mutated_by_expansion_terms()
     result = service.expand("hanan", domain_metadata=[quran_domain_metadata()])
     result.expansions[0].terms.append("leaked")
 
+    assert result.trace["expanded_terms"] == ["حنان", "حنانا", "وحنانا"]
     assert result.trace["expansions"][0]["terms"] == ["حنان", "حنانا", "وحنانا"]
