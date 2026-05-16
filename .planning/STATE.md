@@ -4,8 +4,8 @@ milestone: v1.0
 milestone_name: milestone
 status: executing
 stopped_at: Completed 05-02-PLAN.md
-last_updated: "2026-05-15T10:40:41Z"
-last_activity: 2026-05-15 -- Completed quick task 260515-kc3 Ragstudio changelog, roadmap, and GitHub alignment
+last_updated: "2026-05-16T12:36:29Z"
+last_activity: 2026-05-16 -- Completed quick task 260516-n1c Task 5 lexical-expanded dedupe scoring fix
 progress:
   total_phases: 5
   completed_phases: 4
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-05-14)
 Phase: 5
 Plan: 05-03
 Status: In progress
-Last activity: 2026-05-15 -- Completed quick task 260515-kc3 Ragstudio changelog, roadmap, and GitHub alignment
+Last activity: 2026-05-16 -- Completed quick task 260516-n1c Task 5 lexical-expanded dedupe scoring fix
 
 Progress: [█████████░] 93%
 
@@ -81,6 +81,7 @@ None yet.
 
 | Date | Quick ID | Task | Status |
 |------|----------|------|--------|
+| 2026-05-16 | 260516-n1c | Fix Task 5 lexical-expanded dedupe scoring blocker | Complete |
 | 2026-05-15 | 260515-kc3 | Align public-site changelog, roadmap, and GitHub links with Ragstudio | Complete |
 | 2026-05-15 | 260515-jz0 | Create alternate Evidence Console public-site design after user rejected first SaaS/logo option | Complete |
 | 2026-05-15 | 260515-jk8 | Shift public Ragstudio site positioning to SaaS marketing and add logo/banner assets | Complete |

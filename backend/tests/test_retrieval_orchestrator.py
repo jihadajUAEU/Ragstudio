@@ -465,6 +465,66 @@ def test_fusion_preserves_direct_fields_from_lower_scored_duplicate():
     assert result.canonical_reference == "19:13"
     assert result.scope_status == "in_scope"
     assert result.risk_flags == ["parser_warning"]
+    assert "lexical_expanded_exact" not in result.reasons
+
+
+def test_fusion_retains_lexical_expanded_boost_after_vector_duplicate_wins():
+    plan = plan_for_query("qiyam al layl", document_ids=["doc-lexical"], limit=3)
+    semantic = EvidenceCandidate(
+        candidate_id="pgvector:chunk-night-prayer",
+        text="The chapter discusses night prayer and standing in worship.",
+        document_id="doc-lexical",
+        chunk_id="chunk-night-prayer",
+        source_location={"page": 7},
+        metadata={},
+        tool="pgvector",
+        tool_rank=1,
+        base_score=40.0,
+        retrieval_pass="vector_db",
+    )
+    lexical_expanded = EvidenceCandidate(
+        candidate_id="lexical-expanded:chunk-night-prayer",
+        text="The chapter discusses night prayer and standing in worship.",
+        document_id="doc-lexical",
+        chunk_id="chunk-night-prayer",
+        source_location={"page": 7},
+        metadata={"retrieval_passes": ["lexical_expanded_token"]},
+        tool="metadata",
+        tool_rank=2,
+        base_score=6.0,
+        retrieval_pass="lexical_expanded_token",
+        match_features={
+            "lexical_expanded": True,
+            "expanded_token": "qiyam",
+            "matched_token": "standing",
+        },
+    )
+    ordinary_semantic = EvidenceCandidate(
+        candidate_id="pgvector:ordinary",
+        text="A semantic-only result about general worship.",
+        document_id="doc-lexical",
+        chunk_id="chunk-ordinary",
+        source_location={"page": 9},
+        metadata={},
+        tool="pgvector",
+        tool_rank=3,
+        base_score=20.0,
+        retrieval_pass="vector_db",
+    )
+
+    fused = fuse_candidates(plan, [semantic, lexical_expanded, ordinary_semantic])
+
+    result = next(candidate for candidate in fused if candidate.chunk_id == "chunk-night-prayer")
+    assert result.tool == "pgvector"
+    assert result.retrieval_pass == "vector_db"
+    assert result.metadata["retrieval_passes"] == ["vector_db", "lexical_expanded_token"]
+    assert result.match_features["lexical_expanded"] is True
+    assert result.reasons.count("lexical_expanded_exact") == 1
+    assert result.boost_score == 28.0
+    assert result.final_score == 68.0
+
+    semantic_only = next(candidate for candidate in fused if candidate.chunk_id == "chunk-ordinary")
+    assert "lexical_expanded_exact" not in semantic_only.reasons
 
 
 def test_fusion_merges_parser_warnings_when_native_duplicate_wins():

@@ -252,6 +252,10 @@ def _score_candidate(
         boost += 2.0
         reasons.append("research_semantic_native")
 
+    if _has_lexical_expanded_evidence(candidate):
+        boost += 28.0
+        reasons.append("lexical_expanded_exact")
+
     if candidate.tool == "metadata":
         boost += 3.0
         reasons.append("metadata_precision_tool")
@@ -325,6 +329,26 @@ def _quality_allows_domain_reference_boost(metadata: dict[str, Any]) -> bool:
     return (
         bool(policy.get("index_exact_arabic", True))
         and policy.get("graph_confidence") != "blocked"
+    )
+
+
+def _has_lexical_expanded_evidence(candidate: EvidenceCandidate) -> bool:
+    if candidate.retrieval_pass == "lexical_expanded_token":
+        return True
+
+    retrieval_passes = candidate.metadata.get("retrieval_passes")
+    if isinstance(retrieval_passes, list) and "lexical_expanded_token" in {
+        str(item) for item in retrieval_passes
+    }:
+        return True
+
+    metadata_match_features = candidate.metadata.get("match_features")
+    match_features = (
+        metadata_match_features if isinstance(metadata_match_features, dict) else {}
+    )
+    return bool(
+        candidate.match_features.get("lexical_expanded")
+        or match_features.get("lexical_expanded")
     )
 
 
