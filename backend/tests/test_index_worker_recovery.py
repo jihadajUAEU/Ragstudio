@@ -13,6 +13,7 @@ from ragstudio.schemas.common import StageStatus
 from ragstudio.schemas.parsing import IndexDocumentIn
 from ragstudio.services.document_service import DocumentService
 from ragstudio.services.index_job_runner import IndexJobRunner
+from ragstudio.services.index_lifecycle_service import IndexLifecycleResult, IndexLifecycleService
 from ragstudio.services.job_queue_service import JobLeaseLostError
 from sqlalchemy import select
 
@@ -310,6 +311,121 @@ async def test_index_job_runner_resumes_graph_projection_without_reindex(
     assert refreshed.result["indexing_stage"]["chunk_count"] == 1
     assert projection.status == "succeeded"
     assert index_record.status == StageStatus.SUCCEEDED.value
+
+
+@pytest.mark.asyncio
+async def test_index_job_runner_materializes_pending_projection_before_succeeding_job(
+    client,
+    tmp_path,
+    monkeypatch,
+):
+    app = client._transport.app
+    artifact = tmp_path / "uploads" / "normal-graph-sha"
+    artifact.parent.mkdir(parents=True)
+    artifact.write_text("Quran 1:4", encoding="utf-8")
+    FakeGraphProjectionRunner.calls = []
+
+    async with app.state.session_factory() as session:
+        session.add(
+            SettingsProfile(
+                id="default",
+                provider="openai-compatible",
+                llm_model="gpt-4o",
+                embedding_model="text-embedding-3-large",
+                storage_backend="postgres_pgvector_neo4j",
+                runtime_mode="runtime",
+            )
+        )
+        document = Document(
+            filename="normal-graph.pdf",
+            content_type="application/pdf",
+            sha256="normal-graph-sha",
+            artifact_path=str(artifact),
+            status=StageStatus.READY.value,
+        )
+        session.add(document)
+        await session.flush()
+        session.add(
+            Chunk(
+                document_id=document.id,
+                text="Quran 1:4",
+                source_location={"page": 1},
+                metadata_json={},
+            )
+        )
+        session.add(
+            GraphProjectionRecord(
+                document_id=document.id,
+                runtime_profile_id="default",
+                status="pending",
+                node_count=0,
+                edge_count=0,
+            )
+        )
+        session.add(
+            Job(
+                id="job-normal-graph",
+                type="index_document",
+                target_id=document.id,
+                status=StageStatus.RUNNING.value,
+                progress=50,
+                logs=["Worker worker-a claimed job."],
+                result={"index_options": {"parser_mode": "mineru_strict", "domain_metadata": {}}},
+                job_options={"parser_mode": "mineru_strict", "domain_metadata": {}},
+                worker_id="worker-a",
+                lease_expires_at=datetime.now(UTC) + timedelta(minutes=5),
+            )
+        )
+        await session.commit()
+        document_id = document.id
+
+    async def fake_reindex_document(
+        self,
+        document_id,
+        *,
+        options=None,
+        on_mineru_status=None,
+        on_stage=None,
+    ):
+        return IndexLifecycleResult(
+            chunks=[object()],
+            graph_projection_record_id="projection-normal-graph",
+            graph_materialization={
+                "status": "pending",
+                "node_count": 0,
+                "edge_count": 0,
+                "reason": None,
+            },
+        )
+
+    monkeypatch.setattr(IndexLifecycleService, "reindex_document", fake_reindex_document)
+    monkeypatch.setattr(
+        "ragstudio.services.document_service.GraphProjectionRunner",
+        FakeGraphProjectionRunner,
+    )
+
+    async with app.state.session_factory() as session:
+        job = await session.get(Job, "job-normal-graph")
+        await IndexJobRunner(session, app.state.settings, worker_id="worker-a").run(job)
+        refreshed = await session.get(Job, "job-normal-graph")
+        projection = await session.scalar(
+            select(GraphProjectionRecord).where(
+                GraphProjectionRecord.document_id == document_id,
+            )
+        )
+
+    assert FakeGraphProjectionRunner.calls == [document_id]
+    assert refreshed.status == StageStatus.SUCCEEDED.value
+    assert refreshed.worker_id is None
+    assert refreshed.lease_expires_at is None
+    assert refreshed.result["graph_materialization"] == {
+        "status": "succeeded",
+        "node_count": 2,
+        "edge_count": 1,
+        "reason": None,
+    }
+    assert refreshed.result["indexing_stage"]["stage"] == "ready"
+    assert projection.status == "succeeded"
 
 
 @pytest.mark.asyncio

@@ -5,26 +5,26 @@
 - **What this is:** Ragstudio is an open-source RAG data-quality workbench that makes document quality inspectable before bad chunks become bad answers.
 - **Who it's for:** RAG engineers, AI application teams, and technical founders who need to inspect parser warnings, references, chunks, retrieval traces, reranker behavior, and proof artifacts.
 - **Space/industry:** AI developer tools, RAG observability, document parsing quality, benchmark-backed open-source infrastructure.
-- **Project type:** Hybrid public launch site, static proof viewer, benchmark/docs site, and app-like evidence workbench.
+- **Project type:** Product-led public launch site, static proof viewer, benchmark/docs site, and app-like evidence workbench.
 - **Memorable thing:** Ragstudio makes RAG quality inspectable before bad answers happen.
 
 ## Aesthetic Direction
 
-- **Direction:** Technical Field Guide with an embedded proof instrument.
+- **Direction:** Evidence Console: a polished product surface with an embedded proof and trust layer.
 - **Decoration level:** Intentional and sparse.
-- **Mood:** Serious, readable, public, and evidence-first. The public site should feel like a technical publication that contains a working proof viewer, not like a generic SaaS landing page or terminal-themed demo.
+- **Mood:** Polished, confident, readable, and operational. The public site should feel like a serious product surface for a technical audience, with proof pages acting as trust support rather than the entire first impression.
 - **Reference sites:** Research considered current AI observability and eval tools such as Langfuse, W&B Weave, Braintrust, Arize/Phoenix, Evidently AI, LlamaIndex, and document-processing products. Ragstudio should borrow their clarity around traces/docs/source links, but avoid converging on their generic observability-platform posture.
 
 ## Design Thesis
 
-Ragstudio's public surface should lead with a written benchmark story and then let reviewers inspect the evidence. The strongest visual object is the proof packet: claims, warnings, chunks, traces, source commits, schemas, hashes, and raw artifacts.
+Ragstudio's public surface should lead with a clear product promise and then let technical reviewers inspect the evidence. The strongest first impression is the product value: a workbench for parser quality, chunk policy, graph evidence, retrieval traces, and proof packets.
 
-Design the site as a field guide:
+Design the site as an evidence-console launch:
 
-- Start with a readable product thesis.
-- Show the proof packet as a field note, not a decorative dashboard screenshot.
-- Make every claim traceable to an artifact, source path, commit, or roadmap entry.
-- Treat disabled and roadmap claims as trust-building objects, not as footnotes.
+- Start with the product category and buyer-facing outcome.
+- Show polished product screenshots and brand banners before the proof detail.
+- Use evidence, source paths, commits, and limitations as credibility layers.
+- Keep disabled and roadmap claims visible, but place them after the product story.
 - Keep the proof viewer compact, stable, and work-focused.
 
 ## Typography
@@ -131,9 +131,9 @@ Primary navigation order:
 
 The homepage first viewport has three jobs:
 
-1. Name Ragstudio as a RAG quality workbench.
-2. State the proof-backed launch claim.
-3. Send the visitor to inspect the proof.
+1. Name Ragstudio as a RAG evidence-control workbench.
+2. State the buyer-facing value clearly.
+3. Send the visitor to docs, product examples, or proof based on intent.
 
 ### Proof Viewer Layout
 
@@ -166,7 +166,7 @@ Mobile:
 - Warning/partial: amber.
 - Error: red.
 - Disabled/roadmap: neutral or amber, depending on whether action is needed.
-- Badges describe evidence state, not marketing emphasis.
+- Badges may support product positioning when they remain concrete: open source, static proof, graph evidence, quality gates, docs ready.
 
 ### Field Notes
 
@@ -178,7 +178,7 @@ Use field-note panels for benchmark or launch narrative objects:
 - Corpus note.
 - Replay command.
 
-These panels should read like evidence annotations, not marketing cards.
+These panels should read like compact credibility annotations inside a larger product page.
 
 ### Proof Cards
 
@@ -234,6 +234,9 @@ Avoid:
 
 Use direct product language:
 
+- `Build trustworthy RAG`
+- `See the product`
+- `Start with docs`
 - `Inspect proof`
 - `Replay benchmark`
 - `Open raw artifact`
@@ -245,21 +248,18 @@ Use direct product language:
 
 Avoid:
 
-- `unlock`
 - `all-in-one`
-- `powerful`
 - `seamless`
 - `next-generation`
-- `modern AI`
 - `transform your workflow`
 - `built for the future`
 
-Every section has one job and one headline. Delete copy that does not help a reviewer verify, replay, or contribute.
+Every section has one job and one headline. Marketing copy must still name a concrete Ragstudio capability or workflow.
 
 ## Anti-Slop Rules
 
-- No 3-column feature grid with circular icons.
-- No centered-everything page rhythm.
+- 3-column feature grids are allowed when they describe concrete product value and remain scannable.
+- Centered hero copy is allowed only when the product screenshot or banner stays visible in the first viewport.
 - No decorative blobs, orbital gradients, wavy dividers, or emoji decoration.
 - No generic hero copy that could fit any other RAG tool.
 - No dashboard-card mosaic as the first impression.
@@ -269,10 +269,10 @@ Every section has one job and one headline. Delete copy that does not help a rev
 
 ## Implementation Notes
 
-- The chosen preview direction was `Option 3 - Technical Field Guide`.
+- The current direction is `Evidence Console`: a product-led homepage with proof-backed credibility pages.
 - Preview file used during consultation: `/tmp/design-consultation-preview-1778694347-option3.html`.
 - The rejected direction was the dark verification console. Do not revive dark/neon/terminal styling unless explicitly requested.
-- Refined Option 1 was stronger as a product launch, but Option 3 was selected for a more technical-publication feel.
+- Keep the homepage product-led, use real Studio screenshots before abstract brand art, and keep the proof viewer workbench-like.
 
 ## Decisions Log
 
@@ -282,3 +282,5 @@ Every section has one job and one headline. Delete copy that does not help a rev
 | 2026-05-13 | Selected Technical Field Guide direction | User chose Option 3 after rejecting the dark verification-console direction and reviewing the refined evidence-workbench option. |
 | 2026-05-13 | Use Literata, Source Sans 3, and IBM Plex Mono | This supports public benchmark reading, practical UI, and artifact inspection. |
 | 2026-05-13 | Keep proof viewer compact and workbench-like | The site can read editorially while the proof surface remains task-focused. |
+| 2026-05-15 | Shift homepage direction to SaaS marketing | User explicitly requested changing the public site from proof-first field-guide framing into a SaaS marketing site. |
+| 2026-05-15 | Replace abstract SaaS option with Evidence Console | User disliked the first SaaS/logo/banner direction and requested another option using `gsd-ui-researcher` and `design-html`. |

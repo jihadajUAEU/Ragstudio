@@ -440,9 +440,6 @@ class DocumentService:
         parser_quality_details = self._parser_quality_details(chunks or [])
         index_quality_report = self._index_quality_report(chunks or [])
         parser_warning = self._parser_quality_warning(parser_quality)
-        document.status = StageStatus.SUCCEEDED.value
-        job.status = StageStatus.SUCCEEDED.value
-        job.progress = 100
         job.result = {
             **job.result,
             "document_id": document.id,
@@ -489,6 +486,9 @@ class DocumentService:
             stage_warning=combined_warning,
         )
         await ensure_current_lease()
+        document.status = StageStatus.SUCCEEDED.value
+        job.status = StageStatus.SUCCEEDED.value
+        job.progress = 100
 
     def _record_warning_entries(
         self,
