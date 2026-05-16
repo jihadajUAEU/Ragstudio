@@ -1,6 +1,6 @@
 import "@testing-library/jest-dom/vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { apiClient } from "../src/api/client";
@@ -161,7 +161,11 @@ describe("AppShell", () => {
 
     renderShell();
 
-    expect(await screen.findByRole("button", { name: new RegExp(`Runtime trust status: ${label}`) })).toBeVisible();
+    expect(
+      await screen.findByRole("button", {
+        name: new RegExp(`Runtime trust status: ${label}`),
+      }),
+    ).toBeVisible();
   });
 
   it("renders blocked when diagnostics cannot load", async () => {
@@ -186,8 +190,131 @@ describe("AppShell", () => {
 
     renderShell();
 
-    expect(await screen.findByRole("button", { name: /Runtime trust status: Blocked/ })).toBeVisible();
+    expect(
+      await screen.findByRole("button", { name: /Runtime trust status: Blocked/ }),
+    ).toBeVisible();
     expect(screen.queryByText("Graph pending")).not.toBeInTheDocument();
+  });
+
+  it("polls diagnostics every 30 seconds without running provider tests", async () => {
+    vi.useFakeTimers();
+
+    renderShell();
+
+    await vi.waitFor(() => expect(apiClient.diagnostics).toHaveBeenCalledTimes(1));
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30000);
+    });
+
+    await vi.waitFor(() => expect(apiClient.diagnostics).toHaveBeenCalledTimes(2));
+    expect(apiClient.defaultSettings).not.toHaveBeenCalled();
+    expect(apiClient.testLlmSettings).not.toHaveBeenCalled();
+    expect(apiClient.testEmbeddingSettings).not.toHaveBeenCalled();
+    expect(apiClient.testRerankerSettings).not.toHaveBeenCalled();
+    expect(apiClient.testMinerUSettings).not.toHaveBeenCalled();
+  });
+
+  it("opens the runtime trust panel with grouped runtime sections", async () => {
+    renderShell();
+
+    fireEvent.click(await screen.findByRole("button", { name: /Runtime trust status: Ready/ }));
+
+    expect(screen.getByRole("dialog", { name: "Runtime trust" })).toHaveAttribute(
+      "aria-modal",
+      "true",
+    );
+    expect(screen.getByText("Backend/API")).toBeVisible();
+    expect(screen.getByText("Worker/jobs")).toBeVisible();
+    expect(screen.getByText("Postgres/PGVector")).toBeVisible();
+    expect(screen.getByText("Neo4j/graph projection")).toBeVisible();
+    expect(screen.getByText("MinerU/parser")).toBeVisible();
+    expect(screen.getByText("LLM")).toBeVisible();
+    expect(screen.getByText("Embeddings")).toBeVisible();
+    expect(screen.getByText("Reranker")).toBeVisible();
+  });
+
+  it("refreshes status and opens Diagnostics from the runtime trust panel", async () => {
+    const onNavigate = vi.fn();
+    renderShell(onNavigate);
+
+    fireEvent.click(await screen.findByRole("button", { name: /Runtime trust status: Ready/ }));
+    await waitFor(() => expect(apiClient.diagnostics).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole("button", { name: "Refresh status" }));
+    await waitFor(() => expect(apiClient.diagnostics).toHaveBeenCalledTimes(2));
+
+    fireEvent.click(screen.getByRole("button", { name: "Open Diagnostics" }));
+
+    expect(onNavigate).toHaveBeenCalledWith("/diagnostics");
+  });
+
+  it("runs each provider test with the saved default settings payload", async () => {
+    vi.mocked(apiClient.testLlmSettings).mockResolvedValue({
+      ok: true,
+      provider: "openai_compatible",
+      model: "gpt-4.1",
+      latency_ms: 10,
+      detail: "LLM ready",
+    });
+    vi.mocked(apiClient.testEmbeddingSettings).mockResolvedValue({
+      ok: true,
+      provider: "vllm_openai",
+      model: "Qwen/Qwen3-Embedding-8B",
+      dimensions: 1536,
+      latency_ms: 8,
+      detail: "Embeddings ready",
+    });
+    vi.mocked(apiClient.testRerankerSettings).mockResolvedValue({
+      ok: true,
+      provider: "generic_http",
+      model: "Qwen/Qwen3-Reranker-8B",
+      base_url: "http://127.0.0.1:8005/v1/rerank",
+      latency_ms: 12,
+      detail: "Reranker ready",
+    });
+    vi.mocked(apiClient.testMinerUSettings).mockResolvedValue({
+      ok: true,
+      base_url: "http://127.0.0.1:8765",
+      latency_ms: 15,
+      detail: "MinerU ready",
+      optimization: {},
+    });
+    renderShell();
+
+    fireEvent.click(await screen.findByRole("button", { name: /Runtime trust status: Ready/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Test LLM" }));
+    fireEvent.click(screen.getByRole("button", { name: "Test embeddings" }));
+    fireEvent.click(screen.getByRole("button", { name: "Test reranker" }));
+    fireEvent.click(screen.getByRole("button", { name: "Test MinerU" }));
+
+    expect(await screen.findByText("Connected: LLM ready")).toBeVisible();
+    expect(screen.getByText("Connected: Embeddings ready (1536 dims)")).toBeVisible();
+    expect(screen.getByText("Connected: Reranker ready")).toBeVisible();
+    expect(screen.getByText("Connected: MinerU ready")).toBeVisible();
+    expect(apiClient.testLlmSettings).toHaveBeenCalledWith(defaultSettings);
+    expect(apiClient.testEmbeddingSettings).toHaveBeenCalledWith(defaultSettings);
+    expect(apiClient.testRerankerSettings).toHaveBeenCalledWith(defaultSettings);
+    expect(apiClient.testMinerUSettings).toHaveBeenCalledWith(defaultSettings);
+  });
+
+  it("keeps failed provider test output visible and restores focus on Escape", async () => {
+    vi.mocked(apiClient.testLlmSettings).mockRejectedValueOnce(new Error("LLM timeout"));
+    renderShell();
+
+    const trigger = await screen.findByRole("button", { name: /Runtime trust status: Ready/ });
+    trigger.focus();
+    fireEvent.click(trigger);
+    fireEvent.click(screen.getByRole("button", { name: "Test LLM" }));
+
+    expect(await screen.findByText("LLM timeout")).toBeVisible();
+    expect(screen.getByRole("dialog", { name: "Runtime trust" })).toBeVisible();
+
+    fireEvent.keyDown(window, { key: "Escape" });
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "Runtime trust" })).not.toBeInTheDocument();
+    });
+    expect(trigger).toHaveFocus();
   });
 });
 
