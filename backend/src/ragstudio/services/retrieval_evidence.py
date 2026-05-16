@@ -22,6 +22,8 @@ class RetrievalPlan:
     use_relationships: bool = True
     candidate_limit: int = 20
     understanding: QueryUnderstanding | None = None
+    retrieval_strategy: str = "semantic_hybrid"
+    graph_context_required: bool = False
 
 
 @dataclass(frozen=True)
@@ -153,6 +155,8 @@ def plan_for_query(query: str, *, document_ids: list[str], limit: int) -> Retrie
         intent=intent,
         candidate_limit=max(limit * 2, 20),
         understanding=understanding,
+        retrieval_strategy=understanding.retrieval_strategy,
+        graph_context_required=understanding.graph_context_required,
     )
 
 
@@ -181,11 +185,12 @@ def fuse_candidates(
         _score_candidate(plan, candidate, deduped_tools[_dedupe_key(candidate)])
         for candidate in deduped.values()
     ]
-    return sorted(
+    ranked = sorted(
         scored,
         key=lambda candidate: (candidate.final_score, -candidate.tool_rank),
         reverse=True,
     )
+    return _apply_multi_document_ordering(plan, ranked)
 
 
 def _score_candidate(
@@ -208,6 +213,44 @@ def _score_candidate(
         if title and query_terms & _terms(title):
             boost += 8.0
             reasons.append("title_match")
+
+    if (
+        plan.retrieval_strategy in {"reference_first_hybrid", "graph_context_hybrid"}
+        and candidate.retrieval_pass == "reference_exact"
+    ):
+        boost += 12.0
+        reasons.append("reference_first_hybrid")
+
+    if plan.graph_context_required and candidate.tool == "graph":
+        boost += 8.0
+        reasons.append("query_requested_graph_context")
+
+    if plan.retrieval_strategy == "count_metadata_hybrid" and candidate.tool == "metadata":
+        boost += 6.0
+        reasons.append("count_metadata_hybrid")
+
+    domain_family = _domain_family(candidate.metadata)
+    domain_reference_allowed = _quality_allows_domain_reference_boost(candidate.metadata)
+
+    if (
+        domain_reference_allowed
+        and domain_family in {"tafseer_reference", "hadith_reference", "legal_reference"}
+        and candidate.retrieval_pass == "reference_exact"
+    ):
+        boost += 10.0
+        reasons.append(f"{domain_family}_exact")
+
+    if (
+        domain_family == "tafseer_reference"
+        and plan.graph_context_required
+        and candidate.tool == "graph"
+    ):
+        boost += 5.0
+        reasons.append("tafseer_graph_context")
+
+    if domain_family == "research_semantic" and candidate.tool == "native":
+        boost += 2.0
+        reasons.append("research_semantic_native")
 
     if candidate.tool == "metadata":
         boost += 3.0
@@ -242,6 +285,118 @@ def _score_candidate(
         source_quality=candidate.source_quality,
         risk_flags=candidate.risk_flags,
     )
+
+
+def _domain_family(metadata: dict[str, Any]) -> str:
+    domain_metadata = metadata.get("domain_metadata")
+    if not isinstance(domain_metadata, dict):
+        return "generic"
+
+    raw_tags = domain_metadata.get("tags")
+    tags = (
+        {str(tag).casefold() for tag in raw_tags if isinstance(tag, str)}
+        if isinstance(raw_tags, list)
+        else set()
+    )
+    tokens = {
+        str(domain_metadata.get("domain") or "").casefold(),
+        str(domain_metadata.get("document_type") or "").casefold(),
+        str(domain_metadata.get("collection") or "").casefold(),
+        str(domain_metadata.get("content_role") or "").casefold(),
+        str(domain_metadata.get("citation_style") or "").casefold(),
+        *tags,
+    }
+
+    if {"quran_tafseer", "tafseer", "quran"} & tokens:
+        return "tafseer_reference"
+    if "hadith" in tokens:
+        return "hadith_reference"
+    if {"legal", "law", "statute", "policy"} & tokens:
+        return "legal_reference"
+    if {"research", "paper", "report", "scientific"} & tokens:
+        return "research_semantic"
+    return "generic"
+
+
+def _quality_allows_domain_reference_boost(metadata: dict[str, Any]) -> bool:
+    policy = metadata.get("quality_action_policy")
+    if not isinstance(policy, dict):
+        return True
+    return (
+        bool(policy.get("index_exact_arabic", True))
+        and policy.get("graph_confidence") != "blocked"
+    )
+
+
+def _selected_document_count(plan: RetrievalPlan) -> int:
+    return len({document_id for document_id in plan.document_ids if document_id})
+
+
+def _best_candidate_by_document(
+    candidates: list[EvidenceCandidate],
+) -> dict[str, EvidenceCandidate]:
+    best: dict[str, EvidenceCandidate] = {}
+    for candidate in candidates:
+        if not candidate.document_id:
+            continue
+        existing = best.get(candidate.document_id)
+        if existing is None or candidate.final_score > existing.final_score:
+            best[candidate.document_id] = candidate
+    return best
+
+
+def _apply_multi_document_ordering(
+    plan: RetrievalPlan,
+    ranked: list[EvidenceCandidate],
+) -> list[EvidenceCandidate]:
+    if _selected_document_count(plan) <= 1:
+        return ranked
+
+    best_by_document = _best_candidate_by_document(ranked)
+    if len(best_by_document) <= 1:
+        return ranked
+
+    if plan.intent == "comparison":
+        comparison_head = sorted(
+            best_by_document.values(),
+            key=lambda candidate: (candidate.final_score, -candidate.tool_rank),
+            reverse=True,
+        )
+        comparison_ids = {candidate.candidate_id for candidate in comparison_head}
+        return [
+            *comparison_head,
+            *[candidate for candidate in ranked if candidate.candidate_id not in comparison_ids],
+        ]
+
+    top_window = ranked[: max(plan.limit, 1)]
+    top_documents = {candidate.document_id for candidate in top_window if candidate.document_id}
+    if len(top_documents) > 1:
+        return ranked
+
+    top_score = ranked[0].final_score if ranked else 0.0
+    diversity_candidates = [
+        candidate
+        for candidate in best_by_document.values()
+        if candidate.document_id not in top_documents
+        and candidate.final_score >= top_score * 0.65
+    ]
+    if not diversity_candidates:
+        return ranked
+
+    diversity_candidate = sorted(
+        diversity_candidates,
+        key=lambda candidate: (candidate.final_score, -candidate.tool_rank),
+        reverse=True,
+    )[0]
+    return [
+        ranked[0],
+        diversity_candidate,
+        *[
+            candidate
+            for candidate in ranked[1:]
+            if candidate.candidate_id != diversity_candidate.candidate_id
+        ],
+    ]
 
 
 def _dedupe_key(candidate: EvidenceCandidate) -> str:

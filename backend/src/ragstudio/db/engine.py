@@ -375,6 +375,14 @@ def _ensure_chunk_search_indexes(connection) -> None:
             """
         )
     )
+    connection.execute(
+        text(
+            """
+            CREATE INDEX IF NOT EXISTS ix_chunks_document_preview_ref
+            ON chunks (document_id, preview_ref)
+            """
+        )
+    )
 
 
 def _backfill_graph_projection_targets(connection) -> None:

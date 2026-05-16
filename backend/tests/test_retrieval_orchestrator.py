@@ -31,6 +31,18 @@ def test_plan_for_reference_query_marks_reference_intent():
     assert plan.use_relationships is True
 
 
+def test_plan_for_reference_context_query_sets_graph_context_strategy():
+    plan = plan_for_query(
+        "Explain 1:5 and show the surrounding connected verses",
+        document_ids=["doc-tafseer"],
+        limit=5,
+    )
+
+    assert plan.intent == "reference"
+    assert plan.retrieval_strategy == "graph_context_hybrid"
+    assert plan.graph_context_required is True
+
+
 def test_plan_for_arabic_token_carries_retrieval_passes():
     plan = plan_for_query("حنانا", document_ids=["doc-quran"], limit=5)
 
@@ -130,6 +142,201 @@ def test_fusion_boosts_title_count_chunk_for_count_query():
     assert fused[0].chunk_id == "m1"
     assert "answer_bearing_count" in fused[0].reasons
     assert fused[0].final_score > weak_native.base_score
+
+
+def test_fusion_keeps_exact_reference_first_and_boosts_graph_context_neighbors():
+    plan = plan_for_query(
+        "Explain 1:5 and show the surrounding connected verses",
+        document_ids=["doc-tafseer"],
+        limit=5,
+    )
+    exact = EvidenceCandidate(
+        candidate_id="metadata:1-5",
+        text="Verse 1:5 Guide us to the straight path.",
+        document_id="doc-tafseer",
+        chunk_id="chunk-1-5",
+        source_location={"reference": "1:5"},
+        metadata={},
+        tool="metadata",
+        tool_rank=1,
+        base_score=10.0,
+        retrieval_pass="reference_exact",
+    )
+    neighbor = EvidenceCandidate(
+        candidate_id="graph:1-4",
+        text="Verse 1:4 It is You we worship and You we ask for help.",
+        document_id="doc-tafseer",
+        chunk_id="chunk-1-4",
+        source_location={"reference": "1:4"},
+        metadata={"graph_relationship": {"type": "REFERENCES", "path": "reference_hop"}},
+        tool="graph",
+        tool_rank=1,
+        base_score=10.0,
+    )
+
+    fused = fuse_candidates(plan, [neighbor, exact])
+
+    assert fused[0].chunk_id == "chunk-1-5"
+    assert fused[1].chunk_id == "chunk-1-4"
+    assert "reference_first_hybrid" in fused[0].reasons
+    assert "query_requested_graph_context" in fused[1].reasons
+
+
+def test_domain_aware_fusion_boosts_tafseer_exact_reference():
+    plan = plan_for_query("Explain 1:5", document_ids=["doc-tafseer"], limit=5)
+    tafseer_exact = EvidenceCandidate(
+        candidate_id="metadata:tafseer-1-5",
+        text="Verse 1:5 Guide us to the straight path.",
+        document_id="doc-tafseer",
+        chunk_id="chunk-tafseer-1-5",
+        source_location={"reference": "1:5"},
+        metadata={
+            "domain_metadata": {
+                "domain": "quran_tafseer",
+                "tags": ["quran"],
+                "script": "arabic",
+            },
+            "reference_metadata": {"references": ["1:5"]},
+            "quality_action_policy": {
+                "index_exact_arabic": True,
+                "graph_confidence": "trusted",
+            },
+        },
+        tool="metadata",
+        tool_rank=1,
+        base_score=10.0,
+        retrieval_pass="reference_exact",
+    )
+    generic_native = EvidenceCandidate(
+        candidate_id="native:generic",
+        text="A generic discussion of guidance.",
+        document_id="doc-tafseer",
+        chunk_id="chunk-generic",
+        source_location={},
+        metadata={"domain_metadata": {"domain": "generic"}},
+        tool="native",
+        tool_rank=1,
+        base_score=20.0,
+    )
+
+    fused = fuse_candidates(plan, [generic_native, tafseer_exact])
+
+    assert fused[0].chunk_id == "chunk-tafseer-1-5"
+    assert "tafseer_reference_exact" in fused[0].reasons
+
+
+def test_domain_aware_fusion_does_not_apply_tafseer_boost_to_research_paper():
+    plan = plan_for_query("Explain 1:5", document_ids=["doc-paper"], limit=5)
+    paper_candidate = EvidenceCandidate(
+        candidate_id="metadata:paper-section",
+        text="Section 1.5 describes retrieval methodology.",
+        document_id="doc-paper",
+        chunk_id="chunk-paper-1-5",
+        source_location={"section": "1.5"},
+        metadata={
+            "domain_metadata": {
+                "domain": "research",
+                "document_type": "paper",
+            },
+        },
+        tool="metadata",
+        tool_rank=1,
+        base_score=10.0,
+        retrieval_pass="reference_exact",
+    )
+
+    fused = fuse_candidates(plan, [paper_candidate])
+
+    assert "tafseer_reference_exact" not in fused[0].reasons
+    assert "hadith_reference_exact" not in fused[0].reasons
+
+
+def test_multi_document_reference_query_keeps_exact_hits_from_each_tafseer_document():
+    plan = plan_for_query("Explain 1:5", document_ids=["doc-a", "doc-b"], limit=2)
+    doc_a = EvidenceCandidate(
+        candidate_id="metadata:doc-a-1-5",
+        text="Doc A verse 1:5 explanation.",
+        document_id="doc-a",
+        chunk_id="chunk-doc-a-1-5",
+        source_location={"reference": "1:5"},
+        metadata={"domain_metadata": {"domain": "quran_tafseer"}},
+        tool="metadata",
+        tool_rank=1,
+        base_score=30.0,
+        retrieval_pass="reference_exact",
+    )
+    doc_b = EvidenceCandidate(
+        candidate_id="metadata:doc-b-1-5",
+        text="Doc B verse 1:5 explanation.",
+        document_id="doc-b",
+        chunk_id="chunk-doc-b-1-5",
+        source_location={"reference": "1:5"},
+        metadata={"domain_metadata": {"domain": "quran_tafseer"}},
+        tool="metadata",
+        tool_rank=2,
+        base_score=24.0,
+        retrieval_pass="reference_exact",
+    )
+    doc_a_extra = EvidenceCandidate(
+        candidate_id="metadata:doc-a-extra",
+        text="Another strong Doc A passage.",
+        document_id="doc-a",
+        chunk_id="chunk-doc-a-extra",
+        source_location={},
+        metadata={"domain_metadata": {"domain": "quran_tafseer"}},
+        tool="metadata",
+        tool_rank=3,
+        base_score=25.0,
+    )
+
+    fused = fuse_candidates(plan, [doc_a, doc_a_extra, doc_b])
+
+    assert [candidate.document_id for candidate in fused[:2]] == ["doc-a", "doc-b"]
+
+
+def test_multi_document_comparison_query_prioritizes_multiple_documents():
+    plan = plan_for_query(
+        "Compare guidance in these selected documents",
+        document_ids=["doc-a", "doc-b"],
+        limit=4,
+    )
+    doc_a = EvidenceCandidate(
+        candidate_id="native:doc-a",
+        text="Doc A discusses guidance as a straight path.",
+        document_id="doc-a",
+        chunk_id="chunk-doc-a",
+        source_location={},
+        metadata={"domain_metadata": {"domain": "quran_tafseer"}},
+        tool="native",
+        tool_rank=1,
+        base_score=40.0,
+    )
+    doc_b = EvidenceCandidate(
+        candidate_id="native:doc-b",
+        text="Doc B discusses guidance as divine direction.",
+        document_id="doc-b",
+        chunk_id="chunk-doc-b",
+        source_location={},
+        metadata={"domain_metadata": {"domain": "quran_tafseer"}},
+        tool="native",
+        tool_rank=2,
+        base_score=20.0,
+    )
+    doc_a_extra = EvidenceCandidate(
+        candidate_id="native:doc-a-extra",
+        text="Doc A extra evidence.",
+        document_id="doc-a",
+        chunk_id="chunk-doc-a-extra",
+        source_location={},
+        metadata={"domain_metadata": {"domain": "quran_tafseer"}},
+        tool="native",
+        tool_rank=3,
+        base_score=35.0,
+    )
+
+    fused = fuse_candidates(plan, [doc_a, doc_a_extra, doc_b])
+
+    assert {candidate.document_id for candidate in fused[:2]} == {"doc-a", "doc-b"}
 
 
 def test_fusion_dedupes_by_text_and_keeps_best_candidate():
@@ -442,6 +649,20 @@ class SlowRuntimeTool:
         return RuntimeQueryResult(answer="late", sources=[])
 
 
+class SlowNativeRuntimeTool(FakeRuntimeTool):
+    def __init__(self):
+        self.query_called = False
+
+    async def query(self, query, *, document_ids, query_config):
+        self.query_called = True
+        await asyncio.sleep(0.05)
+        return RuntimeQueryResult(
+            answer="slow native answer",
+            sources=[],
+            timings={"runtime_query_ms": 50},
+        )
+
+
 class ExplodingNativeRuntimeTool:
     async def query(self, query, *, document_ids, query_config):
         raise RuntimeError("native query crashed")
@@ -559,9 +780,26 @@ class FakeAnswerService:
         return "Sahih al-Bukhari contains 7277 hadith.", {"prompt_tokens": 12}
 
 
+class SlowAnswerService:
+    def __init__(self):
+        self.called = False
+
+    async def answer(self, query, evidence, profile):
+        self.called = True
+        await asyncio.sleep(0.05)
+        return "This slow LLM answer should not be returned in fast mode.", {
+            "prompt_tokens": 4000,
+        }
+
+
 class FakeRerankerService:
     async def rerank(self, query, chunks, profile):
         return chunks, [{"provider": "disabled", "status": "disabled"}]
+
+
+class RerankerShouldNotRun:
+    async def rerank(self, query, chunks, profile):
+        raise AssertionError("reranker should not run")
 
 
 class FakeGraphExpansionService:
@@ -641,6 +879,44 @@ async def test_orchestrator_fuses_native_metadata_and_graph_before_answering():
     )
     assert graph_evidence.source_location == {"page": 9}
     assert graph_evidence.metadata["graph_hydration"]["status"] == "hydrated"
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_returns_evidence_first_answer_when_fast_llm_budget_expires():
+    answer_service = SlowAnswerService()
+    orchestrator = RetrievalOrchestrator(
+        chunk_service=FakeChunkSearchService(),
+        answer_service=answer_service,
+        reranker_service=FakeRerankerService(),
+        graph_expansion_service=FakeGraphExpansionService(),
+    )
+
+    result = await orchestrator.query(
+        "how many hadith in bukhari",
+        runtime=FakeRuntimeTool(),
+        profile=type("Profile", (), {"enable_rerank": False, "reranker_provider": "disabled"})(),
+        document_ids=["doc-1"],
+        variant_id="variant-1",
+        query_config={
+            "limit": 8,
+            "response_mode": "fast",
+            "answer_budget_ms": 1,
+        },
+    )
+
+    assert answer_service.called is True
+    assert result.error is None
+    assert result.error_type is None
+    assert result.sources
+    assert any(source["metadata"]["retrieval_tool"] == "graph" for source in result.sources)
+    assert result.answer.startswith("Evidence-first result")
+    assert "Sahih al-Bukhari" in result.answer
+    assert result.token_metadata["answer_mode"] == "evidence_first"
+    assert result.token_metadata["generated_without_llm"] is True
+    assert result.token_metadata["llm_answer_status"] == "timeout"
+    assert result.token_metadata["llm_timeout_ms"] == 1
+    assert result.timings["answer_fallback"] is True
+    assert result.timings["answer_timeout_ms"] == 1
 
 
 @pytest.mark.asyncio
@@ -1010,6 +1286,70 @@ async def test_orchestrator_degrades_native_timeout_to_metadata():
     assert result.timings["native_error_type"] == "native_query_timeout"
     assert "timed out" in result.timings["native_error"]
     assert result.timings["metadata_ms"] >= 0
+    assert answer_service.called is True
+
+
+@pytest.mark.asyncio
+async def test_fast_mode_uses_metadata_when_native_misses_fast_budget():
+    runtime = SlowNativeRuntimeTool()
+    answer_service = FakeAnswerService()
+    orchestrator = RetrievalOrchestrator(
+        chunk_service=FakeChunkSearchService(),
+        answer_service=answer_service,
+        reranker_service=FakeRerankerService(),
+        graph_expansion_service=FakeGraphExpansionService(),
+    )
+
+    result = await orchestrator.query(
+        "how many hadith in bukhari",
+        runtime=runtime,
+        profile=type("Profile", (), {"enable_rerank": False, "reranker_provider": "disabled"})(),
+        document_ids=["doc-1"],
+        variant_id="variant-1",
+        query_config={
+            "limit": 8,
+            "response_mode": "fast",
+            "response_budget_ms": 200,
+            "native_query_timeout_ms": 1,
+            "graph_expansion_enabled": False,
+        },
+    )
+
+    assert runtime.query_called is True
+    assert result.error is None
+    assert result.sources
+    assert result.timings["native_degraded"] is True
+    assert result.timings["native_error_type"] == "native_query_timeout"
+    assert result.timings["response_budget_ms"] == 200
+    assert answer_service.called is True
+
+
+@pytest.mark.asyncio
+async def test_fast_mode_query_config_disables_profile_reranker():
+    answer_service = FakeAnswerService()
+    orchestrator = RetrievalOrchestrator(
+        chunk_service=FakeChunkSearchService(),
+        answer_service=answer_service,
+        reranker_service=RerankerShouldNotRun(),
+        graph_expansion_service=FakeGraphExpansionService(),
+    )
+
+    result = await orchestrator.query(
+        "how many hadith in bukhari",
+        runtime=FakeRuntimeTool(),
+        profile=type("Profile", (), {"enable_rerank": True, "reranker_provider": "llm"})(),
+        document_ids=["doc-1"],
+        variant_id="variant-1",
+        query_config={
+            "limit": 8,
+            "response_mode": "fast",
+            "enable_rerank": False,
+            "graph_expansion_enabled": False,
+        },
+    )
+
+    assert result.error is None
+    assert result.timings["rerank_ms"] == 0.0
     assert answer_service.called is True
 
 

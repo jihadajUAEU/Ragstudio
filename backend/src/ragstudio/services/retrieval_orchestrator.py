@@ -11,6 +11,7 @@ from ragstudio.services.arabic_text import arabic_tokens
 from ragstudio.services.chunk_service import ChunkService
 from ragstudio.services.context_assembly_service import ContextAssemblyService
 from ragstudio.services.domain_metadata_quality_gate import DomainMetadataQualityGate
+from ragstudio.services.evidence_first_answer_service import EvidenceFirstAnswerService
 from ragstudio.services.graph_expansion_service import GraphExpansionService
 from ragstudio.services.grounding_validator import GroundingValidator
 from ragstudio.services.metadata_retrieval_service import MetadataRetrievalService
@@ -56,6 +57,15 @@ class ParallelRetrievalFailed(RuntimeError):
         super().__init__(error)
 
 
+class _ProfileWithLlmTimeout:
+    def __init__(self, profile: Any, llm_timeout_ms: int):
+        self._profile = profile
+        self.llm_timeout_ms = llm_timeout_ms
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._profile, name)
+
+
 class RetrievalOrchestrator:
     def __init__(
         self,
@@ -68,6 +78,7 @@ class RetrievalOrchestrator:
         retrieval_fusion: RetrievalFusion | None = None,
         metadata_retrieval_service: MetadataRetrievalService | None = None,
         grounding_validator: GroundingValidator | None = None,
+        evidence_first_answer_service: EvidenceFirstAnswerService | None = None,
     ):
         self.chunk_service = chunk_service
         self.answer_service = answer_service or RuntimeAnswerService()
@@ -79,6 +90,9 @@ class RetrievalOrchestrator:
             metadata_retrieval_service or MetadataRetrievalService(chunk_service)
         )
         self.grounding_validator = grounding_validator or GroundingValidator()
+        self.evidence_first_answer_service = (
+            evidence_first_answer_service or EvidenceFirstAnswerService()
+        )
 
     async def query(
         self,
@@ -93,6 +107,9 @@ class RetrievalOrchestrator:
         started = perf_counter()
         limit = int(query_config.get("limit") or 8)
         timings: dict[str, Any] = {"orchestrated_query": True}
+        deadline_at = _deadline_at(started, query_config)
+        if deadline_at is not None:
+            timings["response_budget_ms"] = _response_budget_ms(query_config)
         plan = plan_for_query(query, document_ids=document_ids, limit=limit)
         observability = RetrievalObservability()
         cache_decision = observability.cache_decision(
@@ -180,6 +197,7 @@ class RetrievalOrchestrator:
                 limit=limit,
                 enabled=bool(query_config.get("graph_expansion_enabled", True)),
                 timings=timings,
+                deadline_at=deadline_at,
             )
             traces.extend(graph_traces)
             graph_candidates, graph_hydration_traces = await self._hydrate_graph_candidates(
@@ -232,7 +250,9 @@ class RetrievalOrchestrator:
             reranker_traces: list[dict[str, Any]] = []
             reranked = fused
             timings["rerank_ms"] = 0.0
-            if getattr(profile, "enable_rerank", False):
+            if getattr(profile, "enable_rerank", False) and bool(
+                query_config.get("enable_rerank", True)
+            ):
                 rerank_started = perf_counter()
                 reranked, reranker_traces = await self._rerank(query, fused, profile)
                 timings["rerank_ms"] = _elapsed_ms(rerank_started)
@@ -273,13 +293,14 @@ class RetrievalOrchestrator:
                 }
             )
             traces.extend(candidate.to_trace() for candidate in final_evidence)
-            answer_started = perf_counter()
-            answer, token_metadata = await self.answer_service.answer(
+            answer, token_metadata = await self._answer_with_budget(
                 query,
                 final_evidence,
                 profile,
+                query_config=query_config,
+                timings=timings,
+                deadline_at=deadline_at,
             )
-            timings["answer_ms"] = _elapsed_ms(answer_started)
             expected_references = _expected_references(plan)
             validation = self.grounding_validator.validate(
                 answer=answer,
@@ -300,6 +321,60 @@ class RetrievalOrchestrator:
             )
         except Exception as exc:
             return self._failed_orchestrated_answer(exc, started, timings)
+
+    async def _answer_with_budget(
+        self,
+        query: str,
+        evidence: list[EvidenceCandidate],
+        profile: Any,
+        *,
+        query_config: dict[str, Any],
+        timings: dict[str, Any],
+        deadline_at: float | None,
+    ) -> tuple[str, dict[str, Any]]:
+        answer_started = perf_counter()
+        response_mode = _response_mode(query_config)
+        timeout_ms = int(
+            _remaining_timeout_seconds(
+                deadline_at,
+                fallback_ms=_answer_budget_ms(query_config),
+            )
+            * 1000
+        )
+        answer_profile = _profile_with_llm_timeout(profile, timeout_ms)
+        try:
+            if response_mode == "fast":
+                answer, token_metadata = await asyncio.wait_for(
+                    self.answer_service.answer(query, evidence, answer_profile),
+                    timeout=max(timeout_ms, 1) / 1000,
+                )
+            else:
+                answer, token_metadata = await self.answer_service.answer(
+                    query,
+                    evidence,
+                    answer_profile,
+                )
+            timings["answer_ms"] = _elapsed_ms(answer_started)
+            return answer, {
+                **token_metadata,
+                "answer_mode": response_mode,
+                "generated_without_llm": False,
+            }
+        except TimeoutError as exc:
+            timings["answer_ms"] = _elapsed_ms(answer_started)
+            timings["answer_timeout_ms"] = timeout_ms
+            timings["answer_fallback"] = True
+            answer, token_metadata = self.evidence_first_answer_service.answer(
+                query,
+                evidence,
+                reason="llm_timeout",
+                llm_timeout_ms=timeout_ms,
+            )
+            return answer, {
+                **token_metadata,
+                "llm_answer_status": "timeout",
+                "llm_error_type": exc.__class__.__name__,
+            }
 
     async def _quality_diagnostics_trace(
         self,
@@ -370,6 +445,17 @@ class RetrievalOrchestrator:
                         "metadata_trace": metadata_trace,
                     },
                 )
+            if _fast_mode(query_config):
+                return await self._fast_parallel_retrieval(
+                    query,
+                    runtime,
+                    document_ids,
+                    variant_id,
+                    query_config,
+                    plan,
+                    timings,
+                    parallel_started,
+                )
             native_task = self._timed_native_candidates(query, runtime, document_ids, query_config)
             try:
                 native_result = await native_task
@@ -404,7 +490,7 @@ class RetrievalOrchestrator:
             plan=plan,
             timings=timings,
             parallel_started=parallel_started,
-        )
+            )
 
     async def _metadata_after_native_result(
         self,
@@ -426,6 +512,54 @@ class RetrievalOrchestrator:
             )
         except Exception as exc:
             metadata_result = exc
+        return self._resolve_retrieval_results(
+            native_result=native_result,
+            metadata_result=metadata_result,
+            plan=plan,
+            timings=timings,
+            parallel_started=parallel_started,
+        )
+
+    async def _fast_parallel_retrieval(
+        self,
+        query: str,
+        runtime: Any,
+        document_ids: list[str],
+        variant_id: str,
+        query_config: dict[str, Any],
+        plan: Any,
+        timings: dict[str, Any],
+        parallel_started: float,
+    ) -> tuple[list[EvidenceCandidate], list[EvidenceCandidate], dict[str, Any]]:
+        native_task = asyncio.create_task(
+            self._timed_native_candidates(query, runtime, document_ids, query_config)
+        )
+        try:
+            metadata_result = await self._timed_metadata_candidates(
+                query,
+                document_ids,
+                variant_id,
+                plan.candidate_limit,
+                plan,
+            )
+        except Exception as exc:
+            metadata_result = exc
+        timeout_ms = int(query_config.get("native_query_timeout_ms") or 2500)
+        try:
+            native_result = await asyncio.wait_for(
+                native_task,
+                timeout=max(timeout_ms, 1) / 1000,
+            )
+        except TimeoutError as exc:
+            native_task.cancel()
+            native_result = NativeRuntimeQueryFailed(
+                f"Native query timed out after {timeout_ms} ms.",
+                "native_query_timeout",
+                {"native_stage_ms": _elapsed_ms(parallel_started)},
+            )
+            native_result.__cause__ = exc
+        except Exception as exc:
+            native_result = exc
         return self._resolve_retrieval_results(
             native_result=native_result,
             metadata_result=metadata_result,
@@ -501,6 +635,7 @@ class RetrievalOrchestrator:
         limit: int,
         enabled: bool,
         timings: dict[str, Any],
+        deadline_at: float | None,
     ) -> tuple[list[EvidenceCandidate], list[dict[str, Any]]]:
         graph_started = perf_counter()
         if not enabled:
@@ -515,12 +650,15 @@ class RetrievalOrchestrator:
                 }
             ]
         try:
-            graph_candidates, graph_traces = await self.graph_expansion_service.expand(
-                query,
-                seeds=seeds,
-                profile=profile,
-                document_ids=document_ids,
-                limit=limit,
+            graph_candidates, graph_traces = await asyncio.wait_for(
+                self.graph_expansion_service.expand(
+                    query,
+                    seeds=seeds,
+                    profile=profile,
+                    document_ids=document_ids,
+                    limit=limit,
+                ),
+                timeout=_remaining_timeout_seconds(deadline_at, fallback_ms=1200),
             )
             timings["graph_ms"] = _elapsed_ms(graph_started)
             if _graph_degraded(graph_traces):
@@ -809,6 +947,50 @@ def _metadata_only(query_config: dict[str, Any]) -> bool:
     retrieval_mode = str(query_config.get("retrieval_mode") or "").casefold()
     reference_mode = str(query_config.get("reference_query_mode") or "").casefold()
     return retrieval_mode == "metadata" or reference_mode in {"exact", "lexical"}
+
+
+def _fast_mode(query_config: dict[str, Any]) -> bool:
+    return _response_mode(query_config) == "fast"
+
+
+def _response_mode(query_config: dict[str, Any]) -> str:
+    mode = str(query_config.get("response_mode") or "full").casefold()
+    return mode if mode in {"fast", "full"} else "full"
+
+
+def _response_budget_ms(query_config: dict[str, Any]) -> int:
+    value = query_config.get("response_budget_ms")
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = 8000
+    return min(max(parsed, 1), 120_000)
+
+
+def _deadline_at(started: float, query_config: dict[str, Any]) -> float | None:
+    if not _fast_mode(query_config):
+        return None
+    return started + (_response_budget_ms(query_config) / 1000)
+
+
+def _remaining_timeout_seconds(deadline_at: float | None, *, fallback_ms: int) -> float:
+    if deadline_at is None:
+        return max(fallback_ms, 1) / 1000
+    remaining = deadline_at - perf_counter()
+    return max(min(remaining, max(fallback_ms, 1) / 1000), 0.001)
+
+
+def _answer_budget_ms(query_config: dict[str, Any]) -> int:
+    value = query_config.get("answer_budget_ms")
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = 1000
+    return min(max(parsed, 1), 120_000)
+
+
+def _profile_with_llm_timeout(profile: Any, timeout_ms: int) -> Any:
+    return _ProfileWithLlmTimeout(profile, max(int(timeout_ms), 1))
 
 
 def _expected_references(plan: Any) -> set[str]:

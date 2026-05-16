@@ -24,12 +24,15 @@ const queryKeys = {
   runs: ["runs"],
 } as const;
 
+type QueryResponseMode = "fast" | "full";
+
 export function QueryPage() {
   const queryClient = useQueryClient();
   const documentsQuery = useQuery({ queryKey: queryKeys.documents, queryFn: apiClient.documents });
   const variantsQuery = useQuery({ queryKey: queryKeys.variants, queryFn: apiClient.variants });
   const [queryText, setQueryText] = useState("");
   const [limit, setLimit] = useState(8);
+  const [responseMode, setResponseMode] = useState<QueryResponseMode>("fast");
   const [selectedDocumentIds, setSelectedDocumentIds] = useState<string[]>([]);
   const [selectedVariantIds, setSelectedVariantIds] = useState<string[]>([]);
   const [formError, setFormError] = useState("");
@@ -61,6 +64,9 @@ export function QueryPage() {
       document_ids: selectedDocumentIds,
       variant_ids: selectedVariantIds,
       limit,
+      response_mode: responseMode,
+      answer_budget_ms: responseMode === "fast" ? 1000 : null,
+      response_budget_ms: responseMode === "fast" ? 8000 : null,
     });
   };
 
@@ -139,6 +145,31 @@ export function QueryPage() {
           </ChoicePanel>
         </div>
 
+        <div className="mt-4">
+          <span className="mb-1.5 block text-sm font-medium text-[#3a4a53]">Answer mode</span>
+          <div
+            className="grid grid-cols-2 rounded-md border border-[#cfd8dd] bg-[#f8fafb] p-1"
+            role="group"
+            aria-label="Answer mode"
+          >
+            {(["fast", "full"] as const).map((mode) => (
+              <button
+                key={mode}
+                type="button"
+                className={`rounded px-3 py-2 text-sm font-medium ${
+                  responseMode === mode
+                    ? "bg-white text-[#174657] shadow-sm"
+                    : "text-[#62717a] hover:text-[#174657]"
+                }`}
+                onClick={() => setResponseMode(mode)}
+                disabled={runQuery.isPending}
+              >
+                {mode === "fast" ? "Fast evidence" : "Full answer"}
+              </button>
+            ))}
+          </div>
+        </div>
+
         <div className="mt-4 flex items-end gap-3">
           <label className="min-w-0 flex-1 text-sm font-medium text-[#3a4a53]">
             <span className="mb-1.5 block truncate">Chunk limit</span>
@@ -174,7 +205,15 @@ export function QueryPage() {
         {isLoadingChoices ? (
           <EmptyState icon={Loader2} title="Loading query controls" description="Fetching documents and variants." />
         ) : runQuery.isPending ? (
-          <EmptyState icon={Loader2} title="Running query" description="Searching chunks and generating answers." />
+          <EmptyState
+            icon={Loader2}
+            title="Running query"
+            description={
+              responseMode === "fast"
+                ? "Preparing grounded evidence."
+                : "Searching chunks and generating answers."
+            }
+          />
         ) : runQuery.data?.runs.length ? (
           <div className="space-y-4">
             {runQuery.data.runs.map((run) => (
@@ -258,6 +297,9 @@ function CheckboxRow({
 }
 
 function RunResult({ run, variant }: { run: RunOut; variant?: VariantOut }) {
+  const answerMode = textValue(run.token_metadata.answer_mode);
+  const llmAnswerStatus = textValue(run.token_metadata.llm_answer_status);
+
   return (
     <article className="rounded-md border border-[#d6dde1] bg-white p-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -275,6 +317,14 @@ function RunResult({ run, variant }: { run: RunOut; variant?: VariantOut }) {
         {run.error_type ? <Badge>{run.error_type}</Badge> : null}
       </div>
       <RerankerSummary traces={run.reranker_traces} />
+      {answerMode === "evidence_first" ? (
+        <div className="mt-3 rounded-md border border-[#cfe3ea] bg-[#f5fafb] p-3 text-sm text-[#3a4a53]">
+          <p className="font-semibold text-[#1f2933]">Evidence-first result</p>
+          {llmAnswerStatus === "timeout" ? (
+            <p className="mt-1 text-xs text-[#62717a]">LLM wording exceeded the fast budget.</p>
+          ) : null}
+        </div>
+      ) : null}
 
       {run.error ? (
         <p className="mt-3 rounded-md border border-[#e19a9a] bg-[#fff0f0] p-3 text-sm text-[#8c2525]">

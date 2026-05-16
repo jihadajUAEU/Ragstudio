@@ -115,6 +115,7 @@ class Chunk(Base, TimestampMixin):
     __tablename__ = "chunks"
     __table_args__ = (
         Index("ix_chunks_document_id", "document_id"),
+        Index("ix_chunks_document_preview_ref", "document_id", "preview_ref"),
         Index(
             "ix_chunks_text_search_ar_trgm",
             "text_search_ar",

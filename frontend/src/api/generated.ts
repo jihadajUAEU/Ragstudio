@@ -404,6 +404,9 @@ export interface QueryIn {
   document_ids: string[];
   variant_ids: string[];
   limit: number;
+  response_mode?: "fast" | "full";
+  answer_budget_ms?: number | null;
+  response_budget_ms?: number | null;
 }
 
 export interface QueryOut {

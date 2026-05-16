@@ -1,7 +1,11 @@
+from typing import Literal
+
 from pydantic import Field
 
 from ragstudio.schemas.common import StudioModel
 from ragstudio.schemas.runs import RunOut
+
+QueryResponseMode = Literal["fast", "full"]
 
 
 class QueryIn(StudioModel):
@@ -9,6 +13,9 @@ class QueryIn(StudioModel):
     document_ids: list[str] = Field(default_factory=list)
     variant_ids: list[str]
     limit: int = Field(default=8, ge=0)
+    response_mode: QueryResponseMode = "fast"
+    answer_budget_ms: int | None = Field(default=None, ge=500, le=120_000)
+    response_budget_ms: int | None = Field(default=None, ge=1000, le=120_000)
 
 
 class QueryOut(StudioModel):

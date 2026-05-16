@@ -85,6 +85,65 @@ describe("QueryPage", () => {
     expect(screen.getByText("generic_http · ConnectError")).toBeVisible();
   });
 
+  it("runs fast evidence mode by default", async () => {
+    renderQueryPage();
+
+    fireEvent.change(await screen.findByPlaceholderText("Ask a focused question against selected documents."), {
+      target: { value: "alpha" },
+    });
+    fireEvent.click(await screen.findByText("source.txt"));
+    fireEvent.click((await screen.findAllByText("Balanced"))[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+
+    await waitFor(() => expect(apiClient.query).toHaveBeenCalled());
+    expect(vi.mocked(apiClient.query).mock.calls[0][0]).toEqual(
+      expect.objectContaining({
+        response_mode: "fast",
+        answer_budget_ms: 1000,
+        response_budget_ms: 8000,
+      }),
+    );
+  });
+
+  it("labels evidence-first fallback results", async () => {
+    vi.mocked(apiClient.query).mockResolvedValue({
+      runs: [
+        {
+          id: "run-1",
+          variant_id: "variant-1",
+          experiment_id: null,
+          query: "alpha",
+          status: "succeeded",
+          answer: "Evidence-first result\n\nGrounded evidence:\n[S1] alpha",
+          sources: [],
+          chunk_traces: [],
+          timings: {},
+          error: null,
+          runtime_profile_id: null,
+          document_ids: ["doc-1"],
+          query_config: { response_mode: "fast" },
+          reranker_traces: [],
+          token_metadata: {
+            answer_mode: "evidence_first",
+            llm_answer_status: "timeout",
+          },
+          error_type: null,
+        },
+      ],
+    });
+    renderQueryPage();
+
+    fireEvent.change(await screen.findByPlaceholderText("Ask a focused question against selected documents."), {
+      target: { value: "alpha" },
+    });
+    fireEvent.click(await screen.findByText("source.txt"));
+    fireEvent.click((await screen.findAllByText("Balanced"))[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+
+    expect(await screen.findByText("Evidence-first result")).toBeVisible();
+    expect(screen.getByText("LLM wording exceeded the fast budget.")).toBeVisible();
+  });
+
   it("summarizes disabled reranker traces", async () => {
     vi.mocked(apiClient.query).mockResolvedValue({
       runs: [

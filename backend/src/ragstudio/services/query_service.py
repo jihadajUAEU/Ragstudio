@@ -165,7 +165,7 @@ class QueryService:
         for variant_id in payload.variant_ids:
             variant = variants[variant_id]
             started_at = perf_counter()
-            query_config = self._query_config(profile, variant, payload.limit)
+            query_config = self._query_config(profile, variant, payload)
             if index_degradation:
                 query_config = {**query_config, "retrieval_mode": "metadata"}
             if graph_degradation:
@@ -189,15 +189,18 @@ class QueryService:
                     variant_id=variant_id,
                     query_config=query_config,
                 )
+                has_orchestrated_error = bool(orchestrated.error or orchestrated.error_type)
                 run.status = (
-                    StageStatus.FAILED.value if orchestrated.error else StageStatus.SUCCEEDED.value
+                    StageStatus.FAILED.value
+                    if has_orchestrated_error
+                    else StageStatus.SUCCEEDED.value
                 )
                 run.answer = orchestrated.answer
                 run.sources = orchestrated.sources
                 run.chunk_traces = orchestrated.chunk_traces
                 run.reranker_traces = orchestrated.reranker_traces
                 run.token_metadata = orchestrated.token_metadata
-                run.error = orchestrated.error
+                run.error = orchestrated.error or orchestrated.error_type
                 run.error_type = orchestrated.error_type
                 run.timings = {
                     **orchestrated.timings,
@@ -244,9 +247,9 @@ class QueryService:
         found_ids = set(result.scalars().all())
         return [item_id for item_id in requested_ids if item_id not in found_ids]
 
-    def _query_config(self, profile: Any, variant: Variant, limit: int) -> dict[str, Any]:
+    def _query_config(self, profile: Any, variant: Variant, payload: QueryIn) -> dict[str, Any]:
         parameters = variant.parameters or {}
-        return {
+        query_config = {
             "mode": self._query_mode(parameters.get("mode"), profile.query_mode),
             "parser": self._text_param(parameters.get("parser"), profile.parser),
             "parse_method": self._text_param(parameters.get("parse_method"), profile.parse_method),
@@ -331,8 +334,23 @@ class QueryService:
                 15_000,
             ),
             "answer_style": self._text_param(parameters.get("answer_style"), ""),
-            "limit": limit,
+            "limit": payload.limit,
+            "response_mode": payload.response_mode,
+            "answer_budget_ms": payload.answer_budget_ms,
+            "response_budget_ms": payload.response_budget_ms,
         }
+        if payload.response_mode == "fast":
+            query_config["enable_rerank"] = False
+            query_config["native_query_timeout_ms"] = min(
+                int(query_config["native_query_timeout_ms"]),
+                2500,
+            )
+            query_config["answer_budget_ms"] = payload.answer_budget_ms or 1000
+            query_config["response_budget_ms"] = payload.response_budget_ms or 8000
+        else:
+            query_config["answer_budget_ms"] = payload.answer_budget_ms or profile.llm_timeout_ms
+            query_config["response_budget_ms"] = payload.response_budget_ms
+        return query_config
 
     def _query_mode(self, value: Any, fallback: str) -> str:
         mode = self._text_param(value, fallback)
