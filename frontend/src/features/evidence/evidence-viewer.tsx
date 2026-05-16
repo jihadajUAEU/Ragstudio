@@ -179,6 +179,21 @@ function SummaryGrid({ evidence }: { evidence: NormalizedEvidence }) {
         }
       />
       <KeyValue
+        label="Reranker"
+        value={
+          evidence.rerankerSummary
+            ? [
+                evidence.rerankerSummary.status,
+                evidence.rerankerSummary.provider,
+                evidence.rerankerSummary.model,
+                evidence.rerankerSummary.note,
+              ]
+                .filter(Boolean)
+                .join(" · ")
+            : "Reranker context not recorded"
+        }
+      />
+      <KeyValue
         label="Graph"
         value={
           evidence.relationshipRefs?.length

@@ -17,6 +17,11 @@ import { EmptyState } from "../../components/empty-state";
 import { StatusBadge } from "../../components/status-badge";
 import { Button } from "../../components/ui/button";
 import { titleCase, toggleId } from "../../lib/utils";
+import {
+  EvidenceViewer,
+  type EvidenceRerankerSummary,
+  type NormalizedEvidence,
+} from "../evidence/evidence-viewer";
 
 const queryKeys = {
   documents: ["documents"],
@@ -300,6 +305,11 @@ function CheckboxRow({
 function RunResult({ run, variant }: { run: RunOut; variant?: VariantOut }) {
   const answerMode = textValue(run.token_metadata.answer_mode);
   const llmAnswerStatus = textValue(run.token_metadata.llm_answer_status);
+  const [selectedEvidence, setSelectedEvidence] = useState<NormalizedEvidence | null>(null);
+  const readableSources = useMemo(
+    () => run.sources.map((source, index) => normalizeQuerySource(source, index, run)),
+    [run],
+  );
 
   return (
     <article className="rounded-md border border-[#d6dde1] bg-white p-4">
@@ -336,6 +346,27 @@ function RunResult({ run, variant }: { run: RunOut; variant?: VariantOut }) {
         <p className="mt-4 whitespace-pre-wrap text-sm leading-6 text-[#24313a]">{run.answer || "No answer returned."}</p>
       )}
 
+      {readableSources.length ? (
+        <section className="mt-4 rounded-md border border-[#d6dde1] bg-[#fbfcfd] p-3">
+          <h4 className="text-sm font-semibold text-[#1f2933]">Readable sources</h4>
+          <div className="mt-3 space-y-2">
+            {readableSources.map((evidence) => (
+              <SourceEvidenceRow
+                key={evidence.id}
+                evidence={evidence}
+                onInspect={() => setSelectedEvidence(evidence)}
+              />
+            ))}
+          </div>
+        </section>
+      ) : null}
+
+      <EvidenceViewer
+        evidence={selectedEvidence}
+        open={selectedEvidence !== null}
+        onClose={() => setSelectedEvidence(null)}
+      />
+
       <div className="mt-4 grid gap-3 lg:grid-cols-2">
         <JsonPanel title="Sources" items={run.sources} />
         <JsonPanel title="Chunk traces" items={run.chunk_traces} />
@@ -346,6 +377,220 @@ function RunResult({ run, variant }: { run: RunOut; variant?: VariantOut }) {
       <JsonPanel title="Timings" items={[run.timings]} compact />
     </article>
   );
+}
+
+function SourceEvidenceRow({
+  evidence,
+  onInspect,
+}: {
+  evidence: NormalizedEvidence;
+  onInspect: () => void;
+}) {
+  return (
+    <div className="rounded-md border border-[#e1e7ea] bg-white p-3">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <p className="break-words font-mono text-xs font-semibold text-[#1f2933]">{evidence.id}</p>
+          <p className="mt-1 break-words text-xs text-[#62717a]">
+            {evidence.documentName || evidence.documentId || "Document link not recorded"}
+          </p>
+          <p className="mt-1 break-words text-xs text-[#62717a]">
+            {evidence.sourceLocation
+              ? summarizeEvidenceValue(evidence.sourceLocation)
+              : "Source location not recorded"}
+          </p>
+        </div>
+        <Button type="button" variant="secondary" size="sm" className="shrink-0" onClick={onInspect}>
+          Inspect evidence
+        </Button>
+      </div>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <Badge>{evidence.qualityStatus || "Quality policy not recorded"}</Badge>
+        <Badge>
+          {evidence.parserWarnings?.length
+            ? `${evidence.parserWarnings.length} parser warnings`
+            : "Parser warnings not recorded"}
+        </Badge>
+      </div>
+    </div>
+  );
+}
+
+function normalizeQuerySource(
+  source: Record<string, unknown>,
+  index: number,
+  run: RunOut,
+): NormalizedEvidence {
+  const sourceId =
+    textValue(source.id) ??
+    textValue(source.source_id) ??
+    textValue(source.chunk_id) ??
+    textValue(source.chunkId) ??
+    `source-${index + 1}`;
+  const metadata = recordValue(source.metadata) ?? recordValue(source.metadata_json);
+  const sourceLocation =
+    recordValue(source.source_location) ??
+    recordValue(source.sourceLocation) ??
+    textValue(source.source_location) ??
+    textValue(source.location);
+  const relationshipRefs = relationshipRefsFrom(source, metadata);
+
+  return {
+    id: sourceId,
+    kind: "query-source",
+    documentId:
+      textValue(source.document_id) ??
+      textValue(source.documentId) ??
+      textValue(metadata?.document_id) ??
+      run.document_ids[0] ??
+      null,
+    documentName:
+      textValue(source.document_name) ??
+      textValue(source.documentName) ??
+      textValue(source.filename) ??
+      textValue(metadata?.filename) ??
+      null,
+    runtimeProfileId: textValue(source.runtime_profile_id) ?? run.runtime_profile_id ?? null,
+    text:
+      textValue(source.text) ??
+      textValue(source.chunk_text) ??
+      textValue(source.content) ??
+      textValue(source.snippet) ??
+      null,
+    sourceLocation,
+    metadata,
+    parserWarnings: stringArray(
+      source.parser_quality_warning_codes ??
+        source.parser_warnings ??
+        metadata?.parser_quality_warning_codes ??
+        metadata?.parser_warnings,
+    ),
+    qualityStatus:
+      textValue(source.quality_action_policy) ??
+      textValue(source.quality_status) ??
+      textValue(metadata?.quality_action_policy) ??
+      textValue(metadata?.quality_status) ??
+      null,
+    retrievalReasons: retrievalReasonsFrom(source),
+    relationshipRefs,
+    rerankerSummary: rerankerSummaryForSource(sourceId, source, run.reranker_traces),
+    raw: source,
+    routeLinks: {
+      documents: Boolean(source.document_id || source.documentId || metadata?.document_id),
+      chunks: true,
+      query: true,
+      graph: relationshipRefs.length > 0,
+      diagnostics: true,
+      documentUnavailableLabel: "Document link not recorded",
+    },
+  };
+}
+
+function rerankerSummaryForSource(
+  sourceId: string,
+  source: Record<string, unknown>,
+  traces: Record<string, unknown>[],
+): EvidenceRerankerSummary | null {
+  if (!traces.length) {
+    return null;
+  }
+  const exactTrace = traces.find((trace) => traceMatchesSource(trace, sourceId, source));
+  const trace = exactTrace ?? traces[0];
+  const status = textValue(trace.status);
+  const provider = textValue(trace.provider);
+  const model = textValue(trace.model);
+  const errorType = textValue(trace.error_type);
+  const rankCount = rerankerRankCount(traces, trace);
+  return {
+    status,
+    provider,
+    model,
+    detail: [errorType, rankCount ? formatRankCount(rankCount) : ""].filter(Boolean).join(" · "),
+    note: exactTrace ? undefined : "Run-level reranker summary; not source-specific",
+    raw: trace,
+  };
+}
+
+function traceMatchesSource(
+  trace: Record<string, unknown>,
+  sourceId: string,
+  source: Record<string, unknown>,
+) {
+  const candidates = [
+    trace.source_id,
+    trace.sourceId,
+    trace.chunk_id,
+    trace.chunkId,
+    trace.id,
+    source.chunk_id,
+    source.chunkId,
+  ]
+    .map(textValue)
+    .filter(Boolean);
+  return candidates.includes(sourceId);
+}
+
+function retrievalReasonsFrom(source: Record<string, unknown>) {
+  const reasons = stringArray(source.retrieval_reasons ?? source.reasons ?? source.reason);
+  const score = numberValue(source.score);
+  return score !== undefined ? [...reasons, `score ${score.toFixed(3)}`] : reasons;
+}
+
+function relationshipRefsFrom(
+  source: Record<string, unknown>,
+  metadata: Record<string, unknown> | null | undefined,
+) {
+  const direct = relationshipRefsValue(source.relationship_refs);
+  if (direct.length) {
+    return direct;
+  }
+  const explain = recordValue(metadata?.retrieval_explain);
+  return relationshipRefsValue(explain?.relationship_refs);
+}
+
+function relationshipRefsValue(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item)).filter(Boolean);
+  }
+  if (typeof value === "object" && value !== null) {
+    return Object.entries(value as Record<string, unknown>).map(
+      ([key, item]) => `${key}: ${String(item)}`,
+    );
+  }
+  return [];
+}
+
+function recordValue(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function stringArray(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item)).filter(Boolean);
+  }
+  if (typeof value === "string" && value.trim()) {
+    return [value.trim()];
+  }
+  return [];
+}
+
+function summarizeEvidenceValue(value: Record<string, unknown> | string) {
+  if (typeof value === "string") {
+    return value;
+  }
+  return [
+    value.label,
+    value.page,
+    value.page_number,
+    value.chunk_index,
+    value.reference,
+    value.source,
+  ]
+    .filter((item) => item !== undefined && item !== null && item !== "")
+    .map(String)
+    .join(" · ");
 }
 
 function Badge({ children }: { children: ReactNode }) {

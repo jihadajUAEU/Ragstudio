@@ -188,4 +188,64 @@ describe("QueryPage", () => {
     expect(await screen.findByText("Reranker disabled")).toBeVisible();
     expect(screen.getByText("disabled")).toBeVisible();
   });
+
+  it("renders readable source rows and opens the evidence viewer", async () => {
+    vi.mocked(apiClient.query).mockResolvedValue({
+      runs: [
+        {
+          id: "run-1",
+          variant_id: "variant-1",
+          experiment_id: null,
+          query: "alpha",
+          status: "succeeded",
+          answer: "answer",
+          sources: [
+            {
+              id: "source-1",
+              chunk_id: "chunk-1",
+              document_id: "doc-1",
+              document_name: "source.txt",
+              text: "Book 1, Hadith 1",
+              source_location: { page: 1, reference: "Book 1, Hadith 1" },
+              metadata: { domain: "hadith" },
+              parser_quality_warning_codes: ["reference_unit_missing_expected_script"],
+              quality_action_policy: "materialize",
+            },
+          ],
+          chunk_traces: [],
+          timings: {},
+          error: null,
+          runtime_profile_id: "profile-1",
+          document_ids: ["doc-1"],
+          query_config: {},
+          reranker_traces: [
+            { status: "succeeded", provider: "generic_http", model: "rerank-model" },
+          ],
+          token_metadata: {},
+          error_type: null,
+        },
+      ],
+    });
+    renderQueryPage();
+
+    fireEvent.change(await screen.findByPlaceholderText("Ask a focused question against selected documents."), {
+      target: { value: "alpha" },
+    });
+    fireEvent.click(await screen.findByText("source.txt"));
+    fireEvent.click((await screen.findAllByText("Balanced"))[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+
+    expect(await screen.findByText("Readable sources")).toBeVisible();
+    expect(screen.getByText("source-1")).toBeVisible();
+    expect(screen.getAllByText("source.txt").length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: "Inspect evidence" })).toBeVisible();
+    expect(screen.getByText("Sources")).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: "Inspect evidence" }));
+
+    expect(await screen.findByRole("dialog", { name: "Evidence details" })).toBeVisible();
+    expect(screen.getAllByText("source-1").length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByText("Reranker", { selector: "summary" }));
+    expect(screen.getByText("Run-level reranker summary; not source-specific")).toBeVisible();
+  });
 });
