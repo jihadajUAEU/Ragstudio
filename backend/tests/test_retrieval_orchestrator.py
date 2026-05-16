@@ -251,6 +251,94 @@ def test_domain_aware_fusion_does_not_apply_tafseer_boost_to_research_paper():
     assert "hadith_reference_exact" not in fused[0].reasons
 
 
+def test_multi_document_reference_query_keeps_exact_hits_from_each_tafseer_document():
+    plan = plan_for_query("Explain 1:5", document_ids=["doc-a", "doc-b"], limit=2)
+    doc_a = EvidenceCandidate(
+        candidate_id="metadata:doc-a-1-5",
+        text="Doc A verse 1:5 explanation.",
+        document_id="doc-a",
+        chunk_id="chunk-doc-a-1-5",
+        source_location={"reference": "1:5"},
+        metadata={"domain_metadata": {"domain": "quran_tafseer"}},
+        tool="metadata",
+        tool_rank=1,
+        base_score=30.0,
+        retrieval_pass="reference_exact",
+    )
+    doc_b = EvidenceCandidate(
+        candidate_id="metadata:doc-b-1-5",
+        text="Doc B verse 1:5 explanation.",
+        document_id="doc-b",
+        chunk_id="chunk-doc-b-1-5",
+        source_location={"reference": "1:5"},
+        metadata={"domain_metadata": {"domain": "quran_tafseer"}},
+        tool="metadata",
+        tool_rank=2,
+        base_score=24.0,
+        retrieval_pass="reference_exact",
+    )
+    doc_a_extra = EvidenceCandidate(
+        candidate_id="metadata:doc-a-extra",
+        text="Another strong Doc A passage.",
+        document_id="doc-a",
+        chunk_id="chunk-doc-a-extra",
+        source_location={},
+        metadata={"domain_metadata": {"domain": "quran_tafseer"}},
+        tool="metadata",
+        tool_rank=3,
+        base_score=25.0,
+    )
+
+    fused = fuse_candidates(plan, [doc_a, doc_a_extra, doc_b])
+
+    assert [candidate.document_id for candidate in fused[:2]] == ["doc-a", "doc-b"]
+
+
+def test_multi_document_comparison_query_prioritizes_multiple_documents():
+    plan = plan_for_query(
+        "Compare guidance in these selected documents",
+        document_ids=["doc-a", "doc-b"],
+        limit=4,
+    )
+    doc_a = EvidenceCandidate(
+        candidate_id="native:doc-a",
+        text="Doc A discusses guidance as a straight path.",
+        document_id="doc-a",
+        chunk_id="chunk-doc-a",
+        source_location={},
+        metadata={"domain_metadata": {"domain": "quran_tafseer"}},
+        tool="native",
+        tool_rank=1,
+        base_score=40.0,
+    )
+    doc_b = EvidenceCandidate(
+        candidate_id="native:doc-b",
+        text="Doc B discusses guidance as divine direction.",
+        document_id="doc-b",
+        chunk_id="chunk-doc-b",
+        source_location={},
+        metadata={"domain_metadata": {"domain": "quran_tafseer"}},
+        tool="native",
+        tool_rank=2,
+        base_score=20.0,
+    )
+    doc_a_extra = EvidenceCandidate(
+        candidate_id="native:doc-a-extra",
+        text="Doc A extra evidence.",
+        document_id="doc-a",
+        chunk_id="chunk-doc-a-extra",
+        source_location={},
+        metadata={"domain_metadata": {"domain": "quran_tafseer"}},
+        tool="native",
+        tool_rank=3,
+        base_score=35.0,
+    )
+
+    fused = fuse_candidates(plan, [doc_a, doc_a_extra, doc_b])
+
+    assert {candidate.document_id for candidate in fused[:2]} == {"doc-a", "doc-b"}
+
+
 def test_fusion_dedupes_by_text_and_keeps_best_candidate():
     plan = plan_for_query("alpha", document_ids=["doc-1"], limit=3)
     native = EvidenceCandidate(

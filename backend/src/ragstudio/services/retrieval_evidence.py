@@ -185,11 +185,12 @@ def fuse_candidates(
         _score_candidate(plan, candidate, deduped_tools[_dedupe_key(candidate)])
         for candidate in deduped.values()
     ]
-    return sorted(
+    ranked = sorted(
         scored,
         key=lambda candidate: (candidate.final_score, -candidate.tool_rank),
         reverse=True,
     )
+    return _apply_multi_document_ordering(plan, ranked)
 
 
 def _score_candidate(
@@ -321,6 +322,77 @@ def _quality_allows_domain_reference_boost(metadata: dict[str, Any]) -> bool:
         bool(policy.get("index_exact_arabic", True))
         and policy.get("graph_confidence") != "blocked"
     )
+
+
+def _selected_document_count(plan: RetrievalPlan) -> int:
+    return len({document_id for document_id in plan.document_ids if document_id})
+
+
+def _best_candidate_by_document(
+    candidates: list[EvidenceCandidate],
+) -> dict[str, EvidenceCandidate]:
+    best: dict[str, EvidenceCandidate] = {}
+    for candidate in candidates:
+        if not candidate.document_id:
+            continue
+        existing = best.get(candidate.document_id)
+        if existing is None or candidate.final_score > existing.final_score:
+            best[candidate.document_id] = candidate
+    return best
+
+
+def _apply_multi_document_ordering(
+    plan: RetrievalPlan,
+    ranked: list[EvidenceCandidate],
+) -> list[EvidenceCandidate]:
+    if _selected_document_count(plan) <= 1:
+        return ranked
+
+    best_by_document = _best_candidate_by_document(ranked)
+    if len(best_by_document) <= 1:
+        return ranked
+
+    if plan.intent == "comparison":
+        comparison_head = sorted(
+            best_by_document.values(),
+            key=lambda candidate: (candidate.final_score, -candidate.tool_rank),
+            reverse=True,
+        )
+        comparison_ids = {candidate.candidate_id for candidate in comparison_head}
+        return [
+            *comparison_head,
+            *[candidate for candidate in ranked if candidate.candidate_id not in comparison_ids],
+        ]
+
+    top_window = ranked[: max(plan.limit, 1)]
+    top_documents = {candidate.document_id for candidate in top_window if candidate.document_id}
+    if len(top_documents) > 1:
+        return ranked
+
+    top_score = ranked[0].final_score if ranked else 0.0
+    diversity_candidates = [
+        candidate
+        for candidate in best_by_document.values()
+        if candidate.document_id not in top_documents
+        and candidate.final_score >= top_score * 0.65
+    ]
+    if not diversity_candidates:
+        return ranked
+
+    diversity_candidate = sorted(
+        diversity_candidates,
+        key=lambda candidate: (candidate.final_score, -candidate.tool_rank),
+        reverse=True,
+    )[0]
+    return [
+        ranked[0],
+        diversity_candidate,
+        *[
+            candidate
+            for candidate in ranked[1:]
+            if candidate.candidate_id != diversity_candidate.candidate_id
+        ],
+    ]
 
 
 def _dedupe_key(candidate: EvidenceCandidate) -> str:
