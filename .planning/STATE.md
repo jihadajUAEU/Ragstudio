@@ -4,12 +4,12 @@ milestone: v1.0
 milestone_name: milestone
 status: executing
 stopped_at: Phase 06 UI-SPEC approved
-last_updated: "2026-05-16T13:54:49.389Z"
-last_activity: 2026-05-16 -- Completed quick task 260516-n1c Task 5 lexical-expanded dedupe scoring fix
+last_updated: "2026-05-16T14:02:47.225Z"
+last_activity: 2026-05-16 -- Phase 06 planning complete
 progress:
   total_phases: 6
   completed_phases: 4
-  total_plans: 14
+  total_plans: 17
   completed_plans: 13
   percent: 67
 ---
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-14)
 
 **Core value:** Every public Ragstudio claim must be inspectable from claim text to replayable evidence, source commit, raw artifact, and known limitation.
-**Current focus:** Phase 05 — launch-hardening-and-domain-release
+**Current focus:** Phase 06 — app-evidence-viewer-and-runtime-trust-banner
 
 ## Current Position
 
-Phase: 5
-Plan: 05-03
-Status: In progress
-Last activity: 2026-05-16 -- Completed quick task 260516-n1c Task 5 lexical-expanded dedupe scoring fix
+Phase: 6
+Plan: 06-01
+Status: Ready to execute
+Last activity: 2026-05-16 -- Phase 06 planning complete
 
-Progress: [█████████░] 93%
+Progress: [███████░░░] 76%
 
 ## Performance Metrics
 
@@ -49,11 +49,12 @@ Progress: [█████████░] 93%
 | 3. `ragstudio-site` Scaffold and Import Pipeline | 2/2 | n/a | n/a |
 | 4. Static Proof Viewer and Public Site UX | 3/3 | n/a | n/a |
 | 5. Launch Hardening and Domain Release | 2/3 | 14 min | 7 min |
+| 6. App Evidence Viewer and Runtime Trust Banner | 0/3 | n/a | n/a |
 
 **Recent Trend:**
 
 - Last 5 plans: P01 3 min, P02 4 min, P03 38 min
-- Trend: Phase 5 in progress; launch gate automation complete.
+- Trend: Phase 6 planned; runtime trust and evidence viewer ready for execution.
 
 | Phase 01 P01 | 3 min | 3 tasks | 10 files |
 | Phase 01 P02 | 4 min | 3 tasks | 8 files |

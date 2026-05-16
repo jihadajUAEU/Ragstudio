@@ -124,10 +124,12 @@ Plans:
   3. Query result sources can open a focused evidence view with chunk text, metadata, parser warnings, quality status, and reranker context where available.
   4. Evidence links can route back to existing Documents, Chunks, Query, Graph, and Diagnostics surfaces without duplicating those pages.
   5. The phase does not introduce exportable investigation reports; reporting remains a later phase after the viewer and status primitives exist.
-**Plans**: 0 plans
+**Plans**: 3 plans
 
 Plans:
-- [ ] TBD (run /gsd-plan-phase 6 to break down after SPEC.md)
+- [ ] 06-01: Add runtime trust chip, diagnostics polling, detail panel, and provider test actions.
+- [ ] 06-02: Build the shared evidence viewer and wire Query source inspection.
+- [ ] 06-03: Add Chunk Inspector evidence entry, graph/missing-state behavior, and final accessibility/build verification.
 
 ## Progress
 
@@ -141,7 +143,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6
 | 3. `ragstudio-site` Scaffold and Import Pipeline | 2/2 | Complete | 2026-05-14 |
 | 4. Static Proof Viewer and Public Site UX | 3/3 | Complete | 2026-05-14 |
 | 5. Launch Hardening and Domain Release | 2/3 | In Progress | - |
-| 6. App Evidence Viewer and Runtime Trust Banner | 0/0 | Not Planned | - |
+| 6. App Evidence Viewer and Runtime Trust Banner | 0/3 | Ready to Execute | - |
 
 ## Coverage
 
