@@ -228,6 +228,25 @@ def _score_candidate(
         boost += 6.0
         reasons.append("count_metadata_hybrid")
 
+    domain_family = _domain_family(candidate.metadata)
+    domain_reference_allowed = _quality_allows_domain_reference_boost(candidate.metadata)
+
+    if (
+        domain_reference_allowed
+        and domain_family in {"tafseer_reference", "hadith_reference", "legal_reference"}
+        and candidate.retrieval_pass == "reference_exact"
+    ):
+        boost += 10.0
+        reasons.append(f"{domain_family}_exact")
+
+    if domain_family == "tafseer_reference" and plan.graph_context_required and candidate.tool == "graph":
+        boost += 5.0
+        reasons.append("tafseer_graph_context")
+
+    if domain_family == "research_semantic" and candidate.tool == "native":
+        boost += 2.0
+        reasons.append("research_semantic_native")
+
     if candidate.tool == "metadata":
         boost += 3.0
         reasons.append("metadata_precision_tool")
@@ -260,6 +279,47 @@ def _score_candidate(
         scope_status=candidate.scope_status,
         source_quality=candidate.source_quality,
         risk_flags=candidate.risk_flags,
+    )
+
+
+def _domain_family(metadata: dict[str, Any]) -> str:
+    domain_metadata = metadata.get("domain_metadata")
+    if not isinstance(domain_metadata, dict):
+        return "generic"
+
+    raw_tags = domain_metadata.get("tags")
+    tags = (
+        {str(tag).casefold() for tag in raw_tags if isinstance(tag, str)}
+        if isinstance(raw_tags, list)
+        else set()
+    )
+    tokens = {
+        str(domain_metadata.get("domain") or "").casefold(),
+        str(domain_metadata.get("document_type") or "").casefold(),
+        str(domain_metadata.get("collection") or "").casefold(),
+        str(domain_metadata.get("content_role") or "").casefold(),
+        str(domain_metadata.get("citation_style") or "").casefold(),
+        *tags,
+    }
+
+    if {"quran_tafseer", "tafseer", "quran"} & tokens:
+        return "tafseer_reference"
+    if "hadith" in tokens:
+        return "hadith_reference"
+    if {"legal", "law", "statute", "policy"} & tokens:
+        return "legal_reference"
+    if {"research", "paper", "report", "scientific"} & tokens:
+        return "research_semantic"
+    return "generic"
+
+
+def _quality_allows_domain_reference_boost(metadata: dict[str, Any]) -> bool:
+    policy = metadata.get("quality_action_policy")
+    if not isinstance(policy, dict):
+        return True
+    return (
+        bool(policy.get("index_exact_arabic", True))
+        and policy.get("graph_confidence") != "blocked"
     )
 
 

@@ -182,6 +182,75 @@ def test_fusion_keeps_exact_reference_first_and_boosts_graph_context_neighbors()
     assert "query_requested_graph_context" in fused[1].reasons
 
 
+def test_domain_aware_fusion_boosts_tafseer_exact_reference():
+    plan = plan_for_query("Explain 1:5", document_ids=["doc-tafseer"], limit=5)
+    tafseer_exact = EvidenceCandidate(
+        candidate_id="metadata:tafseer-1-5",
+        text="Verse 1:5 Guide us to the straight path.",
+        document_id="doc-tafseer",
+        chunk_id="chunk-tafseer-1-5",
+        source_location={"reference": "1:5"},
+        metadata={
+            "domain_metadata": {
+                "domain": "quran_tafseer",
+                "tags": ["quran"],
+                "script": "arabic",
+            },
+            "reference_metadata": {"references": ["1:5"]},
+            "quality_action_policy": {
+                "index_exact_arabic": True,
+                "graph_confidence": "trusted",
+            },
+        },
+        tool="metadata",
+        tool_rank=1,
+        base_score=10.0,
+        retrieval_pass="reference_exact",
+    )
+    generic_native = EvidenceCandidate(
+        candidate_id="native:generic",
+        text="A generic discussion of guidance.",
+        document_id="doc-tafseer",
+        chunk_id="chunk-generic",
+        source_location={},
+        metadata={"domain_metadata": {"domain": "generic"}},
+        tool="native",
+        tool_rank=1,
+        base_score=20.0,
+    )
+
+    fused = fuse_candidates(plan, [generic_native, tafseer_exact])
+
+    assert fused[0].chunk_id == "chunk-tafseer-1-5"
+    assert "tafseer_reference_exact" in fused[0].reasons
+
+
+def test_domain_aware_fusion_does_not_apply_tafseer_boost_to_research_paper():
+    plan = plan_for_query("Explain 1:5", document_ids=["doc-paper"], limit=5)
+    paper_candidate = EvidenceCandidate(
+        candidate_id="metadata:paper-section",
+        text="Section 1.5 describes retrieval methodology.",
+        document_id="doc-paper",
+        chunk_id="chunk-paper-1-5",
+        source_location={"section": "1.5"},
+        metadata={
+            "domain_metadata": {
+                "domain": "research",
+                "document_type": "paper",
+            },
+        },
+        tool="metadata",
+        tool_rank=1,
+        base_score=10.0,
+        retrieval_pass="reference_exact",
+    )
+
+    fused = fuse_candidates(plan, [paper_candidate])
+
+    assert "tafseer_reference_exact" not in fused[0].reasons
+    assert "hadith_reference_exact" not in fused[0].reasons
+
+
 def test_fusion_dedupes_by_text_and_keeps_best_candidate():
     plan = plan_for_query("alpha", document_ids=["doc-1"], limit=3)
     native = EvidenceCandidate(
