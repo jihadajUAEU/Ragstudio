@@ -126,22 +126,30 @@ class ChunkService:
         if reference_prefiltered:
             chunks = reference_prefiltered
         else:
+            english_prefiltered = await repository.english_prefilter(
+                query=search_in.query,
+                document_ids=search_in.document_ids,
+                limit=prefilter_limit,
+            )
+            arabic_prefiltered = await repository.arabic_prefilter(
+                query=search_in.query,
+                document_ids=search_in.document_ids,
+                limit=prefilter_limit,
+            )
+            prefiltered_ids = {
+                chunk.id for chunk in [*english_prefiltered, *arabic_prefiltered]
+            }
             statement = select(Chunk)
             if search_in.document_ids:
                 statement = statement.where(Chunk.document_id.in_(search_in.document_ids))
             result = await self.session.execute(
                 statement.order_by(Chunk.created_at.asc(), Chunk.id.asc())
             )
-            chunks = list(result.scalars().all())
-            arabic_prefiltered = await repository.arabic_prefilter(
-                query=search_in.query,
-                document_ids=search_in.document_ids,
-                limit=prefilter_limit,
-            )
-            prefiltered_ids = {chunk.id for chunk in arabic_prefiltered}
+            all_chunks = list(result.scalars().all())
             chunks = [
+                *english_prefiltered,
                 *arabic_prefiltered,
-                *[chunk for chunk in chunks if chunk.id not in prefiltered_ids],
+                *[chunk for chunk in all_chunks if chunk.id not in prefiltered_ids],
             ]
 
         ranked = sorted(
@@ -189,44 +197,48 @@ class ChunkService:
         if not requested:
             return []
 
-        rows = (
-            await self.session.execute(
-                select(Chunk.document_id, Chunk.metadata_json)
-                .where(Chunk.document_id.in_(requested))
-                .order_by(Chunk.created_at.asc(), Chunk.id.asc())
-            )
-        ).all()
         metadata_by_document: dict[str, list[dict[str, Any]]] = {
             document_id: [] for document_id in requested
         }
         seen_by_document: dict[str, set[str]] = {
             document_id: set() for document_id in requested
         }
-        for document_id, metadata_json in rows:
-            if document_id not in metadata_by_document or not isinstance(metadata_json, dict):
-                continue
-            domain_metadata = metadata_json.get("domain_metadata")
-            if not isinstance(domain_metadata, dict):
-                continue
-            metadata_copy = sanitize_db_value(domain_metadata)
-            scrubbed_metadata = self._scrub_domain_metadata_lookup_value(metadata_copy)
-            if not isinstance(scrubbed_metadata, dict):
-                continue
-            dedupe_key = json.dumps(
-                scrubbed_metadata,
-                sort_keys=True,
-                separators=(",", ":"),
-                default=str,
-            )
-            if dedupe_key in seen_by_document[document_id]:
-                continue
-            seen_by_document[document_id].add(dedupe_key)
-            metadata_by_document[document_id].append(
-                {
-                    **scrubbed_metadata,
-                    "document_id": document_id,
-                }
-            )
+        for document_id in requested:
+            rows = (
+                await self.session.execute(
+                    select(Chunk.metadata_json)
+                    .where(Chunk.document_id == document_id)
+                    .order_by(Chunk.created_at.asc(), Chunk.id.asc())
+                    .limit(100)
+                )
+            ).scalars()
+            for metadata_json in rows:
+                if not isinstance(metadata_json, dict):
+                    continue
+                domain_metadata = metadata_json.get("domain_metadata")
+                if not isinstance(domain_metadata, dict):
+                    continue
+                metadata_copy = sanitize_db_value(domain_metadata)
+                scrubbed_metadata = self._scrub_domain_metadata_lookup_value(metadata_copy)
+                if not isinstance(scrubbed_metadata, dict):
+                    continue
+                dedupe_key = json.dumps(
+                    scrubbed_metadata,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    default=str,
+                )
+                if dedupe_key in seen_by_document[document_id]:
+                    continue
+                seen_by_document[document_id].add(dedupe_key)
+                metadata_by_document[document_id].append(
+                    {
+                        **scrubbed_metadata,
+                        "document_id": document_id,
+                    }
+                )
+                if len(metadata_by_document[document_id]) >= 5:
+                    break
 
         return [
             metadata

@@ -272,6 +272,52 @@ def test_fusion_boosts_lexical_expanded_metadata_above_semantic_candidate():
     assert fused[0].final_score > fused[1].final_score
 
 
+def test_fusion_keeps_answer_bearing_metadata_above_graph_neighbors():
+    plan = plan_for_query(
+        "Which is the hadith saying about offering sacrifice for eid from hadith_bukhari",
+        document_ids=["doc-bukhari"],
+        limit=8,
+    )
+    exact_hadith = EvidenceCandidate(
+        candidate_id="metadata:book-13-hadith-25",
+        text=(
+            "Book 13, Hadith 25. The day of Id-ul-Adha: first offer the prayer, "
+            "then return and slaughter the sacrifice."
+        ),
+        document_id="doc-bukhari",
+        chunk_id="book-13-hadith-25",
+        source_location={"reference": "Book 13, Hadith 25"},
+        metadata={
+            "score_breakdown": {"term_coverage": 8.3},
+            "domain_metadata": {"domain": "hadith", "collection": "sahih_bukhari"},
+        },
+        tool="metadata",
+        tool_rank=3,
+        base_score=10.4,
+        retrieval_pass="semantic_metadata",
+    )
+    neighbor = EvidenceCandidate(
+        candidate_id="graph:book-13-hadith-24",
+        text="Book 13, Hadith 24. A nearby Eid prayer narration.",
+        document_id="doc-bukhari",
+        chunk_id="book-13-hadith-24",
+        source_location={"reference": "Book 13, Hadith 24"},
+        metadata={
+            "graph_relationship": {"type": "REFERENCES", "path": "reference_hop"},
+            "domain_metadata": {"domain": "hadith", "collection": "sahih_bukhari"},
+        },
+        tool="graph",
+        tool_rank=1,
+        base_score=17.0,
+        reasons=["graph_neighbor"],
+    )
+
+    fused = fuse_candidates(plan, [neighbor, exact_hadith])
+
+    assert fused[0].chunk_id == "book-13-hadith-25"
+    assert "answer_terms_matched" in fused[0].reasons
+
+
 def test_domain_aware_fusion_boosts_tafseer_exact_reference():
     plan = plan_for_query("Explain 1:5", document_ids=["doc-tafseer"], limit=5)
     tafseer_exact = EvidenceCandidate(
@@ -776,6 +822,61 @@ class QuranDomainMetadataChunkSearchService:
         )()
 
 
+class HadithReferenceChunkSearchService:
+    def __init__(self):
+        self.search_queries = []
+        self.domain_metadata_document_calls = []
+
+    async def domain_metadata_for_documents(self, document_ids):
+        self.domain_metadata_document_calls.append(list(document_ids))
+        return [
+            {
+                "domain": "hadith",
+                "document_type": "collection",
+                "content_role": "primary_source",
+                "tags": ["hadith", "islamic_text", "religious_text"],
+            }
+        ]
+
+    async def search(self, search_in):
+        self.search_queries.append(search_in.query)
+        items = []
+        if search_in.query == "book:34:hadith:288":
+            items.append(
+                ChunkOut(
+                    id="book-34-hadith-288",
+                    document_id="doc-hadith",
+                    text="Book 34, Hadith 288. A trade-related report.",
+                    source_location={"reference": "Book 34, Hadith 288"},
+                    metadata={
+                        "domain_metadata": {"domain": "hadith"},
+                        "reference_metadata": {"references": ["book:34:hadith:288"]},
+                        "score": 100.0,
+                        "score_breakdown": {"reference_exact": 100.0},
+                    },
+                )
+            )
+        elif search_in.query == "book:13:hadith:25" or search_in.query.startswith("Which"):
+            items.append(
+                ChunkOut(
+                    id="book-13-hadith-25",
+                    document_id="doc-hadith",
+                    text=(
+                        "Book 13, Hadith 25. On Eid, prayer comes first, then "
+                        "the sacrifice."
+                    ),
+                    source_location={"reference": "Book 13, Hadith 25"},
+                    metadata={
+                        "domain_metadata": {"domain": "hadith"},
+                        "reference_metadata": {"references": ["book:13:hadith:25"]},
+                        "score": 10.0,
+                        "score_breakdown": {"term_coverage": 8.5},
+                    },
+                )
+            )
+        return type("SearchResult", (), {"items": items, "total": len(items)})()
+
+
 class HananHypothesisService:
     async def hypothesize(self, query, *, profile, domain_metadata, timeout_ms):
         return QueryHypothesis(
@@ -815,6 +916,49 @@ class SemanticHypothesisService:
             valid=True,
             source="llm",
         )
+
+
+class CorrectHadithReferenceHypothesisService:
+    async def hypothesize(self, query, *, profile, domain_metadata, timeout_ms):
+        return QueryHypothesis(
+            original_query=query,
+            intent="reference_lookup",
+            target_terms=[
+                QueryTargetTerm(surface="offering", script="latin"),
+                QueryTargetTerm(surface="sacrifice", script="latin"),
+                QueryTargetTerm(surface="eid", script="latin"),
+            ],
+            possible_references=["book:13:hadith:25"],
+            domain_hint="hadith",
+            answer_shape="reference",
+            confidence=0.86,
+            valid=True,
+            source="llm",
+        )
+
+
+class WrongHadithReferenceHypothesisService:
+    async def hypothesize(self, query, *, profile, domain_metadata, timeout_ms):
+        return QueryHypothesis(
+            original_query=query,
+            intent="reference_lookup",
+            target_terms=[
+                QueryTargetTerm(surface="offering", script="latin"),
+                QueryTargetTerm(surface="sacrifice", script="latin"),
+                QueryTargetTerm(surface="eid", script="latin"),
+            ],
+            possible_references=["book:34:hadith:288"],
+            domain_hint="hadith",
+            answer_shape="reference",
+            confidence=0.66,
+            valid=True,
+            source="llm",
+        )
+
+
+class TimeoutHypothesisService:
+    async def hypothesize(self, query, *, profile, domain_metadata, timeout_ms):
+        raise TimeoutError("planner timed out")
 
 
 class ParserWarningChunkSearchService(FakeChunkSearchService):
@@ -1689,6 +1833,109 @@ async def test_orchestrator_uses_hypothesis_terms_and_confirmed_answer_for_word_
     )
     assert verification_trace["status"] == "confirmed"
     assert verification_trace["reference"] == "19:13"
+
+
+@pytest.mark.asyncio
+async def test_religious_query_requires_llm_planning_in_auto_mode():
+    orchestrator = RetrievalOrchestrator(
+        chunk_service=QuranDomainMetadataChunkSearchService(),
+        answer_service=FakeAnswerService(),
+        reranker_service=FakeRerankerService(),
+        graph_expansion_service=FakeGraphExpansionService(),
+        query_hypothesis_service=TimeoutHypothesisService(),
+    )
+
+    result = await orchestrator.query(
+        "Which hadith mentions offering sacrifice for eid?",
+        runtime=NativeSearchShouldNotRun(),
+        profile=type("Profile", (), {"enable_rerank": False, "reranker_provider": "disabled"})(),
+        document_ids=["doc-quran"],
+        variant_id="variant-1",
+        query_config={
+            "limit": 8,
+            "retrieval_mode": "metadata",
+            "graph_expansion_enabled": False,
+            "query_hypothesis_required": "auto",
+            "query_hypothesis_timeout_ms": 5000,
+        },
+    )
+
+    assert result.error_type == "query_hypothesis_failed"
+    assert "LLM query planning failed" in (result.error or "")
+    assert result.timings["query_hypothesis_timeout_ms"] == 5000
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_tries_confirmed_hadith_reference_hypothesis_first():
+    chunk_service = HadithReferenceChunkSearchService()
+    orchestrator = RetrievalOrchestrator(
+        chunk_service=chunk_service,
+        answer_service=FakeAnswerService(),
+        reranker_service=FakeRerankerService(),
+        graph_expansion_service=FakeGraphExpansionService(),
+        query_hypothesis_service=CorrectHadithReferenceHypothesisService(),
+    )
+
+    result = await orchestrator.query(
+        "Which hadith mentions offering sacrifice for eid?",
+        runtime=NativeSearchShouldNotRun(),
+        profile=type("Profile", (), {"enable_rerank": False, "reranker_provider": "disabled"})(),
+        document_ids=["doc-hadith"],
+        variant_id="variant-1",
+        query_config={
+            "limit": 8,
+            "retrieval_mode": "metadata",
+            "graph_expansion_enabled": False,
+        },
+    )
+
+    assert result.error is None
+    assert chunk_service.search_queries[0] == "book:13:hadith:25"
+    assert result.sources[0]["metadata"]["canonical_reference"] == "book:13:hadith:25"
+    verification_trace = next(
+        trace for trace in result.chunk_traces if trace["stage"] == "hypothesis_verification"
+    )
+    assert verification_trace["status"] == "confirmed"
+    assert verification_trace["possible_reference_results"][0]["status"] == "confirmed"
+    assert verification_trace["reference"] == "book:13:hadith:25"
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_keeps_semantic_fallback_when_reference_hypothesis_is_wrong():
+    chunk_service = HadithReferenceChunkSearchService()
+    orchestrator = RetrievalOrchestrator(
+        chunk_service=chunk_service,
+        answer_service=FakeAnswerService(),
+        reranker_service=FakeRerankerService(),
+        graph_expansion_service=FakeGraphExpansionService(),
+        query_hypothesis_service=WrongHadithReferenceHypothesisService(),
+    )
+
+    result = await orchestrator.query(
+        "Which hadith mentions offering sacrifice for eid?",
+        runtime=NativeSearchShouldNotRun(),
+        profile=type("Profile", (), {"enable_rerank": False, "reranker_provider": "disabled"})(),
+        document_ids=["doc-hadith"],
+        variant_id="variant-1",
+        query_config={
+            "limit": 8,
+            "retrieval_mode": "metadata",
+            "graph_expansion_enabled": False,
+        },
+    )
+
+    assert result.error is None
+    assert chunk_service.search_queries[:2] == [
+        "book:34:hadith:288",
+        "Which hadith mentions offering sacrifice for eid?",
+    ]
+    assert result.sources[0]["metadata"]["canonical_reference"] == "book:13:hadith:25"
+    verification_trace = next(
+        trace for trace in result.chunk_traces if trace["stage"] == "hypothesis_verification"
+    )
+    assert verification_trace["status"] == "confirmed"
+    assert verification_trace["reference"] == "book:13:hadith:25"
+    assert verification_trace["possible_reference_results"][0]["status"] == "rejected"
 
 
 @pytest.mark.asyncio

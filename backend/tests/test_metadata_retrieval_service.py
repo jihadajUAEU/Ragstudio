@@ -92,6 +92,59 @@ class LexicalExpandedChunkService:
         return type("SearchResult", (), {"items": [], "total": 0})()
 
 
+class HypothesisReferenceChunkService:
+    def __init__(self):
+        self.calls = []
+
+    async def search(self, search_in):
+        self.calls.append(search_in)
+        if search_in.query == "book:34:hadith:288":
+            return type(
+                "SearchResult",
+                (),
+                {
+                    "items": [
+                        ChunkOut(
+                            id="wrong-hypothesis-reference",
+                            document_id="doc-hadith",
+                            text="Book 34, Hadith 288. A different topic.",
+                            source_location={"reference": "Book 34, Hadith 288"},
+                            metadata={
+                                "score": 100.0,
+                                "reference_metadata": {
+                                    "references": ["book:34:hadith:288"]
+                                },
+                            },
+                        )
+                    ],
+                    "total": 1,
+                },
+            )()
+        if search_in.query == "offering sacrifice eid":
+            return type(
+                "SearchResult",
+                (),
+                {
+                    "items": [
+                        ChunkOut(
+                            id="semantic-correct-reference",
+                            document_id="doc-hadith",
+                            text="Book 13, Hadith 25. Eid prayer before sacrifice.",
+                            source_location={"reference": "Book 13, Hadith 25"},
+                            metadata={
+                                "score": 12.0,
+                                "reference_metadata": {
+                                    "references": ["book:13:hadith:25"]
+                                },
+                            },
+                        )
+                    ],
+                    "total": 1,
+                },
+            )()
+        return type("SearchResult", (), {"items": [], "total": 0})()
+
+
 class LegacyLexicalExpandedPass:
     name = "lexical_expanded_token"
     query = "حنانا"
@@ -201,6 +254,52 @@ async def test_metadata_service_stops_after_direct_lexical_expanded_candidate():
     assert len(candidates) == 1
     assert candidates[0].chunk_id == "chunk-19-13-expanded"
     assert [item["name"] for item in trace["passes"]] == ["lexical_expanded_token"]
+
+
+@pytest.mark.asyncio
+async def test_metadata_service_does_not_stop_after_hypothesis_reference_candidate():
+    chunk_service = HypothesisReferenceChunkService()
+    understanding = QueryUnderstanding(
+        query="offering sacrifice eid",
+        intent="lexical_expanded_token",
+        answer_type="reference",
+        retrieval_passes=[
+            RetrievalPass(
+                name="reference_exact",
+                query="book:34:hadith:288",
+                direct_evidence=True,
+                match_type="hypothesis_reference",
+            ),
+            RetrievalPass("semantic_metadata", "offering sacrifice eid"),
+        ],
+    )
+
+    candidates, trace = await MetadataRetrievalService(chunk_service).retrieve(
+        "offering sacrifice eid",
+        understanding=understanding,
+        document_ids=["doc-hadith"],
+        variant_id="variant-1",
+        limit=5,
+    )
+
+    assert [call.query for call in chunk_service.calls] == [
+        "book:34:hadith:288",
+        "offering sacrifice eid",
+    ]
+    assert [candidate.chunk_id for candidate in candidates] == [
+        "wrong-hypothesis-reference",
+        "semantic-correct-reference",
+    ]
+    assert candidates[0].retrieval_pass == "reference_hypothesis"
+    assert candidates[0].match_features == {
+        "reference_hypothesis": True,
+        "reference": "book:34:hadith:288",
+        "match_type": "hypothesis_reference",
+    }
+    assert [item["name"] for item in trace["passes"]] == [
+        "reference_exact",
+        "semantic_metadata",
+    ]
 
 
 @pytest.mark.asyncio

@@ -14,6 +14,39 @@ from ragstudio.services.arabic_text import (
 from ragstudio.services.reference_metadata import ReferenceSemantics
 from ragstudio.services.retrieval_explainer import build_retrieval_explain
 
+_ENGLISH_STOPWORDS = {
+    "a",
+    "an",
+    "about",
+    "and",
+    "are",
+    "as",
+    "at",
+    "be",
+    "by",
+    "for",
+    "from",
+    "in",
+    "is",
+    "it",
+    "of",
+    "on",
+    "or",
+    "saying",
+    "says",
+    "say",
+    "the",
+    "this",
+    "to",
+    "was",
+    "what",
+    "which",
+    "who",
+    "whom",
+    "whose",
+    "with",
+}
+
 
 @dataclass(frozen=True)
 class ChunkScore:
@@ -314,10 +347,16 @@ class HybridChunkSearch:
         return ""
 
     def _terms(self, value: str) -> set[str]:
-        return {
-            match.group(0).lower()
-            for match in re.finditer(r"[\w\u0600-\u06FF]+", value, flags=re.UNICODE)
-        }
+        terms: set[str] = set()
+        for match in re.finditer(r"[\w\u0600-\u06FF]+", value, flags=re.UNICODE):
+            term = match.group(0).lower()
+            if term in _ENGLISH_STOPWORDS:
+                continue
+            if term == "eid":
+                terms.update({"id", "adha"})
+                continue
+            terms.add(term)
+        return terms
 
     def _query_reference_label(self, query_ref: dict[str, Any] | None) -> str | None:
         if not isinstance(query_ref, dict):

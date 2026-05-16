@@ -20,6 +20,7 @@ from ragstudio.services.runtime_profile_service import (
     RuntimeProfileService,
 )
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
@@ -213,12 +214,44 @@ class QueryService:
                 run.error = str(exc)
                 run.error_type = exc.__class__.__name__
                 run.timings = {"total_ms": self._elapsed_ms(started_at)}
-            runs.append(run)
 
-        await self.session.commit()
-        for run in runs:
-            await self.session.refresh(run)
+            runs.append(await self._commit_query_run(run))
         return QueryOut(runs=[RunOut.model_validate(run) for run in runs])
+
+    async def _commit_query_run(self, run: Run) -> Run:
+        snapshot = self._run_snapshot(run)
+        try:
+            await self.session.commit()
+        except SQLAlchemyError:
+            await self.session.rollback()
+            recovered = Run(**snapshot)
+            self.session.add(recovered)
+            await self.session.commit()
+            run = recovered
+        await self.session.refresh(run)
+        return run
+
+    def _run_snapshot(self, run: Run) -> dict[str, Any]:
+        snapshot: dict[str, Any] = {
+            "variant_id": run.variant_id,
+            "experiment_id": run.experiment_id,
+            "runtime_profile_id": run.runtime_profile_id,
+            "query": run.query,
+            "status": run.status,
+            "answer": run.answer,
+            "document_ids": list(run.document_ids or []),
+            "query_config": dict(run.query_config or {}),
+            "sources": list(run.sources or []),
+            "chunk_traces": list(run.chunk_traces or []),
+            "reranker_traces": list(run.reranker_traces or []),
+            "timings": dict(run.timings or {}),
+            "token_metadata": dict(run.token_metadata or {}),
+            "error": run.error,
+            "error_type": run.error_type,
+        }
+        if run.id:
+            snapshot["id"] = run.id
+        return snapshot
 
     def _retrieval_orchestrator(self) -> RetrievalOrchestrator:
         if self.retrieval_orchestrator is not None:
@@ -333,6 +366,13 @@ class QueryService:
                 parameters.get("native_query_timeout_ms"),
                 15_000,
             ),
+            "query_hypothesis_timeout_ms": self._int_param(
+                parameters.get("query_hypothesis_timeout_ms"),
+                5000,
+            ),
+            "query_hypothesis_required": self._query_hypothesis_required_param(
+                parameters.get("query_hypothesis_required")
+            ),
             "answer_style": self._text_param(parameters.get("answer_style"), ""),
             "limit": payload.limit,
             "response_mode": payload.response_mode,
@@ -345,12 +385,25 @@ class QueryService:
                 int(query_config["native_query_timeout_ms"]),
                 2500,
             )
-            query_config["answer_budget_ms"] = payload.answer_budget_ms or 1000
-            query_config["response_budget_ms"] = payload.response_budget_ms or 8000
+            query_config["answer_budget_ms"] = payload.answer_budget_ms or 3000
+            query_config["response_budget_ms"] = payload.response_budget_ms or 15000
         else:
             query_config["answer_budget_ms"] = payload.answer_budget_ms or profile.llm_timeout_ms
             query_config["response_budget_ms"] = payload.response_budget_ms
         return query_config
+
+    def _query_hypothesis_required_param(self, value: Any) -> bool | str:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            normalized = value.strip().casefold()
+            if normalized in {"true", "required", "always"}:
+                return True
+            if normalized in {"false", "optional", "never"}:
+                return False
+            if normalized == "auto":
+                return "auto"
+        return "auto"
 
     def _query_mode(self, value: Any, fallback: str) -> str:
         mode = self._text_param(value, fallback)

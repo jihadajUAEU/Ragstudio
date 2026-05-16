@@ -4,6 +4,7 @@ from time import perf_counter
 from typing import Any
 
 from ragstudio.schemas.chunks import ChunkOut, ChunkSearchIn
+from ragstudio.services.query_hypothesis_service import normalize_reference_hypothesis
 from ragstudio.services.query_understanding import QueryUnderstanding, RetrievalPass
 from ragstudio.services.retrieval_evidence import EvidenceCandidate
 
@@ -52,10 +53,10 @@ class MetadataRetrievalService:
                 chunk_id = _chunk_id(chunk)
                 if chunk_id in seen_chunk_ids:
                     continue
-                seen_chunk_ids.add(chunk_id)
-                pass_candidates.append(
-                    self._candidate_from_chunk(chunk, index, retrieval_pass)
-                )
+                candidate = self._candidate_from_chunk(chunk, index, retrieval_pass)
+                if candidate.retrieval_pass != "reference_hypothesis":
+                    seen_chunk_ids.add(chunk_id)
+                pass_candidates.append(candidate)
 
             candidates.extend(pass_candidates)
             pass_traces.append(
@@ -95,6 +96,8 @@ class MetadataRetrievalService:
             metadata.setdefault("runtime_source_id", runtime_source_id)
         chunk_id = _chunk_id(chunk)
         effective_pass = self._effective_retrieval_pass(chunk, retrieval_pass, metadata)
+        if effective_pass == "reference_hypothesis":
+            base_score = min(base_score, 1.0)
         metadata.setdefault("canonical_chunk_id", chunk_id)
         return EvidenceCandidate(
             candidate_id=f"metadata:{chunk_id}",
@@ -121,6 +124,8 @@ class MetadataRetrievalService:
     ) -> str:
         if retrieval_pass.name != "reference_exact":
             return retrieval_pass.name
+        if retrieval_pass.match_type == "hypothesis_reference":
+            return "reference_hypothesis"
         if _reference_exact_score(metadata) > 0:
             return "reference_exact"
         if _normalize_reference(self._first_reference(chunk)) == _normalize_reference(
@@ -144,6 +149,12 @@ class MetadataRetrievalService:
             }
         if effective_pass == "reference_exact":
             return {"reference_exact": True, "reference": retrieval_pass.query}
+        if effective_pass == "reference_hypothesis":
+            return {
+                "reference_hypothesis": True,
+                "reference": retrieval_pass.query,
+                "match_type": "hypothesis_reference",
+            }
         if effective_pass == "phrase_exact":
             return {"target_phrase": retrieval_pass.query}
         if effective_pass == "title_count":
@@ -153,13 +164,14 @@ class MetadataRetrievalService:
     def _first_reference(self, chunk: ChunkOut) -> str | None:
         source_reference = _chunk_source_location(chunk).get("reference")
         if isinstance(source_reference, str) and source_reference:
-            return source_reference
+            return normalize_reference_hypothesis(source_reference) or source_reference
         reference_metadata = _chunk_metadata(chunk).get("reference_metadata")
         if not isinstance(reference_metadata, dict):
             return None
         references = reference_metadata.get("references")
         if isinstance(references, list) and references:
-            return str(references[0])
+            reference = str(references[0])
+            return normalize_reference_hypothesis(reference) or reference
         return None
 
     def _source_quality(self, chunk: ChunkOut) -> dict[str, Any]:
@@ -217,6 +229,8 @@ def _has_direct_evidence_candidates(
     retrieval_pass: RetrievalPass,
     candidates: list[EvidenceCandidate],
 ) -> bool:
+    if getattr(retrieval_pass, "match_type", None) == "hypothesis_reference":
+        return False
     return (
         bool(getattr(retrieval_pass, "direct_evidence", False))
         and retrieval_pass.name in _METADATA_PASS_NAMES

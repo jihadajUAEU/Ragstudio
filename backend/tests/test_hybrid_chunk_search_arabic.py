@@ -54,6 +54,46 @@ def test_arabic_query_does_not_match_quarantined_exact_policy():
     assert score.breakdown["quality_blocked_arabic"] == 1.0
 
 
+def test_hadith_topic_query_prioritizes_answer_terms_over_question_scaffolding():
+    query = "Which is the hadith saying about offering sacrifice for eid from hadith_bukhari"
+    domain_metadata = {
+        "domain": "hadith",
+        "document_type": "collection",
+        "collection": "sahih_bukhari",
+        "tags": ["hadith", "islamic_text"],
+    }
+    correct = Chunk(
+        id="correct",
+        document_id="doc-1",
+        text=(
+            "Book 13, Hadith 25\n\n"
+            "The Prophet went on the day of Id-ul-Adha and said our first act "
+            "is offering the prayer, then we return and slaughter the sacrifice."
+        ),
+        source_location={"page": 374},
+        metadata_json={"domain_metadata": domain_metadata},
+    )
+    distractor = Chunk(
+        id="distractor",
+        document_id="doc-1",
+        text=(
+            "Book 63, Hadith 91\n\n"
+            "Which report is the saying about a different matter for people from Medina."
+        ),
+        source_location={"page": 2000},
+        metadata_json={"domain_metadata": domain_metadata},
+    )
+
+    search = HybridChunkSearch()
+    correct_score = search.score(query, correct)
+    distractor_score = search.score(query, distractor)
+
+    assert correct_score.score > distractor_score.score
+    assert correct_score.breakdown["term_coverage"] > distractor_score.breakdown[
+        "term_coverage"
+    ]
+
+
 def test_cross_reference_only_inline_reference_does_not_get_reference_exact_boost():
     domain_metadata = {
         "domain": "quran_tafseer",

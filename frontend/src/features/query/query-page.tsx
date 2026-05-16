@@ -4,6 +4,7 @@ import {
   AlertCircle,
   CheckSquare,
   FileText,
+  GitBranch,
   Loader2,
   MessageSquareText,
   PlayCircle,
@@ -22,6 +23,7 @@ import {
   type EvidenceRerankerSummary,
   type NormalizedEvidence,
 } from "../evidence/evidence-viewer";
+import { QueryPathwayViewer } from "./query-pathway-viewer";
 
 const queryKeys = {
   documents: ["documents"],
@@ -70,8 +72,8 @@ export function QueryPage() {
       variant_ids: selectedVariantIds,
       limit,
       response_mode: responseMode,
-      answer_budget_ms: responseMode === "fast" ? 1000 : null,
-      response_budget_ms: responseMode === "fast" ? 8000 : null,
+      answer_budget_ms: responseMode === "fast" ? 3000 : null,
+      response_budget_ms: responseMode === "fast" ? 15000 : null,
     });
   };
 
@@ -306,6 +308,7 @@ function RunResult({ run, variant }: { run: RunOut; variant?: VariantOut }) {
   const answerMode = textValue(run.token_metadata.answer_mode);
   const llmAnswerStatus = textValue(run.token_metadata.llm_answer_status);
   const [selectedEvidence, setSelectedEvidence] = useState<NormalizedEvidence | null>(null);
+  const [pathwayOpen, setPathwayOpen] = useState(false);
   const readableSources = useMemo(
     () => run.sources.map((source, index) => normalizeQuerySource(source, index, run)),
     [run],
@@ -320,7 +323,13 @@ function RunResult({ run, variant }: { run: RunOut; variant?: VariantOut }) {
             {variant?.name ?? run.variant_id} · {run.id}
           </p>
         </div>
-        <StatusBadge status={run.status} className="shrink-0" />
+        <div className="flex shrink-0 items-center gap-2">
+          <Button type="button" variant="secondary" size="sm" onClick={() => setPathwayOpen(true)}>
+            <GitBranch className="h-4 w-4" aria-hidden="true" />
+            View pathway
+          </Button>
+          <StatusBadge status={run.status} />
+        </div>
       </div>
       <div className="mt-3 flex flex-wrap gap-2">
         <Badge>profile {run.runtime_profile_id ?? "n/a"}</Badge>
@@ -365,6 +374,11 @@ function RunResult({ run, variant }: { run: RunOut; variant?: VariantOut }) {
         evidence={selectedEvidence}
         open={selectedEvidence !== null}
         onClose={() => setSelectedEvidence(null)}
+      />
+      <QueryPathwayViewer
+        run={run}
+        open={pathwayOpen}
+        onClose={() => setPathwayOpen(false)}
       />
 
       <div className="mt-4 grid gap-3 lg:grid-cols-2">

@@ -267,6 +267,10 @@ def _score_candidate(
         boost += 28.0
         reasons.append("lexical_expanded_exact")
 
+    if candidate.tool == "metadata" and _has_answer_term_coverage(candidate):
+        boost += 12.0
+        reasons.append("answer_terms_matched")
+
     if candidate.tool == "metadata":
         boost += 3.0
         reasons.append("metadata_precision_tool")
@@ -361,6 +365,14 @@ def _has_lexical_expanded_evidence(candidate: EvidenceCandidate) -> bool:
         candidate.match_features.get("lexical_expanded")
         or match_features.get("lexical_expanded")
     )
+
+
+def _has_answer_term_coverage(candidate: EvidenceCandidate) -> bool:
+    score_breakdown = candidate.metadata.get("score_breakdown")
+    if not isinstance(score_breakdown, dict):
+        return False
+    term_coverage = score_breakdown.get("term_coverage")
+    return isinstance(term_coverage, int | float) and float(term_coverage) >= 8.0
 
 
 def _selected_document_count(plan: RetrievalPlan) -> int:

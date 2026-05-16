@@ -71,6 +71,8 @@ def _candidate_key(candidate: EvidenceCandidate) -> str:
 
 def _direct_priority(candidate: EvidenceCandidate) -> int:
     features = _features(candidate)
+    if features.get("reference_hypothesis"):
+        return 5
     if features.get("reference_exact"):
         return 100
     if features.get("arabic_exact"):

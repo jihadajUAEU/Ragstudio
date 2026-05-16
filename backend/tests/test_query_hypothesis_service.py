@@ -113,6 +113,116 @@ def test_parse_hypothesis_sanitizes_unsafe_probable_answer_strings():
     )
 
 
+def test_parse_hypothesis_accepts_live_hadith_retrieval_plan_with_terms():
+    raw = {
+        "intent": "retrieval",
+        "target_terms": [
+            "hadith",
+            "eid",
+            "sacrifice",
+            "hadith_bukhari",
+        ],
+        "domain_hint": "hadith",
+        "answer_shape": "citation",
+        "probable_answer": (
+            "The hadith in Sahih al-Bukhari (Book 34, Hadith 288) states this."
+        ),
+        "confidence": "medium",
+        "needs_clarification": True,
+    }
+
+    hypothesis = QueryHypothesisService.parse_hypothesis(
+        raw,
+        original_query=(
+            "Which is the hadith saying about offering sacrifice for eid from hadith_bukhari"
+        ),
+    )
+
+    assert hypothesis.valid is True
+    assert hypothesis.intent == "semantic_question"
+    assert hypothesis.answer_shape == "reference"
+    assert hypothesis.needs_clarification is False
+    assert [term.surface for term in hypothesis.target_terms] == [
+        "hadith",
+        "eid",
+        "sacrifice",
+        "hadith_bukhari",
+    ]
+
+
+def test_parse_hypothesis_normalizes_possible_hadith_references():
+    raw = {
+        "intent": "reference_lookup",
+        "target_terms": ["offering", "sacrifice", "eid"],
+        "domain_hint": "hadith",
+        "answer_shape": "reference",
+        "possible_references": [
+            "Book 13, Hadith 25",
+            {"reference": "book:34:hadith:288"},
+            {"book": 13, "hadith": 25},
+            "/Users/meet/private.pdf",
+        ],
+        "probable_answer": {"reference": "Book 13, Hadith 25"},
+        "confidence": "high",
+        "needs_clarification": False,
+    }
+
+    hypothesis = QueryHypothesisService.parse_hypothesis(
+        raw,
+        original_query="Which hadith says about offering sacrifice for eid?",
+    )
+
+    assert hypothesis.valid is True
+    assert hypothesis.possible_references == [
+        "book:13:hadith:25",
+        "book:34:hadith:288",
+    ]
+    assert hypothesis.probable_answer == ProbableAnswer(reference="book:13:hadith:25")
+    assert hypothesis.confidence == pytest.approx(0.9)
+
+
+def test_parse_hypothesis_accepts_reference_only_search_plan():
+    hypothesis = QueryHypothesisService.parse_hypothesis(
+        {
+            "intent": "reference_lookup",
+            "possible_references": ["Book 13 Hadith 25"],
+            "domain_hint": "hadith",
+            "answer_shape": "reference",
+        },
+        original_query="find the Eid sacrifice hadith",
+    )
+
+    assert hypothesis.valid is True
+    assert hypothesis.target_terms == []
+    assert hypothesis.possible_references == ["book:13:hadith:25"]
+
+
+@pytest.mark.parametrize(
+    ("possible_references", "expected"),
+    [
+        ("Book 13, Hadith 25", ["book:13:hadith:25"]),
+        ({"reference": "Book 13, Hadith 25"}, ["book:13:hadith:25"]),
+        ({"book": "13", "hadith": "25"}, ["book:13:hadith:25"]),
+    ],
+)
+def test_parse_hypothesis_accepts_single_possible_reference_shapes(
+    possible_references,
+    expected,
+):
+    hypothesis = QueryHypothesisService.parse_hypothesis(
+        {
+            "intent": "reference_lookup",
+            "possible_references": possible_references,
+            "domain_hint": "hadith",
+            "answer_shape": "reference",
+        },
+        original_query="find the Eid sacrifice hadith",
+    )
+
+    assert hypothesis.valid is True
+    assert hypothesis.possible_references == expected
+
+
 def test_parse_hypothesis_returns_invalid_for_non_dict():
     hypothesis = QueryHypothesisService.parse_hypothesis(["bad"], original_query="hello")
 
@@ -288,4 +398,4 @@ async def test_hypothesize_returns_invalid_on_bad_json(monkeypatch):
     )
 
     assert hypothesis.valid is False
-    assert hypothesis.reason == "no_valid_target_terms"
+    assert hypothesis.reason == "no_valid_search_plan"

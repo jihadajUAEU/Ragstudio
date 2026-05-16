@@ -179,6 +179,50 @@ def test_domain_query_expansion_uses_hypothesis_target_terms_from_sentence():
     assert [item.query for item in result.retrieval_passes] == ["حنانا", "وحنانا"]
 
 
+def test_domain_query_expansion_prepends_possible_reference_hypotheses():
+    service = DomainQueryExpansionService()
+    hypothesis = QueryHypothesis(
+        original_query="Which hadith says about offering sacrifice for eid?",
+        intent="reference_lookup",
+        target_terms=[
+            QueryTargetTerm(surface="offering", script="latin"),
+            QueryTargetTerm(surface="sacrifice", script="latin"),
+            QueryTargetTerm(surface="eid", script="latin"),
+        ],
+        domain_hint="hadith",
+        answer_shape="reference",
+        possible_references=["book:13:hadith:25", "book:34:hadith:288"],
+        confidence=0.8,
+        valid=True,
+    )
+
+    result = service.expand(
+        "Which hadith says about offering sacrifice for eid?",
+        domain_metadata=[
+            {
+                "domain": "hadith",
+                "document_type": "collection",
+                "tags": ["hadith", "islamic_text"],
+            }
+        ],
+        query_hypothesis=hypothesis,
+    )
+
+    assert [item.name for item in result.retrieval_passes[:2]] == [
+        "reference_exact",
+        "reference_exact",
+    ]
+    assert [item.query for item in result.retrieval_passes[:2]] == [
+        "book:13:hadith:25",
+        "book:34:hadith:288",
+    ]
+    assert all(item.direct_evidence is True for item in result.retrieval_passes[:2])
+    assert result.trace["possible_references"] == [
+        "book:13:hadith:25",
+        "book:34:hadith:288",
+    ]
+
+
 def test_domain_query_expansion_preserves_exact_script_match_type_on_passes():
     service = DomainQueryExpansionService()
 

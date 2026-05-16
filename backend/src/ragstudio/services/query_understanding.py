@@ -71,7 +71,7 @@ def understand_query(query: str, *, domain_expansion: Any | None = None) -> Quer
         expanded_terms = [
             item.query
             for item in expansion_passes
-            if getattr(item, "query", "")
+            if getattr(item, "query", "") and item.name != "reference_exact"
         ]
         return QueryUnderstanding(
             query=query,

@@ -32,6 +32,21 @@ _ALLOWED_ANSWER_SHAPES = {
     "explanation",
     "unknown",
 }
+_INTENT_ALIASES = {
+    "retrieval": "semantic_question",
+    "search": "semantic_question",
+    "citation_lookup": "reference_lookup",
+}
+_ANSWER_SHAPE_ALIASES = {
+    "citation": "reference",
+    "citation_reference": "reference",
+    "source_citation": "reference",
+}
+_CONFIDENCE_LABELS = {
+    "low": 0.33,
+    "medium": 0.66,
+    "high": 0.9,
+}
 _ARABIC_RE = re.compile(r"[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]+")
 _WORD_TARGET_RE = re.compile(
     r"\b(?:word|term|arabic word|arabic term)\s+['\"]?(?P<term>[A-Za-z][A-Za-z'-]{1,79})['\"]?",
@@ -40,7 +55,15 @@ _WORD_TARGET_RE = re.compile(
 _ARABIC_TARGET_RE = re.compile(
     r"(?:كلمة|لفظ)\s+(?P<term>[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]+)"
 )
-_REFERENCE_VALUE_RE = re.compile(r"^\d{1,3}:\d{1,3}$")
+_REFERENCE_VALUE_RE = re.compile(r"^\d{1,4}:\d{1,6}$")
+_BOOK_HADITH_CANONICAL_RE = re.compile(
+    r"^book:(?P<book>\d{1,4}):hadith:(?P<hadith>\d{1,6})$",
+    re.IGNORECASE,
+)
+_BOOK_HADITH_TEXT_RE = re.compile(
+    r"\bBook\s+(?P<book>\d{1,4})\s*,?\s*Hadith\s+(?P<hadith>\d{1,6})\b",
+    re.IGNORECASE,
+)
 _PATH_LIKE_RE = re.compile(r"(?:^|/)(?:Users|home|var|tmp|etc|private)(?:/|$)", re.IGNORECASE)
 _CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]+")
 
@@ -77,6 +100,7 @@ class QueryHypothesis:
     original_query: str
     intent: str = "unknown"
     target_terms: list[QueryTargetTerm] = field(default_factory=list)
+    possible_references: list[str] = field(default_factory=list)
     domain_hint: str = "unknown"
     answer_shape: str = "unknown"
     probable_answer: ProbableAnswer | None = None
@@ -102,6 +126,7 @@ class QueryHypothesis:
             "confidence": self.confidence,
             "needs_clarification": self.needs_clarification,
             "target_terms": [term.to_trace() for term in self.target_terms],
+            "possible_references": list(self.possible_references),
             "probable_answer": (
                 self.probable_answer.to_trace() if self.probable_answer is not None else None
             ),
@@ -200,22 +225,31 @@ class QueryHypothesisService:
             return QueryHypothesis.empty(original_query, reason="invalid_hypothesis_shape")
 
         target_terms = _target_terms(raw.get("target_terms"))
+        possible_references = _possible_references(raw.get("possible_references"))
         probable_answer = _probable_answer(raw.get("probable_answer"))
-        intent = _allowed(raw.get("intent"), _ALLOWED_INTENTS, default="unknown")
+        intent = _allowed_alias(
+            raw.get("intent"),
+            _ALLOWED_INTENTS,
+            default="unknown",
+            aliases=_INTENT_ALIASES,
+        )
         domain_hint = _allowed(raw.get("domain_hint"), _ALLOWED_DOMAIN_HINTS, default="unknown")
-        answer_shape = _allowed(
+        answer_shape = _allowed_alias(
             raw.get("answer_shape"),
             _ALLOWED_ANSWER_SHAPES,
             default="unknown",
+            aliases=_ANSWER_SHAPE_ALIASES,
         )
         confidence = _confidence(raw.get("confidence"))
-        needs_clarification = bool(raw.get("needs_clarification", False))
+        has_search_plan = bool(target_terms or possible_references)
+        needs_clarification = bool(raw.get("needs_clarification", False)) and not has_search_plan
 
-        valid = bool(target_terms) and not needs_clarification
+        valid = has_search_plan and not needs_clarification
         return QueryHypothesis(
             original_query=original_query,
             intent=intent,
             target_terms=target_terms,
+            possible_references=possible_references,
             domain_hint=domain_hint,
             answer_shape=answer_shape,
             probable_answer=probable_answer,
@@ -223,7 +257,7 @@ class QueryHypothesisService:
             needs_clarification=needs_clarification,
             valid=valid,
             source="parsed",
-            reason=None if valid else "no_valid_target_terms",
+            reason=None if valid else "no_valid_search_plan",
         )
 
     def _payload(
@@ -249,16 +283,33 @@ class QueryHypothesisService:
                 {
                     "role": "system",
                     "content": (
-                        "Return only JSON. Extract search intent and exact target terms for "
-                        "a RAG retrieval system. Do not answer authoritatively. Probable "
-                        "answers are hypotheses and must include only compact references."
+                        "Return only JSON. Extract a mandatory search plan for a RAG "
+                        "retrieval system. Do not answer authoritatively. For semantic "
+                        "or content lookup questions, target_terms must contain 2-5 "
+                        "answer-bearing terms from the query after removing wrapper words "
+                        "and source names. You may also include up to 3 possible_references "
+                        "when the query suggests a concrete citation, but those references "
+                        "are untrusted hypotheses that retrieval must verify. Set "
+                        "needs_clarification true only when no usable retrieval terms or "
+                        "reference hypotheses can be extracted. Probable answers are "
+                        "hypotheses and must include only compact references."
                     ),
                 },
                 {
                     "role": "user",
                     "content": (
-                        "Schema keys: intent, target_terms, domain_hint, answer_shape, "
+                        "Schema keys: intent, target_terms, possible_references, "
+                        "domain_hint, answer_shape, "
                         "probable_answer, confidence, needs_clarification.\n"
+                        "Use canonical values when possible: intent semantic_question, "
+                        "reference_lookup, find_word_occurrence, or explain_reference; "
+                        "answer_shape reference, short_answer, explanation, or "
+                        "surah_and_verse.\n"
+                        "Example: query 'Which hadith says about offering sacrifice for "
+                        "eid from hadith_bukhari' should include target_terms such as "
+                        "offering, sacrifice, eid, may include possible_references such "
+                        "as book:13:hadith:25 only if plausible, and must set "
+                        "needs_clarification false.\n"
                         f"Domain tokens: {domain_tokens}\n"
                         f"Query: {query.strip()}"
                     ),
@@ -272,6 +323,17 @@ def _target_terms(raw: Any) -> list[QueryTargetTerm]:
         return []
     terms: list[QueryTargetTerm] = []
     for item in raw:
+        if isinstance(item, str):
+            surface = item.strip()
+            if not _safe_term(surface):
+                continue
+            terms.append(
+                QueryTargetTerm(
+                    surface=surface,
+                    script=_script_for_term(surface),
+                )
+            )
+            continue
         if not isinstance(item, dict):
             continue
         surface = str(item.get("surface") or "").strip()
@@ -290,6 +352,35 @@ def _target_terms(raw: Any) -> list[QueryTargetTerm]:
             )
         )
     return _dedupe_terms(terms)[:5]
+
+
+def _possible_references(raw: Any) -> list[str]:
+    if isinstance(raw, str | dict):
+        raw = [raw]
+    if not isinstance(raw, list):
+        return []
+    references: list[str] = []
+    for item in raw:
+        reference = _reference_from_item(item)
+        if reference is not None:
+            references.append(reference)
+    return list(dict.fromkeys(references))[:3]
+
+
+def _reference_from_item(item: Any) -> str | None:
+    if isinstance(item, str):
+        return normalize_reference_hypothesis(item)
+    if not isinstance(item, dict):
+        return None
+    for key in ("reference", "ref", "citation"):
+        reference = normalize_reference_hypothesis(item.get(key))
+        if reference is not None:
+            return reference
+    book = _positive_int(item.get("book"), max_value=9999)
+    hadith = _positive_int(item.get("hadith"), max_value=999999)
+    if book is not None and hadith is not None:
+        return f"book:{book}:hadith:{hadith}"
+    return None
 
 
 def _probable_answer(raw: Any) -> ProbableAnswer | None:
@@ -364,10 +455,25 @@ def _safe_short_text(value: Any, *, max_length: int) -> str | None:
 
 
 def _safe_reference(value: Any) -> str | None:
-    reference = _safe_short_text(value, max_length=20)
+    return normalize_reference_hypothesis(value)
+
+
+def normalize_reference_hypothesis(value: Any) -> str | None:
+    reference = _safe_short_text(value, max_length=80)
     if reference is None:
         return None
-    return reference if _REFERENCE_VALUE_RE.fullmatch(reference) else None
+    if _REFERENCE_VALUE_RE.fullmatch(reference):
+        return reference
+    canonical_match = _BOOK_HADITH_CANONICAL_RE.fullmatch(reference)
+    if canonical_match is not None:
+        return (
+            f"book:{int(canonical_match.group('book'))}:"
+            f"hadith:{int(canonical_match.group('hadith'))}"
+        )
+    text_match = _BOOK_HADITH_TEXT_RE.search(reference)
+    if text_match is not None:
+        return f"book:{int(text_match.group('book'))}:hadith:{int(text_match.group('hadith'))}"
+    return None
 
 
 def _allowed(value: Any, allowed: set[str], *, default: str) -> str:
@@ -375,9 +481,25 @@ def _allowed(value: Any, allowed: set[str], *, default: str) -> str:
     return normalized if normalized in allowed else default
 
 
+def _allowed_alias(
+    value: Any,
+    allowed: set[str],
+    *,
+    default: str,
+    aliases: dict[str, str],
+) -> str:
+    normalized = str(value or "").strip().casefold()
+    normalized = aliases.get(normalized, normalized)
+    return normalized if normalized in allowed else default
+
+
 def _confidence(value: Any) -> float:
     if isinstance(value, bool):
         return 0.0
+    if isinstance(value, str):
+        label = value.strip().casefold()
+        if label in _CONFIDENCE_LABELS:
+            return _CONFIDENCE_LABELS[label]
     try:
         parsed = float(value)
     except (TypeError, ValueError):
@@ -385,11 +507,17 @@ def _confidence(value: Any) -> float:
     return min(max(parsed, 0.0), 1.0)
 
 
-def _positive_int(value: Any) -> int | None:
+def _positive_int(value: Any, *, max_value: int | None = None) -> int | None:
     if isinstance(value, bool):
         return None
-    if isinstance(value, int) and value > 0:
-        return value
+    if isinstance(value, int):
+        parsed = value
+    elif isinstance(value, str) and value.strip().isdigit():
+        parsed = int(value.strip())
+    else:
+        return None
+    if parsed > 0 and (max_value is None or parsed <= max_value):
+        return parsed
     return None
 
 
@@ -398,6 +526,14 @@ def _str_or_none(value: Any) -> str | None:
         return None
     stripped = value.strip()
     return stripped or None
+
+
+def _script_for_term(value: str) -> str:
+    if _ARABIC_RE.search(value):
+        return "arabic"
+    if re.search(r"[A-Za-z]", value):
+        return "latin"
+    return "unknown"
 
 
 def _arabic_target_terms(query: str) -> list[str]:

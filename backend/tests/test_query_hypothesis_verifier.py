@@ -125,3 +125,86 @@ def test_verifier_rejects_when_reference_does_not_match_probable_answer():
 
     assert verification.status == "rejected"
     assert verification.reason == "target_term_not_confirmed_in_evidence"
+
+
+def test_verifier_confirms_possible_reference_only_when_evidence_matches():
+    hypothesis = QueryHypothesis(
+        original_query="Which hadith says about offering sacrifice for eid?",
+        intent="reference_lookup",
+        target_terms=[QueryTargetTerm(surface="sacrifice", script="latin")],
+        possible_references=["book:13:hadith:25", "book:34:hadith:288"],
+        domain_hint="hadith",
+        answer_shape="reference",
+        valid=True,
+    )
+    candidate = EvidenceCandidate(
+        candidate_id="metadata:book-13-hadith-25",
+        text="Book 13, Hadith 25. Prayer first, then sacrifice on Eid.",
+        document_id="doc-hadith",
+        chunk_id="book-13-hadith-25",
+        source_location={"reference": "Book 13, Hadith 25"},
+        metadata={"reference_metadata": {"references": ["book:13:hadith:25"]}},
+        tool="metadata",
+        tool_rank=1,
+        base_score=10,
+        retrieval_pass="reference_exact",
+        canonical_reference="book:13:hadith:25",
+    )
+
+    verification = QueryHypothesisVerifier().verify(
+        hypothesis,
+        [candidate],
+        document_ids=["doc-hadith"],
+    )
+
+    assert verification.status == "confirmed"
+    assert verification.reference == "book:13:hadith:25"
+    assert verification.evidence_label == "S1"
+    assert verification.possible_reference_results == [
+        {
+            "reference": "book:13:hadith:25",
+            "status": "confirmed",
+            "reason": "reference_found_in_evidence",
+            "evidence_candidate_id": "metadata:book-13-hadith-25",
+            "evidence_label": "S1",
+        },
+        {
+            "reference": "book:34:hadith:288",
+            "status": "not_found",
+            "reason": "reference_not_in_retrieved_evidence",
+            "evidence_candidate_id": None,
+            "evidence_label": None,
+        },
+    ]
+
+
+def test_verifier_rejects_hallucinated_possible_reference_but_allows_term_match():
+    hypothesis = QueryHypothesis(
+        original_query="Which hadith says about offering sacrifice for eid?",
+        intent="reference_lookup",
+        target_terms=[QueryTargetTerm(surface="sacrifice", script="latin")],
+        possible_references=["book:34:hadith:288"],
+        valid=True,
+    )
+    candidate = EvidenceCandidate(
+        candidate_id="metadata:book-13-hadith-25",
+        text="Book 13, Hadith 25. Prayer first, then sacrifice on Eid.",
+        document_id="doc-hadith",
+        chunk_id="book-13-hadith-25",
+        source_location={"reference": "Book 13, Hadith 25"},
+        metadata={},
+        tool="metadata",
+        tool_rank=1,
+        base_score=10,
+        canonical_reference="book:13:hadith:25",
+    )
+
+    verification = QueryHypothesisVerifier().verify(
+        hypothesis,
+        [candidate],
+        document_ids=["doc-hadith"],
+    )
+
+    assert verification.status == "confirmed"
+    assert verification.reference == "book:13:hadith:25"
+    assert verification.possible_reference_results[0]["status"] == "not_found"

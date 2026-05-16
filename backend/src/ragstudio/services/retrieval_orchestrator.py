@@ -54,6 +54,14 @@ class MetadataRetrievalFailed(RuntimeError):
         super().__init__(error)
 
 
+class QueryHypothesisFailed(RuntimeError):
+    def __init__(self, error: str, timings: dict[str, Any]):
+        self.error = error
+        self.error_type = "query_hypothesis_failed"
+        self.timings = timings
+        super().__init__(error)
+
+
 class ParallelRetrievalFailed(RuntimeError):
     def __init__(
         self,
@@ -130,14 +138,21 @@ class RetrievalOrchestrator:
         if deadline_at is not None:
             timings["response_budget_ms"] = _response_budget_ms(query_config)
         domain_metadata = await self._domain_metadata_for_documents(document_ids)
-        query_hypothesis = await self._safe_query_hypothesis(
-            query,
-            profile=profile,
-            domain_metadata=domain_metadata,
-            query_config=query_config,
-            timings=timings,
-            deadline_at=deadline_at,
-        )
+        try:
+            query_hypothesis = await self._safe_query_hypothesis(
+                query,
+                profile=profile,
+                domain_metadata=domain_metadata,
+                query_config=query_config,
+                timings=timings,
+                deadline_at=deadline_at,
+            )
+        except QueryHypothesisFailed as exc:
+            return self._failed_orchestrated_answer(
+                exc,
+                started,
+                {**timings, **exc.timings},
+            )
         domain_expansion = self.domain_query_expansion_service.expand(
             query,
             domain_metadata=domain_metadata,
@@ -523,15 +538,22 @@ class RetrievalOrchestrator:
         deadline_at: float | None,
     ) -> QueryHypothesis:
         hypothesis_started = perf_counter()
+        required = _query_hypothesis_required(query_config, domain_metadata)
         if query_config.get("enable_query_hypothesis") is False:
             timings["query_hypothesis_ms"] = _elapsed_ms(hypothesis_started)
             timings["query_hypothesis_status"] = "skipped"
+            if required:
+                raise QueryHypothesisFailed(
+                    "LLM query planning is required but disabled.",
+                    dict(timings),
+                )
             return QueryHypothesis.empty(query, reason="disabled")
 
-        fallback_ms = int(query_config.get("query_hypothesis_timeout_ms") or 650)
+        fallback_ms = int(query_config.get("query_hypothesis_timeout_ms") or 5000)
         timeout_ms = int(
             _remaining_timeout_seconds(deadline_at, fallback_ms=fallback_ms) * 1000
         )
+        timings["query_hypothesis_timeout_ms"] = timeout_ms
         try:
             hypothesis = await asyncio.wait_for(
                 self.query_hypothesis_service.hypothesize(
@@ -543,12 +565,26 @@ class RetrievalOrchestrator:
                 timeout=max(timeout_ms, 1) / 1000,
             )
         except Exception as exc:
+            timings["query_hypothesis_ms"] = _elapsed_ms(hypothesis_started)
+            timings["query_hypothesis_status"] = "failed"
+            if required:
+                raise QueryHypothesisFailed(
+                    f"LLM query planning failed: {exc.__class__.__name__}",
+                    dict(timings),
+                ) from exc
             hypothesis = QueryHypothesis.empty(
                 query,
                 reason=f"failed_{exc.__class__.__name__}",
             )
         timings["query_hypothesis_ms"] = _elapsed_ms(hypothesis_started)
         timings["query_hypothesis_status"] = "valid" if hypothesis.valid else "skipped"
+        if required and not hypothesis.valid:
+            timings["query_hypothesis_status"] = "failed"
+            raise QueryHypothesisFailed(
+                "LLM query planning did not produce a valid search plan"
+                f": {hypothesis.reason or 'unknown'}",
+                dict(timings),
+            )
         return hypothesis
 
     async def _parallel_retrieval(
@@ -1146,7 +1182,7 @@ def _response_budget_ms(query_config: dict[str, Any]) -> int:
     try:
         parsed = int(value)
     except (TypeError, ValueError):
-        parsed = 8000
+        parsed = 15000
     return min(max(parsed, 1), 120_000)
 
 
@@ -1168,12 +1204,57 @@ def _answer_budget_ms(query_config: dict[str, Any]) -> int:
     try:
         parsed = int(value)
     except (TypeError, ValueError):
-        parsed = 1000
+        parsed = 3000
     return min(max(parsed, 1), 120_000)
 
 
 def _profile_with_llm_timeout(profile: Any, timeout_ms: int) -> Any:
     return _ProfileWithLlmTimeout(profile, max(int(timeout_ms), 1))
+
+
+def _query_hypothesis_required(
+    query_config: dict[str, Any],
+    domain_metadata: list[dict[str, Any]],
+) -> bool:
+    value = query_config.get("query_hypothesis_required", "auto")
+    if isinstance(value, bool):
+        return value
+    normalized = str(value or "auto").strip().casefold()
+    if normalized in {"true", "required", "always"}:
+        return True
+    if normalized in {"false", "optional", "never"}:
+        return False
+    return _domain_metadata_family(domain_metadata) == "arabic_religious"
+
+
+def _domain_metadata_family(domain_metadata: list[dict[str, Any]]) -> str:
+    signals: set[str] = set()
+    for metadata in domain_metadata:
+        if not isinstance(metadata, dict):
+            continue
+        raw_tags = metadata.get("tags")
+        tags = raw_tags if isinstance(raw_tags, list | tuple | set) else []
+        for value in [
+            metadata.get("domain"),
+            metadata.get("document_type"),
+            metadata.get("content_role"),
+            *tags,
+        ]:
+            if isinstance(value, str) and value.strip():
+                signals.add(value.strip().casefold())
+    if signals & {
+        "quran",
+        "tafseer",
+        "quran_tafseer",
+        "hadith",
+        "islamic_text",
+        "religious_text",
+        "fiqh",
+        "fatwa",
+        "islamic_law",
+    }:
+        return "arabic_religious"
+    return "generic"
 
 
 def _expected_references(

@@ -107,8 +107,8 @@ describe("QueryPage", () => {
     expect(vi.mocked(apiClient.query).mock.calls[0][0]).toEqual(
       expect.objectContaining({
         response_mode: "fast",
-        answer_budget_ms: 1000,
-        response_budget_ms: 8000,
+        answer_budget_ms: 3000,
+        response_budget_ms: 15000,
       }),
     );
   });
@@ -150,6 +150,112 @@ describe("QueryPage", () => {
 
     expect(await screen.findByText("Evidence-first result")).toBeVisible();
     expect(screen.getByText("LLM wording exceeded the fast budget.")).toBeVisible();
+  });
+
+  it("opens query pathway details with stage status, results, and timings", async () => {
+    vi.mocked(apiClient.query).mockResolvedValue({
+      runs: [
+        {
+          id: "run-1",
+          variant_id: "variant-1",
+          experiment_id: null,
+          query: "Which hadith mentions Eid sacrifice?",
+          status: "succeeded",
+          answer: "Evidence-first result",
+          sources: [
+            {
+              chunk_id: "chunk-25",
+              source_location: { reference: "Book 13, Hadith 25" },
+              metadata: { canonical_reference: "book:13:hadith:25" },
+            },
+          ],
+          chunk_traces: [
+            {
+              stage: "planner",
+              intent: "semantic",
+              retrieval_strategy: "semantic_hybrid",
+              candidate_limit: 20,
+              query_hypothesis_status: "valid",
+            },
+            {
+              stage: "query_hypothesis",
+              status: "valid",
+              target_terms: [{ surface: "sacrifice" }, { surface: "eid" }],
+              possible_references: ["book:13:hadith:25"],
+            },
+            {
+              stage: "retrieval",
+              native_status: "degraded",
+              native_candidates: 0,
+              metadata_trace: {
+                passes: [
+                  { name: "reference_exact", candidate_count: 1 },
+                  { name: "semantic_metadata", candidate_count: 1 },
+                ],
+              },
+            },
+            { stage: "seed_fusion", seed_candidates: 1 },
+            { stage: "graph_expansion", status: "ok", expanded_candidates: 2 },
+            { stage: "graph_hydration", status: "ok", unique_hydrated_chunks: 2 },
+            { stage: "final_fusion", fused_candidates: 3 },
+            {
+              stage: "hypothesis_verification",
+              status: "confirmed",
+              possible_reference_results: [
+                { reference: "book:13:hadith:25", status: "confirmed" },
+              ],
+            },
+            { stage: "context_assembly", included_candidates: 3 },
+            { stage: "grounding_validation", status: "grounded", cited_labels: ["S1"] },
+          ],
+          timings: {
+            total_ms: 7574.93,
+            planner_ms: 1915.076,
+            query_hypothesis_ms: 1842.868,
+            query_hypothesis_timeout_ms: 5000,
+            metadata_ms: 4492.731,
+            native_stage_ms: 4303.248,
+            native_degraded: true,
+            native_error: "Native query timed out after 2500 ms.",
+            graph_ms: 159.334,
+            graph_hydration_ms: 3.274,
+            initial_fusion_ms: 0.053,
+            final_fusion_ms: 0.146,
+            context_assembly_ms: 0.081,
+            answer_ms: 3000,
+            answer_fallback: true,
+          },
+          error: null,
+          runtime_profile_id: null,
+          document_ids: ["doc-1"],
+          query_config: { response_mode: "fast" },
+          reranker_traces: [],
+          token_metadata: {
+            answer_mode: "evidence_first",
+            llm_answer_status: "timeout",
+            fallback_reason: "llm_timeout",
+          },
+          error_type: null,
+        },
+      ],
+    });
+    renderQueryPage();
+
+    fireEvent.change(await screen.findByPlaceholderText("Ask a focused question against selected documents."), {
+      target: { value: "alpha" },
+    });
+    fireEvent.click(await screen.findByText("source.txt"));
+    fireEvent.click((await screen.findAllByText("Balanced"))[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    fireEvent.click(await screen.findByRole("button", { name: "View pathway" }));
+
+    expect(await screen.findByRole("dialog", { name: "Query pathway" })).toBeVisible();
+    expect(screen.getByText("Timeline", { selector: "summary" })).toBeVisible();
+    expect(screen.getByText("LLM planning")).toBeVisible();
+    expect(screen.getByText("Metadata retrieval")).toBeVisible();
+    expect(screen.getAllByText("book:13:hadith:25").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Native query timed out after 2500 ms.").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("3000 ms").length).toBeGreaterThan(0);
   });
 
   it("summarizes disabled reranker traces", async () => {

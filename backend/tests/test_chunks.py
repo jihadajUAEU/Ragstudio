@@ -3,6 +3,7 @@ import json
 import pytest
 from ragstudio.db.engine import init_db, make_engine, make_session_factory
 from ragstudio.db.models import Chunk, Document
+from ragstudio.schemas.chunks import ChunkSearchIn
 from ragstudio.schemas.parsing import DomainMetadata
 from ragstudio.services.adapter import AdapterChunk
 from ragstudio.services.chunk_sanitizer import sanitize_db_value
@@ -314,3 +315,59 @@ async def test_domain_metadata_for_documents_removes_nested_path_keys(
             "document_id": "doc-path-key",
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_search_scores_full_scope_after_english_prefilter(
+    database_url,
+    tmp_path,
+):
+    engine = make_engine(database_url)
+    await init_db(engine)
+    factory = make_session_factory(engine)
+
+    async with factory() as session:
+        document = Document(
+            id="doc-english-prefilter",
+            filename="prefilter.txt",
+            content_type="text/plain",
+            sha256="prefilter-sha",
+            artifact_path=str(tmp_path / "prefilter.txt"),
+            status="succeeded",
+        )
+        session.add(document)
+        await session.flush()
+        session.add_all(
+            [
+                Chunk(
+                    id=f"weak-prefilter-{index}",
+                    document_id=document.id,
+                    text=f"offering filler {index} sacrifice id adha",
+                    metadata_json={},
+                    source_location={},
+                )
+                for index in range(25)
+            ]
+        )
+        session.add(
+            Chunk(
+                id="target-after-prefilter-window",
+                document_id=document.id,
+                text="offering sacrifice eid",
+                metadata_json={},
+                source_location={},
+            )
+        )
+        await session.commit()
+
+        result = await ChunkService(session, tmp_path).search(
+            ChunkSearchIn(
+                query="offering sacrifice eid",
+                document_ids=[document.id],
+                limit=1,
+            )
+        )
+
+    await engine.dispose()
+
+    assert [item.id for item in result.items] == ["target-after-prefilter-window"]

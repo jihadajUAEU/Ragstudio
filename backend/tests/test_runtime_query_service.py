@@ -23,6 +23,7 @@ from ragstudio.services.retrieval_orchestrator import RetrievalOrchestrator
 from ragstudio.services.runtime_health_service import RuntimeHealthService
 from ragstudio.services.runtime_profile_service import RuntimeProfileService
 from ragstudio.services.runtime_types import RuntimeQueryResult
+from sqlalchemy import text
 
 
 class FakeRuntime:
@@ -785,6 +786,73 @@ async def test_query_service_fast_mode_caps_slow_stages(client):
     assert run.query_config["response_budget_ms"] == 7500
     assert run.query_config["enable_rerank"] is False
     assert run.query_config["native_query_timeout_ms"] == 2500
+    assert run.query_config["query_hypothesis_timeout_ms"] == 5000
+    assert run.query_config["query_hypothesis_required"] == "auto"
+
+
+@pytest.mark.asyncio
+async def test_query_service_fast_mode_defaults_include_mandatory_planner_budget(client):
+    app = client._transport.app
+
+    class CapturingOrchestrator:
+        def __init__(self):
+            self.query_config = None
+
+        async def query(self, *args, **kwargs):
+            self.query_config = kwargs["query_config"]
+            return type(
+                "Answer",
+                (),
+                {
+                    "answer": "ok",
+                    "sources": [],
+                    "chunk_traces": [],
+                    "reranker_traces": [],
+                    "token_metadata": {},
+                    "error": None,
+                    "error_type": None,
+                    "timings": {},
+                },
+            )()
+
+    orchestrator = CapturingOrchestrator()
+    async with app.state.session_factory() as session:
+        document, variant = await _create_runtime_records(session, app, indexed=False)
+        profile = await RuntimeProfileService(session, app.state.settings).get_active_profile()
+        session.add(
+            IndexRecord(
+                document_id=document.id,
+                runtime_profile_id=profile.id,
+                status=StageStatus.SUCCEEDED.value,
+                index_shape=profile.index_shape,
+                chunk_count=1,
+            )
+        )
+        await session.commit()
+
+        service = QueryService(
+            session,
+            app.state.settings.data_dir,
+            settings=app.state.settings,
+            runtime_factory=FakeFactory(),
+            health_service=FakeHealthService(),
+            retrieval_orchestrator=orchestrator,
+        )
+        result = await service.run_query(
+            QueryIn(
+                query="Which hadith mentions Eid sacrifice?",
+                document_ids=[document.id],
+                variant_ids=[variant.id],
+                response_mode="fast",
+            )
+        )
+
+    run = result.runs[0]
+    assert run.status == StageStatus.SUCCEEDED
+    assert orchestrator.query_config["answer_budget_ms"] == 3000
+    assert orchestrator.query_config["response_budget_ms"] == 15000
+    assert orchestrator.query_config["query_hypothesis_timeout_ms"] == 5000
+    assert orchestrator.query_config["query_hypothesis_required"] == "auto"
 
 
 @pytest.mark.asyncio
@@ -838,3 +906,63 @@ async def test_query_service_marks_error_type_only_orchestrated_run_failed(clien
     assert run.status == StageStatus.FAILED
     assert run.error_type == "ReadTimeout"
     assert run.error == "ReadTimeout"
+
+
+@pytest.mark.asyncio
+async def test_query_service_recovers_when_orchestrator_leaves_session_in_rollback(client):
+    app = client._transport.app
+
+    class RollbackOnlyOrchestrator:
+        def __init__(self, session):
+            self.session = session
+
+        async def query(self, *args, **kwargs):
+            try:
+                await self.session.execute(text("select 1 / 0"))
+            except Exception:
+                pass
+            return type(
+                "Answer",
+                (),
+                {
+                    "answer": "",
+                    "sources": [],
+                    "chunk_traces": [],
+                    "reranker_traces": [],
+                    "token_metadata": {},
+                    "error": "Parallel retrieval failed: metadata=TimeoutError",
+                    "error_type": "parallel_retrieval_failed",
+                    "timings": {"metadata_error_type": "TimeoutError"},
+                },
+            )()
+
+    async with app.state.session_factory() as session:
+        document, variant = await _create_runtime_records(session, app, indexed=False)
+        profile = await RuntimeProfileService(session, app.state.settings).get_active_profile()
+        session.add(
+            IndexRecord(
+                document_id=document.id,
+                runtime_profile_id=profile.id,
+                status=StageStatus.SUCCEEDED.value,
+                index_shape=profile.index_shape,
+                chunk_count=1,
+            )
+        )
+        await session.commit()
+
+        service = QueryService(
+            session,
+            app.state.settings.data_dir,
+            settings=app.state.settings,
+            runtime_factory=FakeFactory(),
+            health_service=FakeHealthService(),
+            retrieval_orchestrator=RollbackOnlyOrchestrator(session),
+        )
+        result = await service.run_query(
+            QueryIn(query="slow metadata", document_ids=[document.id], variant_ids=[variant.id])
+        )
+
+    run = result.runs[0]
+    assert run.status == StageStatus.FAILED
+    assert run.error_type == "parallel_retrieval_failed"
+    assert run.timings["metadata_error_type"] == "TimeoutError"

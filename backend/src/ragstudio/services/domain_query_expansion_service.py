@@ -36,6 +36,23 @@ class DomainQueryExpansionService:
         retrieval_passes: list[RetrievalPass] = []
         expansion_source = "original_query"
         expansion_inputs = [query]
+        possible_references = (
+            list(query_hypothesis.possible_references)
+            if query_hypothesis is not None and query_hypothesis.valid
+            else []
+        )
+
+        retrieval_passes.extend(
+            RetrievalPass(
+                "reference_exact",
+                reference,
+                direct_evidence=True,
+                match_type="hypothesis_reference",
+            )
+            for reference in possible_references
+        )
+        if possible_references:
+            expansion_source = "query_hypothesis"
 
         if (
             domain_family == "arabic_religious"
@@ -95,6 +112,7 @@ class DomainQueryExpansionService:
                 "expansion_source": expansion_source,
                 "expansion_input_terms": expansion_inputs,
                 "expanded_terms": expanded_terms,
+                "possible_references": possible_references,
                 "query_hypothesis": (
                     _hypothesis_summary(query_hypothesis)
                     if query_hypothesis is not None
@@ -159,6 +177,7 @@ def _hypothesis_summary(hypothesis: QueryHypothesis) -> dict[str, object]:
         "answer_shape": hypothesis.answer_shape,
         "confidence": hypothesis.confidence,
         "target_terms": [term.to_trace() for term in hypothesis.target_terms],
+        "possible_references": list(hypothesis.possible_references),
         "probable_answer": (
             hypothesis.probable_answer.to_trace()
             if hypothesis.probable_answer is not None
