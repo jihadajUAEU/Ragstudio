@@ -156,6 +156,7 @@ export function QueryPage() {
               <button
                 key={mode}
                 type="button"
+                aria-pressed={responseMode === mode}
                 className={`rounded px-3 py-2 text-sm font-medium ${
                   responseMode === mode
                     ? "bg-white text-[#174657] shadow-sm"

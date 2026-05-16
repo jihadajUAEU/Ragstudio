@@ -113,13 +113,6 @@ class ChunkService:
 
     async def search(self, search_in: ChunkSearchIn) -> ChunkSearchOut:
         limit = max(search_in.limit, 0)
-        statement = select(Chunk)
-        if search_in.document_ids:
-            statement = statement.where(Chunk.document_id.in_(search_in.document_ids))
-        result = await self.session.execute(
-            statement.order_by(Chunk.created_at.asc(), Chunk.id.asc())
-        )
-        chunks = list(result.scalars().all())
         repository = ChunkLexicalSearchRepository(self.session)
         prefilter_limit = max(search_in.limit, 20)
         reference_prefiltered = await repository.reference_prefilter(
@@ -127,14 +120,26 @@ class ChunkService:
             document_ids=search_in.document_ids,
             limit=prefilter_limit,
         )
-        arabic_prefiltered = await repository.arabic_prefilter(
-            query=search_in.query,
-            document_ids=search_in.document_ids,
-            limit=prefilter_limit,
-        )
-        prefiltered = [*reference_prefiltered, *arabic_prefiltered]
-        prefiltered_ids = {chunk.id for chunk in prefiltered}
-        chunks = [*prefiltered, *[chunk for chunk in chunks if chunk.id not in prefiltered_ids]]
+        if reference_prefiltered:
+            chunks = reference_prefiltered
+        else:
+            statement = select(Chunk)
+            if search_in.document_ids:
+                statement = statement.where(Chunk.document_id.in_(search_in.document_ids))
+            result = await self.session.execute(
+                statement.order_by(Chunk.created_at.asc(), Chunk.id.asc())
+            )
+            chunks = list(result.scalars().all())
+            arabic_prefiltered = await repository.arabic_prefilter(
+                query=search_in.query,
+                document_ids=search_in.document_ids,
+                limit=prefilter_limit,
+            )
+            prefiltered_ids = {chunk.id for chunk in arabic_prefiltered}
+            chunks = [
+                *arabic_prefiltered,
+                *[chunk for chunk in chunks if chunk.id not in prefiltered_ids],
+            ]
 
         ranked = sorted(
             (

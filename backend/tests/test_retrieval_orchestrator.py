@@ -1,12 +1,15 @@
 import asyncio
 
+import httpx
 import pytest
 from ragstudio.schemas.chunks import ChunkOut
 from ragstudio.services.retrieval_evidence import (
     EvidenceCandidate,
+    apply_query_aware_ordering,
     fuse_candidates,
     plan_for_query,
 )
+from ragstudio.services.retrieval_fusion import RetrievalFusion
 from ragstudio.services.retrieval_orchestrator import RetrievalOrchestrator
 from ragstudio.services.runtime_types import RuntimeQueryResult
 
@@ -337,6 +340,56 @@ def test_multi_document_comparison_query_prioritizes_multiple_documents():
     fused = fuse_candidates(plan, [doc_a, doc_a_extra, doc_b])
 
     assert {candidate.document_id for candidate in fused[:2]} == {"doc-a", "doc-b"}
+
+
+def test_multi_document_ordering_survives_retrieval_fusion_rescoring():
+    plan = plan_for_query(
+        "Compare guidance in these selected documents",
+        document_ids=["doc-a", "doc-b"],
+        limit=4,
+    )
+    doc_a = EvidenceCandidate(
+        candidate_id="native:doc-a",
+        text="Doc A discusses guidance as a straight path.",
+        document_id="doc-a",
+        chunk_id="chunk-doc-a",
+        source_location={},
+        metadata={},
+        tool="native",
+        tool_rank=1,
+        base_score=40.0,
+        final_score=40.0,
+    )
+    doc_a_extra = EvidenceCandidate(
+        candidate_id="native:doc-a-extra",
+        text="Doc A extra evidence.",
+        document_id="doc-a",
+        chunk_id="chunk-doc-a-extra",
+        source_location={},
+        metadata={},
+        tool="native",
+        tool_rank=2,
+        base_score=35.0,
+        final_score=35.0,
+    )
+    doc_b = EvidenceCandidate(
+        candidate_id="native:doc-b",
+        text="Doc B discusses guidance as divine direction.",
+        document_id="doc-b",
+        chunk_id="chunk-doc-b",
+        source_location={},
+        metadata={},
+        tool="native",
+        tool_rank=3,
+        base_score=20.0,
+        final_score=20.0,
+    )
+
+    fused = RetrievalFusion().fuse([[doc_a, doc_a_extra, doc_b]], limit=4)
+    reordered = apply_query_aware_ordering(plan, fused)
+
+    assert [candidate.document_id for candidate in fused[:2]] == ["doc-a", "doc-a"]
+    assert {candidate.document_id for candidate in reordered[:2]} == {"doc-a", "doc-b"}
 
 
 def test_fusion_dedupes_by_text_and_keeps_best_candidate():
@@ -717,6 +770,12 @@ class ExplodingChunkSearchService:
         raise RuntimeError("metadata search exploded")
 
 
+class SlowChunkSearchService(FakeChunkSearchService):
+    async def search(self, search_in):
+        await asyncio.sleep(0.05)
+        return await super().search(search_in)
+
+
 class EmptyQualityReportChunkSearchService:
     def __init__(self, report):
         self.report = report
@@ -790,6 +849,15 @@ class SlowAnswerService:
         return "This slow LLM answer should not be returned in fast mode.", {
             "prompt_tokens": 4000,
         }
+
+
+class TimeoutAnswerService:
+    def __init__(self):
+        self.called = False
+
+    async def answer(self, query, evidence, profile):
+        self.called = True
+        raise httpx.ReadTimeout("provider timed out")
 
 
 class FakeRerankerService:
@@ -917,6 +985,33 @@ async def test_orchestrator_returns_evidence_first_answer_when_fast_llm_budget_e
     assert result.token_metadata["llm_timeout_ms"] == 1
     assert result.timings["answer_fallback"] is True
     assert result.timings["answer_timeout_ms"] == 1
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_returns_evidence_first_answer_when_provider_times_out():
+    answer_service = TimeoutAnswerService()
+    orchestrator = RetrievalOrchestrator(
+        chunk_service=FakeChunkSearchService(),
+        answer_service=answer_service,
+        reranker_service=FakeRerankerService(),
+        graph_expansion_service=FakeGraphExpansionService(),
+    )
+
+    result = await orchestrator.query(
+        "how many hadith in bukhari",
+        runtime=FakeRuntimeTool(),
+        profile=type("Profile", (), {"enable_rerank": False, "reranker_provider": "disabled"})(),
+        document_ids=["doc-1"],
+        variant_id="variant-1",
+        query_config={"limit": 8, "response_mode": "fast", "answer_budget_ms": 1000},
+    )
+
+    assert answer_service.called is True
+    assert result.error is None
+    assert result.answer.startswith("Evidence-first result")
+    assert result.token_metadata["llm_answer_status"] == "timeout"
+    assert result.token_metadata["llm_error_type"] == "ReadTimeout"
+    assert result.timings["answer_fallback"] is True
 
 
 @pytest.mark.asyncio
@@ -1322,6 +1417,37 @@ async def test_fast_mode_uses_metadata_when_native_misses_fast_budget():
     assert result.timings["native_error_type"] == "native_query_timeout"
     assert result.timings["response_budget_ms"] == 200
     assert answer_service.called is True
+
+
+@pytest.mark.asyncio
+async def test_fast_mode_applies_response_budget_to_metadata_and_native_retrieval():
+    runtime = SlowNativeRuntimeTool()
+    orchestrator = RetrievalOrchestrator(
+        chunk_service=SlowChunkSearchService(),
+        answer_service=FakeAnswerService(),
+        reranker_service=FakeRerankerService(),
+        graph_expansion_service=FakeGraphExpansionService(),
+    )
+
+    result = await orchestrator.query(
+        "how many hadith in bukhari",
+        runtime=runtime,
+        profile=type("Profile", (), {"enable_rerank": False, "reranker_provider": "disabled"})(),
+        document_ids=["doc-1"],
+        variant_id="variant-1",
+        query_config={
+            "limit": 8,
+            "response_mode": "fast",
+            "response_budget_ms": 1,
+            "native_query_timeout_ms": 1000,
+        },
+    )
+
+    assert runtime.query_called is True
+    assert result.error_type == "parallel_retrieval_failed"
+    assert result.timings["native_error_type"] == "native_query_timeout"
+    assert result.timings["metadata_error_type"] == "TimeoutError"
+    assert result.timings["total_ms"] < 100
 
 
 @pytest.mark.asyncio

@@ -36,6 +36,32 @@ class FakeChunkService:
         return type("SearchResult", (), {"items": [], "total": 0})()
 
 
+class MismatchedReferenceChunkService:
+    async def search(self, search_in):
+        if search_in.query == "Explain 1:5":
+            return type(
+                "SearchResult",
+                (),
+                {
+                    "items": [
+                        ChunkOut(
+                            id="chunk-2-2",
+                            document_id="doc-quran",
+                            text="Verse 2:2 context.",
+                            source_location={"reference": "2:2"},
+                            metadata={
+                                "score": 4.0,
+                                "score_breakdown": {"reference_exact": 0.0},
+                                "reference_metadata": {"references": ["2:2"]},
+                            },
+                        )
+                    ],
+                    "total": 1,
+                },
+            )()
+        return type("SearchResult", (), {"items": [], "total": 0})()
+
+
 @pytest.mark.asyncio
 async def test_metadata_service_runs_arabic_exact_before_semantic():
     chunk_service = FakeChunkService()
@@ -68,6 +94,24 @@ async def test_metadata_service_runs_arabic_exact_before_semantic():
     assert trace["passes"][0]["top_candidate_ids"] == ["metadata:chunk-19-13"]
     assert trace["passes"][1]["name"] == "semantic_metadata"
     assert trace["passes"][1]["candidate_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_metadata_service_does_not_mark_mismatched_reference_as_exact():
+    candidates, _trace = await MetadataRetrievalService(
+        MismatchedReferenceChunkService()
+    ).retrieve(
+        "Explain 1:5",
+        understanding=understand_query("Explain 1:5"),
+        document_ids=["doc-quran"],
+        variant_id="variant-1",
+        limit=5,
+    )
+
+    assert candidates[0].chunk_id == "chunk-2-2"
+    assert candidates[0].retrieval_pass == "semantic_metadata"
+    assert candidates[0].match_features == {}
+    assert candidates[0].canonical_reference == "2:2"
 
 
 @pytest.mark.asyncio

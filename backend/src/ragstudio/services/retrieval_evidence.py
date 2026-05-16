@@ -190,7 +190,7 @@ def fuse_candidates(
         key=lambda candidate: (candidate.final_score, -candidate.tool_rank),
         reverse=True,
     )
-    return _apply_multi_document_ordering(plan, ranked)
+    return apply_query_aware_ordering(plan, ranked)
 
 
 def _score_candidate(
@@ -345,7 +345,7 @@ def _best_candidate_by_document(
     return best
 
 
-def _apply_multi_document_ordering(
+def apply_query_aware_ordering(
     plan: RetrievalPlan,
     ranked: list[EvidenceCandidate],
 ) -> list[EvidenceCandidate]:

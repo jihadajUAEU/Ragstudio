@@ -6,6 +6,7 @@ from dataclasses import asdict, replace
 from time import perf_counter
 from typing import Any
 
+import httpx
 from ragstudio.schemas.chunks import ChunkOut
 from ragstudio.services.arabic_text import arabic_tokens
 from ragstudio.services.chunk_service import ChunkService
@@ -19,6 +20,7 @@ from ragstudio.services.reranker_service import RerankerService
 from ragstudio.services.retrieval_evidence import (
     EvidenceCandidate,
     OrchestratedAnswer,
+    apply_query_aware_ordering,
     fuse_candidates,
     plan_for_query,
 )
@@ -131,13 +133,14 @@ class RetrievalOrchestrator:
         try:
             native_candidates, metadata_candidates, retrieval_trace = await (
                 self._parallel_retrieval(
-                query,
-                runtime,
-                document_ids,
-                variant_id,
-                query_config,
-                plan,
-                timings,
+                    query,
+                    runtime,
+                    document_ids,
+                    variant_id,
+                    query_config,
+                    plan,
+                    timings,
+                    deadline_at,
                 )
             )
         except (NativeRuntimeQueryFailed, MetadataRetrievalFailed, ParallelRetrievalFailed) as exc:
@@ -212,7 +215,10 @@ class RetrievalOrchestrator:
                 plan,
                 [*native_candidates, *metadata_candidates, *graph_candidates],
             )
-            fused = self.retrieval_fusion.fuse([legacy_fused], limit=plan.candidate_limit)
+            fused = apply_query_aware_ordering(
+                plan,
+                self.retrieval_fusion.fuse([legacy_fused], limit=plan.candidate_limit),
+            )
             timings["final_fusion_ms"] = _elapsed_ms(refusion_started)
             final_fusion_detail = {
                 "native_candidates": len(native_candidates),
@@ -360,7 +366,9 @@ class RetrievalOrchestrator:
                 "answer_mode": response_mode,
                 "generated_without_llm": False,
             }
-        except TimeoutError as exc:
+        except (TimeoutError, httpx.TimeoutException) as exc:
+            if response_mode != "fast":
+                raise
             timings["answer_ms"] = _elapsed_ms(answer_started)
             timings["answer_timeout_ms"] = timeout_ms
             timings["answer_fallback"] = True
@@ -420,16 +428,18 @@ class RetrievalOrchestrator:
         query_config: dict[str, Any],
         plan: Any,
         timings: dict[str, Any],
+        deadline_at: float | None,
     ) -> tuple[list[EvidenceCandidate], list[EvidenceCandidate], dict[str, Any]]:
         parallel_started = perf_counter()
         if document_ids:
             if _metadata_only(query_config):
-                metadata_result = await self._timed_metadata_candidates(
+                metadata_result = await self._timed_metadata_candidates_with_deadline(
                     query,
                     document_ids,
                     variant_id,
                     plan.candidate_limit,
                     plan,
+                    deadline_at=deadline_at,
                 )
                 metadata_candidates, metadata_ms, metadata_trace = metadata_result
                 timings["metadata_ms"] = metadata_ms
@@ -455,6 +465,7 @@ class RetrievalOrchestrator:
                     plan,
                     timings,
                     parallel_started,
+                    deadline_at,
                 )
             native_task = self._timed_native_candidates(query, runtime, document_ids, query_config)
             try:
@@ -469,6 +480,7 @@ class RetrievalOrchestrator:
                 timings,
                 parallel_started,
                 native_result,
+                deadline_at,
             )
 
         native_task = self._timed_native_candidates(query, runtime, document_ids, query_config)
@@ -501,14 +513,16 @@ class RetrievalOrchestrator:
         timings: dict[str, Any],
         parallel_started: float,
         native_result: Any,
+        deadline_at: float | None = None,
     ) -> tuple[list[EvidenceCandidate], list[EvidenceCandidate], dict[str, Any]]:
         try:
-            metadata_result = await self._timed_metadata_candidates(
+            metadata_result = await self._timed_metadata_candidates_with_deadline(
                 query,
                 document_ids,
                 variant_id,
                 plan.candidate_limit,
                 plan,
+                deadline_at=deadline_at,
             )
         except Exception as exc:
             metadata_result = exc
@@ -530,21 +544,29 @@ class RetrievalOrchestrator:
         plan: Any,
         timings: dict[str, Any],
         parallel_started: float,
+        deadline_at: float | None,
     ) -> tuple[list[EvidenceCandidate], list[EvidenceCandidate], dict[str, Any]]:
         native_task = asyncio.create_task(
             self._timed_native_candidates(query, runtime, document_ids, query_config)
         )
         try:
-            metadata_result = await self._timed_metadata_candidates(
+            metadata_result = await self._timed_metadata_candidates_with_deadline(
                 query,
                 document_ids,
                 variant_id,
                 plan.candidate_limit,
                 plan,
+                deadline_at=deadline_at,
             )
         except Exception as exc:
             metadata_result = exc
-        timeout_ms = int(query_config.get("native_query_timeout_ms") or 2500)
+        timeout_ms = int(
+            _remaining_timeout_seconds(
+                deadline_at,
+                fallback_ms=int(query_config.get("native_query_timeout_ms") or 2500),
+            )
+            * 1000
+        )
         try:
             native_result = await asyncio.wait_for(
                 native_task,
@@ -566,6 +588,35 @@ class RetrievalOrchestrator:
             plan=plan,
             timings=timings,
             parallel_started=parallel_started,
+        )
+
+    async def _timed_metadata_candidates_with_deadline(
+        self,
+        query: str,
+        document_ids: list[str],
+        variant_id: str,
+        limit: int,
+        plan: Any,
+        *,
+        deadline_at: float | None,
+    ) -> tuple[list[EvidenceCandidate], float, dict[str, Any]]:
+        if deadline_at is None:
+            return await self._timed_metadata_candidates(
+                query,
+                document_ids,
+                variant_id,
+                limit,
+                plan,
+            )
+        return await asyncio.wait_for(
+            self._timed_metadata_candidates(
+                query,
+                document_ids,
+                variant_id,
+                limit,
+                plan,
+            ),
+            timeout=_remaining_timeout_seconds(deadline_at, fallback_ms=8000),
         )
 
     def _resolve_retrieval_results(

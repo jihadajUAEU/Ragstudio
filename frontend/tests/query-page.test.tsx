@@ -88,6 +88,14 @@ describe("QueryPage", () => {
   it("runs fast evidence mode by default", async () => {
     renderQueryPage();
 
+    expect(await screen.findByRole("button", { name: "Fast evidence" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByRole("button", { name: "Full answer" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
     fireEvent.change(await screen.findByPlaceholderText("Ask a focused question against selected documents."), {
       target: { value: "alpha" },
     });

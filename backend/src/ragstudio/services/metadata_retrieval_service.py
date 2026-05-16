@@ -91,6 +91,7 @@ class MetadataRetrievalService:
         if runtime_source_id:
             metadata.setdefault("runtime_source_id", runtime_source_id)
         chunk_id = _chunk_id(chunk)
+        effective_pass = self._effective_retrieval_pass(chunk, retrieval_pass, metadata)
         metadata.setdefault("canonical_chunk_id", chunk_id)
         return EvidenceCandidate(
             candidate_id=f"metadata:{chunk_id}",
@@ -102,21 +103,41 @@ class MetadataRetrievalService:
             tool="metadata",
             tool_rank=rank,
             base_score=base_score,
-            retrieval_pass=retrieval_pass.name,
-            match_features=self._match_features(retrieval_pass),
+            retrieval_pass=effective_pass,
+            match_features=self._match_features(retrieval_pass, effective_pass),
             canonical_reference=self._first_reference(chunk),
             scope_status="in_scope",
             source_quality=self._source_quality(chunk),
         )
 
-    def _match_features(self, retrieval_pass: RetrievalPass) -> dict[str, Any]:
-        if retrieval_pass.name == "arabic_exact_token":
+    def _effective_retrieval_pass(
+        self,
+        chunk: ChunkOut,
+        retrieval_pass: RetrievalPass,
+        metadata: dict[str, Any],
+    ) -> str:
+        if retrieval_pass.name != "reference_exact":
+            return retrieval_pass.name
+        if _reference_exact_score(metadata) > 0:
+            return "reference_exact"
+        if _normalize_reference(self._first_reference(chunk)) == _normalize_reference(
+            retrieval_pass.query
+        ):
+            return "reference_exact"
+        return "semantic_metadata"
+
+    def _match_features(
+        self,
+        retrieval_pass: RetrievalPass,
+        effective_pass: str,
+    ) -> dict[str, Any]:
+        if effective_pass == "arabic_exact_token":
             return {"arabic_exact": True, "arabic_token": retrieval_pass.query}
-        if retrieval_pass.name == "reference_exact":
+        if effective_pass == "reference_exact":
             return {"reference_exact": True, "reference": retrieval_pass.query}
-        if retrieval_pass.name == "phrase_exact":
+        if effective_pass == "phrase_exact":
             return {"target_phrase": retrieval_pass.query}
-        if retrieval_pass.name == "title_count":
+        if effective_pass == "title_count":
             return {"title_count": True}
         return {}
 
@@ -167,6 +188,20 @@ def _chunk_metadata(chunk: Any) -> dict[str, Any]:
 def _chunk_source_location(chunk: Any) -> dict[str, Any]:
     source_location = getattr(chunk, "source_location", None)
     return dict(source_location) if isinstance(source_location, dict) else {}
+
+
+def _reference_exact_score(metadata: dict[str, Any]) -> float:
+    breakdown = metadata.get("score_breakdown")
+    if not isinstance(breakdown, dict):
+        return 0.0
+    score = breakdown.get("reference_exact")
+    return float(score) if isinstance(score, (int, float)) else 0.0
+
+
+def _normalize_reference(value: Any) -> str | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    return value.strip().casefold()
 
 
 def _elapsed_ms(started_at: float) -> float:
