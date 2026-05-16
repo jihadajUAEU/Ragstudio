@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 import { studioRoutes } from "../lib/routes";
 import { cn } from "../lib/utils";
 import { FocusTrapDialog } from "./focus-trap-dialog";
+import { RuntimeTrust } from "./runtime-trust";
 import { Button } from "./ui/button";
 
 export function AppShell({
@@ -56,21 +57,24 @@ export function AppShell({
                 {title}
               </h1>
             </div>
-            <Button
-              variant="secondary"
-              size="sm"
-              className="shrink-0 lg:hidden"
-              aria-label={isMobileNavOpen ? "Close navigation" : "Open navigation"}
-              aria-controls="studio-mobile-navigation"
-              aria-expanded={isMobileNavOpen}
-              onClick={() => setIsMobileNavOpen((isOpen) => !isOpen)}
-            >
-              {isMobileNavOpen ? (
-                <X className="h-4 w-4" aria-hidden="true" />
-              ) : (
-                <Menu className="h-4 w-4" aria-hidden="true" />
-              )}
-            </Button>
+            <div className="flex shrink-0 items-center gap-2">
+              <RuntimeTrust onNavigate={onNavigate} />
+              <Button
+                variant="secondary"
+                size="sm"
+                className="shrink-0 lg:hidden"
+                aria-label={isMobileNavOpen ? "Close navigation" : "Open navigation"}
+                aria-controls="studio-mobile-navigation"
+                aria-expanded={isMobileNavOpen}
+                onClick={() => setIsMobileNavOpen((isOpen) => !isOpen)}
+              >
+                {isMobileNavOpen ? (
+                  <X className="h-4 w-4" aria-hidden="true" />
+                ) : (
+                  <Menu className="h-4 w-4" aria-hidden="true" />
+                )}
+              </Button>
+            </div>
           </div>
         </header>
 
