@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Phase 06 context gathered
-last_updated: "2026-05-16T13:45:06.109Z"
+stopped_at: Phase 06 UI-SPEC approved
+last_updated: "2026-05-16T13:54:49.389Z"
 last_activity: 2026-05-16 -- Completed quick task 260516-n1c Task 5 lexical-expanded dedupe scoring fix
 progress:
   total_phases: 6
@@ -105,6 +105,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-05-16T13:45:06.103Z
-Stopped at: Phase 06 context gathered
-Resume file: .planning/phases/06-app-evidence-viewer-and-runtime-trust-banner/06-CONTEXT.md
+Last session: 2026-05-16T13:54:49.382Z
+Stopped at: Phase 06 UI-SPEC approved
+Resume file: .planning/phases/06-app-evidence-viewer-and-runtime-trust-banner/06-UI-SPEC.md
