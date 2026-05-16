@@ -242,7 +242,9 @@ async def test_query_service_uses_runtime_orchestrator_path(client):
     assert run.timings["planner_ms"] >= 0
     assert run.timings["metadata_ms"] >= 0
     assert run.timings["answer_ms"] >= 0
-    assert run.reranker_traces[0]["status"] == "disabled"
+    assert run.query_config["response_mode"] == "fast"
+    assert run.query_config["enable_rerank"] is False
+    assert run.reranker_traces == []
     assert run.token_metadata["prompt_tokens"] == 12
 
 
