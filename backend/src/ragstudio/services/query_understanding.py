@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Any, Literal
 
 from ragstudio.services.arabic_text import arabic_query_variants
 
 QueryUnderstandingIntent = Literal[
     "arabic_exact_token",
+    "lexical_expanded_token",
     "reference",
     "phrase_lookup",
     "count",
@@ -51,16 +52,40 @@ class QueryUnderstanding:
     graph_context_required: bool = False
     target_phrases: list[str] = field(default_factory=list)
     required_terms: list[str] = field(default_factory=list)
+    expanded_terms: list[str] = field(default_factory=list)
     reference_hints: list[str] = field(default_factory=list)
     arabic_query_variants: list[str] = field(default_factory=list)
     retrieval_passes: list[RetrievalPass] = field(default_factory=list)
     direct_evidence_required: bool = False
+    expansion_trace: dict[str, Any] = field(default_factory=dict)
 
 
-def understand_query(query: str) -> QueryUnderstanding:
+def understand_query(query: str, *, domain_expansion: Any | None = None) -> QueryUnderstanding:
     normalized = query.casefold()
     reference_hints = _reference_hints(query)
     graph_context_required = _needs_graph_context(query)
+    expansion_passes = list(getattr(domain_expansion, "retrieval_passes", []) or [])
+    if expansion_passes:
+        expanded_terms = [
+            item.query
+            for item in expansion_passes
+            if getattr(item, "query", "")
+        ]
+        return QueryUnderstanding(
+            query=query,
+            intent="lexical_expanded_token",
+            answer_type="reference",
+            retrieval_strategy=(
+                "graph_context_hybrid" if graph_context_required else "reference_first_hybrid"
+            ),
+            graph_context_required=graph_context_required,
+            required_terms=expanded_terms,
+            expanded_terms=expanded_terms,
+            retrieval_passes=[*expansion_passes, *_semantic_passes(query)],
+            direct_evidence_required=True,
+            expansion_trace=dict(getattr(domain_expansion, "trace", {}) or {}),
+        )
+
     if reference_hints:
         return QueryUnderstanding(
             query=query,
