@@ -241,7 +241,9 @@ class RetrievalOrchestrator:
             reranker_traces: list[dict[str, Any]] = []
             reranked = fused
             timings["rerank_ms"] = 0.0
-            if getattr(profile, "enable_rerank", False):
+            if getattr(profile, "enable_rerank", False) and bool(
+                query_config.get("enable_rerank", True)
+            ):
                 rerank_started = perf_counter()
                 reranked, reranker_traces = await self._rerank(query, fused, profile)
                 timings["rerank_ms"] = _elapsed_ms(rerank_started)

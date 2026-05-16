@@ -797,6 +797,11 @@ class FakeRerankerService:
         return chunks, [{"provider": "disabled", "status": "disabled"}]
 
 
+class RerankerShouldNotRun:
+    async def rerank(self, query, chunks, profile):
+        raise AssertionError("reranker should not run")
+
+
 class FakeGraphExpansionService:
     async def expand(self, query, *, seeds, profile, document_ids, limit):
         return [
@@ -1316,6 +1321,35 @@ async def test_fast_mode_uses_metadata_when_native_misses_fast_budget():
     assert result.timings["native_degraded"] is True
     assert result.timings["native_error_type"] == "native_query_timeout"
     assert result.timings["response_budget_ms"] == 200
+    assert answer_service.called is True
+
+
+@pytest.mark.asyncio
+async def test_fast_mode_query_config_disables_profile_reranker():
+    answer_service = FakeAnswerService()
+    orchestrator = RetrievalOrchestrator(
+        chunk_service=FakeChunkSearchService(),
+        answer_service=answer_service,
+        reranker_service=RerankerShouldNotRun(),
+        graph_expansion_service=FakeGraphExpansionService(),
+    )
+
+    result = await orchestrator.query(
+        "how many hadith in bukhari",
+        runtime=FakeRuntimeTool(),
+        profile=type("Profile", (), {"enable_rerank": True, "reranker_provider": "llm"})(),
+        document_ids=["doc-1"],
+        variant_id="variant-1",
+        query_config={
+            "limit": 8,
+            "response_mode": "fast",
+            "enable_rerank": False,
+            "graph_expansion_enabled": False,
+        },
+    )
+
+    assert result.error is None
+    assert result.timings["rerank_ms"] == 0.0
     assert answer_service.called is True
 
 
