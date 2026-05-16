@@ -172,3 +172,145 @@ async def test_domain_metadata_for_documents_dedupes_and_copies(
         stored.metadata_json["domain_metadata"]["nested"]["reference_schema"]
         == "chapter_verse"
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("unsafe_value", "unsafe_key"),
+    [
+        ("/var/private/ragstudio/artifacts/a.pdf", "source_root"),
+        ("C:\\Users\\meet\\Ragstudio\\artifacts\\a.pdf", "source_root"),
+    ],
+)
+async def test_domain_metadata_for_documents_removes_absolute_path_values(
+    database_url,
+    tmp_path,
+    unsafe_value,
+    unsafe_key,
+):
+    engine = make_engine(database_url)
+    await init_db(engine)
+    factory = make_session_factory(engine)
+
+    domain_metadata = {
+        "domain": "quran_tafseer",
+        "language": "arabic",
+        unsafe_key: unsafe_value,
+        "tags": ["reference", unsafe_value],
+        "custom_json": {
+            "reference_schema": {"type": "chapter_verse"},
+            "examples": ["safe-example", unsafe_value],
+        },
+    }
+
+    async with factory() as session:
+        session.add_all(
+            [
+                Document(
+                    id="doc-path-value",
+                    filename="path-value.pdf",
+                    content_type="application/pdf",
+                    sha256=f"sha-{unsafe_key}",
+                    artifact_path=str(tmp_path / "path-value.pdf"),
+                ),
+                Chunk(
+                    id="chunk-path-value",
+                    document_id="doc-path-value",
+                    text="A chunk with path-like domain metadata",
+                    metadata_json={"domain_metadata": domain_metadata},
+                ),
+            ]
+        )
+        await session.commit()
+
+        result = await ChunkService(session, tmp_path).domain_metadata_for_documents(
+            ["doc-path-value"]
+        )
+
+    await engine.dispose()
+
+    assert result == [
+        {
+            "domain": "quran_tafseer",
+            "language": "arabic",
+            "tags": ["reference"],
+            "custom_json": {
+                "reference_schema": {"type": "chapter_verse"},
+                "examples": ["safe-example"],
+            },
+            "document_id": "doc-path-value",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_domain_metadata_for_documents_removes_nested_path_keys(
+    database_url,
+    tmp_path,
+):
+    engine = make_engine(database_url)
+    await init_db(engine)
+    factory = make_session_factory(engine)
+
+    domain_metadata = {
+        "domain": "hadith",
+        "document_type": "collection",
+        "custom_json": {
+            "path": "relative/path/is-removed-by-key.pdf",
+            "reference_schema": {
+                "type": "book_hadith",
+                "file_path": "relative/hadith-source.json",
+                "fields": {"book": "book", "hadith": "hadith"},
+            },
+            "evidence": [
+                {"page": 1, "artifact_path": "relative/page-1.json"},
+                {"page": 2, "observation": "safe"},
+            ],
+            "layout": {
+                "preview_path": "relative/preview.png",
+                "role": "parallel_text",
+            },
+        },
+    }
+
+    async with factory() as session:
+        session.add_all(
+            [
+                Document(
+                    id="doc-path-key",
+                    filename="path-key.pdf",
+                    content_type="application/pdf",
+                    sha256="sha-path-key",
+                    artifact_path=str(tmp_path / "path-key.pdf"),
+                ),
+                Chunk(
+                    id="chunk-path-key",
+                    document_id="doc-path-key",
+                    text="A chunk with nested path keys",
+                    metadata_json={"domain_metadata": domain_metadata},
+                ),
+            ]
+        )
+        await session.commit()
+
+        result = await ChunkService(session, tmp_path).domain_metadata_for_documents(
+            ["doc-path-key"]
+        )
+
+    await engine.dispose()
+
+    assert result == [
+        {
+            "domain": "hadith",
+            "document_type": "collection",
+            "custom_json": {
+                "reference_schema": {
+                    "type": "book_hadith",
+                    "fields": {"book": "book", "hadith": "hadith"},
+                },
+                "evidence": [{"page": 1}, {"page": 2, "observation": "safe"}],
+                "layout": {"role": "parallel_text"},
+            },
+            "document_id": "doc-path-key",
+        }
+    ]

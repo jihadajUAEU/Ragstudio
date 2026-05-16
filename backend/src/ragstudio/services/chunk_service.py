@@ -22,6 +22,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 MinerUStatusCallback = Callable[[dict[str, Any]], Awaitable[None]]
+_SCRUBBED_DOMAIN_METADATA_VALUE = object()
+_UNSAFE_DOMAIN_METADATA_PATH_KEYS = {"artifact_path", "file_path", "path"}
 
 
 class ChunkService:
@@ -207,10 +209,11 @@ class ChunkService:
             if not isinstance(domain_metadata, dict):
                 continue
             metadata_copy = sanitize_db_value(domain_metadata)
-            if not isinstance(metadata_copy, dict):
+            scrubbed_metadata = self._scrub_domain_metadata_lookup_value(metadata_copy)
+            if not isinstance(scrubbed_metadata, dict):
                 continue
             dedupe_key = json.dumps(
-                metadata_copy,
+                scrubbed_metadata,
                 sort_keys=True,
                 separators=(",", ":"),
                 default=str,
@@ -220,7 +223,7 @@ class ChunkService:
             seen_by_document[document_id].add(dedupe_key)
             metadata_by_document[document_id].append(
                 {
-                    **metadata_copy,
+                    **scrubbed_metadata,
                     "document_id": document_id,
                 }
             )
@@ -416,6 +419,39 @@ class ChunkService:
         if not isinstance(value, str):
             return False
         return Path(value).is_absolute() or PureWindowsPath(value).is_absolute()
+
+    def _scrub_domain_metadata_lookup_value(self, value: Any) -> Any:
+        if isinstance(value, dict):
+            scrubbed: dict[str, Any] = {}
+            for key, item in value.items():
+                if self._is_unsafe_domain_metadata_path_key(key):
+                    continue
+                scrubbed_item = self._scrub_domain_metadata_lookup_value(item)
+                if scrubbed_item is _SCRUBBED_DOMAIN_METADATA_VALUE:
+                    continue
+                scrubbed[key] = scrubbed_item
+            return scrubbed
+        if isinstance(value, list):
+            return [
+                scrubbed_item
+                for item in value
+                if (
+                    scrubbed_item := self._scrub_domain_metadata_lookup_value(item)
+                )
+                is not _SCRUBBED_DOMAIN_METADATA_VALUE
+            ]
+        if self._is_absolute_path_value(value):
+            return _SCRUBBED_DOMAIN_METADATA_VALUE
+        return value
+
+    def _is_unsafe_domain_metadata_path_key(self, key: Any) -> bool:
+        if not isinstance(key, str):
+            return False
+        normalized = key.casefold()
+        return (
+            normalized in _UNSAFE_DOMAIN_METADATA_PATH_KEYS
+            or normalized.endswith("_path")
+        )
 
     def _quality_language(self, metadata: DomainMetadata) -> str:
         values = [
