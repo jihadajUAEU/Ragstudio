@@ -21,20 +21,18 @@ def test_understand_query_accepts_domain_expansion_passes():
     assert understanding.answer_type == "reference"
     assert understanding.retrieval_strategy == "reference_first_hybrid"
     assert understanding.direct_evidence_required is True
-    assert understanding.expanded_terms == ["حنان", "حنانا", "وحنانا"]
-    assert understanding.expansion_trace["expanded_terms"] == ["حنان", "حنانا", "وحنانا"]
-    assert [item.name for item in understanding.retrieval_passes[:3]] == [
-        "lexical_expanded_token",
+    assert understanding.expanded_terms == ["حنانا", "وحنانا"]
+    assert understanding.expansion_trace["expanded_terms"] == ["حنانا", "وحنانا"]
+    assert [item.name for item in understanding.retrieval_passes[:2]] == [
         "lexical_expanded_token",
         "lexical_expanded_token",
     ]
-    assert understanding.retrieval_passes[0].query == "حنان"
-    assert [item.match_type for item in understanding.retrieval_passes[:3]] == [
-        "transliteration",
+    assert understanding.retrieval_passes[0].query == "حنانا"
+    assert [item.match_type for item in understanding.retrieval_passes[:2]] == [
         "transliteration",
         "transliteration",
     ]
-    assert [item.name for item in understanding.retrieval_passes[3:]] == [
+    assert [item.name for item in understanding.retrieval_passes[2:]] == [
         "semantic_metadata",
         "vector_db",
         "native_vector",
@@ -59,8 +57,8 @@ def test_understand_query_deep_copies_domain_expansion_trace():
     understanding.expansion_trace["expanded_terms"].append("leaked")
     understanding.expansion_trace["expansions"][0]["terms"].append("also leaked")
 
-    assert expansion.trace["expanded_terms"] == ["حنان", "حنانا", "وحنانا"]
-    assert expansion.trace["expansions"][0]["terms"] == ["حنان", "حنانا", "وحنانا"]
+    assert expansion.trace["expanded_terms"] == ["حنانا", "وحنانا"]
+    assert expansion.trace["expansions"][0]["terms"] == ["حنانا", "وحنانا"]
 
 
 def test_understanding_detects_arabic_exact_token_and_variants():

@@ -26,7 +26,8 @@ def test_arabic_adapter_expands_known_latin_transliteration():
     assert expansion.language == "arabic"
     assert expansion.script == "arab"
     assert expansion.normalized_query == "hanan"
-    assert expansion.terms == ["حنان", "حنانا", "وحنانا"]
+    assert expansion.terms == ["حنانا", "وحنانا"]
+    assert "حنان" not in expansion.terms
     assert expansion.match_type == "transliteration"
     assert expansion.confidence >= 0.9
 
@@ -66,7 +67,7 @@ def test_arabic_transliteration_terms_are_not_shared_between_expansions():
 
     next_expansion = adapter.expand_query("hanan")
 
-    assert next_expansion.terms == ["حنان", "حنانا", "وحنانا"]
+    assert next_expansion.terms == ["حنانا", "وحنانا"]
 
 
 def test_generic_latin_adapter_does_not_invent_cross_script_terms():
@@ -128,13 +129,12 @@ def test_domain_query_expansion_prefers_arabic_for_quran_transliteration():
 
     assert result.original_query == "hanan"
     assert result.domain_family == "arabic_religious"
-    assert result.expansions[0].terms == ["حنان", "حنانا", "وحنانا"]
+    assert result.expansions[0].terms == ["حنانا", "وحنانا"]
     assert result.retrieval_passes[0].name == "lexical_expanded_token"
-    assert result.retrieval_passes[0].query == "حنان"
+    assert result.retrieval_passes[0].query == "حنانا"
     assert result.retrieval_passes[0].direct_evidence is True
-    assert [item.query for item in result.retrieval_passes] == ["حنان", "حنانا", "وحنانا"]
+    assert [item.query for item in result.retrieval_passes] == ["حنانا", "وحنانا"]
     assert [item.match_type for item in result.retrieval_passes] == [
-        "transliteration",
         "transliteration",
         "transliteration",
     ]
@@ -143,7 +143,7 @@ def test_domain_query_expansion_prefers_arabic_for_quran_transliteration():
         and retrieval_pass.direct_evidence is True
         for retrieval_pass in result.retrieval_passes
     )
-    assert result.trace["expanded_terms"] == ["حنان", "حنانا", "وحنانا"]
+    assert result.trace["expanded_terms"] == ["حنانا", "وحنانا"]
 
 
 def test_domain_query_expansion_preserves_exact_script_match_type_on_passes():
@@ -190,5 +190,5 @@ def test_domain_query_expansion_trace_terms_are_not_mutated_by_expansion_terms()
     result = service.expand("hanan", domain_metadata=[quran_domain_metadata()])
     result.expansions[0].terms.append("leaked")
 
-    assert result.trace["expanded_terms"] == ["حنان", "حنانا", "وحنانا"]
-    assert result.trace["expansions"][0]["terms"] == ["حنان", "حنانا", "وحنانا"]
+    assert result.trace["expanded_terms"] == ["حنانا", "وحنانا"]
+    assert result.trace["expansions"][0]["terms"] == ["حنانا", "وحنانا"]

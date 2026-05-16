@@ -112,7 +112,7 @@ async def test_metadata_service_runs_arabic_exact_before_semantic():
         limit=5,
     )
 
-    assert [call.query for call in chunk_service.calls][:2] == ["حنانا", "حنانا"]
+    assert [call.query for call in chunk_service.calls] == ["حنانا"]
     assert len(candidates) == 1
     assert candidates[0].chunk_id == "chunk-19-13"
     assert candidates[0].tool == "metadata"
@@ -129,8 +129,7 @@ async def test_metadata_service_runs_arabic_exact_before_semantic():
     assert trace["passes"][0]["candidate_count"] == 1
     assert trace["passes"][0]["latency_ms"] >= 0
     assert trace["passes"][0]["top_candidate_ids"] == ["metadata:chunk-19-13"]
-    assert trace["passes"][1]["name"] == "semantic_metadata"
-    assert trace["passes"][1]["candidate_count"] == 0
+    assert len(trace["passes"]) == 1
 
 
 @pytest.mark.asyncio
@@ -170,6 +169,38 @@ async def test_metadata_service_runs_lexical_expanded_token_passes():
     assert trace["passes"][0]["name"] == "lexical_expanded_token"
     assert trace["passes"][0]["query"] == "حنانا"
     assert trace["passes"][0]["candidate_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_metadata_service_stops_after_direct_lexical_expanded_candidate():
+    chunk_service = LexicalExpandedChunkService()
+    understanding = QueryUnderstanding(
+        query="hanana",
+        intent="lexical_expanded_token",
+        answer_type="reference",
+        retrieval_passes=[
+            RetrievalPass(
+                name="lexical_expanded_token",
+                query="حنانا",
+                direct_evidence=True,
+                match_type="transliteration",
+            ),
+            RetrievalPass("semantic_metadata", "hanana"),
+        ],
+    )
+
+    candidates, trace = await MetadataRetrievalService(chunk_service).retrieve(
+        "hanana",
+        understanding=understanding,
+        document_ids=["doc-quran"],
+        variant_id="variant-1",
+        limit=5,
+    )
+
+    assert [call.query for call in chunk_service.calls] == ["حنانا"]
+    assert len(candidates) == 1
+    assert candidates[0].chunk_id == "chunk-19-13-expanded"
+    assert [item["name"] for item in trace["passes"]] == ["lexical_expanded_token"]
 
 
 @pytest.mark.asyncio

@@ -15,7 +15,7 @@ _ARABIC_RE = re.compile(
 _LATIN_RE = re.compile(r"[A-Za-z]")
 
 _ARABIC_TRANSLITERATION_LEXICON: dict[str, list[str]] = {
-    "hanan": ["حنان", "حنانا", "وحنانا"],
+    "hanan": ["حنانا", "وحنانا"],
     "hananan": ["حنانا", "وحنانا"],
     "hanana": ["حنانا", "وحنانا"],
 }

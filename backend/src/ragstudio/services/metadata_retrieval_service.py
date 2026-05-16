@@ -69,6 +69,8 @@ class MetadataRetrievalService:
                     ],
                 }
             )
+            if _has_direct_evidence_candidates(retrieval_pass, pass_candidates):
+                break
 
         return candidates, {"stage": "metadata_retrieval", "passes": pass_traces}
 
@@ -209,6 +211,17 @@ def _normalize_reference(value: Any) -> str | None:
     if not isinstance(value, str) or not value.strip():
         return None
     return value.strip().casefold()
+
+
+def _has_direct_evidence_candidates(
+    retrieval_pass: RetrievalPass,
+    candidates: list[EvidenceCandidate],
+) -> bool:
+    return (
+        bool(getattr(retrieval_pass, "direct_evidence", False))
+        and retrieval_pass.name in _METADATA_PASS_NAMES
+        and any(candidate.retrieval_pass == retrieval_pass.name for candidate in candidates)
+    )
 
 
 def _elapsed_ms(started_at: float) -> float:
