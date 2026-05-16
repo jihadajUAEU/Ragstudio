@@ -64,7 +64,7 @@ class DomainQueryExpansionService:
                         "match_type": expansion.match_type,
                         "confidence": expansion.confidence,
                         "source": expansion.source,
-                        "terms": expansion.terms,
+                        "terms": list(expansion.terms),
                     }
                     for expansion in expansions
                 ],
@@ -73,34 +73,34 @@ class DomainQueryExpansionService:
 
 
 def _domain_family(domain_metadata: list[dict[str, Any]]) -> str:
-    tokens: set[str] = set()
+    religious_signals: set[str] = set()
     for metadata in domain_metadata:
         if not isinstance(metadata, dict):
             continue
         raw_tags = metadata.get("tags")
-        tags = raw_tags if isinstance(raw_tags, list) else []
-        tokens.update(
-            str(value).casefold()
+        tags = raw_tags if isinstance(raw_tags, list | tuple | set) else []
+        religious_signals.update(
+            normalized_value
             for value in [
                 metadata.get("domain"),
                 metadata.get("document_type"),
-                metadata.get("language"),
-                metadata.get("script"),
                 metadata.get("content_role"),
                 *tags,
             ]
-            if value
+            if isinstance(value, str)
+            if (normalized_value := value.strip().casefold())
         )
 
-    if tokens & {
-        "arabic",
-        "mixed",
+    if religious_signals & {
         "quran",
         "tafseer",
         "quran_tafseer",
         "hadith",
         "islamic_text",
         "religious_text",
+        "fiqh",
+        "fatwa",
+        "islamic_law",
     }:
         return "arabic_religious"
     return "generic"

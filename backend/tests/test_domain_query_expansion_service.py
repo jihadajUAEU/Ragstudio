@@ -101,6 +101,26 @@ def research_domain_metadata() -> dict[str, object]:
     }
 
 
+def arabic_research_domain_metadata() -> dict[str, object]:
+    return {
+        "domain": "research",
+        "document_type": "paper",
+        "language": " Arabic ",
+        "tags": ("arabic", "research"),
+        "script": "mixed",
+    }
+
+
+def mixed_admin_domain_metadata() -> dict[str, object]:
+    return {
+        "domain": "admin",
+        "document_type": "policy",
+        "language": "mixed",
+        "tags": {"arabic", "internal"},
+        "script": " Mixed ",
+    }
+
+
 def test_domain_query_expansion_prefers_arabic_for_quran_transliteration():
     service = DomainQueryExpansionService()
 
@@ -112,6 +132,11 @@ def test_domain_query_expansion_prefers_arabic_for_quran_transliteration():
     assert result.retrieval_passes[0].name == "lexical_expanded_token"
     assert result.retrieval_passes[0].query == "حنان"
     assert result.retrieval_passes[0].direct_evidence is True
+    assert all(
+        retrieval_pass.name == "lexical_expanded_token"
+        and retrieval_pass.direct_evidence is True
+        for retrieval_pass in result.retrieval_passes
+    )
     assert result.trace["expanded_terms"] == ["حنان", "حنانا", "وحنانا"]
 
 
@@ -124,3 +149,26 @@ def test_domain_query_expansion_does_not_cross_script_expand_research_text():
     assert result.expansions == []
     assert result.retrieval_passes == []
     assert result.trace["expanded_terms"] == []
+
+
+def test_domain_query_expansion_keeps_arabic_research_and_admin_generic():
+    service = DomainQueryExpansionService()
+
+    research_result = service.expand("hanan", domain_metadata=[arabic_research_domain_metadata()])
+    admin_result = service.expand("hanan", domain_metadata=[mixed_admin_domain_metadata()])
+
+    assert research_result.domain_family == "generic"
+    assert research_result.expansions == []
+    assert research_result.retrieval_passes == []
+    assert admin_result.domain_family == "generic"
+    assert admin_result.expansions == []
+    assert admin_result.retrieval_passes == []
+
+
+def test_domain_query_expansion_trace_terms_are_not_mutated_by_expansion_terms():
+    service = DomainQueryExpansionService()
+
+    result = service.expand("hanan", domain_metadata=[quran_domain_metadata()])
+    result.expansions[0].terms.append("leaked")
+
+    assert result.trace["expansions"][0]["terms"] == ["حنان", "حنانا", "وحنانا"]
