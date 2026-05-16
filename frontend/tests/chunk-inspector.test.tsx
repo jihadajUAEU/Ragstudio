@@ -1,6 +1,6 @@
 import "@testing-library/jest-dom/vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { ChunkInspector } from "../src/features/chunks/chunk-inspector";
@@ -109,5 +109,30 @@ describe("ChunkInspector metadata", () => {
     expect(screen.getByText("neighbor: chunk-2")).toBeVisible();
     expect(screen.getByText("semantic: 0.92")).toBeVisible();
     expect(screen.getByText("reference: 1.00")).toBeVisible();
+  });
+
+  it("opens chunk evidence details from an explicit Inspect evidence action", async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ChunkInspector />
+      </QueryClientProvider>,
+    );
+
+    fireEvent.click(await screen.findByRole("checkbox"));
+    fireEvent.change(screen.getByLabelText("Question or search text"), {
+      target: { value: "hadith" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^Search$/i }));
+
+    const inspect = await screen.findByRole("button", { name: "Inspect evidence" });
+    fireEvent.click(inspect);
+
+    const dialog = await screen.findByRole("dialog", { name: "Evidence details" });
+    expect(within(dialog).getAllByText("chunk-1").length).toBeGreaterThan(0);
+    fireEvent.click(within(dialog).getByText("Chunk text", { selector: "summary" }));
+    expect(within(dialog).getByText("Book 1, Hadith 1")).toBeVisible();
+    fireEvent.click(within(dialog).getByText("Graph context", { selector: "summary" }));
+    expect(within(dialog).getByText("neighbor: chunk-2")).toBeVisible();
   });
 });

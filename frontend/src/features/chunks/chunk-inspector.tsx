@@ -21,6 +21,7 @@ import { EmptyState } from "../../components/empty-state";
 import { Button } from "../../components/ui/button";
 import { titleCase, toggleId } from "../../lib/utils";
 import { DomainMetadataPanel } from "../domain-metadata/domain-metadata-panel";
+import { EvidenceViewer, type NormalizedEvidence } from "../evidence/evidence-viewer";
 
 const queryKeys = {
   documents: ["documents"],
@@ -261,6 +262,8 @@ export function ChunkInspector() {
 
 function ChunkCard({ chunk }: { chunk: ChunkOut }) {
   const retrievalExplain = getRetrievalExplain(chunk.metadata);
+  const [selectedEvidence, setSelectedEvidence] = useState<NormalizedEvidence | null>(null);
+  const evidence = useMemo(() => normalizeChunkEvidence(chunk, retrievalExplain), [chunk, retrievalExplain]);
 
   return (
     <article className="rounded-md border border-[#d6dde1] bg-white p-4">
@@ -269,13 +272,18 @@ function ChunkCard({ chunk }: { chunk: ChunkOut }) {
           <h3 className="truncate text-sm font-semibold text-[#1f2933]">{chunk.id}</h3>
           <p className="truncate text-xs text-[#62717a]">{chunk.document_id}</p>
         </div>
-        <div className="flex shrink-0 flex-wrap gap-2">
-          <Badge>score {formatValue(chunk.metadata.score)}</Badge>
-          <Badge>profile {chunk.runtime_profile_id ?? "n/a"}</Badge>
-          <Badge>{chunk.content_type}</Badge>
-          <Badge>snapshot {metadataValue(chunk.metadata, ["mirrored_snapshot"], "false")}</Badge>
-          <Badge>{metadataValue(chunk.metadata, ["parser_metadata", "backend"], "fallback")}</Badge>
-          <Badge>{metadataValue(chunk.metadata, ["domain_metadata", "domain"], "generic")}</Badge>
+        <div className="flex shrink-0 flex-col items-start gap-2 sm:items-end">
+          <div className="flex flex-wrap gap-2 sm:justify-end">
+            <Badge>score {formatValue(chunk.metadata.score)}</Badge>
+            <Badge>profile {chunk.runtime_profile_id ?? "n/a"}</Badge>
+            <Badge>{chunk.content_type}</Badge>
+            <Badge>snapshot {metadataValue(chunk.metadata, ["mirrored_snapshot"], "false")}</Badge>
+            <Badge>{metadataValue(chunk.metadata, ["parser_metadata", "backend"], "fallback")}</Badge>
+            <Badge>{metadataValue(chunk.metadata, ["domain_metadata", "domain"], "generic")}</Badge>
+          </div>
+          <Button type="button" variant="secondary" size="sm" onClick={() => setSelectedEvidence(evidence)}>
+            Inspect evidence
+          </Button>
         </div>
       </div>
       <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-[#24313a]">{chunk.text}</p>
@@ -284,8 +292,58 @@ function ChunkCard({ chunk }: { chunk: ChunkOut }) {
         <JsonBlock title="Source location" value={chunk.source_location} />
         <JsonBlock title="Snapshot metadata" value={chunk.metadata} />
       </div>
+      <EvidenceViewer
+        evidence={selectedEvidence}
+        open={selectedEvidence !== null}
+        onClose={() => setSelectedEvidence(null)}
+      />
     </article>
   );
+}
+
+function normalizeChunkEvidence(
+  chunk: ChunkOut,
+  retrievalExplain: RetrievalExplain | null,
+): NormalizedEvidence {
+  const relationshipRefs = Object.entries(retrievalExplain?.relationship_refs ?? {}).map(
+    ([name, reference]) => `${name}: ${reference}`,
+  );
+  const retrievalReasons = [
+    ...(retrievalExplain?.matched_references ?? []).map((reference) => `matched ${reference}`),
+    ...(retrievalExplain?.signals ?? []).map(
+      (signal) => `${signal.name}: ${formatValue(signal.value)}`,
+    ),
+  ];
+  const parserWarnings = stringArray(
+    metadataAt(chunk.metadata, ["parser_quality_warning_codes"]) ??
+      metadataAt(chunk.metadata, ["parser_warnings"]),
+  );
+
+  return {
+    id: chunk.id,
+    kind: "chunk",
+    documentId: chunk.document_id,
+    runtimeProfileId: chunk.runtime_profile_id,
+    text: chunk.text,
+    sourceLocation: chunk.source_location,
+    metadata: chunk.metadata,
+    parserWarnings,
+    qualityStatus:
+      textMetadata(chunk.metadata, ["quality_action_policy"]) ??
+      textMetadata(chunk.metadata, ["quality_status"]) ??
+      null,
+    retrievalReasons,
+    relationshipRefs,
+    raw: chunk,
+    routeLinks: {
+      documents: Boolean(chunk.document_id),
+      chunks: true,
+      query: true,
+      graph: relationshipRefs.length > 0,
+      diagnostics: true,
+      documentUnavailableLabel: "Document link not recorded",
+    },
+  };
 }
 
 function RetrievalExplainPanel({ explain }: { explain: RetrievalExplain }) {
@@ -393,6 +451,32 @@ function metadataValue(metadata: Record<string, unknown>, path: string[], fallba
     return current ? "true" : "false";
   }
   return fallback;
+}
+
+function metadataAt(metadata: Record<string, unknown>, path: string[]) {
+  let current: unknown = metadata;
+  for (const segment of path) {
+    if (typeof current !== "object" || current === null || !(segment in current)) {
+      return undefined;
+    }
+    current = (current as Record<string, unknown>)[segment];
+  }
+  return current;
+}
+
+function textMetadata(metadata: Record<string, unknown>, path: string[]) {
+  const value = metadataAt(metadata, path);
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function stringArray(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item)).filter(Boolean);
+  }
+  if (typeof value === "string" && value.trim()) {
+    return [value.trim()];
+  }
+  return [];
 }
 
 function getRetrievalExplain(metadata: Record<string, unknown>): RetrievalExplain | null {
