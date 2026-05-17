@@ -10,25 +10,14 @@ from typing import Any
 
 import httpx
 from ragstudio.schemas.parsing import DomainMetadata
-
-TEXT_BLOCK_TYPES = frozenset(
-    {
-        "caption",
-        "heading",
-        "list",
-        "list_item",
-        "paragraph",
-        "para",
-        "section",
-        "table",
-        "table_body",
-        "text",
-        "title",
-    }
+from ragstudio.services.block_types import (
+    EQUATION_BLOCK_TYPES,
+    IMAGE_BLOCK_TYPES,
+    TEXT_BLOCK_TYPES,
+    VISION_TARGET_BLOCK_TYPES,
 )
-EQUATION_BLOCK_TYPES = frozenset({"equation", "equation_interline", "interline_equation"})
-IMAGE_BLOCK_TYPES = frozenset({"figure", "image", "picture"})
-VISION_TARGET_BLOCK_TYPES = IMAGE_BLOCK_TYPES | EQUATION_BLOCK_TYPES
+from ragstudio.services.script_detection import SCRIPT_PATTERNS
+
 VISION_RECOVERY_TRIGGERS = frozenset(
     {
         "missing_pdf_text_layer",
@@ -38,10 +27,6 @@ VISION_RECOVERY_TRIGGERS = frozenset(
 )
 VISION_RECOVERY_MAX_TOTAL_BLOCKS = 40
 VISION_IMAGE_MAX_BYTES = 4_000_000
-SCRIPT_PATTERNS = {
-    "arabic": re.compile(r"[\u0600-\u06ff\u0750-\u077f\u08a0-\u08ff\ufb50-\ufdff\ufe70-\ufeff]"),
-    "latin": re.compile(r"[A-Za-z]"),
-}
 
 
 @dataclass(frozen=True)
@@ -224,7 +209,7 @@ class _VisionRecoveryState:
 
 
 class VisionBlockRecoveryClient:
-    def recover_text(
+    async def recover_text(
         self,
         *,
         image_data_url: str,
@@ -262,12 +247,12 @@ class VisionBlockRecoveryClient:
 
         url = f"{config.base_url.rstrip('/')}/chat/completions"
         try:
-            with httpx.Client(timeout=config.timeout_ms / 1000) as client:
-                response = client.post(url, headers=headers, json=payload)
+            async with httpx.AsyncClient(timeout=config.timeout_ms / 1000) as client:
+                response = await client.post(url, headers=headers, json=payload)
                 if response.status_code in {400, 422}:
                     fallback_payload = dict(payload)
                     fallback_payload.pop("response_format", None)
-                    response = client.post(url, headers=headers, json=fallback_payload)
+                    response = await client.post(url, headers=headers, json=fallback_payload)
                 response.raise_for_status()
                 response_payload = response.json()
         except httpx.HTTPError:
@@ -324,7 +309,7 @@ class MinerUContentNormalizer:
     ) -> None:
         self.vision_recovery_client = vision_recovery_client or VisionBlockRecoveryClient()
 
-    def normalize_content_list(
+    async def normalize_content_list(
         self,
         data: Any,
         *,
@@ -357,7 +342,7 @@ class MinerUContentNormalizer:
                 block_type = _block_type(item)
                 page = _page_number(item)
                 text = self._extract_text(item, block_type=block_type).replace("\x00", "").strip()
-                recovery = self._extract_recovery(
+                recovery = await self._extract_recovery(
                     item,
                     block_type=block_type,
                     existing_text=text,
@@ -475,7 +460,7 @@ class MinerUContentNormalizer:
             return " ".join(part for part in parts if part)
         return ""
 
-    def _extract_recovery(
+    async def _extract_recovery(
         self,
         item: dict[str, Any],
         *,
@@ -504,7 +489,7 @@ class MinerUContentNormalizer:
             block_type=block_type,
             pdf_recovery_context=pdf_recovery_context,
         )
-        vision_recovery = self._extract_vision_recovery(
+        vision_recovery = await self._extract_vision_recovery(
             item,
             block_type=block_type,
             existing_text=pdf_recovery.text if pdf_recovery is not None else existing_text,
@@ -523,7 +508,7 @@ class MinerUContentNormalizer:
             return pdf_recovery
         return None
 
-    def _extract_vision_recovery(
+    async def _extract_vision_recovery(
         self,
         item: dict[str, Any],
         *,
@@ -569,7 +554,7 @@ class MinerUContentNormalizer:
         if not vision_recovery_state.reserve(page, config):
             return None
 
-        recovered_text = self.vision_recovery_client.recover_text(
+        recovered_text = await self.vision_recovery_client.recover_text(
             image_data_url=image_data_url,
             block_type=block_type,
             page=page,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from pathlib import Path, PureWindowsPath
 from typing import Any
@@ -10,8 +11,13 @@ from ragstudio.schemas.parsing import DomainMetadata, IndexDocumentIn, ParserMod
 from ragstudio.services.adapter import AdapterChunk
 from ragstudio.services.arabic_text import arabic_tokens, normalize_arabic_text
 from ragstudio.services.chunk_sanitizer import sanitize_db_text, sanitize_db_value
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+logger = logging.getLogger(__name__)
+
+_MIN_EXPECTED_CHUNKS = 2
+_MAX_EXPECTED_CHUNKS = 5000
 
 _SCRUBBED_PATH = object()
 
@@ -30,7 +36,20 @@ class ChunkPersistenceService:
         runtime_profile_id: str | None = None,
         index_shape: dict[str, Any] | None = None,
     ) -> list[ChunkOut]:
-        await self.session.execute(delete(Chunk).where(Chunk.document_id == document.id))
+        chunk_count = len(adapter_chunks)
+        if chunk_count < _MIN_EXPECTED_CHUNKS:
+            logger.warning(
+                "Document %s produced only %d chunk(s) — possible extraction issue",
+                document.id,
+                chunk_count,
+            )
+        if chunk_count > _MAX_EXPECTED_CHUNKS:
+            logger.warning(
+                "Document %s produced %d chunks — unusually high, possible parser regression",
+                document.id,
+                chunk_count,
+            )
+
         indexed_at = datetime.now(UTC)
         chunks = [
             self._chunk_row(
@@ -43,13 +62,27 @@ class ChunkPersistenceService:
             )
             for adapter_chunk in adapter_chunks
         ]
-        self.session.add_all(chunks)
+
+        # Savepoint: if insert fails the old chunks survive the rollback.
+        async with self.session.begin_nested():
+            await self.session.execute(
+                delete(Chunk).where(Chunk.document_id == document.id)
+            )
+            self.session.add_all(chunks)
+
         if commit:
             await self.session.commit()
         else:
             await self.session.flush()
-        for chunk in chunks:
-            await self.session.refresh(chunk)
+
+        # Bulk-refresh: single SELECT replaces N individual refresh calls.
+        chunk_ids = [chunk.id for chunk in chunks]
+        if chunk_ids:
+            result = await self.session.execute(
+                select(Chunk).where(Chunk.id.in_(chunk_ids))
+            )
+            chunks = list(result.scalars().all())
+
         return [ChunkOut.model_validate(chunk) for chunk in chunks]
 
     def _chunk_row(

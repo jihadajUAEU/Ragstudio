@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from ragstudio.services.adapter import AdapterChunk
+from ragstudio.services.script_detection import SCRIPT_PATTERNS
 
 
 class MinerUExtractionContractError(RuntimeError):
@@ -25,7 +26,7 @@ class MinerUExtractionReport:
 
 
 class MinerUExtractionValidator:
-    _ARABIC_RE = re.compile(r"[\u0600-\u06ff]")
+    _ARABIC_RE = SCRIPT_PATTERNS["arabic"]
     _RAW_PDF_RE = re.compile(
         r"(%PDF-\d|/Type\s*/Page\b|/Filter\s*/FlateDecode\b|xref\s+\d|"
         r"\bobj\s*<<|\bendobj\b|\bstream\r?\n|\bendstream\b)"
@@ -34,7 +35,7 @@ class MinerUExtractionValidator:
     def __init__(
         self,
         *,
-        min_text_chars: int = 8,
+        min_text_chars: int = 50,
         min_page_coverage_ratio: float = 0.5,
     ) -> None:
         self.min_text_chars = min_text_chars
@@ -84,7 +85,7 @@ class MinerUExtractionValidator:
 
         pages = self._observed_pages(non_empty_chunks)
         total_pages = self._total_pages(non_empty_chunks)
-        if total_pages is not None and total_pages > 1:
+        if total_pages is not None:
             coverage = len(pages) / total_pages
             if coverage < self.min_page_coverage_ratio:
                 raise MinerUExtractionContractError(

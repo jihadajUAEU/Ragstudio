@@ -9,7 +9,9 @@ from typing import Any
 from ragstudio.schemas.parsing import DomainMetadata, ParserMode
 from ragstudio.services.adapter import AdapterChunk
 from ragstudio.services.chunk_quality_gate import ChunkQualityGate
-from ragstudio.services.domain_metadata_quality_gate import DomainMetadataQualityGate
+from ragstudio.services.parser_warning_utils import (
+    merge_parser_warnings as _shared_merge_parser_warnings,
+)
 from ragstudio.services.parser_normalization import (
     ExpectedContentProfile,
     MinerUContentNormalizer,
@@ -30,6 +32,8 @@ class ChunkProfile:
     target_words: int
     hard_max_words: int
     semantics: ReferenceSemantics | None = None
+    table_max_rows: int = 25  # Tables ≤ this stay as a single chunk
+    image_context_blocks: int = 1  # Preceding text blocks attached to image chunks
 
 
 @dataclass(frozen=True)
@@ -60,20 +64,19 @@ class ChunkSplitter:
         self.content_normalizer = MinerUContentNormalizer()
         self.reference_unit_assembler = ReferenceUnitAssembler()
 
-    def split(
+    async def split(
         self,
         chunks: list[AdapterChunk],
         *,
         domain_metadata: DomainMetadata,
-        parser_mode: ParserMode,
+        parser_mode: ParserMode,  # noqa: ARG002 — reserved for future use
     ) -> list[AdapterChunk]:
-        del parser_mode
 
         profile = self._profile(domain_metadata)
         expected_profile = ExpectedContentProfile.from_domain_metadata(domain_metadata)
         output: list[AdapterChunk] = []
         for chunk in chunks:
-            pieces = self._split_chunk(
+            pieces = await self._split_chunk(
                 chunk,
                 profile,
                 expected_profile,
@@ -145,14 +148,14 @@ class ChunkSplitter:
             )
         return ChunkProfile("generic", target_words=1000, hard_max_words=self.max_words)
 
-    def _split_chunk(
+    async def _split_chunk(
         self,
         chunk: AdapterChunk,
         profile: ChunkProfile,
         expected_profile: ExpectedContentProfile,
         domain_metadata: DomainMetadata,
     ) -> list[SplitPiece]:
-        content_list_result = self._chunks_from_content_list(
+        content_list_result = await self._chunks_from_content_list(
             chunk,
             profile,
             expected_profile,
@@ -188,7 +191,7 @@ class ChunkSplitter:
             if text.strip()
         ]
 
-    def _chunks_from_content_list(
+    async def _chunks_from_content_list(
         self,
         chunk: AdapterChunk,
         profile: ChunkProfile,
@@ -214,7 +217,7 @@ class ChunkSplitter:
         if not isinstance(data, list):
             return None
 
-        normalized_blocks = self.content_normalizer.normalize_content_list(
+        normalized_blocks = await self.content_normalizer.normalize_content_list(
             data,
             domain_metadata=domain_metadata,
             expected_profile=expected_profile,
@@ -542,14 +545,51 @@ class ChunkSplitter:
             packed.append("\n\n".join(current).strip())
         return packed
 
+    # Sentence-boundary pattern: split after punctuation followed by whitespace.
+    _SENTENCE_END_RE = re.compile(
+        r"(?<=[.!?\u061f\u0964\u3002])\s+"
+    )
+
     def _hard_split_text(self, text: str, hard_max_words: int) -> list[str]:
         source_words = text.split()
         if len(source_words) <= hard_max_words:
             return [text.strip()] if text.strip() else []
-        return [
-            " ".join(source_words[index : index + hard_max_words])
-            for index in range(0, len(source_words), hard_max_words)
-        ]
+
+        # Sentence-aware splitting: pack sentences into chunks.
+        sentences = self._SENTENCE_END_RE.split(text)
+        chunks: list[str] = []
+        current: list[str] = []
+        current_words = 0
+
+        for sentence in sentences:
+            sentence = sentence.strip()
+            if not sentence:
+                continue
+            sentence_word_count = len(sentence.split())
+
+            # If a single sentence exceeds the limit, fall back to word split.
+            if sentence_word_count > hard_max_words:
+                if current:
+                    chunks.append(" ".join(current))
+                    current = []
+                    current_words = 0
+                words = sentence.split()
+                for i in range(0, len(words), hard_max_words):
+                    chunks.append(" ".join(words[i : i + hard_max_words]))
+                continue
+
+            if current_words + sentence_word_count > hard_max_words and current:
+                chunks.append(" ".join(current))
+                current = []
+                current_words = 0
+
+            current.append(sentence)
+            current_words += sentence_word_count
+
+        if current:
+            chunks.append(" ".join(current))
+
+        return [c for c in chunks if c.strip()]
 
     def _with_split_metadata(
         self,
@@ -678,7 +718,7 @@ class ChunkSplitter:
         metadata: dict[str, Any],
         warnings: list[dict[str, Any]],
     ) -> None:
-        DomainMetadataQualityGate.merge_parser_warnings(metadata, warnings)
+        _shared_merge_parser_warnings(metadata, warnings)
 
     def _warning_only_piece(
         self,

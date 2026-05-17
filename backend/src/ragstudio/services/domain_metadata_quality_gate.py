@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from dataclasses import dataclass
 from typing import Any
@@ -10,18 +11,14 @@ from ragstudio.services.adapter import AdapterChunk
 from ragstudio.services.arabic_text import arabic_tokens
 from ragstudio.services.parser_normalization import ExpectedContentProfile
 from ragstudio.services.parser_quality_intelligent_gate import ParserQualityIntelligentGate
+from ragstudio.services.parser_warning_utils import (
+    merge_parser_warnings as _shared_merge_parser_warnings,
+)
 from ragstudio.services.reference_metadata import ReferenceSemantics
 from ragstudio.services.reference_unit_assembler import provenance_only_quality_policy
+from ragstudio.services.script_detection import SCRIPT_PATTERNS
 
-SCRIPT_PATTERNS = {
-    "arabic": re.compile(r"[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]"),
-    "latin": re.compile(r"[A-Za-z]"),
-    "cyrillic": re.compile(r"[\u0400-\u04FF]"),
-    "greek": re.compile(r"[\u0370-\u03FF]"),
-    "hebrew": re.compile(r"[\u0590-\u05FF]"),
-    "devanagari": re.compile(r"[\u0900-\u097F]"),
-    "han": re.compile(r"[\u3400-\u4DBF\u4E00-\u9FFF]"),
-}
+logger = logging.getLogger(__name__)
 CHAPTER_VERSE_PATTERN = re.compile(
     r"(?P<prefix>\bQuran\s+)?(?P<bracket>\[)?"
     r"(?P<chapter>\d{1,4})\s*:\s*(?P<verse>\d{1,4})"
@@ -233,6 +230,10 @@ class DomainMetadataQualityGate:
         self._apply_parser_quality_action_policy(chunks)
         quality_summary = self.parser_quality_summary(chunks)
         status = "passed_with_warnings" if quality_summary["warning_counts"] else "passed"
+
+        # Modal-aware validation: verify structure integrity per modality.
+        modal_warnings = self._validate_modal_chunks(chunks)
+
         return {
             "status": status,
             "chunk_count": len(chunks),
@@ -248,6 +249,7 @@ class DomainMetadataQualityGate:
             },
             "parser_quality": quality_summary,
             "index_quality_report": index_quality_report,
+            "modal_validation": modal_warnings,
         }
 
     def annotate_chunk(
@@ -1357,22 +1359,51 @@ class DomainMetadataQualityGate:
         else:
             extraction_quality = {}
 
-        existing = extraction_quality.get("parser_warnings")
-        parser_warnings = list(existing) if isinstance(existing, list) else []
-        seen = {
-            json.dumps(warning, sort_keys=True, default=str)
-            for warning in parser_warnings
-            if isinstance(warning, dict)
-        }
-        for warning in warnings:
-            key = json.dumps(warning, sort_keys=True, default=str)
-            if key in seen:
-                continue
-            parser_warnings.append(dict(warning))
-            seen.add(key)
-
-        extraction_quality["parser_warnings"] = parser_warnings
+        _shared_merge_parser_warnings(extraction_quality, warnings)
         metadata["extraction_quality"] = extraction_quality
+
+    def _validate_modal_chunks(
+        self, chunks: list[AdapterChunk]
+    ) -> list[dict[str, Any]]:
+        """Validate modality-specific structural integrity."""
+        warnings: list[dict[str, Any]] = []
+        for index, chunk in enumerate(chunks):
+            modality = chunk.metadata.get("modality", "text")
+            if modality == "table":
+                structured = chunk.metadata.get("structured_data", {})
+                if not structured.get("markdown") and not structured.get("raw_body"):
+                    warnings.append({
+                        "chunk_index": index,
+                        "modality": "table",
+                        "code": "table_missing_structure",
+                        "message": "Table chunk has no structured body data.",
+                    })
+            elif modality == "image":
+                structured = chunk.metadata.get("structured_data", {})
+                caption = structured.get("caption", [])
+                if not caption and not chunk.text.strip():
+                    warnings.append({
+                        "chunk_index": index,
+                        "modality": "image",
+                        "code": "image_missing_description",
+                        "message": "Image chunk has no caption or description.",
+                    })
+            elif modality == "equation":
+                structured = chunk.metadata.get("structured_data", {})
+                if not structured.get("latex"):
+                    warnings.append({
+                        "chunk_index": index,
+                        "modality": "equation",
+                        "code": "equation_missing_latex",
+                        "message": "Equation chunk has no LaTeX content.",
+                    })
+
+        if warnings:
+            logger.info(
+                "Modal validation: %d warning(s) across %d chunks",
+                len(warnings), len(chunks),
+            )
+        return warnings
 
 
 def _dict_value(value: dict[str, Any], key: str) -> dict[str, Any] | None:

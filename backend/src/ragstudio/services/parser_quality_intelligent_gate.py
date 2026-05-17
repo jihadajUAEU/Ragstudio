@@ -3,9 +3,9 @@ from __future__ import annotations
 from typing import Any
 
 from ragstudio.schemas.parsing import DomainMetadata
+from ragstudio.services.block_types import EQUATION_BLOCK_TYPES
 
 INFO_LEVELS = {"info"}
-EQUATION_BLOCK_TYPES = {"equation", "equation_interline", "interline_equation"}
 
 
 class ParserQualityIntelligentGate:

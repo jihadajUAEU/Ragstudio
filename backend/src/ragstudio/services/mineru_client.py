@@ -90,6 +90,10 @@ class MinerUSidecarHealth:
 
 MinerUStatusCallback = Callable[[dict[str, Any]], Awaitable[None]]
 
+_TRANSIENT_STATUS_CODES = frozenset({429, 502, 503, 504})
+_MAX_RETRIES = 3
+_RETRY_BASE_DELAY = 2.0  # seconds, doubles each retry
+
 
 class MinerUClient:
     def __init__(self, base_url: str, timeout_ms: int, poll_interval_ms: int):
@@ -163,10 +167,9 @@ class MinerUClient:
         return str(payload["jobId"])
 
     async def poll_parse_job(self, parse_job_id: str) -> dict[str, Any]:
-        async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
-            response = await client.get(f"{self.base_url}/parse-jobs/{parse_job_id}")
-        response.raise_for_status()
-        return response.json()
+        return await self._retry_transient(
+            "GET", f"{self.base_url}/parse-jobs/{parse_job_id}"
+        )
 
     async def health(self) -> MinerUSidecarHealth:
         async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
@@ -228,11 +231,41 @@ class MinerUClient:
 
     async def download_artifacts(self, parse_job_id: str, target_path: Path) -> Path:
         target_path.parent.mkdir(parents=True, exist_ok=True)
+        url = f"{self.base_url}/parse-jobs/{parse_job_id}/artifacts"
         async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
-            response = await client.get(f"{self.base_url}/parse-jobs/{parse_job_id}/artifacts")
-        response.raise_for_status()
-        target_path.write_bytes(response.content)
+            async with client.stream("GET", url) as response:
+                response.raise_for_status()
+                with target_path.open("wb") as fh:
+                    async for chunk in response.aiter_bytes(chunk_size=1024 * 256):
+                        fh.write(chunk)
         return target_path
+
+    async def _retry_transient(
+        self,
+        method: str,
+        url: str,
+        *,
+        max_retries: int = _MAX_RETRIES,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        """Execute an HTTP request with exponential backoff on transient errors."""
+        last_exc: Exception | None = None
+        for attempt in range(max_retries + 1):
+            try:
+                async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+                    response = await client.request(method, url, **kwargs)
+                if response.status_code in _TRANSIENT_STATUS_CODES and attempt < max_retries:
+                    await asyncio.sleep(_RETRY_BASE_DELAY * (2 ** attempt))
+                    continue
+                response.raise_for_status()
+                return response.json()
+            except httpx.HTTPError as exc:
+                last_exc = exc
+                if attempt < max_retries:
+                    await asyncio.sleep(_RETRY_BASE_DELAY * (2 ** attempt))
+                    continue
+                raise
+        raise last_exc  # type: ignore[misc]  # unreachable, satisfies mypy
 
     def normalize_artifact_zip(
         self,

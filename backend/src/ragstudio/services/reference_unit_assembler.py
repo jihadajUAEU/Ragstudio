@@ -6,6 +6,10 @@ import re
 from dataclasses import dataclass, replace
 from typing import Any
 
+from ragstudio.services.parser_warning_utils import (
+    merge_parser_warnings as _shared_merge_parser_warnings,
+    page_range as _shared_page_range,
+)
 from ragstudio.services.reference_metadata import ReferenceSemantics
 
 
@@ -372,14 +376,7 @@ class ReferenceUnitAssembler:
         return source_location
 
     def _page_range(self, source_location: dict[str, Any]) -> dict[str, Any]:
-        page_start = source_location.get("page_start", source_location.get("page"))
-        page_end = source_location.get("page_end", source_location.get("page"))
-        pages: dict[str, Any] = {}
-        if page_start is not None:
-            pages["page_start"] = page_start
-        if page_end is not None:
-            pages["page_end"] = page_end
-        return pages
+        return _shared_page_range(source_location)
 
     def _provenance_block(
         self,
@@ -477,20 +474,7 @@ class ReferenceUnitAssembler:
             extraction_quality = dict(extraction_quality)
         else:
             extraction_quality = {}
-        parser_warnings = extraction_quality.get("parser_warnings")
-        merged = list(parser_warnings) if isinstance(parser_warnings, list) else []
-        seen = {
-            json.dumps(warning, sort_keys=True, default=str)
-            for warning in merged
-            if isinstance(warning, dict)
-        }
-        for warning in warnings:
-            key = json.dumps(warning, sort_keys=True, default=str)
-            if key in seen:
-                continue
-            seen.add(key)
-            merged.append(warning)
-        extraction_quality["parser_warnings"] = merged
+        _shared_merge_parser_warnings(extraction_quality, warnings)
         metadata["extraction_quality"] = extraction_quality
 
 
