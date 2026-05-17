@@ -1390,36 +1390,6 @@ async def test_orchestrator_returns_evidence_first_answer_when_provider_times_ou
 
 
 @pytest.mark.asyncio
-async def test_orchestrator_returns_evidence_first_answer_when_full_provider_times_out():
-    answer_service = TimeoutAnswerService()
-    orchestrator = RetrievalOrchestrator(
-        chunk_service=FakeChunkSearchService(),
-        answer_service=answer_service,
-        reranker_service=FakeRerankerService(),
-        graph_expansion_service=FakeGraphExpansionService(),
-    )
-
-    result = await orchestrator.query(
-        "how many hadith in bukhari",
-        runtime=FakeRuntimeTool(),
-        profile=type("Profile", (), {"enable_rerank": False, "reranker_provider": "disabled"})(),
-        document_ids=["doc-1"],
-        variant_id="variant-1",
-        query_config={"limit": 8, "response_mode": "full", "answer_budget_ms": 1000},
-    )
-
-    assert answer_service.called is True
-    assert result.error is None
-    assert result.error_type is None
-    assert result.answer.startswith("Evidence-first result")
-    assert result.token_metadata["answer_mode"] == "evidence_first"
-    assert result.token_metadata["answer_mode_requested"] == "full"
-    assert result.token_metadata["llm_answer_status"] == "timeout"
-    assert result.token_metadata["llm_error_type"] == "ReadTimeout"
-    assert result.timings["answer_fallback"] is True
-
-
-@pytest.mark.asyncio
 async def test_orchestrator_emits_primary_seed_expansion_and_final_fusion_stages():
     answer_service = FakeAnswerService()
     orchestrator = RetrievalOrchestrator(

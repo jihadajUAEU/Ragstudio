@@ -458,6 +458,8 @@ class RetrievalOrchestrator:
                 "generated_without_llm": False,
             }
         except (TimeoutError, httpx.TimeoutException) as exc:
+            if response_mode != "fast":
+                raise
             timings["answer_ms"] = _elapsed_ms(answer_started)
             timings["answer_timeout_ms"] = timeout_ms
             timings["answer_fallback"] = True
@@ -471,7 +473,6 @@ class RetrievalOrchestrator:
                 **token_metadata,
                 "llm_answer_status": "timeout",
                 "llm_error_type": exc.__class__.__name__,
-                "answer_mode_requested": response_mode,
             }
 
     async def _quality_diagnostics_trace(
