@@ -347,10 +347,17 @@ function summarizeValue(value: Record<string, unknown> | string) {
   if (typeof value === "string") {
     return value;
   }
+  if (value.label) {
+    return String(value.label);
+  }
   const candidates = [
-    value.label,
     value.page,
+    value.page_start === value.page_end ? undefined : value.page_start,
+    value.page_end,
     value.page_number,
+    value.line,
+    value.line_start === value.line_end ? undefined : value.line_start,
+    value.line_end,
     value.chunk_index,
     value.reference,
     value.source,

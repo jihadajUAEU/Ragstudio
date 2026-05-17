@@ -165,6 +165,7 @@ class QueryService:
         graph_degradation = await self._graph_degradation(payload.document_ids, profile.id)
 
         variants = await self._variants_by_id(payload.variant_ids)
+        document_labels = await self._document_labels(payload.document_ids)
         runs: list[Run] = []
         for variant_id in payload.variant_ids:
             variant = variants[variant_id]
@@ -200,7 +201,11 @@ class QueryService:
                     else StageStatus.SUCCEEDED.value
                 )
                 run.answer = orchestrated.answer
-                run.sources = orchestrated.sources
+                run.sources = self._enriched_sources(
+                    orchestrated.sources,
+                    document_labels=document_labels,
+                    runtime_profile_id=profile.id,
+                )
                 run.chunk_traces = orchestrated.chunk_traces
                 run.reranker_traces = orchestrated.reranker_traces
                 run.token_metadata = orchestrated.token_metadata
@@ -319,6 +324,74 @@ class QueryService:
         result = await self.session.execute(select(model.id).where(model.id.in_(requested_ids)))
         found_ids = set(result.scalars().all())
         return [item_id for item_id in requested_ids if item_id not in found_ids]
+
+    async def _document_labels(self, document_ids: list[str]) -> dict[str, str]:
+        if not document_ids:
+            return {}
+        requested_ids = list(dict.fromkeys(document_ids))
+        result = await self.session.execute(
+            select(Document.id, Document.filename).where(Document.id.in_(requested_ids))
+        )
+        return {document_id: filename for document_id, filename in result.all()}
+
+    def _enriched_sources(
+        self,
+        sources: list[dict[str, Any]],
+        *,
+        document_labels: dict[str, str],
+        runtime_profile_id: str,
+    ) -> list[dict[str, Any]]:
+        enriched: list[dict[str, Any]] = []
+        for source in sources:
+            item = dict(source)
+            document_id = item.get("document_id")
+            document_name = (
+                document_labels.get(document_id) if isinstance(document_id, str) else None
+            )
+            if document_name:
+                item.setdefault("document_name", document_name)
+                item.setdefault("filename", document_name)
+            item.setdefault("runtime_profile_id", runtime_profile_id)
+            source_location = item.get("source_location")
+            if isinstance(source_location, dict):
+                item["source_location"] = self._source_location_summary(
+                    source_location,
+                    document_name=document_name,
+                )
+            metadata = dict(item.get("metadata") or {})
+            if document_name:
+                metadata.setdefault("document_name", document_name)
+                metadata.setdefault("filename", document_name)
+            metadata.setdefault("runtime_profile_id", runtime_profile_id)
+            item["metadata"] = metadata
+            enriched.append(item)
+        return enriched
+
+    def _source_location_summary(
+        self,
+        source_location: dict[str, Any],
+        *,
+        document_name: str | None,
+    ) -> dict[str, Any]:
+        location = dict(source_location)
+        page = location.get("page")
+        page_start = location.get("page_start")
+        page_end = location.get("page_end")
+        if page is None and page_start is not None and page_start == page_end:
+            location["page"] = page_start
+        label_parts = [document_name]
+        if location.get("page") is not None:
+            label_parts.append(f"page {location['page']}")
+        elif page_start is not None and page_end is not None:
+            label_parts.append(f"pages {page_start}-{page_end}")
+        elif page_start is not None:
+            label_parts.append(f"page {page_start}")
+        line = location.get("line") or location.get("line_start")
+        if line is not None:
+            label_parts.append(f"line {line}")
+        if any(label_parts):
+            location.setdefault("label", " · ".join(str(part) for part in label_parts if part))
+        return location
 
     def _query_config(self, profile: Any, variant: Variant, payload: QueryIn) -> dict[str, Any]:
         parameters = variant.parameters or {}

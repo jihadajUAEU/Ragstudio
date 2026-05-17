@@ -247,6 +247,10 @@ async def test_query_service_uses_runtime_orchestrator_path(client):
     assert run.query_config["enable_rerank"] is False
     assert run.reranker_traces == []
     assert run.token_metadata["prompt_tokens"] == 12
+    assert run.sources[0]["document_name"] == "doc.txt"
+    assert run.sources[0]["filename"] == "doc.txt"
+    assert run.sources[0]["runtime_profile_id"] == "default"
+    assert run.sources[0]["metadata"]["document_name"] == "doc.txt"
     assert [row.stage for row in run.pathway_diagnostics][:3] == [
         "planner",
         "llm_planning",
@@ -427,9 +431,10 @@ async def test_query_service_degrades_pending_runtime_index_to_metadata(client):
 
     run = result.runs[0]
     assert run.status == StageStatus.SUCCEEDED
-    assert run.answer == "Sahih al-Bukhari contains 7277 hadith."
+    assert run.answer == "The word حنانا is mentioned in Surah 19, verse 13. [S1]"
     assert run.sources
     assert run.sources[0]["document_id"] == document.id
+    assert run.sources[0]["document_name"] == "doc.txt"
     assert run.sources[0]["source_location"]["reference"] == "19:13"
     assert runtime.query_calls == 0
     assert run.timings["index_degraded"] is True

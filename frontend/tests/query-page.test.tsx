@@ -422,7 +422,12 @@ describe("QueryPage", () => {
               chunk_id: "chunk-1",
               document_id: "doc-1",
               text: "Book 1, Hadith 1",
-              source_location: { page: 1, reference: "Book 1, Hadith 1" },
+              source_location: {
+                label: "source.txt · page 1",
+                page_start: 1,
+                page_end: 1,
+                reference: "Book 1, Hadith 1",
+              },
               parser_quality_warning_codes: ["reference_unit_missing_expected_script"],
               quality_action_policy: "materialize",
             },
@@ -451,9 +456,72 @@ describe("QueryPage", () => {
 
     expect(await screen.findByRole("dialog", { name: "Evidence details" })).toBeVisible();
     expect(screen.getByText("Source location", { selector: "summary" })).toBeVisible();
+    expect(screen.getAllByText("source.txt · page 1").length).toBeGreaterThan(0);
     fireEvent.click(screen.getByText("Parser quality", { selector: "summary" }));
     expect(screen.getByText("reference_unit_missing_expected_script")).toBeVisible();
     expect(screen.getAllByText("materialize").length).toBeGreaterThan(0);
+  });
+
+  it("derives evidence summary from nested metadata when root fields are absent", async () => {
+    vi.mocked(apiClient.query).mockResolvedValue({
+      runs: [
+        {
+          id: "run-1",
+          variant_id: "variant-1",
+          experiment_id: null,
+          query: "alpha",
+          status: "succeeded",
+          answer: "answer",
+          sources: [
+            {
+              chunk_id: "chunk-1",
+              document_id: "doc-1",
+              text: "Evidence text",
+              source_location: { page_start: 412, page_end: 412 },
+              metadata: {
+                filename: "quran_arabic_english.pdf",
+                index_shape: { runtime_profile_id: "default" },
+                extraction_quality: {
+                  parser_warnings: [
+                    {
+                      code: "recovered_text_from_misclassified_block",
+                      quality_gate_action: "review_warning",
+                    },
+                  ],
+                },
+              },
+            },
+          ],
+          chunk_traces: [],
+          timings: {},
+          error: null,
+          runtime_profile_id: null,
+          document_ids: ["doc-1"],
+          query_config: {},
+          reranker_traces: [],
+          token_metadata: {},
+          error_type: null,
+        },
+      ],
+    });
+    renderQueryPage();
+
+    fireEvent.change(await screen.findByPlaceholderText("Ask a focused question against selected documents."), {
+      target: { value: "alpha" },
+    });
+    fireEvent.click(await screen.findByText("source.txt"));
+    fireEvent.click((await screen.findAllByText("Balanced"))[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+
+    expect(await screen.findByText("quran_arabic_english.pdf")).toBeVisible();
+    expect(screen.getAllByText("412").length).toBeGreaterThan(0);
+    expect(screen.getByText("1 parser warning: review_warning")).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: "Inspect evidence" }));
+    expect(await screen.findByRole("dialog", { name: "Evidence details" })).toBeVisible();
+    expect(screen.getByText("default")).toBeVisible();
+    fireEvent.click(screen.getByText("Parser quality", { selector: "summary" }));
+    expect(screen.getByText("recovered_text_from_misclassified_block")).toBeVisible();
   });
 
   it("shows explicit missing states and restores focus after Escape", async () => {

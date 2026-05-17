@@ -448,6 +448,7 @@ function normalizeQuerySource(
     textValue(source.source_location) ??
     textValue(source.location);
   const relationshipRefs = relationshipRefsFrom(source, metadata);
+  const indexShape = recordValue(metadata?.index_shape);
 
   return {
     id: sourceId,
@@ -463,8 +464,17 @@ function normalizeQuerySource(
       textValue(source.documentName) ??
       textValue(source.filename) ??
       textValue(metadata?.filename) ??
+      textValue(metadata?.document_name) ??
+      textValue(metadata?.documentName) ??
+      textValue(recordValue(metadata?.document_metadata)?.title) ??
       null,
-    runtimeProfileId: textValue(source.runtime_profile_id) ?? run.runtime_profile_id ?? null,
+    runtimeProfileId:
+      textValue(source.runtime_profile_id) ??
+      textValue(source.runtimeProfileId) ??
+      textValue(metadata?.runtime_profile_id) ??
+      textValue(indexShape?.runtime_profile_id) ??
+      run.runtime_profile_id ??
+      null,
     text:
       textValue(source.text) ??
       textValue(source.chunk_text) ??
@@ -473,18 +483,8 @@ function normalizeQuerySource(
       null,
     sourceLocation,
     metadata,
-    parserWarnings: stringArray(
-      source.parser_quality_warning_codes ??
-        source.parser_warnings ??
-        metadata?.parser_quality_warning_codes ??
-        metadata?.parser_warnings,
-    ),
-    qualityStatus:
-      textValue(source.quality_action_policy) ??
-      textValue(source.quality_status) ??
-      textValue(metadata?.quality_action_policy) ??
-      textValue(metadata?.quality_status) ??
-      null,
+    parserWarnings: parserWarningsFrom(source, metadata),
+    qualityStatus: qualityStatusFrom(source, metadata),
     retrievalReasons: retrievalReasonsFrom(source),
     relationshipRefs,
     graphUnavailableDetail:
@@ -547,9 +547,87 @@ function traceMatchesSource(
 }
 
 function retrievalReasonsFrom(source: Record<string, unknown>) {
-  const reasons = stringArray(source.retrieval_reasons ?? source.reasons ?? source.reason);
+  const metadata = recordValue(source.metadata);
+  const reasons = stringArray(
+    source.retrieval_reasons ??
+      source.reasons ??
+      source.reason ??
+      metadata?.retrieval_reasons ??
+      metadata?.reasons,
+  );
   const score = numberValue(source.score);
   return score !== undefined ? [...reasons, `score ${score.toFixed(3)}`] : reasons;
+}
+
+function parserWarningsFrom(
+  source: Record<string, unknown>,
+  metadata: Record<string, unknown> | null | undefined,
+) {
+  const direct = stringArray(
+    source.parser_quality_warning_codes ??
+      source.parser_warnings ??
+      metadata?.parser_quality_warning_codes ??
+      metadata?.parser_warnings,
+  );
+  if (direct.length) {
+    return direct;
+  }
+  const extractionQuality =
+    recordValue(source.extraction_quality) ?? recordValue(metadata?.extraction_quality);
+  const parserWarnings = extractionQuality?.parser_warnings;
+  if (!Array.isArray(parserWarnings)) {
+    return [];
+  }
+  return parserWarnings
+    .map((warning) => {
+      if (typeof warning === "string") {
+        return warning;
+      }
+      const record = recordValue(warning);
+      return textValue(record?.code) ?? textValue(record?.message);
+    })
+    .filter(Boolean) as string[];
+}
+
+function qualityStatusFrom(
+  source: Record<string, unknown>,
+  metadata: Record<string, unknown> | null | undefined,
+) {
+  const explicit =
+    summarizePolicy(source.quality_action_policy) ??
+    textValue(source.quality_status) ??
+    summarizePolicy(metadata?.quality_action_policy) ??
+    textValue(metadata?.quality_status);
+  if (explicit) {
+    return explicit;
+  }
+  const extractionQuality =
+    recordValue(source.extraction_quality) ?? recordValue(metadata?.extraction_quality);
+  const parserWarnings = extractionQuality?.parser_warnings;
+  if (Array.isArray(parserWarnings) && parserWarnings.length > 0) {
+    const actions = parserWarnings
+      .map((warning) => textValue(recordValue(warning)?.quality_gate_action))
+      .filter(Boolean);
+    const actionSummary = actions.length ? `: ${Array.from(new Set(actions)).join(", ")}` : "";
+    return `${parserWarnings.length} parser warning${parserWarnings.length === 1 ? "" : "s"}${actionSummary}`;
+  }
+  return null;
+}
+
+function summarizePolicy(value: unknown) {
+  if (typeof value === "string" && value.trim()) {
+    return value.trim();
+  }
+  const record = recordValue(value);
+  if (!record) {
+    return null;
+  }
+  const action =
+    textValue(record.action) ??
+    textValue(record.status) ??
+    textValue(record.quality_gate_action) ??
+    textValue(record.graph_confidence);
+  return action ?? summarizeEvidenceValue(record);
 }
 
 function relationshipRefsFrom(
@@ -596,10 +674,17 @@ function summarizeEvidenceValue(value: Record<string, unknown> | string) {
   if (typeof value === "string") {
     return value;
   }
+  if (value.label) {
+    return String(value.label);
+  }
   return [
-    value.label,
     value.page,
+    value.page_start === value.page_end ? undefined : value.page_start,
+    value.page_end,
     value.page_number,
+    value.line,
+    value.line_start === value.line_end ? undefined : value.line_start,
+    value.line_end,
     value.chunk_index,
     value.reference,
     value.source,
