@@ -1,20 +1,16 @@
 import { X } from "lucide-react";
 import { useMemo, type ReactNode } from "react";
 
-import type { RunOut } from "../../api/generated";
+import type { PathwayDiagnosticOut, RunOut } from "../../api/generated";
 import { FocusTrapDialog } from "../../components/focus-trap-dialog";
 import { Button } from "../../components/ui/button";
 import { cn } from "../../lib/utils";
 
-type StepStatus = "success" | "warning" | "failed" | "skipped" | "neutral";
+type StepStatus = "success" | "warning" | "failed" | "skipped" | "unknown";
 
 interface PathwayStep {
   step: string;
-  pathway: string;
-  status: string;
-  statusKind: StepStatus;
-  time: string;
-  result: string;
+  diagnostic: PathwayDiagnosticOut;
 }
 
 export function QueryPathwayViewer({
@@ -63,26 +59,14 @@ export function QueryPathwayViewer({
             <PathwaySection title="Timeline" defaultOpen>
               <Timeline steps={pathway.steps} />
             </PathwaySection>
-            <PathwaySection title="Planner">
-              <KeyValue label="Status" value={pathway.plannerStatus} />
-              <KeyValue label="Timeout" value={pathway.plannerTimeout} />
-              <KeyValue label="Target terms" value={pathway.targetTerms} />
-              <KeyValue label="Possible references" value={pathway.possibleReferences} />
-              <KeyValue label="Reference verification" value={pathway.referenceVerification} />
-            </PathwaySection>
-            <PathwaySection title="Retrieval">
-              <KeyValue label="Metadata" value={pathway.metadataResult} />
-              <KeyValue label="Native" value={pathway.nativeResult} />
-              <KeyValue label="Graph" value={pathway.graphResult} />
-              <KeyValue label="Fusion" value={pathway.fusionResult} />
-            </PathwaySection>
-            <PathwaySection title="Answer">
-              <KeyValue label="Answer status" value={pathway.answerStatus} />
-              <KeyValue label="Fallback" value={pathway.answerFallback} />
-              <KeyValue label="Grounding" value={pathway.groundingStatus} />
-            </PathwaySection>
             <PathwaySection title="Raw">
-              <JsonBlock value={{ timings: run.timings, chunk_traces: run.chunk_traces, token_metadata: run.token_metadata }} />
+              <JsonBlock
+                value={{
+                  timings: run.timings,
+                  chunk_traces: run.chunk_traces,
+                  token_metadata: run.token_metadata,
+                }}
+              />
             </PathwaySection>
           </div>
         </>
@@ -93,7 +77,7 @@ export function QueryPathwayViewer({
 
 function SummaryGrid({ run, pathway }: { run: RunOut; pathway: ReturnType<typeof buildPathway> }) {
   return (
-    <div className="grid gap-2 text-sm sm:grid-cols-2">
+    <div className="grid gap-2 text-sm sm:col-span-2 sm:grid-cols-2">
       <KeyValue label="Run status" value={run.status} />
       <KeyValue label="Total time" value={formatMs(numberValue(run.timings.total_ms))} />
       <KeyValue label="Answer mode" value={textValue(run.token_metadata.answer_mode) ?? "not recorded"} />
@@ -111,19 +95,30 @@ function Timeline({ steps }: { steps: PathwayStep[] }) {
         <li key={step.step} className="rounded-md border border-[#e1e7ea] bg-white p-3">
           <div className="grid gap-2 sm:grid-cols-[2.25rem_minmax(8rem,1fr)_auto_auto] sm:items-center">
             <span className="font-mono text-xs text-[#62717a]">{step.step}</span>
-            <p className="font-medium text-[#1f2933]">{step.pathway}</p>
+            <p className="font-medium text-[#1f2933]">{step.diagnostic.label}</p>
             <div>
               <p className="sr-only">Status</p>
-              <StatusPill status={step.status} kind={step.statusKind} />
+              <StatusPill
+                status={step.diagnostic.status}
+                kind={statusKind(step.diagnostic.status)}
+              />
             </div>
             <div className="font-mono text-xs text-[#3a4a53]">
               <span className="sr-only">Time </span>
-              {step.time}
+              {formatMs(step.diagnostic.time_ms ?? undefined)}
+              {step.diagnostic.budget_ms ? ` / ${formatMs(step.diagnostic.budget_ms)}` : ""}
             </div>
           </div>
-          <div className="mt-2 rounded-md bg-[#f8fafb] px-3 py-2">
-            <p className="text-xs font-semibold text-[#62717a]">Result</p>
-            <p className="mt-1 break-words text-sm text-[#3a4a53]">{step.result}</p>
+          <div className="mt-2 grid gap-2 sm:grid-cols-2">
+            <DiagnosticValue label="Input" value={step.diagnostic.input} />
+            <DiagnosticValue label="Action" value={step.diagnostic.action} />
+            <DiagnosticValue label="Output" value={step.diagnostic.output} />
+            <DiagnosticValue label="Diagnosis" value={step.diagnostic.diagnosis} />
+            <DiagnosticValue
+              label="Suggested action"
+              value={step.diagnostic.suggested_action}
+              className="sm:col-span-2"
+            />
           </div>
         </li>
       ))}
@@ -161,6 +156,23 @@ function KeyValue({ label, value }: { label: string; value: string }) {
   );
 }
 
+function DiagnosticValue({
+  label,
+  value,
+  className,
+}: {
+  label: string;
+  value: string;
+  className?: string;
+}) {
+  return (
+    <div className={cn("min-w-0 rounded-md bg-[#f8fafb] px-3 py-2", className)}>
+      <p className="text-xs font-semibold text-[#62717a]">{label}</p>
+      <p className="mt-1 break-words text-sm text-[#3a4a53]">{value || "not recorded"}</p>
+    </div>
+  );
+}
+
 function StatusPill({ status, kind }: { status: string; kind: StepStatus }) {
   return (
     <span
@@ -170,7 +182,7 @@ function StatusPill({ status, kind }: { status: string; kind: StepStatus }) {
         kind === "warning" && "bg-[#fff4d7] text-[#8a5a00]",
         kind === "failed" && "bg-[#fff0f0] text-[#8c2525]",
         kind === "skipped" && "bg-[#eef4f6] text-[#62717a]",
-        kind === "neutral" && "bg-[#f8fafb] text-[#3a4a53]",
+        kind === "unknown" && "bg-[#f8fafb] text-[#3a4a53]",
       )}
     >
       {status}
@@ -187,7 +199,6 @@ function JsonBlock({ value }: { value: unknown }) {
 }
 
 function buildPathway(run: RunOut) {
-  const timings = run.timings;
   const traces = run.chunk_traces;
   const plannerTrace = traceByStage(traces, "planner");
   const hypothesisTrace = traceByStage(traces, "query_hypothesis");
@@ -210,56 +221,200 @@ function buildPathway(run: RunOut) {
     textValue(topSource?.source_location) ??
     textValue(recordValue(topSource?.source_location)?.reference) ??
     "not recorded";
-  const possibleReferences = stringArray(hypothesisTrace?.possible_references);
   const targetTerms = targetTermValues(hypothesisTrace?.target_terms);
   const referenceResults = referenceResultValues(verificationTrace?.possible_reference_results);
   const answerStatus =
     textValue(run.token_metadata.llm_answer_status) ??
     (run.timings.answer_fallback ? "fallback" : run.status);
-  const steps: PathwayStep[] = [
-    step("1", "Planner", textValue(plannerTrace?.query_hypothesis_status) ?? "recorded", numberValue(timings.planner_ms), plannerResult(plannerTrace)),
-    step("2", "LLM planning", textValue(hypothesisTrace?.status) ?? textValue(timings.query_hypothesis_status) ?? "not recorded", numberValue(timings.query_hypothesis_ms), listSummary("terms", targetTerms)),
-    step("3", "Metadata retrieval", metadataPassStatus(metadataPasses), numberValue(timings.metadata_ms), metadataResult(metadataPasses)),
-    step("4", "Native retrieval", timings.native_degraded ? "degraded" : textValue(retrievalTrace?.native_status) ?? "ok", numberValue(timings.native_stage_ms), textValue(timings.native_error) ?? countSummary("candidates", numberValue(retrievalTrace?.native_candidates))),
-    step("5", "Seed fusion", "ok", numberValue(timings.initial_fusion_ms), countSummary("seed candidates", numberValue(seedFusionTrace?.seed_candidates))),
-    step("6", "Graph expansion", textValue(graphTrace?.status) ?? "not recorded", numberValue(timings.graph_ms), countSummary("expanded candidates", numberValue(graphTrace?.expanded_candidates))),
-    step("7", "Graph hydration", textValue(graphHydrationTrace?.status) ?? "not recorded", numberValue(timings.graph_hydration_ms), countSummary("hydrated chunks", numberValue(graphHydrationTrace?.unique_hydrated_chunks))),
-    step("8", "Final fusion", "ok", numberValue(timings.final_fusion_ms), countSummary("fused candidates", numberValue(finalFusionTrace?.fused_candidates))),
-    step("9", "Hypothesis verification", textValue(verificationTrace?.status) ?? "not recorded", undefined, referenceResults || textValue(verificationTrace?.reason) || "not recorded"),
-    step("10", "Context assembly", "ok", numberValue(timings.context_assembly_ms), countSummary("included candidates", numberValue(contextTrace?.included_candidates))),
-    step("11", "Answer generation", answerStatus, numberValue(timings.answer_ms), answerResult(run)),
-    step("12", "Grounding validation", textValue(groundingTrace?.status) ?? "not recorded", undefined, groundingResult(groundingTrace)),
-  ];
+  const steps = diagnosticsForRun(run, {
+    plannerTrace,
+    hypothesisTrace,
+    retrievalTrace,
+    seedFusionTrace,
+    graphTrace,
+    graphHydrationTrace,
+    finalFusionTrace,
+    verificationTrace,
+    contextTrace,
+    groundingTrace,
+    metadataPasses,
+    targetTerms,
+    referenceResults,
+    answerStatus,
+  }).map((diagnostic, index) => ({ step: String(index + 1), diagnostic }));
 
   return {
     steps,
     topReference,
     topSource: textValue(topSource?.chunk_id) ?? textValue(topSource?.id) ?? "not recorded",
-    plannerStatus: textValue(hypothesisTrace?.status) ?? textValue(timings.query_hypothesis_status) ?? "not recorded",
-    plannerTimeout: formatMs(numberValue(timings.query_hypothesis_timeout_ms)),
-    targetTerms: targetTerms.length ? targetTerms.join(", ") : "not recorded",
-    possibleReferences: possibleReferences.length ? possibleReferences.join(", ") : "none",
-    referenceVerification: referenceResults || "not recorded",
-    metadataResult: metadataResult(metadataPasses),
-    nativeResult: textValue(timings.native_error) ?? countSummary("native candidates", numberValue(retrievalTrace?.native_candidates)),
-    graphResult: countSummary("expanded candidates", numberValue(graphTrace?.expanded_candidates)),
-    fusionResult: countSummary("fused candidates", numberValue(finalFusionTrace?.fused_candidates)),
-    answerStatus,
-    answerFallback: run.timings.answer_fallback
-      ? textValue(run.token_metadata.fallback_reason) ?? "answer fallback"
-      : "none",
-    groundingStatus: textValue(groundingTrace?.status) ?? "not recorded",
   };
 }
 
-function step(stepId: string, pathway: string, status: string, timeMs: number | undefined, result: string): PathwayStep {
+function diagnosticsForRun(
+  run: RunOut,
+  fallback: {
+    plannerTrace: Record<string, unknown> | undefined;
+    hypothesisTrace: Record<string, unknown> | undefined;
+    retrievalTrace: Record<string, unknown> | undefined;
+    seedFusionTrace: Record<string, unknown> | undefined;
+    graphTrace: Record<string, unknown> | undefined;
+    graphHydrationTrace: Record<string, unknown> | undefined;
+    finalFusionTrace: Record<string, unknown> | undefined;
+    verificationTrace: Record<string, unknown> | undefined;
+    contextTrace: Record<string, unknown> | undefined;
+    groundingTrace: Record<string, unknown> | undefined;
+    metadataPasses: Record<string, unknown>[];
+    targetTerms: string[];
+    referenceResults: string;
+    answerStatus: string;
+  },
+): PathwayDiagnosticOut[] {
+  if (run.pathway_diagnostics?.length) {
+    return run.pathway_diagnostics;
+  }
+  return [
+    diagnostic(
+      "planner",
+      "Planner",
+      "query + selected documents",
+      "Build retrieval plan and pathway stages",
+      plannerResult(fallback.plannerTrace),
+      textValue(fallback.plannerTrace?.query_hypothesis_status) ?? "unknown",
+      numberValue(run.timings.planner_ms),
+    ),
+    diagnostic(
+      "llm_planning",
+      "LLM planning",
+      "query + selected document metadata",
+      "Generate target terms and possible references",
+      listSummary("target_terms", fallback.targetTerms),
+      textValue(fallback.hypothesisTrace?.status) ??
+        textValue(run.timings.query_hypothesis_status) ??
+        "unknown",
+      numberValue(run.timings.query_hypothesis_ms),
+      numberValue(run.timings.query_hypothesis_timeout_ms),
+    ),
+    diagnostic(
+      "metadata_retrieval",
+      "Metadata retrieval",
+      "retrieval plan + selected documents",
+      "Run metadata, lexical, and exact-reference passes",
+      metadataResult(fallback.metadataPasses),
+      metadataPassStatus(fallback.metadataPasses),
+      numberValue(run.timings.metadata_ms),
+    ),
+    diagnostic(
+      "native_retrieval",
+      "Native retrieval",
+      "query + native runtime scope",
+      "Search native RAG runtime",
+      textValue(run.timings.native_error) ??
+        countSummary("candidates", numberValue(fallback.retrievalTrace?.native_candidates)),
+      run.timings.native_degraded
+        ? "warning"
+        : textValue(fallback.retrievalTrace?.native_status) ?? "unknown",
+      numberValue(run.timings.native_stage_ms),
+      numberValue(run.query_config.native_query_timeout_ms),
+    ),
+    diagnostic(
+      "seed_fusion",
+      "Seed fusion",
+      "metadata and native candidates",
+      "Merge initial candidates before graph expansion",
+      countSummary("seed candidates", numberValue(fallback.seedFusionTrace?.seed_candidates)),
+      "success",
+      numberValue(run.timings.initial_fusion_ms),
+    ),
+    diagnostic(
+      "graph_expansion",
+      "Graph expansion",
+      "seed candidates",
+      "Expand candidate context through graph relationships",
+      countSummary("expanded candidates", numberValue(fallback.graphTrace?.expanded_candidates)),
+      textValue(fallback.graphTrace?.status) ?? "unknown",
+      numberValue(run.timings.graph_ms),
+    ),
+    diagnostic(
+      "graph_hydration",
+      "Graph hydration",
+      "graph candidates",
+      "Hydrate graph candidates into source chunks",
+      countSummary(
+        "hydrated chunks",
+        numberValue(fallback.graphHydrationTrace?.unique_hydrated_chunks),
+      ),
+      textValue(fallback.graphHydrationTrace?.status) ?? "unknown",
+      numberValue(run.timings.graph_hydration_ms),
+    ),
+    diagnostic(
+      "final_fusion",
+      "Final fusion",
+      "metadata, native, and graph candidates",
+      "Score and order final evidence candidates",
+      countSummary("fused candidates", numberValue(fallback.finalFusionTrace?.fused_candidates)),
+      "success",
+      numberValue(run.timings.final_fusion_ms),
+    ),
+    diagnostic(
+      "hypothesis_verification",
+      "Hypothesis verification",
+      "final evidence + planner hypotheses",
+      "Verify possible references and target terms against evidence",
+      fallback.referenceResults || textValue(fallback.verificationTrace?.reason) || "not recorded",
+      textValue(fallback.verificationTrace?.status) ?? "unknown",
+    ),
+    diagnostic(
+      "context_assembly",
+      "Context assembly",
+      "reranked final candidates",
+      "Assemble evidence context for answer generation",
+      countSummary("included", numberValue(fallback.contextTrace?.included_candidates)),
+      "success",
+      numberValue(run.timings.context_assembly_ms),
+    ),
+    diagnostic(
+      "answer_generation",
+      "Answer generation",
+      "assembled evidence context",
+      "Generate final answer wording or evidence-first fallback",
+      answerResult(run),
+      fallback.answerStatus,
+      numberValue(run.timings.answer_ms),
+      numberValue(run.timings.answer_timeout_ms) ?? numberValue(run.query_config.answer_budget_ms),
+    ),
+    diagnostic(
+      "grounding_validation",
+      "Grounding validation",
+      "answer + final evidence",
+      "Validate answer citations and expected references",
+      groundingResult(fallback.groundingTrace),
+      textValue(fallback.groundingTrace?.status) ?? "unknown",
+    ),
+  ];
+}
+
+function diagnostic(
+  stage: string,
+  label: string,
+  input: string,
+  action: string,
+  output: string,
+  status: string,
+  timeMs?: number,
+  budgetMs?: number,
+): PathwayDiagnosticOut {
+  const kind = statusKind(status);
   return {
-    step: stepId,
-    pathway,
-    status,
-    statusKind: statusKind(status),
-    time: formatMs(timeMs),
-    result,
+    stage,
+    label,
+    input,
+    action,
+    output: output || "not recorded",
+    status: kind,
+    time_ms: timeMs,
+    budget_ms: budgetMs,
+    diagnosis: fallbackDiagnosis(kind),
+    suggested_action: kind === "unknown" ? "Inspect raw pathway data." : "None",
   };
 }
 
@@ -356,7 +511,23 @@ function statusKind(status: string): StepStatus {
   if (["skipped", "not_applicable", "disabled"].includes(normalized)) {
     return "skipped";
   }
-  return "neutral";
+  return "unknown";
+}
+
+function fallbackDiagnosis(kind: StepStatus) {
+  if (kind === "unknown") {
+    return "Missing trace or timing data.";
+  }
+  if (kind === "warning") {
+    return "Stage degraded or used fallback.";
+  }
+  if (kind === "failed") {
+    return "Stage failed.";
+  }
+  if (kind === "skipped") {
+    return "Skipped by query configuration.";
+  }
+  return "Healthy.";
 }
 
 function formatMs(value: number | undefined) {
@@ -375,14 +546,4 @@ function recordValue(value: unknown): Record<string, unknown> | null {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null;
-}
-
-function stringArray(value: unknown): string[] {
-  if (Array.isArray(value)) {
-    return value.map((item) => String(item)).filter(Boolean);
-  }
-  if (typeof value === "string" && value.trim()) {
-    return [value.trim()];
-  }
-  return [];
 }

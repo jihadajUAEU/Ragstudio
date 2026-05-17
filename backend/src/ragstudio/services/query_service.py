@@ -11,6 +11,9 @@ from ragstudio.schemas.runtime import RuntimeHealthCheck
 from ragstudio.services.adapter import RAGAnythingAdapter
 from ragstudio.services.chunk_service import ChunkService
 from ragstudio.services.index_progress import index_shape_compatible
+from ragstudio.services.query_pathway_diagnostics_service import (
+    QueryPathwayDiagnosticsService,
+)
 from ragstudio.services.reranker_service import RerankerService
 from ragstudio.services.retrieval_orchestrator import RetrievalOrchestrator
 from ragstudio.services.runtime_factory import RAGAnythingRuntimeFactory
@@ -147,7 +150,7 @@ class QueryService:
 
     async def list_runs(self) -> list[RunOut]:
         result = await self.session.execute(select(Run).order_by(Run.created_at.desc()))
-        return [RunOut.model_validate(item) for item in result.scalars().all()]
+        return [self._run_out(item) for item in result.scalars().all()]
 
     async def _run_runtime_query(self, payload: QueryIn, profile: Any) -> QueryOut:
         checks = await self.health_service.check(profile)
@@ -216,7 +219,7 @@ class QueryService:
                 run.timings = {"total_ms": self._elapsed_ms(started_at)}
 
             runs.append(await self._commit_query_run(run))
-        return QueryOut(runs=[RunOut.model_validate(run) for run in runs])
+        return QueryOut(runs=[self._run_out(run) for run in runs])
 
     async def _commit_query_run(self, run: Run) -> Run:
         snapshot = self._run_snapshot(run)
@@ -252,6 +255,43 @@ class QueryService:
         if run.id:
             snapshot["id"] = run.id
         return snapshot
+
+    def _run_out(self, run: Run) -> RunOut:
+        sources = list(run.sources or [])
+        chunk_traces = list(run.chunk_traces or [])
+        timings = dict(run.timings or {})
+        token_metadata = dict(run.token_metadata or {})
+        query_config = dict(run.query_config or {})
+        return RunOut.model_validate(
+            {
+                "id": run.id,
+                "variant_id": run.variant_id,
+                "experiment_id": run.experiment_id,
+                "query": run.query,
+                "status": run.status,
+                "answer": run.answer,
+                "sources": sources,
+                "chunk_traces": chunk_traces,
+                "timings": timings,
+                "error": run.error,
+                "runtime_profile_id": run.runtime_profile_id,
+                "document_ids": list(run.document_ids or []),
+                "query_config": query_config,
+                "reranker_traces": list(run.reranker_traces or []),
+                "token_metadata": token_metadata,
+                "error_type": run.error_type,
+                "pathway_diagnostics": QueryPathwayDiagnosticsService().build(
+                    status=str(run.status or ""),
+                    error=run.error,
+                    error_type=run.error_type,
+                    timings=timings,
+                    chunk_traces=chunk_traces,
+                    sources=sources,
+                    token_metadata=token_metadata,
+                    query_config=query_config,
+                ),
+            }
+        )
 
     def _retrieval_orchestrator(self) -> RetrievalOrchestrator:
         if self.retrieval_orchestrator is not None:
@@ -571,7 +611,7 @@ class QueryService:
         await self.session.commit()
         for run in runs:
             await self.session.refresh(run)
-        return QueryOut(runs=[RunOut.model_validate(run) for run in runs])
+        return QueryOut(runs=[self._run_out(run) for run in runs])
 
     @staticmethod
     def runtime_failure_detail(checks: list[RuntimeHealthCheck]) -> str:

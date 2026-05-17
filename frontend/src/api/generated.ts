@@ -495,6 +495,19 @@ export interface OptimizerOut {
   candidate_summaries: OptimizerCandidateSummary[];
 }
 
+export interface PathwayDiagnosticOut {
+  stage: string;
+  label: string;
+  input: string;
+  action: string;
+  output: string;
+  status: "success" | "warning" | "failed" | "skipped" | "unknown";
+  time_ms?: number | null;
+  budget_ms?: number | null;
+  diagnosis: string;
+  suggested_action: string;
+}
+
 export interface RunOut {
   id: string;
   variant_id: string;
@@ -512,6 +525,7 @@ export interface RunOut {
   reranker_traces: Record<string, unknown>[];
   token_metadata: Record<string, unknown>;
   error_type?: string | null;
+  pathway_diagnostics?: PathwayDiagnosticOut[];
 }
 
 export interface DiagnosticsOut {

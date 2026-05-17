@@ -247,6 +247,13 @@ async def test_query_service_uses_runtime_orchestrator_path(client):
     assert run.query_config["enable_rerank"] is False
     assert run.reranker_traces == []
     assert run.token_metadata["prompt_tokens"] == 12
+    assert [row.stage for row in run.pathway_diagnostics][:3] == [
+        "planner",
+        "llm_planning",
+        "metadata_retrieval",
+    ]
+    assert run.pathway_diagnostics[0].input == "query + selected documents"
+    assert "pathway_diagnostics" not in run.token_metadata
 
 
 @pytest.mark.asyncio

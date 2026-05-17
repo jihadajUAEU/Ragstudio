@@ -235,6 +235,45 @@ describe("QueryPage", () => {
             llm_answer_status: "timeout",
             fallback_reason: "llm_timeout",
           },
+          pathway_diagnostics: [
+            {
+              stage: "llm_planning",
+              label: "LLM planning",
+              input: "query + selected document metadata",
+              action: "Generate target terms and possible references",
+              output:
+                "target_terms: sacrifice, eid; possible_references: book:13:hadith:25",
+              status: "success",
+              time_ms: 1842.868,
+              budget_ms: 5000,
+              diagnosis: "Healthy. Used 37% of budget.",
+              suggested_action: "None",
+            },
+            {
+              stage: "native_retrieval",
+              label: "Native retrieval",
+              input: "query + native runtime scope",
+              action: "Search native RAG runtime",
+              output: "Native query timed out after 2500 ms.",
+              status: "warning",
+              time_ms: 4303.248,
+              budget_ms: 2500,
+              diagnosis: "Timed out or degraded; metadata fallback used.",
+              suggested_action: "Check native runtime latency.",
+            },
+            {
+              stage: "answer_generation",
+              label: "Answer generation",
+              input: "assembled evidence context",
+              action: "Generate final answer wording or evidence-first fallback",
+              output: "fallback: llm_timeout",
+              status: "warning",
+              time_ms: 3000,
+              budget_ms: 3000,
+              diagnosis: "Timed out; evidence-first answer used.",
+              suggested_action: "Use full mode if natural LLM wording is required.",
+            },
+          ],
           error_type: null,
         },
       ],
@@ -251,11 +290,20 @@ describe("QueryPage", () => {
 
     expect(await screen.findByRole("dialog", { name: "Query pathway" })).toBeVisible();
     expect(screen.getByText("Timeline", { selector: "summary" })).toBeVisible();
+    expect(screen.getByText("Raw", { selector: "summary" })).toBeVisible();
+    expect(screen.queryByText("Planner", { selector: "summary" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Retrieval", { selector: "summary" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Answer", { selector: "summary" })).not.toBeInTheDocument();
     expect(screen.getByText("LLM planning")).toBeVisible();
-    expect(screen.getByText("Metadata retrieval")).toBeVisible();
+    expect(screen.getByText("Native retrieval")).toBeVisible();
+    expect(screen.getAllByText("Input").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Action").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Output").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Diagnosis").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Suggested action").length).toBeGreaterThan(0);
     expect(screen.getAllByText("book:13:hadith:25").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Native query timed out after 2500 ms.").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("3000 ms").length).toBeGreaterThan(0);
+    expect(screen.getByText("3000 ms / 3000 ms")).toBeVisible();
   });
 
   it("summarizes disabled reranker traces", async () => {
