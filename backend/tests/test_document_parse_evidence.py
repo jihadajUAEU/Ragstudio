@@ -250,6 +250,51 @@ async def test_parse_evidence_redacts_secret_query_params_but_preserves_public_u
 
 
 @pytest.mark.asyncio
+async def test_parse_evidence_redacts_public_url_userinfo_but_preserves_public_host_and_path(
+    client,
+    tmp_path: Path,
+):
+    artifact = tmp_path / "userinfo-url.pdf"
+    artifact.write_bytes(b"%PDF synthetic")
+    userinfo_secret_url = "https://user:sk-secret@example.com/v1?ok=true"
+    userinfo_password_url = "https://user:password@example.com/v1"
+    async with client._transport.app.state.session_factory() as session:
+        session.add(
+            Document(
+                id="doc-userinfo-url",
+                filename="userinfo-url.pdf",
+                content_type="application/pdf",
+                sha256="sha-userinfo-url",
+                artifact_path=str(artifact),
+                status=StageStatus.SUCCEEDED.value,
+            )
+        )
+        session.add(
+            Chunk(
+                id="chunk-userinfo-url",
+                document_id="doc-userinfo-url",
+                text="Public URLs with userinfo should be sanitized.",
+                source_location={"page": 1, "url": userinfo_secret_url},
+                metadata_json={"provider_url": userinfo_password_url},
+                extraction_quality={},
+            )
+        )
+        await session.commit()
+
+        evidence = await DocumentParseEvidenceService(
+            session,
+            source_commit="test-commit",
+        ).get_document_evidence("doc-userinfo-url")
+
+    serialized = evidence.model_dump_json()
+    assert "sk-secret" not in serialized
+    assert "password@example.com" not in serialized
+    assert "user:" not in serialized
+    assert "https://example.com/v1" in serialized
+    assert any(".userinfo" in entry for entry in evidence.proof.redaction_summary)
+
+
+@pytest.mark.asyncio
 async def test_parse_evidence_marks_missing_sections_for_document_without_chunks(client, tmp_path: Path):
     artifact = tmp_path / "empty.pdf"
     artifact.write_bytes(b"%PDF synthetic")

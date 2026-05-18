@@ -724,6 +724,15 @@ class DocumentParseEvidenceService:
 
     def _sanitize_public_url(self, value: str, *, context: str) -> str:
         split = urlsplit(value)
+        netloc = split.netloc
+        if split.username is not None or split.password is not None:
+            self._record_redaction("secret value", f"{context}.userinfo")
+            hostname = split.hostname or ""
+            if ":" in hostname and not hostname.startswith("["):
+                hostname = f"[{hostname}]"
+            port = f":{split.port}" if split.port is not None else ""
+            netloc = f"{hostname}{port}"
+
         sanitized_query: list[tuple[str, str]] = []
         for key, raw_value in parse_qsl(split.query, keep_blank_values=True):
             if SECRET_KEY_PATTERN.search(key) or self._looks_like_secret(raw_value):
@@ -749,7 +758,7 @@ class DocumentParseEvidenceService:
                 fragment = "[redacted]"
 
         query = urlencode(sanitized_query, doseq=True)
-        return urlunsplit((split.scheme, split.netloc, split.path, query, fragment))
+        return urlunsplit((split.scheme, netloc, split.path, query, fragment))
 
     def _replace_pattern(
         self,
