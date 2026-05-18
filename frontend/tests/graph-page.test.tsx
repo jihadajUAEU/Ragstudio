@@ -19,7 +19,7 @@ vi.mock("@xyflow/react", () => ({
     children,
   }: {
     nodes: Array<{ id: string; data: { label: string; type: string; detail: string } }>;
-    edges: Array<{ id: string; label?: string }>;
+    edges: Array<{ id: string; label?: string; style?: { stroke?: string } }>;
     children: ReactNode;
   }) => (
     <div aria-label="Graph relationship map">
@@ -31,7 +31,9 @@ vi.mock("@xyflow/react", () => ({
         </div>
       ))}
       {edges.map((edge) => (
-        <span key={edge.id}>{edge.label}</span>
+        <span key={edge.id} data-edge-stroke={edge.style?.stroke}>
+          {edge.label}
+        </span>
       ))}
       {children}
     </div>
@@ -108,6 +110,7 @@ describe("GraphPage", () => {
     expect(map).toHaveTextContent("2:255");
     expect(map).toHaveTextContent("Reference");
     expect(map).toHaveTextContent("document doc-1");
+    expect(map.querySelector('[data-edge-stroke="var(--rs-accent)"]')).toBeInTheDocument();
   });
 
   it("shows graph detail returned by the backend", async () => {

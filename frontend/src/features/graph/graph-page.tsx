@@ -26,7 +26,8 @@ import {
 import { apiClient } from "../../api/client";
 import { EmptyState } from "../../components/empty-state";
 import { Button } from "../../components/ui/button";
-import { formatCount } from "../../lib/utils";
+import { rs } from "../../lib/design-tokens";
+import { cn, formatCount } from "../../lib/utils";
 
 const queryKeys = {
   graph: ["graph"],
@@ -95,11 +96,11 @@ export function GraphPage() {
     <div className="mx-auto flex max-w-7xl flex-col gap-6">
       <section className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
-          <p className="text-sm font-medium text-[#176b87]">Graph</p>
-          <h2 className="mt-1 text-2xl font-semibold tracking-normal text-[#1f2933]">
+          <p className={cn("text-sm font-medium", rs.text.accent)}>Graph</p>
+          <h2 className={cn("mt-1 text-2xl font-semibold tracking-normal", rs.text.ink)}>
             Nodes, edges, and graph payload details
           </h2>
-          <p className="mt-2 max-w-3xl text-sm leading-6 text-[#62717a]">
+          <p className={cn("mt-2 max-w-3xl text-sm leading-6", rs.text.muted)}>
             Reads `/api/graph` directly and exposes the returned shape for debugging graph-backed
             retrieval.
           </p>
@@ -130,13 +131,13 @@ export function GraphPage() {
       </section>
 
       {graphQuery.data?.detail ? (
-        <div className="rounded-md border border-[#f4c95d] bg-[#fff8e1] px-3 py-2 text-sm text-[#6d5700]">
+        <div className={cn("rounded-md border px-3 py-2 text-sm", rs.border.warning, rs.bg.warningSoft, rs.text.warning)}>
           {graphQuery.data.detail}
         </div>
       ) : null}
 
       {filteredGraph.nodes.length > previewNodes.length || filteredGraph.edges.length > previewEdges.length ? (
-        <div className="rounded-md border border-[#d6dde1] bg-[#f7fafb] px-3 py-2 text-sm text-[#3a4a53]">
+        <div className={cn("rounded-md border px-3 py-2 text-sm", rs.border.line, rs.bg.field, rs.text.body)}>
           Showing {visualGraph.nodes.length} of {filteredGraph.nodes.length} nodes and{" "}
           {visualGraph.edges.length} of {filteredGraph.edges.length} edges in the visual preview.
         </div>
@@ -183,7 +184,7 @@ export function GraphPage() {
             onReset={() => setFilters(emptyFilters)}
           />
           <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
-            <div className="h-[560px] overflow-hidden rounded-md border border-[#d6dde1] bg-white">
+            <div className={cn("h-[560px] overflow-hidden rounded-md border", rs.border.line, rs.bg.paper)}>
               {filteredResultEmpty ? (
                 <div className="flex h-full items-center justify-center p-6">
                   <EmptyState
@@ -204,7 +205,7 @@ export function GraphPage() {
                   maxZoom={1.6}
                   aria-label="Graph relationship map"
                 >
-                  <Background color="#d7e0e4" gap={20} />
+                  <Background color="var(--rs-line)" gap={20} />
                   <MiniMap pannable zoomable nodeStrokeWidth={3} />
                   <Controls showInteractive={false} />
                 </ReactFlow>
@@ -235,7 +236,7 @@ function GraphFiltersPanel({
   const active = hasGraphFilters(filters);
 
   return (
-    <div className="rounded-md border border-[#d6dde1] bg-white p-4">
+    <div className={cn("rounded-md border p-4", rs.border.line, rs.bg.paper)}>
       <div className="flex flex-col gap-3 lg:flex-row lg:items-end">
         <FilterSelect
           label="Node type"
@@ -258,15 +259,15 @@ function GraphFiltersPanel({
           placeholder="All documents"
           onChange={(documentId) => onChange({ ...filters, documentId })}
         />
-        <label className="min-w-0 flex-1 text-sm font-medium text-[#3a4a53]">
+        <label className={cn("min-w-0 flex-1 text-sm font-medium", rs.text.body)}>
           Page or reference
-          <div className="mt-1 flex h-10 items-center gap-2 rounded-md border border-[#d6dde1] bg-white px-3 focus-within:ring-2 focus-within:ring-[#176b87]">
-            <Search className="h-4 w-4 shrink-0 text-[#6f7f87]" aria-hidden="true" />
+          <div className={cn("mt-1 flex h-10 items-center gap-2 rounded-md border px-3 focus-within:ring-2 focus-within:ring-[var(--rs-accent)]", rs.border.line, rs.bg.paper)}>
+            <Search className={cn("h-4 w-4 shrink-0", rs.text.muted)} aria-hidden="true" />
             <input
               value={filters.searchText}
               onChange={(event) => onChange({ ...filters, searchText: event.target.value })}
               placeholder="Label, id, page, ref"
-              className="min-w-0 flex-1 bg-transparent text-sm text-[#24313a] outline-none placeholder:text-[#8c9aa1]"
+              className={cn("min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-[var(--rs-muted)]", rs.text.body)}
             />
           </div>
         </label>
@@ -292,12 +293,12 @@ function FilterSelect({
   onChange: (value: string) => void;
 }) {
   return (
-    <label className="min-w-0 flex-1 text-sm font-medium text-[#3a4a53]">
+    <label className={cn("min-w-0 flex-1 text-sm font-medium", rs.text.body)}>
       {label}
       <select
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className="mt-1 h-10 w-full rounded-md border border-[#d6dde1] bg-white px-3 text-sm text-[#24313a] outline-none focus:ring-2 focus:ring-[#176b87]"
+        className={cn("mt-1 h-10 w-full rounded-md border px-3 text-sm outline-none focus:ring-2 focus:ring-[var(--rs-accent)]", rs.border.line, rs.bg.paper, rs.text.body)}
       >
         <option value="">{placeholder}</option>
         {options.map((option) => (
@@ -312,12 +313,14 @@ function FilterSelect({
 
 function GraphEntityNode({ data }: NodeProps<Node<GraphNodeData>>) {
   return (
-    <div className="min-w-48 max-w-64 rounded-md border border-[#c9d6dc] bg-white px-3 py-2 shadow-sm">
-      <Handle type="target" position={Position.Left} className="!bg-[#176b87]" />
-      <p className="truncate text-sm font-semibold text-[#1f2933]">{data.label}</p>
-      <p className="mt-1 truncate text-xs font-medium text-[#176b87]">{data.type}</p>
-      {data.detail ? <p className="mt-1 line-clamp-2 text-xs leading-5 text-[#62717a]">{data.detail}</p> : null}
-      <Handle type="source" position={Position.Right} className="!bg-[#176b87]" />
+    <div className={cn("min-w-48 max-w-64 rounded-md border px-3 py-2 shadow-sm", rs.border.strong, rs.bg.paper)}>
+      <Handle type="target" position={Position.Left} className="!bg-[var(--rs-accent)]" />
+      <p className={cn("truncate text-sm font-semibold", rs.text.ink)}>{data.label}</p>
+      <p className={cn("mt-1 truncate text-xs font-medium", rs.text.accent)}>{data.type}</p>
+      {data.detail ? (
+        <p className={cn("mt-1 line-clamp-2 text-xs leading-5", rs.text.muted)}>{data.detail}</p>
+      ) : null}
+      <Handle type="source" position={Position.Right} className="!bg-[var(--rs-accent)]" />
     </div>
   );
 }
@@ -334,16 +337,16 @@ function Metric({
   detail?: string;
 }) {
   return (
-    <div className="rounded-md border border-[#d6dde1] bg-white p-4">
+    <div className={cn("rounded-md border p-4", rs.border.line, rs.bg.paper)}>
       <div className="flex items-center gap-3">
-        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-[#e7f1f4] text-[#176b87]">
+        <div className={cn("flex h-10 w-10 shrink-0 items-center justify-center rounded-md", rs.bg.accentSoft, rs.text.accent)}>
           <Icon className="h-5 w-5" aria-hidden="true" />
         </div>
         <div className="min-w-0">
-          <p className="truncate text-sm text-[#62717a]">{label}</p>
+          <p className={cn("truncate text-sm", rs.text.muted)}>{label}</p>
           <div className="flex flex-wrap items-baseline gap-x-2">
-            <p className="truncate text-2xl font-semibold text-[#1f2933]">{value}</p>
-            {detail ? <p className="truncate text-xs text-[#6f7f87]">{detail}</p> : null}
+            <p className={cn("truncate text-2xl font-semibold", rs.text.ink)}>{value}</p>
+            {detail ? <p className={cn("truncate text-xs", rs.text.muted)}>{detail}</p> : null}
           </div>
         </div>
       </div>
@@ -361,23 +364,23 @@ function GraphList({
   total: number;
 }) {
   return (
-    <div className="min-w-0 rounded-md border border-[#d6dde1] bg-white p-4">
+    <div className={cn("min-w-0 rounded-md border p-4", rs.border.line, rs.bg.paper)}>
       <div className="mb-3 flex items-center justify-between gap-3">
-        <h3 className="truncate text-base font-semibold text-[#1f2933]">{title}</h3>
-        <span className="shrink-0 text-xs text-[#62717a]">
+        <h3 className={cn("truncate text-base font-semibold", rs.text.ink)}>{title}</h3>
+        <span className={cn("shrink-0 text-xs", rs.text.muted)}>
           Showing {formatCount(items.length)} of {formatCount(total)}
         </span>
       </div>
       <div className="max-h-[560px] space-y-2 overflow-auto pr-1">
         {items.length === 0 ? (
-          <p className="rounded-md border border-[#e1e7ea] bg-[#f8fafb] p-3 text-sm text-[#62717a]">
+          <p className={cn("rounded-md border p-3 text-sm", rs.border.line, rs.bg.field, rs.text.muted)}>
             No matching {title.toLowerCase()}.
           </p>
         ) : (
           items.map((item, index) => (
             <pre
               key={`${title}-${index}`}
-              className="whitespace-pre-wrap break-words rounded-md border border-[#e1e7ea] bg-[#f8fafb] p-3 text-xs leading-5 text-[#3a4a53]"
+              className={cn("whitespace-pre-wrap break-words rounded-md border p-3 text-xs leading-5", rs.border.line, rs.bg.field, rs.text.body)}
             >
               {JSON.stringify(item, null, 2)}
             </pre>
@@ -597,8 +600,8 @@ function buildVisualGraph(
         target,
         label: graphType(item, "relates"),
         animated: false,
-        style: { stroke: "#176b87", strokeWidth: 2 },
-        labelStyle: { fill: "#3a4a53", fontSize: 12, fontWeight: 600 },
+        style: { stroke: "var(--rs-accent)", strokeWidth: 2 },
+        labelStyle: { fill: "var(--rs-text)", fontSize: 12, fontWeight: 600 },
       },
     ];
   });

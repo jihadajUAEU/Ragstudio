@@ -2,6 +2,7 @@ import { Activity, Menu, X } from "lucide-react";
 import { useState } from "react";
 import type { ReactNode } from "react";
 
+import { rs } from "../lib/design-tokens";
 import { studioRoutes } from "../lib/routes";
 import { cn } from "../lib/utils";
 import { FocusTrapDialog } from "./focus-trap-dialog";
@@ -22,7 +23,7 @@ export function AppShell({
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
 
   return (
-    <div className="min-h-screen bg-[#f5f7f8] text-[#24313a]">
+    <div className={cn("min-h-screen", rs.bg.page, rs.text.body)}>
       <FocusTrapDialog
         open={isMobileNavOpen}
         ariaLabel="Studio navigation"
@@ -30,7 +31,7 @@ export function AppShell({
         panelId="studio-mobile-navigation"
         onClose={() => setIsMobileNavOpen(false)}
         overlayClassName="lg:hidden"
-        className="fixed inset-y-0 left-0 z-30 w-64 border-r border-[#d6dde1] bg-[#fbfcfd] lg:hidden"
+        className={cn("fixed inset-y-0 left-0 z-30 w-64 border-r lg:hidden", rs.border.line, rs.bg.paper)}
       >
         <aside>
           <SidebarContent
@@ -44,16 +45,16 @@ export function AppShell({
         </aside>
       </FocusTrapDialog>
 
-      <aside className="fixed inset-y-0 left-0 z-20 hidden w-64 border-r border-[#d6dde1] bg-[#fbfcfd] lg:block">
+      <aside className={cn("fixed inset-y-0 left-0 z-20 hidden w-64 border-r lg:block", rs.border.line, rs.bg.paper)}>
         <SidebarContent activePath={activePath} onNavigate={onNavigate} />
       </aside>
 
       <div className="lg:pl-64">
-        <header className="sticky top-0 z-10 border-b border-[#d6dde1] bg-[#fbfcfd]/95 backdrop-blur">
+        <header className={cn("sticky top-0 z-10 border-b bg-[color-mix(in_srgb,var(--rs-paper)_95%,transparent)] backdrop-blur", rs.border.line)}>
           <div className="flex min-h-16 items-center justify-between gap-3 px-4 sm:px-6 lg:px-8">
             <div className="min-w-0">
               <p className="truncate text-sm font-semibold lg:hidden">RAG-Anything Studio</p>
-              <h1 className="truncate text-lg font-semibold text-[#1f2933] sm:text-xl">
+              <h1 className={cn("truncate text-lg font-semibold sm:text-xl", rs.text.ink)}>
                 {title}
               </h1>
             </div>
@@ -95,14 +96,14 @@ function SidebarContent({
 }) {
   return (
     <>
-      <div className="flex h-16 items-center justify-between gap-3 border-b border-[#d6dde1] px-5">
+      <div className={cn("flex h-16 items-center justify-between gap-3 border-b px-5", rs.border.line)}>
         <div className="flex min-w-0 items-center gap-3">
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-[#176b87] text-white">
+          <div className={cn("flex h-9 w-9 shrink-0 items-center justify-center rounded-md", rs.bg.accent, rs.text.white)}>
             <Activity className="h-5 w-5" aria-hidden="true" />
           </div>
           <div className="min-w-0">
             <p className="truncate text-sm font-semibold">RAG-Anything</p>
-            <p className="truncate text-xs text-[#6f7f87]">Studio Workbench</p>
+            <p className={cn("truncate text-xs", rs.text.muted)}>Studio Workbench</p>
           </div>
         </div>
         {onClose ? (
@@ -123,10 +124,10 @@ function SidebarContent({
           const className = cn(
             "flex min-h-10 items-center gap-3 rounded-md px-3 text-sm font-medium",
             route.enabled && route.href === activePath
-              ? "bg-[#e7f1f4] text-[#174657]"
+              ? cn(rs.bg.accentSoft, rs.text.accentDeep)
               : route.enabled
-                ? "text-[#3a4a53] hover:bg-[#eef4f6]"
-                : "text-[#7e8b92]",
+                ? cn(rs.text.body, rs.hover.field)
+                : rs.text.muted,
           );
 
           if (!route.enabled) {
