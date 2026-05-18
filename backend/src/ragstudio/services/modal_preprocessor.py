@@ -51,6 +51,7 @@ class ModalPreprocessor:
 
         results: list[AdapterChunk] = []
         for index, block in enumerate(modal_blocks):
+            source_location: dict[str, Any] = {"artifact": content_ref, "block_index": index}
             metadata: dict[str, Any] = {
                 "parser_metadata": dict(parser_metadata),
                 MODAL_ROUTER_PROCESSED_FLAG: True,
@@ -59,6 +60,8 @@ class ModalPreprocessor:
                 "chunk_index": index,
             }
             if block.page is not None:
+                source_location["page_start"] = block.page
+                source_location["page_end"] = block.page
                 metadata["page"] = block.page
             if block.warnings:
                 metadata["extraction_quality"] = {"parser_warnings": block.warnings}
@@ -66,7 +69,7 @@ class ModalPreprocessor:
             results.append(
                 AdapterChunk(
                     text=block.text,
-                    source_location={"artifact": content_ref, "block_index": index},
+                    source_location=source_location,
                     metadata=metadata,
                     runtime_source_id=adapter_chunks[0].runtime_source_id,
                     content_type="application/json",

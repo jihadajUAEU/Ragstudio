@@ -652,6 +652,8 @@ async def test_reindex_document_applies_modal_preprocessor(session, app, tmp_pat
     assert first_chunk.metadata["modal_router_processed"] is True
     assert first_chunk.metadata["modality"] == "table"
     assert first_chunk.metadata["page"] == 1
+    assert first_chunk.source_location["page_start"] == 1
+    assert first_chunk.source_location["page_end"] == 1
 
 
 @pytest.mark.asyncio
