@@ -5,7 +5,7 @@ import re
 from ipaddress import ip_address
 from pathlib import Path, PurePath
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from ragstudio.db.models import Chunk, Document, GraphProjectionRecord, Job
 from ragstudio.schemas.document_parse_evidence import (
@@ -575,7 +575,7 @@ class DocumentParseEvidenceService:
         return self._sanitize_string(str(value), context=context)
 
     def _sanitize_string(self, value: str, *, context: str) -> str:
-        sanitized = value
+        sanitized, protected_urls = self._protect_urls(value, context=context)
         sanitized = self._replace_pattern(
             sanitized,
             pattern=OPENAI_KEY_VALUE_PATTERN,
@@ -612,16 +612,18 @@ class DocumentParseEvidenceService:
             redaction_kind="local path",
             replacement_factory=self._path_replacement,
         )
+        for placeholder, safe_url in protected_urls.items():
+            sanitized = sanitized.replace(placeholder, safe_url)
         return sanitized
 
     def _sanitize_artifact_path(self, value: str, *, context: str) -> str:
         if self._is_absolute_path(value):
             self._record_redaction("local path", context)
-            return PurePath(value).name or "[redacted]"
+            return self._sanitize_artifact_basename(PurePath(value).name, context=context)
         sanitized = self._sanitize_string(value, context=context)
         if sanitized == "[redacted]":
             basename = PurePath(value).name
-            return basename or sanitized
+            return self._sanitize_artifact_basename(basename, context=context)
         return sanitized
 
     def _looks_like_secret(self, value: str) -> bool:
@@ -702,6 +704,53 @@ class DocumentParseEvidenceService:
 
         return URL_PATTERN.sub(_replace, value)
 
+    def _protect_urls(self, value: str, *, context: str) -> tuple[str, dict[str, str]]:
+        protected_urls: dict[str, str] = {}
+        parts: list[str] = []
+        last_index = 0
+        for index, match in enumerate(URL_PATTERN.finditer(value)):
+            parts.append(value[last_index:match.start()])
+            candidate = match.group(0)
+            if self._contains_private_host(candidate):
+                self._record_redaction("private host", context)
+                parts.append("[redacted]")
+            else:
+                placeholder = f"__RAGSTUDIO_SAFE_URL_{index}__"
+                protected_urls[placeholder] = self._sanitize_public_url(candidate, context=context)
+                parts.append(placeholder)
+            last_index = match.end()
+        parts.append(value[last_index:])
+        return "".join(parts), protected_urls
+
+    def _sanitize_public_url(self, value: str, *, context: str) -> str:
+        split = urlsplit(value)
+        sanitized_query: list[tuple[str, str]] = []
+        for key, raw_value in parse_qsl(split.query, keep_blank_values=True):
+            if SECRET_KEY_PATTERN.search(key) or self._looks_like_secret(raw_value):
+                self._record_redaction("secret value", f"{context}.query.{key}")
+                sanitized_query.append((key, "[redacted]"))
+            else:
+                sanitized_query.append((key, raw_value))
+
+        fragment = split.fragment
+        if fragment:
+            fragment_pairs = parse_qsl(fragment, keep_blank_values=True)
+            if fragment_pairs:
+                sanitized_fragment_pairs: list[tuple[str, str]] = []
+                for key, raw_value in fragment_pairs:
+                    if SECRET_KEY_PATTERN.search(key) or self._looks_like_secret(raw_value):
+                        self._record_redaction("secret value", f"{context}.fragment.{key}")
+                        sanitized_fragment_pairs.append((key, "[redacted]"))
+                    else:
+                        sanitized_fragment_pairs.append((key, raw_value))
+                fragment = urlencode(sanitized_fragment_pairs, doseq=True)
+            elif self._looks_like_secret(fragment) or "bearer " in fragment.casefold():
+                self._record_redaction("secret value", f"{context}.fragment")
+                fragment = "[redacted]"
+
+        query = urlencode(sanitized_query, doseq=True)
+        return urlunsplit((split.scheme, split.netloc, split.path, query, fragment))
+
     def _replace_pattern(
         self,
         value: str,
@@ -721,6 +770,15 @@ class DocumentParseEvidenceService:
         raw = match.group(0)
         basename = PurePath(raw).name
         return basename or "[redacted]"
+
+    def _sanitize_artifact_basename(self, basename: str, *, context: str) -> str:
+        if not basename:
+            return "[redacted]"
+        if self._looks_like_secret(basename):
+            self._record_redaction("secret value", f"{context}.basename")
+            return "[redacted]"
+        sanitized = self._sanitize_string(basename, context=f"{context}.basename")
+        return sanitized if sanitized != basename else basename
 
     def _record_redaction(self, redaction_kind: str, context: str) -> None:
         self._redactions.add(f"Redacted {redaction_kind} at {context}.")

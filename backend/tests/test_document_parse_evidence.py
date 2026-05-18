@@ -170,6 +170,86 @@ async def test_parse_evidence_redacts_unsafe_artifact_values(client, tmp_path: P
 
 
 @pytest.mark.asyncio
+async def test_parse_evidence_preserves_safe_public_urls(client, tmp_path: Path):
+    artifact = tmp_path / "public-url.pdf"
+    artifact.write_bytes(b"%PDF synthetic")
+    async with client._transport.app.state.session_factory() as session:
+        session.add(
+            Document(
+                id="doc-public-url",
+                filename="public-url.pdf",
+                content_type="application/pdf",
+                sha256="sha-public-url",
+                artifact_path=str(artifact),
+                status=StageStatus.SUCCEEDED.value,
+            )
+        )
+        session.add(
+            Chunk(
+                id="chunk-public-url",
+                document_id="doc-public-url",
+                text="Safe public URL https://example.com/v1 should survive redaction.",
+                source_location={"page": 1, "url": "https://example.com/v1"},
+                metadata_json={"public_url": "https://example.com/v1"},
+                extraction_quality={},
+            )
+        )
+        await session.commit()
+
+        evidence = await DocumentParseEvidenceService(
+            session,
+            source_commit="test-commit",
+        ).get_document_evidence("doc-public-url")
+
+    serialized = evidence.model_dump_json()
+    assert "https://example.com/v1" in serialized
+
+
+@pytest.mark.asyncio
+async def test_parse_evidence_redacts_secret_query_params_but_preserves_public_url_host_and_path(
+    client,
+    tmp_path: Path,
+):
+    artifact = tmp_path / "public-query.pdf"
+    artifact.write_bytes(b"%PDF synthetic")
+    public_url = "https://api.example.com/v1?api_key=plain-secret-123&ok=true"
+    async with client._transport.app.state.session_factory() as session:
+        session.add(
+            Document(
+                id="doc-public-query",
+                filename="public-query.pdf",
+                content_type="application/pdf",
+                sha256="sha-public-query",
+                artifact_path=str(artifact),
+                status=StageStatus.SUCCEEDED.value,
+            )
+        )
+        session.add(
+            Chunk(
+                id="chunk-public-query",
+                document_id="doc-public-query",
+                text=f"Safe public URL with secret query {public_url}",
+                source_location={"page": 1, "url": public_url},
+                metadata_json={"provider_url": public_url},
+                extraction_quality={},
+            )
+        )
+        await session.commit()
+
+        evidence = await DocumentParseEvidenceService(
+            session,
+            source_commit="test-commit",
+        ).get_document_evidence("doc-public-query")
+
+    serialized = evidence.model_dump_json()
+    assert "plain-secret-123" not in serialized
+    assert "api_key=plain-secret-123" not in serialized
+    assert "https://api.example.com/v1" in serialized
+    assert "ok=true" in serialized
+    assert any(".query.api_key" in entry for entry in evidence.proof.redaction_summary)
+
+
+@pytest.mark.asyncio
 async def test_parse_evidence_marks_missing_sections_for_document_without_chunks(client, tmp_path: Path):
     artifact = tmp_path / "empty.pdf"
     artifact.write_bytes(b"%PDF synthetic")
@@ -373,6 +453,41 @@ async def test_parse_evidence_redacts_embedded_private_urls_ipv6_and_root_paths(
         assert unsafe not in serialized
     assert any("private host" in entry for entry in evidence.proof.redaction_summary)
     assert any("local path" in entry for entry in evidence.proof.redaction_summary)
+
+
+@pytest.mark.asyncio
+async def test_parse_evidence_redacts_secret_shaped_artifact_basenames(client):
+    async with client._transport.app.state.session_factory() as session:
+        session.add(
+            Document(
+                id="doc-secret-basename",
+                filename="secret-basename.pdf",
+                content_type="application/pdf",
+                sha256="sha-secret-basename",
+                artifact_path="/tmp/sk-secret.json",
+                status=StageStatus.SUCCEEDED.value,
+            )
+        )
+        session.add(
+            Chunk(
+                id="chunk-secret-basename",
+                document_id="doc-secret-basename",
+                text="Secret basename should not leak.",
+                source_location={"page": 1},
+                metadata_json={},
+                extraction_quality={},
+            )
+        )
+        await session.commit()
+
+        evidence = await DocumentParseEvidenceService(
+            session,
+            source_commit="test-commit",
+        ).get_document_evidence("doc-secret-basename")
+
+    serialized = evidence.model_dump_json()
+    assert "sk-secret.json" not in serialized
+    assert any("document.artifact_path.basename" in entry for entry in evidence.proof.redaction_summary)
 
 
 @pytest.mark.asyncio
