@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import subprocess
 from pathlib import Path, PurePath
 from typing import Any
 from urllib.parse import urlsplit
@@ -75,10 +76,11 @@ class DocumentParseEvidenceService:
 
         warnings = self._build_warnings(chunks)
         warning_ids_by_chunk = self._warning_ids_by_chunk(warnings)
-        parser_blocks = self._build_parser_blocks(chunks, warning_ids_by_chunk)
-        block_ids_by_chunk = self._block_ids_by_chunk(parser_blocks)
+        parser_blocks = self._build_parser_blocks(chunks)
+        block_ids_by_chunk = self._parser_block_ids_by_chunk(chunks, parser_blocks)
         decisions = self._build_decisions(chunks, graph_records, warning_ids_by_chunk, block_ids_by_chunk)
-        warnings = self._attach_warning_decisions(warnings, decisions)
+        warnings = self._attach_warning_links(warnings, parser_blocks, block_ids_by_chunk, decisions)
+        parser_blocks = self._attach_block_warning_ids(parser_blocks, warnings)
         chunk_evidence = self._build_chunks(chunks, warning_ids_by_chunk)
         source_artifacts = self._build_source_artifacts(document, chunks)
         limitations = self._proof_limitations(chunks, graph_records)
@@ -99,7 +101,10 @@ class DocumentParseEvidenceService:
             chunks=chunk_evidence,
             warnings=warnings,
             proof=ProofEvidence(
+                source_commit=self._source_commit(),
+                proof_packet_id="local-document-parse-evidence",
                 mode="local",
+                replay_command="./scripts/proof.sh --fixtures static-fixtures",
                 limitations=limitations,
                 redaction_summary=sorted(self._redactions),
             ),
@@ -134,13 +139,11 @@ class DocumentParseEvidenceService:
     def _build_parser_blocks(
         self,
         chunks: list[Chunk],
-        warning_ids_by_chunk: dict[str, list[str]],
     ) -> list[ParserBlockEvidence]:
         blocks: list[ParserBlockEvidence] = []
         seen_ids: set[str] = set()
         for chunk in chunks:
             source_blocks = self._dict_value(chunk.metadata_json.get("split")).get("source_blocks")
-            chunk_warnings = warning_ids_by_chunk.get(chunk.id, [])
             if isinstance(source_blocks, list) and source_blocks:
                 for fallback_index, item in enumerate(source_blocks):
                     if not isinstance(item, dict):
@@ -162,7 +165,6 @@ class DocumentParseEvidenceService:
                             ),
                             bbox=self._bbox_value(item.get("bbox")),
                             modality=self._chunk_modality(chunk),
-                            warning_ids=list(chunk_warnings),
                         )
                     )
                 continue
@@ -183,7 +185,6 @@ class DocumentParseEvidenceService:
                     block_type=self._chunk_modality(chunk) or "text",
                     text_preview=self._preview(chunk.text),
                     modality=self._chunk_modality(chunk),
-                    warning_ids=list(chunk_warnings),
                 )
             )
         return blocks
@@ -265,11 +266,14 @@ class DocumentParseEvidenceService:
 
         return decisions
 
-    def _attach_warning_decisions(
+    def _attach_warning_links(
         self,
         warnings: list[WarningEvidence],
+        parser_blocks: list[ParserBlockEvidence],
+        block_ids_by_chunk: dict[str, list[str]],
         decisions: list[NormalizationDecisionEvidence],
     ) -> list[WarningEvidence]:
+        block_by_id = {block.id: block for block in parser_blocks}
         quality_decisions = {
             chunk_id: decision.id
             for decision in decisions
@@ -278,12 +282,38 @@ class DocumentParseEvidenceService:
         }
         updated: list[WarningEvidence] = []
         for warning in warnings:
+            block_id = self._warning_block_id(warning, block_ids_by_chunk, block_by_id)
             decision_id = next(
-                (quality_decisions.get(chunk_id) for chunk_id in warning.affected_chunk_ids if quality_decisions.get(chunk_id)),
+                (
+                    quality_decisions.get(chunk_id)
+                    for chunk_id in warning.affected_chunk_ids
+                    if quality_decisions.get(chunk_id)
+                ),
                 None,
             )
-            updated.append(warning.model_copy(update={"decision_id": decision_id}))
+            updated.append(
+                warning.model_copy(
+                    update={
+                        "block_id": block_id,
+                        "decision_id": decision_id,
+                    }
+                )
+            )
         return updated
+
+    def _attach_block_warning_ids(
+        self,
+        parser_blocks: list[ParserBlockEvidence],
+        warnings: list[WarningEvidence],
+    ) -> list[ParserBlockEvidence]:
+        warning_ids_by_block: dict[str, list[str]] = {}
+        for warning in warnings:
+            if warning.block_id:
+                warning_ids_by_block.setdefault(warning.block_id, []).append(warning.id)
+        return [
+            block.model_copy(update={"warning_ids": list(warning_ids_by_block.get(block.id, []))})
+            for block in parser_blocks
+        ]
 
     def _build_chunks(
         self,
@@ -440,6 +470,17 @@ class DocumentParseEvidenceService:
             output.setdefault(chunk_id, []).append(block.id)
         return output
 
+    def _parser_block_ids_by_chunk(
+        self,
+        chunks: list[Chunk],
+        parser_blocks: list[ParserBlockEvidence],
+    ) -> dict[str, list[str]]:
+        generated_block_ids_by_chunk = self._block_ids_by_chunk(parser_blocks)
+        return {
+            chunk.id: self._input_block_ids(chunk, generated_block_ids_by_chunk)
+            for chunk in chunks
+        }
+
     def _input_block_ids(
         self,
         chunk: Chunk,
@@ -462,6 +503,35 @@ class DocumentParseEvidenceService:
             return True
         modality = self._chunk_modality(chunk)
         return modality is not None and modality != "text"
+
+    def _warning_block_id(
+        self,
+        warning: WarningEvidence,
+        block_ids_by_chunk: dict[str, list[str]],
+        block_by_id: dict[str, ParserBlockEvidence],
+    ) -> str | None:
+        if warning.block_id and warning.block_id in block_by_id:
+            return warning.block_id
+
+        chunk_block_ids = [
+            block_id
+            for chunk_id in warning.affected_chunk_ids
+            for block_id in block_ids_by_chunk.get(chunk_id, [])
+            if block_id in block_by_id
+        ]
+        if not chunk_block_ids:
+            return warning.block_id
+        if warning.page is not None:
+            page_matches = [
+                block_id
+                for block_id in chunk_block_ids
+                if block_by_id[block_id].page == warning.page
+            ]
+            if page_matches:
+                return page_matches[0]
+        if len(chunk_block_ids) == 1:
+            return chunk_block_ids[0]
+        return warning.block_id
 
     def _sanitize_value(self, value: Any, *, context: str) -> Any:
         if value is None or isinstance(value, bool):
@@ -504,12 +574,29 @@ class DocumentParseEvidenceService:
 
     def _sanitize_artifact_path(self, value: str, *, context: str) -> str:
         if self._looks_like_absolute_path(value):
+            self._redactions.add(f"Redacted local path at {context}.")
             return PurePath(value).name or "[redacted]"
         sanitized = self._sanitize_string(value, context=context)
         if sanitized == "[redacted]":
             basename = PurePath(value).name
             return basename or sanitized
         return sanitized
+
+    def _source_commit(self) -> str | None:
+        repo_root = Path(__file__).resolve().parents[4]
+        try:
+            result = subprocess.run(
+                ["git", "rev-parse", "--short", "HEAD"],
+                cwd=repo_root,
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=2,
+            )
+        except (FileNotFoundError, NotADirectoryError, OSError, subprocess.SubprocessError):
+            return None
+        commit = result.stdout.strip()
+        return commit or None
 
     def _looks_like_secret(self, value: str) -> bool:
         lower = value.casefold()

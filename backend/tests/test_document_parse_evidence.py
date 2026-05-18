@@ -67,7 +67,10 @@ async def test_parse_evidence_groups_page_stitch_decision(client, tmp_path: Path
     assert evidence.normalization_decisions[0].output_chunk_ids == ["chunk-stitch"]
     assert evidence.chunks[0].page_start == 1
     assert evidence.chunks[0].page_end == 2
-    assert evidence.proof.redaction_summary == []
+    assert any("document.artifact_path" in entry for entry in evidence.proof.redaction_summary)
+    assert evidence.proof.source_commit
+    assert evidence.proof.proof_packet_id == "local-document-parse-evidence"
+    assert evidence.proof.replay_command == "./scripts/proof.sh --fixtures static-fixtures"
 
 
 @pytest.mark.asyncio
@@ -153,6 +156,108 @@ async def test_parse_evidence_redacts_unsafe_artifact_values(client, tmp_path: P
     assert "internal.local" not in serialized
     assert "sk-secret" not in serialized
     assert evidence.proof.redaction_summary
+    assert any("document.artifact_path" in entry for entry in evidence.proof.redaction_summary)
+    assert any("source_location.artifact" in entry for entry in evidence.proof.redaction_summary)
+
+
+@pytest.mark.asyncio
+async def test_parse_evidence_marks_missing_sections_for_document_without_chunks(client, tmp_path: Path):
+    artifact = tmp_path / "empty.pdf"
+    artifact.write_bytes(b"%PDF synthetic")
+    async with client._transport.app.state.session_factory() as session:
+        session.add(
+            Document(
+                id="doc-empty",
+                filename="empty.pdf",
+                content_type="application/pdf",
+                sha256="sha-empty",
+                artifact_path=str(artifact),
+                status=StageStatus.READY.value,
+            )
+        )
+        await session.commit()
+
+        evidence = await DocumentParseEvidenceService(session).get_document_evidence("doc-empty")
+
+    assert evidence.chunks == []
+    assert evidence.parser_blocks == []
+    assert evidence.normalization_decisions == []
+    assert evidence.missing_sections == ["chunks", "parser_blocks", "normalization_decisions"]
+    assert "No chunks have been materialized for this document." in evidence.proof.limitations
+
+
+@pytest.mark.asyncio
+async def test_parse_evidence_links_warning_to_block_and_decision_when_page_is_known(
+    client,
+    tmp_path: Path,
+):
+    artifact = tmp_path / "warning-link.pdf"
+    artifact.write_bytes(b"%PDF synthetic")
+    async with client._transport.app.state.session_factory() as session:
+        document = Document(
+            id="doc-warning-link",
+            filename="warning-link.pdf",
+            content_type="application/pdf",
+            sha256="sha-warning-link",
+            artifact_path=str(artifact),
+            status=StageStatus.SUCCEEDED.value,
+        )
+        chunk = Chunk(
+            id="chunk-warning-link",
+            document_id="doc-warning-link",
+            text="Heading\n\nBody block on page eight.",
+            source_location={"page_start": 7, "page_end": 8, "artifact": "source_content_list.json"},
+            metadata_json={
+                "parser_metadata": {"content_list_ref": "source_content_list.json"},
+                "split": {
+                    "source_blocks": [
+                        {
+                            "block_id": "block-heading",
+                            "page": 7,
+                            "block_index": 0,
+                            "block_type": "heading",
+                            "text": "Heading",
+                        },
+                        {
+                            "block_id": "block-body",
+                            "page": 8,
+                            "block_index": 1,
+                            "block_type": "text",
+                            "text": "Body block on page eight.",
+                        },
+                    ]
+                },
+            },
+            extraction_quality={
+                "quality_status": "warning",
+                "parser_warnings": [
+                    {
+                        "code": "body_truncated",
+                        "message": "Page body was truncated during parse recovery.",
+                        "severity": "error",
+                        "page": 8,
+                    }
+                ],
+            },
+        )
+        session.add_all([document, chunk])
+        await session.commit()
+
+        evidence = await DocumentParseEvidenceService(session).get_document_evidence("doc-warning-link")
+
+    warning = evidence.warnings[0]
+    decision = next(
+        item for item in evidence.normalization_decisions if item.decision_type == "quality_warning"
+    )
+    body_block = next(block for block in evidence.parser_blocks if block.id == "block-body")
+    heading_block = next(block for block in evidence.parser_blocks if block.id == "block-heading")
+
+    assert warning.severity == "error"
+    assert warning.page == 8
+    assert warning.block_id == "block-body"
+    assert warning.decision_id == decision.id
+    assert body_block.warning_ids == [warning.id]
+    assert heading_block.warning_ids == []
 
 
 @pytest.mark.asyncio
@@ -197,3 +302,4 @@ async def test_parse_evidence_route_returns_contract(client, tmp_path: Path):
     body = response.json()
     assert body["document"]["id"] == "doc-route"
     assert body["chunks"][0]["id"] == "chunk-route"
+    assert body["proof"]["proof_packet_id"] == "local-document-parse-evidence"
