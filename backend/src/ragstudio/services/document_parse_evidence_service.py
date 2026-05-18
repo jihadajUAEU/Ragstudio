@@ -5,7 +5,7 @@ import re
 from ipaddress import ip_address
 from pathlib import Path, PurePath
 from typing import Any
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, unquote, urlencode, urlsplit, urlunsplit
 
 from ragstudio.db.models import Chunk, Document, GraphProjectionRecord, Job
 from ragstudio.schemas.document_parse_evidence import (
@@ -805,7 +805,7 @@ class DocumentParseEvidenceService:
             if segment == "":
                 sanitized_segments.append("")
                 continue
-            decoded = segment
+            decoded = unquote(segment)
             if self._looks_like_secret(decoded):
                 self._record_redaction("secret value", f"{context}.path.{index}")
                 sanitized_segments.append("[redacted-secret]")

@@ -335,6 +335,51 @@ async def test_parse_evidence_redacts_secret_public_url_path_segments(client, tm
 
 
 @pytest.mark.asyncio
+async def test_parse_evidence_redacts_percent_encoded_secret_public_url_path_segments(
+    client,
+    tmp_path: Path,
+):
+    artifact = tmp_path / "public-path-encoded-secret.pdf"
+    artifact.write_bytes(b"%PDF synthetic")
+    public_url = "https://example.com/%73k-secret/path"
+    metadata_url = "https://example.com/%73%6b-secret/path"
+    async with client._transport.app.state.session_factory() as session:
+        session.add(
+            Document(
+                id="doc-public-path-encoded-secret",
+                filename="public-path-encoded-secret.pdf",
+                content_type="application/pdf",
+                sha256="sha-public-path-encoded-secret",
+                artifact_path=str(artifact),
+                status=StageStatus.SUCCEEDED.value,
+            )
+        )
+        session.add(
+            Chunk(
+                id="chunk-public-path-encoded-secret",
+                document_id="doc-public-path-encoded-secret",
+                text=f"Encoded public URL path secret {public_url}",
+                source_location={"page": 1, "url": public_url},
+                metadata_json={"public_url": metadata_url},
+                extraction_quality={},
+            )
+        )
+        await session.commit()
+
+        evidence = await DocumentParseEvidenceService(
+            session,
+            source_commit="test-commit",
+        ).get_document_evidence("doc-public-path-encoded-secret")
+
+    serialized = evidence.model_dump_json()
+    assert "%73k-secret" not in serialized
+    assert "%73%6b-secret" not in serialized
+    assert "sk-secret" not in serialized
+    assert "https://example.com/[redacted-secret]/path" in serialized
+    assert any(".path." in entry for entry in evidence.proof.redaction_summary)
+
+
+@pytest.mark.asyncio
 async def test_parse_evidence_handles_malformed_public_url_ports_without_throwing(client, tmp_path: Path):
     artifact = tmp_path / "malformed-port.pdf"
     artifact.write_bytes(b"%PDF synthetic")
