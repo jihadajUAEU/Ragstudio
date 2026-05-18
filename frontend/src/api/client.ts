@@ -34,6 +34,7 @@ import type {
   VariantOut,
   VariantUpdate,
 } from "./generated";
+import type { DocumentParseEvidence } from "../features/document-evidence/types";
 
 export const DEFAULT_PARSER_MODE: ParserMode = "mineru_strict";
 
@@ -106,6 +107,8 @@ function formatApiDetail(detail: unknown): string {
 export const apiClient = {
   health: () => request<HealthOut>("/api/health"),
   documents: () => request<Page<DocumentOut>>("/api/documents"),
+  documentParseEvidence: (documentId: string) =>
+    request<DocumentParseEvidence>(`/api/documents/${encodeURIComponent(documentId)}/parse-evidence`),
   uploadDocument: ({ file, options }: { file: File; options: IndexDocumentIn }) => {
     const formData = new FormData();
     formData.set("file", file);

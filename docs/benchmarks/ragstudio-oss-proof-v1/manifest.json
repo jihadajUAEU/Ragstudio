@@ -34,6 +34,7 @@
   "artifacts": [
     "artifacts/parser-quality.export.json",
     "artifacts/chunks.export.json",
+    "artifacts/document-parse-evidence.export.json",
     "artifacts/retrieval-run.export.json",
     "artifacts/graph-projection.export.json",
     "artifacts/reranker-trace.export.json"
@@ -76,6 +77,11 @@
     "artifacts/chunks.export.json": {
       "algorithm": "sha256",
       "value": "76bf85b1c8c369fbb7ad2453c54855f00bc456a728d07f0a4a6103438387f8e0",
+      "redaction_status": "passed"
+    },
+    "artifacts/document-parse-evidence.export.json": {
+      "algorithm": "sha256",
+      "value": "116435490be8a3854890cd71822f05b4b10168d7cf23d6f583a1d95e174d7b3b",
       "redaction_status": "passed"
     },
     "artifacts/graph-projection.export.json": {

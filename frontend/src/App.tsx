@@ -1,10 +1,11 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 
 import { AppShell } from "./components/app-shell";
 import { ChunkInspector } from "./features/chunks/chunk-inspector";
 import { ComparisonPage } from "./features/comparison/comparison-page";
 import { DashboardPage } from "./features/dashboard/dashboard-page";
 import { DiagnosticsPage } from "./features/diagnostics/diagnostics-page";
+import { DocumentEvidencePage } from "./features/document-evidence/document-evidence-page";
 import { DocumentsPage } from "./features/documents/documents-page";
 import { EvaluationPage } from "./features/evaluation/evaluation-page";
 import { ExperimentsPage } from "./features/experiments/experiments-page";
@@ -22,6 +23,7 @@ const pageTitles: Record<string, string> = {
   "/": "Studio Dashboard",
   "/pipeline": "Pipeline Builder",
   "/documents": "Documents",
+  "/document-evidence": "Parse Evidence",
   "/chunks": "Chunk Inspector",
   "/query": "Query",
   "/evaluation": "Evaluation",
@@ -35,57 +37,58 @@ const pageTitles: Record<string, string> = {
 };
 
 export default function App() {
-  const [activePath, setActivePath] = useState(() => window.location.pathname);
-  const route = pageTitles[activePath] ? activePath : "/";
+  const readLocation = () => `${window.location.pathname}${window.location.search}`;
+  const [activeLocation, setActiveLocation] = useState(readLocation);
+  const pathname = new URL(activeLocation, window.location.origin).pathname;
+  const route = pageTitles[pathname] ? pathname : "/";
 
   useEffect(() => {
-    const handlePopState = () => setActivePath(window.location.pathname);
+    const handlePopState = () => setActiveLocation(readLocation());
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
   }, []);
 
-  const page = useMemo(() => {
-    switch (route) {
-      case "/pipeline":
-        return <PipelineBuilder />;
-      case "/documents":
-        return <DocumentsPage />;
-      case "/chunks":
-        return <ChunkInspector />;
-      case "/query":
-        return <QueryPage />;
-      case "/evaluation":
-        return <EvaluationPage />;
-      case "/experiments":
-        return <ExperimentsPage />;
-      case "/comparison":
-        return <ComparisonPage />;
-      case "/optimizer":
-        return <OptimizerPage />;
-      case "/variants":
-        return <VariantsPage />;
-      case "/graph":
-        return <GraphPage />;
-      case "/diagnostics":
-        return <DiagnosticsPage />;
-      case "/settings":
-        return <SettingsPage />;
-      default:
-        return <DashboardPage />;
-    }
-  }, [route]);
-
   const navigate = (path: string) => {
-    if (path === activePath) {
+    if (path === window.location.pathname && window.location.search.length === 0) {
       return;
     }
     window.history.pushState(null, "", path);
-    setActivePath(path);
+    setActiveLocation(readLocation());
   };
 
   return (
     <AppShell activePath={route} title={pageTitles[route]} onNavigate={navigate}>
-      <Suspense fallback={<div className="text-sm text-[#62717a]">Loading pipeline builder...</div>}>{page}</Suspense>
+      <Suspense fallback={<div className="text-sm text-[#62717a]">Loading pipeline builder...</div>}>
+        {route === "/pipeline" ? (
+          <PipelineBuilder />
+        ) : route === "/documents" ? (
+          <DocumentsPage />
+        ) : route === "/document-evidence" ? (
+          <DocumentEvidencePage />
+        ) : route === "/chunks" ? (
+          <ChunkInspector />
+        ) : route === "/query" ? (
+          <QueryPage />
+        ) : route === "/evaluation" ? (
+          <EvaluationPage />
+        ) : route === "/experiments" ? (
+          <ExperimentsPage />
+        ) : route === "/comparison" ? (
+          <ComparisonPage />
+        ) : route === "/optimizer" ? (
+          <OptimizerPage />
+        ) : route === "/variants" ? (
+          <VariantsPage />
+        ) : route === "/graph" ? (
+          <GraphPage />
+        ) : route === "/diagnostics" ? (
+          <DiagnosticsPage />
+        ) : route === "/settings" ? (
+          <SettingsPage />
+        ) : (
+          <DashboardPage />
+        )}
+      </Suspense>
     </AppShell>
   );
 }
