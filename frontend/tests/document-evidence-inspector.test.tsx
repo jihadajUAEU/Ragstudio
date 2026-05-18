@@ -96,7 +96,7 @@ describe("EvidenceInspector", () => {
     render(<EvidenceInspector evidence={evidence} mode="public" />);
 
     expect(screen.getByRole("heading", { name: "Document parse evidence" })).toBeVisible();
-    expect(screen.getByRole("tab", { name: /Page 1 -> 2 stitch/i })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("button", { name: /Page 1 -> 2 stitch/i })).toHaveAttribute("aria-pressed", "true");
     const sourceBlocks = screen.getByRole("region", { name: "Source blocks" });
     expect(sourceBlocks).toBeVisible();
     expect(within(sourceBlocks).getByText("This paragraph starts on page one and")).toBeVisible();
@@ -144,14 +144,95 @@ describe("EvidenceInspector", () => {
 
     render(<EvidenceInspector evidence={withSecondDecision} mode="local" onReindex={onReindex} />);
 
-    fireEvent.click(screen.getByRole("tab", { name: /Parser warning/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Parser warning/i }));
 
-    expect(screen.getByRole("tab", { name: /Parser warning/i })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("button", { name: /Parser warning/i })).toHaveAttribute("aria-pressed", "true");
 
     const reindexButton = screen.getByRole("button", { name: "Reindex document" });
     expect(reindexButton).toBeVisible();
     fireEvent.click(reindexButton);
     expect(onReindex).toHaveBeenCalledTimes(1);
+  });
+
+  it("supports keyboard navigation across rail decisions", () => {
+    const withDecisions: DocumentParseEvidence = {
+      ...evidence,
+      normalization_decisions: [
+        evidence.normalization_decisions[0],
+        {
+          id: "decision-2",
+          decision_type: "quality_warning",
+          title: "Parser warning",
+          summary: "Parser warning attached to chunk.",
+          input_block_ids: ["block-2"],
+          output_chunk_ids: ["chunk-1"],
+          warning_ids: ["warning-1"],
+          status: "warning",
+        },
+        {
+          id: "decision-3",
+          decision_type: "quality_gate",
+          title: "Quality gate",
+          summary: "Quality gate blocked a chunk.",
+          input_block_ids: ["block-1"],
+          output_chunk_ids: ["chunk-1"],
+          warning_ids: [],
+          status: "blocked",
+        },
+      ],
+    };
+
+    render(<EvidenceInspector evidence={withDecisions} />);
+
+    const first = screen.getByRole("button", { name: /Page 1 -> 2 stitch/i });
+    fireEvent.keyDown(first, { key: "ArrowDown" });
+
+    expect(screen.getByRole("button", { name: /Parser warning/i })).toHaveAttribute("aria-pressed", "true");
+
+    fireEvent.keyDown(screen.getByRole("button", { name: /Parser warning/i }), { key: "End" });
+    expect(screen.getByRole("button", { name: /Quality gate/i })).toHaveAttribute("aria-pressed", "true");
+
+    fireEvent.keyDown(screen.getByRole("button", { name: /Quality gate/i }), { key: "Home" });
+    expect(first).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("renders explicit removed, blocked, and capped diff rows", () => {
+    render(
+      <EvidenceInspector
+        evidence={{
+          ...evidence,
+          normalization_decisions: [
+            {
+              ...evidence.normalization_decisions[0],
+              diff_rows: [
+                {
+                  id: "diff-removed",
+                  kind: "removed",
+                  text: "Page footer removed from chunk output.",
+                },
+                {
+                  id: "diff-blocked",
+                  kind: "blocked",
+                  text: "Low confidence OCR block blocked by quality gate.",
+                },
+                {
+                  id: "diff-capped",
+                  kind: "added",
+                  text: "Large table preview",
+                  capped: true,
+                  hidden_count: 120,
+                },
+              ],
+            },
+          ],
+        }}
+      />,
+    );
+
+    const normalizedUnit = screen.getByRole("region", { name: "Normalized unit" });
+    expect(within(normalizedUnit).getByText("Removed")).toBeVisible();
+    expect(within(normalizedUnit).getByText("Blocked")).toBeVisible();
+    expect(within(normalizedUnit).getByText("Capped preview · 120 hidden characters")).toBeVisible();
   });
 
   it("preserves decision-defined ordering for source blocks and chunks", () => {

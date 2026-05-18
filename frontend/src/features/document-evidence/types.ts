@@ -39,6 +39,16 @@ export type NormalizationDecisionType =
   | "chunk_materialization"
   | "unresolved";
 
+export type DiffRowKind = "added" | "unchanged" | "removed" | "blocked";
+
+export interface DiffRowEvidence {
+  id: string;
+  kind: DiffRowKind;
+  text: string;
+  capped?: boolean;
+  hidden_count?: number;
+}
+
 export interface NormalizationDecisionEvidence {
   id: string;
   decision_type: NormalizationDecisionType;
@@ -48,6 +58,7 @@ export interface NormalizationDecisionEvidence {
   output_chunk_ids: string[];
   warning_ids: string[];
   status: string;
+  diff_rows?: DiffRowEvidence[];
 }
 
 export interface ChunkEvidence {

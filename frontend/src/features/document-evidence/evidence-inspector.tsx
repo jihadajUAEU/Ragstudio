@@ -1,5 +1,5 @@
 import { AlertCircle, Box, FileCode2, GitCommit, RotateCcw, ShieldCheck } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useState, type KeyboardEvent, type ReactNode } from "react";
 
 import { EmptyState } from "../../components/empty-state";
 import { Button } from "../../components/ui/button";
@@ -7,6 +7,7 @@ import { rs } from "../../lib/design-tokens";
 import { cn, titleCase } from "../../lib/utils";
 import type {
   ChunkEvidence,
+  DiffRowEvidence,
   DocumentParseEvidence,
   EvidenceMode,
   NormalizationDecisionEvidence,
@@ -34,9 +35,6 @@ export function EvidenceInspector({
     : [];
   const selectedChunks = selectedDecision ? orderByIds(evidence.chunks, selectedDecision.output_chunk_ids) : [];
   const selectedWarnings = selectedDecision ? orderByIds(evidence.warnings, selectedDecision.warning_ids) : [];
-  const selectedTabId = selectedDecision ? tabIdForDecision(selectedDecision.id) : undefined;
-  const selectedPanelId = selectedDecision ? panelIdForDecision(selectedDecision.id) : undefined;
-
   return (
     <div className={cn(rs.font.body, "mx-auto grid max-w-7xl gap-4 xl:grid-cols-[280px_minmax(0,1fr)_300px]")}>
       <section className="xl:col-span-3">
@@ -88,9 +86,6 @@ export function EvidenceInspector({
       <section
         className="min-w-0"
         aria-label={selectedDecision ? `${selectedDecision.title} evidence detail` : "Evidence detail"}
-        role={selectedDecision ? "tabpanel" : undefined}
-        id={selectedPanelId}
-        aria-labelledby={selectedTabId}
       >
         {selectedDecision ? (
           <div className="space-y-4">
@@ -107,7 +102,7 @@ export function EvidenceInspector({
               )}
             </EvidencePanel>
             <EvidencePanel title="Normalized unit">
-              <DiffPanel blocks={selectedBlocks} chunks={selectedChunks} />
+              <DiffPanel decision={selectedDecision} blocks={selectedBlocks} chunks={selectedChunks} />
             </EvidencePanel>
             <EvidencePanel title="Chunk output">
               {selectedChunks.length ? (
@@ -145,6 +140,49 @@ function EvidenceRail({
   selectedDecisionId: string;
   onSelect: (id: string) => void;
 }) {
+  const selectByIndex = (index: number, currentTarget: EventTarget & HTMLElement) => {
+    const boundedIndex = Math.max(0, Math.min(index, decisions.length - 1));
+    const nextDecision = decisions[boundedIndex];
+    if (!nextDecision) {
+      return;
+    }
+    onSelect(nextDecision.id);
+    window.requestAnimationFrame(() => {
+      currentTarget
+        .querySelector<HTMLButtonElement>(`button[data-decision-id="${cssEscape(nextDecision.id)}"]`)
+        ?.focus();
+    });
+  };
+
+  const handleKeyDown = (
+    event: KeyboardEvent<HTMLButtonElement>,
+    decision: NormalizationDecisionEvidence,
+  ) => {
+    const currentIndex = decisions.findIndex((item) => item.id === decision.id);
+    if (currentIndex < 0) {
+      return;
+    }
+    if (event.key === "ArrowDown" || event.key === "ArrowRight") {
+      event.preventDefault();
+      selectByIndex((currentIndex + 1) % decisions.length, event.currentTarget.parentElement ?? event.currentTarget);
+    }
+    if (event.key === "ArrowUp" || event.key === "ArrowLeft") {
+      event.preventDefault();
+      selectByIndex(
+        (currentIndex - 1 + decisions.length) % decisions.length,
+        event.currentTarget.parentElement ?? event.currentTarget,
+      );
+    }
+    if (event.key === "Home") {
+      event.preventDefault();
+      selectByIndex(0, event.currentTarget.parentElement ?? event.currentTarget);
+    }
+    if (event.key === "End") {
+      event.preventDefault();
+      selectByIndex(decisions.length - 1, event.currentTarget.parentElement ?? event.currentTarget);
+    }
+  };
+
   return (
     <aside className={cn("rounded-md border p-3", rs.border.line, rs.bg.paper)} aria-label="Evidence decisions">
       <div className="mb-3 flex items-center gap-2">
@@ -152,19 +190,17 @@ function EvidenceRail({
         <h2 className={cn("text-sm font-semibold", rs.text.ink)}>Decisions</h2>
       </div>
       {decisions.length ? (
-        <div className="grid gap-2" role="tablist" aria-label="Evidence decisions">
+        <div className="grid gap-2" aria-label="Evidence decisions">
           {decisions.map((decision) => {
             const selected = decision.id === selectedDecisionId;
             return (
               <button
                 key={decision.id}
                 type="button"
-                id={tabIdForDecision(decision.id)}
-                role="tab"
-                aria-selected={selected}
-                aria-controls={panelIdForDecision(decision.id)}
-                tabIndex={selected ? 0 : -1}
+                data-decision-id={decision.id}
+                aria-pressed={selected}
                 onClick={() => onSelect(decision.id)}
+                onKeyDown={(event) => handleKeyDown(event, decision)}
                 className={cn(
                   "min-h-11 rounded-md border px-3 py-2 text-left text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-offset-2",
                   rs.focus.ring,
@@ -243,13 +279,31 @@ function BlockCard({ block }: { block: ParserBlockEvidence }) {
   );
 }
 
-function DiffPanel({ blocks, chunks }: { blocks: ParserBlockEvidence[]; chunks: ChunkEvidence[] }) {
-  if (!blocks.length && !chunks.length) {
+function DiffPanel({
+  decision,
+  blocks,
+  chunks,
+}: {
+  decision: NormalizationDecisionEvidence;
+  blocks: ParserBlockEvidence[];
+  chunks: ChunkEvidence[];
+}) {
+  const explicitRows = decision.diff_rows ?? [];
+  if (!explicitRows.length && !blocks.length && !chunks.length) {
     return <MissingText>No diffable evidence recorded.</MissingText>;
   }
 
   return (
     <div className="grid gap-2">
+      {explicitRows.map((row) => (
+        <DiffRow
+          key={row.id}
+          label={diffKindLabel(row.kind)}
+          text={row.text}
+          capped={row.capped}
+          hiddenCount={row.hidden_count}
+        />
+      ))}
       {blocks.map((block) => (
         <DiffRow key={block.id} label="Unchanged" text={block.text_preview} />
       ))}
@@ -263,14 +317,25 @@ function DiffPanel({ blocks, chunks }: { blocks: ParserBlockEvidence[]; chunks: 
 function DiffRow({
   label,
   text,
+  capped = false,
+  hiddenCount = 0,
 }: {
-  label: "Added" | "Unchanged";
+  label: "Added" | "Unchanged" | "Removed" | "Blocked";
   text: string;
+  capped?: boolean;
+  hiddenCount?: number;
 }) {
   return (
     <div className={cn("grid gap-2 rounded-md border p-3 sm:grid-cols-[110px_minmax(0,1fr)]", rs.border.line, rs.bg.field)}>
       <span className={cn("text-xs font-semibold uppercase", rs.text.accentDeep)}>{label}</span>
-      <span className={cn("whitespace-pre-wrap break-words text-sm leading-6", rs.text.body)}>{text}</span>
+      <span className={cn("whitespace-pre-wrap break-words text-sm leading-6", rs.text.body)}>
+        {text}
+        {capped ? (
+          <span className={cn("mt-1 block text-xs font-semibold", rs.text.warning)}>
+            Capped preview{hiddenCount ? ` · ${hiddenCount} hidden characters` : ""}
+          </span>
+        ) : null}
+      </span>
     </div>
   );
 }
@@ -460,10 +525,16 @@ function orderByIds<T extends { id: string }>(items: T[], ids: string[]) {
   });
 }
 
-function tabIdForDecision(decisionId: string) {
-  return `evidence-tab-${decisionId}`;
+function diffKindLabel(kind: DiffRowEvidence["kind"]) {
+  const labels: Record<DiffRowEvidence["kind"], "Added" | "Unchanged" | "Removed" | "Blocked"> = {
+    added: "Added",
+    unchanged: "Unchanged",
+    removed: "Removed",
+    blocked: "Blocked",
+  };
+  return labels[kind];
 }
 
-function panelIdForDecision(decisionId: string) {
-  return `evidence-panel-${decisionId}`;
+function cssEscape(value: string) {
+  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
