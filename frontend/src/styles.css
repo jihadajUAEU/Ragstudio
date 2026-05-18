@@ -12,6 +12,7 @@
   --rs-accent: #0f766e;
   --rs-accent-deep: #0c524d;
   --rs-accent-soft: #e3f3f1;
+  --rs-on-accent: #ffffff;
   --rs-earth: #7b5f28;
   --rs-earth-soft: #f3ecd9;
   --rs-success: #256a3b;
@@ -77,6 +78,6 @@ a:visited {
 }
 
 ::selection {
-  color: #ffffff;
+  color: var(--rs-on-accent);
   background: var(--rs-accent);
 }

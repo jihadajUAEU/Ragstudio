@@ -22,7 +22,7 @@ export const rs = {
     warning: "text-[var(--rs-warning)]",
     danger: "text-[var(--rs-danger)]",
     visited: "text-[var(--rs-visited)]",
-    white: "text-white",
+    white: "text-[var(--rs-on-accent)]",
   },
   border: {
     line: "border-[var(--rs-line)]",
