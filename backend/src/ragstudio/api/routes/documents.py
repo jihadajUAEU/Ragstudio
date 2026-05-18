@@ -17,8 +17,13 @@ from ragstudio.api.deps import get_session
 from ragstudio.api.upload_utils import read_upload_file
 from ragstudio.config import AppSettings
 from ragstudio.schemas.documents import DocumentOut
+from ragstudio.schemas.document_parse_evidence import DocumentParseEvidence
 from ragstudio.schemas.parsing import IndexDocumentIn
 from ragstudio.services.chunk_service import ChunkService
+from ragstudio.services.document_parse_evidence_service import (
+    DocumentParseEvidenceNotFoundError,
+    DocumentParseEvidenceService,
+)
 from ragstudio.services.document_service import ActiveIndexJobError, DocumentService
 from ragstudio.services.graph_projection_runner import (
     GraphProjectionCleanupError,
@@ -143,6 +148,17 @@ async def rematerialize_document_graph(
     result = await GraphProjectionRunner(session, settings).rematerialize_document(document_id)
     await session.commit()
     return {"document_id": document_id, **result}
+
+
+@router.get("/{document_id}/parse-evidence", response_model=DocumentParseEvidence)
+async def get_document_parse_evidence(
+    document_id: str,
+    session: AsyncSession = Depends(get_session),
+) -> DocumentParseEvidence:
+    try:
+        return await DocumentParseEvidenceService(session).get_document_evidence(document_id)
+    except DocumentParseEvidenceNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Document not found") from exc
 
 
 async def _ensure_runtime_ready(session: AsyncSession, settings: AppSettings) -> None:
