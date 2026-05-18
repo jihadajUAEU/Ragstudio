@@ -55,7 +55,7 @@ This plan implements the document-parse evidence object only. It does not build 
 - Modify: `backend/src/ragstudio/api/routes/documents.py`
 - Create: `backend/tests/test_document_parse_evidence.py`
 
-- [ ] **Step 1: Write failing backend tests**
+- [x] **Step 1: Write failing backend tests**
 
 Create `backend/tests/test_document_parse_evidence.py` with these tests:
 
@@ -245,7 +245,7 @@ async def test_parse_evidence_route_returns_contract(client, tmp_path: Path):
     assert body["chunks"][0]["id"] == "chunk-route"
 ```
 
-- [ ] **Step 2: Run tests to verify failure**
+- [x] **Step 2: Run tests to verify failure**
 
 Run:
 
@@ -255,7 +255,7 @@ python -m pytest backend/tests/test_document_parse_evidence.py -q
 
 Expected: FAIL with `ModuleNotFoundError` for `ragstudio.services.document_parse_evidence_service`.
 
-- [ ] **Step 3: Add Pydantic evidence schemas**
+- [x] **Step 3: Add Pydantic evidence schemas**
 
 Create `backend/src/ragstudio/schemas/document_parse_evidence.py`:
 
@@ -358,7 +358,7 @@ class DocumentParseEvidence(StudioModel):
     missing_sections: list[str] = []
 ```
 
-- [ ] **Step 4: Implement evidence assembly service**
+- [x] **Step 4: Implement evidence assembly service**
 
 Create `backend/src/ragstudio/services/document_parse_evidence_service.py`:
 
@@ -803,7 +803,7 @@ class DocumentParseEvidenceService:
         return output
 ```
 
-- [ ] **Step 5: Add route**
+- [x] **Step 5: Add route**
 
 In `backend/src/ragstudio/api/routes/documents.py`, add imports:
 
@@ -829,7 +829,7 @@ async def get_document_parse_evidence(
         raise HTTPException(status_code=404, detail="Document not found") from exc
 ```
 
-- [ ] **Step 6: Run focused backend tests**
+- [x] **Step 6: Run focused backend tests**
 
 Run:
 
@@ -839,7 +839,7 @@ python -m pytest backend/tests/test_document_parse_evidence.py -q
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 Run:
 
@@ -857,7 +857,7 @@ git commit -m "feat: expose document parse evidence contract"
 - Modify: `backend/tests/test_document_parse_evidence.py`
 - Modify: `docs/benchmarks/ragstudio-oss-proof-v1/manifest.json`
 
-- [ ] **Step 1: Add failing exporter tests**
+- [x] **Step 1: Add failing exporter tests**
 
 Append to `backend/tests/test_document_parse_evidence.py`:
 
@@ -933,7 +933,7 @@ def test_document_parse_evidence_exporter_rejects_unsafe_values(tmp_path: Path):
         )
 ```
 
-- [ ] **Step 2: Run exporter tests to verify failure**
+- [x] **Step 2: Run exporter tests to verify failure**
 
 Run:
 
@@ -943,7 +943,7 @@ python -m pytest backend/tests/test_document_parse_evidence.py::test_document_pa
 
 Expected: FAIL with `ModuleNotFoundError` for `document_parse_evidence_exporter`.
 
-- [ ] **Step 3: Implement exporter**
+- [x] **Step 3: Implement exporter**
 
 Create `backend/src/ragstudio/services/document_parse_evidence_exporter.py`:
 
@@ -1011,7 +1011,7 @@ class DocumentParseEvidenceExporter:
                 raise UnsafeProofExportError(f"Proof export contains unsafe {label}.")
 ```
 
-- [ ] **Step 4: Register export artifact in proof manifest**
+- [x] **Step 4: Register export artifact in proof manifest**
 
 Update `docs/benchmarks/ragstudio-oss-proof-v1/manifest.json` by adding this artifact entry to the existing artifact list:
 
@@ -1025,7 +1025,7 @@ Update `docs/benchmarks/ragstudio-oss-proof-v1/manifest.json` by adding this art
 
 If the manifest uses a different shape, preserve its existing structure and add the new artifact with equivalent fields.
 
-- [ ] **Step 5: Run focused tests**
+- [x] **Step 5: Run focused tests**
 
 Run:
 
@@ -1035,7 +1035,7 @@ python -m pytest backend/tests/test_document_parse_evidence.py -q
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 Run:
 
@@ -1053,7 +1053,7 @@ git commit -m "feat: export sanitized document parse evidence"
 - Create: `frontend/src/features/document-evidence/evidence-inspector.tsx`
 - Create: `frontend/tests/document-evidence-inspector.test.tsx`
 
-- [ ] **Step 1: Add failing component tests**
+- [x] **Step 1: Add failing component tests**
 
 Create `frontend/tests/document-evidence-inspector.test.tsx`:
 
@@ -1208,7 +1208,7 @@ describe("EvidenceInspector", () => {
 });
 ```
 
-- [ ] **Step 2: Run component tests to verify failure**
+- [x] **Step 2: Run component tests to verify failure**
 
 Run:
 
@@ -1219,7 +1219,7 @@ npm test -- document-evidence-inspector.test.tsx
 
 Expected: FAIL because `document-evidence/evidence-inspector` does not exist.
 
-- [ ] **Step 3: Add frontend contract types**
+- [x] **Step 3: Add frontend contract types**
 
 Create `frontend/src/features/document-evidence/types.ts`:
 
@@ -1319,7 +1319,7 @@ export interface DocumentParseEvidence {
 }
 ```
 
-- [ ] **Step 4: Implement shared inspector**
+- [x] **Step 4: Implement shared inspector**
 
 Create `frontend/src/features/document-evidence/evidence-inspector.tsx`:
 
@@ -1619,7 +1619,7 @@ function MissingText({ children }: { children: React.ReactNode }) {
 }
 ```
 
-- [ ] **Step 5: Run component tests**
+- [x] **Step 5: Run component tests**
 
 Run:
 
@@ -1630,7 +1630,7 @@ npm test -- document-evidence-inspector.test.tsx
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 Run:
 
@@ -1650,7 +1650,7 @@ git commit -m "feat: add document evidence inspector component"
 - Modify: `frontend/src/App.tsx`
 - Modify: `frontend/src/lib/routes.ts`
 
-- [ ] **Step 1: Add failing page tests**
+- [x] **Step 1: Add failing page tests**
 
 Create `frontend/tests/document-evidence-page.test.tsx`:
 
@@ -1736,7 +1736,7 @@ describe("DocumentEvidencePage", () => {
 });
 ```
 
-- [ ] **Step 2: Run page tests to verify failure**
+- [x] **Step 2: Run page tests to verify failure**
 
 Run:
 
@@ -1747,7 +1747,7 @@ npm test -- document-evidence-page.test.tsx
 
 Expected: FAIL because `document-evidence-page` does not exist.
 
-- [ ] **Step 3: Add API client method**
+- [x] **Step 3: Add API client method**
 
 In `frontend/src/api/client.ts`, import the local type:
 
@@ -1762,7 +1762,7 @@ Add this method inside `apiClient` after `documents`:
     request<DocumentParseEvidence>(`/api/documents/${encodeURIComponent(documentId)}/parse-evidence`),
 ```
 
-- [ ] **Step 4: Implement page**
+- [x] **Step 4: Implement page**
 
 Create `frontend/src/features/document-evidence/document-evidence-page.tsx`:
 
@@ -1821,7 +1821,7 @@ export function DocumentEvidencePage() {
 }
 ```
 
-- [ ] **Step 5: Add route and navigation**
+- [x] **Step 5: Add route and navigation**
 
 In `frontend/src/App.tsx`, add import:
 
@@ -1848,7 +1848,7 @@ In `frontend/src/lib/routes.ts`, add `ShieldCheck` to the lucide import and add 
   { href: "/document-evidence", label: "Evidence", icon: ShieldCheck, enabled: true },
 ```
 
-- [ ] **Step 6: Run page tests**
+- [x] **Step 6: Run page tests**
 
 Run:
 
@@ -1859,7 +1859,7 @@ npm test -- document-evidence-page.test.tsx document-evidence-inspector.test.tsx
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 Run:
 
@@ -1875,7 +1875,7 @@ git commit -m "feat: mount document evidence in studio"
 **Files:**
 - Modify: `docs/superpowers/plans/2026-05-18-document-parse-evidence-inspector.md`
 
-- [ ] **Step 1: Run backend focused verification**
+- [x] **Step 1: Run backend focused verification**
 
 Run:
 
@@ -1886,7 +1886,7 @@ python -m ruff check backend/src/ragstudio/schemas/document_parse_evidence.py ba
 
 Expected: PASS.
 
-- [ ] **Step 2: Run frontend focused verification**
+- [x] **Step 2: Run frontend focused verification**
 
 Run:
 
@@ -1899,7 +1899,7 @@ npm run build
 
 Expected: PASS.
 
-- [ ] **Step 3: Search for unsafe public proof values in exported fixture**
+- [x] **Step 3: Search for unsafe public proof values in exported fixture**
 
 If `docs/benchmarks/ragstudio-oss-proof-v1/artifacts/document-parse-evidence.export.json` exists, run:
 
@@ -1909,11 +1909,11 @@ Select-String -Path 'docs\benchmarks\ragstudio-oss-proof-v1\artifacts\document-p
 
 Expected: no matches.
 
-- [ ] **Step 4: Mark plan checkboxes complete**
+- [x] **Step 4: Mark plan checkboxes complete**
 
 Update this plan file so completed steps are marked with `[x]`. Do not mark a step complete unless its command passed or its expected failure occurred during TDD.
 
-- [ ] **Step 5: Commit plan**
+- [x] **Step 5: Commit plan**
 
 Run:
 
