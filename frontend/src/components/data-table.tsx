@@ -7,6 +7,7 @@ import {
 } from "@tanstack/react-table";
 
 import { EmptyState } from "./empty-state";
+import { rs } from "../lib/design-tokens";
 import { cn } from "../lib/utils";
 import { Inbox } from "lucide-react";
 
@@ -45,10 +46,15 @@ export function DataTable<TData>({
   }
 
   return (
-    <div className={cn("min-w-0 max-w-full overflow-hidden rounded-md border border-[#d6dde1] bg-white", className)}>
+    <div
+      className={cn(
+        `min-w-0 max-w-full overflow-hidden rounded-md border ${rs.border.line} ${rs.bg.paper}`,
+        className,
+      )}
+    >
       <div className="max-w-full overflow-x-auto">
         <table aria-label={ariaLabel} className="w-full min-w-[720px] table-fixed text-left text-sm">
-          <thead className="border-b border-[#d6dde1] bg-[#f4f7f8] text-xs uppercase text-[#62717a]">
+          <thead className={`border-b ${rs.border.line} ${rs.bg.field} text-xs uppercase ${rs.text.muted}`}>
             {table.getHeaderGroups().map((headerGroup) => (
               <tr key={headerGroup.id}>
                 {headerGroup.headers.map((header) => (
@@ -61,11 +67,11 @@ export function DataTable<TData>({
               </tr>
             ))}
           </thead>
-          <tbody className="divide-y divide-[#edf1f3]">
+          <tbody className={`divide-y ${rs.divide.line}`}>
             {table.getRowModel().rows.map((row) => (
-              <tr key={row.id} className="hover:bg-[#f7fafb]">
+              <tr key={row.id} className={rs.hover.field}>
                 {row.getVisibleCells().map((cell) => (
-                  <td key={cell.id} className="min-w-0 overflow-hidden px-4 py-3 align-middle text-[#24313a]">
+                  <td key={cell.id} className={`min-w-0 overflow-hidden px-4 py-3 align-middle ${rs.text.body}`}>
                     {flexRender(cell.column.columnDef.cell, cell.getContext())}
                   </td>
                 ))}

@@ -2,16 +2,17 @@ import { Slot } from "@radix-ui/react-slot";
 import { cva, type VariantProps } from "class-variance-authority";
 import type { ButtonHTMLAttributes } from "react";
 
+import { rs } from "../../lib/design-tokens";
 import { cn } from "../../lib/utils";
 
 const buttonVariants = cva(
-  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#176b87] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50",
+  `inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 ${rs.focus.ring} focus-visible:ring-offset-2 ${rs.focus.offset} disabled:pointer-events-none disabled:opacity-50`,
   {
     variants: {
       variant: {
-        default: "bg-[#176b87] text-white hover:bg-[#12546a]",
-        secondary: "border border-[#d6dde1] bg-white text-[#24313a] hover:bg-[#edf3f5]",
-        ghost: "text-[#3a4a53] hover:bg-[#e7eef1]",
+        default: `${rs.bg.accent} ${rs.text.white} ${rs.hover.accentDeep}`,
+        secondary: `border ${rs.border.strong} ${rs.bg.paper} ${rs.text.ink} ${rs.hover.field}`,
+        ghost: `${rs.text.body} ${rs.hover.accentSoft}`,
       },
       size: {
         default: "h-10 px-4 py-2",
