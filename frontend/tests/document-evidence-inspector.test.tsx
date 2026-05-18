@@ -19,6 +19,7 @@ const evidence: DocumentParseEvidence = {
       id: "artifact-1",
       kind: "parser",
       path: "artifacts/source_content_list.json",
+      href: "/proof/artifacts/source_content_list.json",
       preview_available: true,
       preview_capped: true,
       hidden_count: 42,
@@ -79,8 +80,11 @@ const evidence: DocumentParseEvidence = {
   proof: {
     mode: "export",
     source_commit: "abc1234",
+    source_commit_href: "https://example.com/commit/abc1234",
     proof_packet_id: "ragstudio-oss-proof-v1",
+    proof_packet_href: "https://example.com/proof/ragstudio-oss-proof-v1",
     replay_command: "./scripts/proof.sh --fixtures static-fixtures",
+    replay_href: "https://example.com/proof/replay",
     limitations: ["Synthetic fixture only."],
     redaction_summary: ["Redacted local absolute path."],
   },
@@ -88,14 +92,11 @@ const evidence: DocumentParseEvidence = {
 };
 
 describe("EvidenceInspector", () => {
-  it("renders selected decision source blocks, chunk output, proof metadata, and diff labels", () => {
+  it("renders selected decision source blocks, chunk output, proof metadata, and public links", () => {
     render(<EvidenceInspector evidence={evidence} mode="public" />);
 
     expect(screen.getByRole("heading", { name: "Document parse evidence" })).toBeVisible();
-    expect(screen.getByRole("button", { name: /Page 1 -> 2 stitch/i })).toHaveAttribute(
-      "aria-current",
-      "true",
-    );
+    expect(screen.getByRole("tab", { name: /Page 1 -> 2 stitch/i })).toHaveAttribute("aria-selected", "true");
     const sourceBlocks = screen.getByRole("region", { name: "Source blocks" });
     expect(sourceBlocks).toBeVisible();
     expect(within(sourceBlocks).getByText("This paragraph starts on page one and")).toBeVisible();
@@ -107,6 +108,18 @@ describe("EvidenceInspector", () => {
     expect(screen.getByRole("region", { name: "Proof metadata" })).toBeVisible();
     expect(screen.getByText("abc1234")).toBeVisible();
     expect(screen.getByText("Redacted local absolute path.")).toBeVisible();
+    expect(screen.getByRole("link", { name: "Open raw artifact" })).toHaveAttribute(
+      "href",
+      "/proof/artifacts/source_content_list.json",
+    );
+    expect(screen.getByRole("link", { name: "View source commit" })).toHaveAttribute(
+      "href",
+      "https://example.com/commit/abc1234",
+    );
+    expect(screen.getByRole("link", { name: "Replay proof" })).toHaveAttribute(
+      "href",
+      "https://example.com/proof/replay",
+    );
     expect(screen.queryByRole("button", { name: "Reindex document" })).not.toBeInTheDocument();
   });
 
@@ -131,17 +144,55 @@ describe("EvidenceInspector", () => {
 
     render(<EvidenceInspector evidence={withSecondDecision} mode="local" onReindex={onReindex} />);
 
-    fireEvent.click(screen.getByRole("button", { name: /Parser warning/i }));
+    fireEvent.click(screen.getByRole("tab", { name: /Parser warning/i }));
 
-    expect(screen.getByRole("button", { name: /Parser warning/i })).toHaveAttribute(
-      "aria-current",
-      "true",
-    );
+    expect(screen.getByRole("tab", { name: /Parser warning/i })).toHaveAttribute("aria-selected", "true");
 
     const reindexButton = screen.getByRole("button", { name: "Reindex document" });
     expect(reindexButton).toBeVisible();
     fireEvent.click(reindexButton);
     expect(onReindex).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves decision-defined ordering for source blocks and chunks", () => {
+    render(
+      <EvidenceInspector
+        evidence={{
+          ...evidence,
+          parser_blocks: [...evidence.parser_blocks].reverse(),
+          chunks: [
+            {
+              id: "chunk-2",
+              text_preview: "Second chunk.",
+              page_start: 3,
+              page_end: 3,
+              source_location: { page: 3 },
+              metadata: {},
+              quality_status: "passed",
+              warning_ids: [],
+            },
+            ...evidence.chunks,
+          ],
+          normalization_decisions: [
+            {
+              ...evidence.normalization_decisions[0],
+              input_block_ids: ["block-1", "block-2"],
+              output_chunk_ids: ["chunk-1", "chunk-2"],
+            },
+          ],
+        }}
+      />,
+    );
+
+    const sourceBlocks = screen.getByRole("region", { name: "Source blocks" });
+    const blockArticles = within(sourceBlocks).getAllByRole("article");
+    expect(within(blockArticles[0]).getByText("This paragraph starts on page one and")).toBeVisible();
+    expect(within(blockArticles[1]).getByText("continues on page two before ending.")).toBeVisible();
+
+    const chunkOutput = screen.getByRole("region", { name: "Chunk output" });
+    const chunkArticles = within(chunkOutput).getAllByRole("article");
+    expect(within(chunkArticles[0]).getByText(/chunk-1/i)).toBeVisible();
+    expect(within(chunkArticles[1]).getByText(/chunk-2/i)).toBeVisible();
   });
 
   it("shows missing evidence sections explicitly", () => {

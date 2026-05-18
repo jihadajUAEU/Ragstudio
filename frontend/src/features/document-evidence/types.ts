@@ -14,6 +14,7 @@ export interface SourceArtifactEvidence {
   kind: string;
   path?: string | null;
   checksum?: string | null;
+  href?: string | null;
   preview_available: boolean;
   preview_capped: boolean;
   hidden_count: number;
@@ -74,9 +75,12 @@ export interface WarningEvidence {
 
 export interface ProofEvidence {
   source_commit?: string | null;
+  source_commit_href?: string | null;
   proof_packet_id?: string | null;
+  proof_packet_href?: string | null;
   mode: "local" | "static-fixture" | "export";
   replay_command?: string | null;
+  replay_href?: string | null;
   limitations: string[];
   redaction_summary: string[];
 }

@@ -30,14 +30,12 @@ export function EvidenceInspector({
   const selectedDecision =
     decisions.find((decision) => decision.id === selectedDecisionId) ?? decisions[0] ?? null;
   const selectedBlocks = selectedDecision
-    ? evidence.parser_blocks.filter((block) => selectedDecision.input_block_ids.includes(block.id))
+    ? orderByIds(evidence.parser_blocks, selectedDecision.input_block_ids)
     : [];
-  const selectedChunks = selectedDecision
-    ? evidence.chunks.filter((chunk) => selectedDecision.output_chunk_ids.includes(chunk.id))
-    : [];
-  const selectedWarnings = selectedDecision
-    ? evidence.warnings.filter((warning) => selectedDecision.warning_ids.includes(warning.id))
-    : [];
+  const selectedChunks = selectedDecision ? orderByIds(evidence.chunks, selectedDecision.output_chunk_ids) : [];
+  const selectedWarnings = selectedDecision ? orderByIds(evidence.warnings, selectedDecision.warning_ids) : [];
+  const selectedTabId = selectedDecision ? tabIdForDecision(selectedDecision.id) : undefined;
+  const selectedPanelId = selectedDecision ? panelIdForDecision(selectedDecision.id) : undefined;
 
   return (
     <div className={cn(rs.font.body, "mx-auto grid max-w-7xl gap-4 xl:grid-cols-[280px_minmax(0,1fr)_300px]")}>
@@ -87,9 +85,15 @@ export function EvidenceInspector({
         onSelect={setSelectedDecisionId}
       />
 
-      <main className="min-w-0 space-y-4">
+      <section
+        className="min-w-0"
+        aria-label={selectedDecision ? `${selectedDecision.title} evidence detail` : "Evidence detail"}
+        role={selectedDecision ? "tabpanel" : undefined}
+        id={selectedPanelId}
+        aria-labelledby={selectedTabId}
+      >
         {selectedDecision ? (
-          <>
+          <div className="space-y-4">
             <DecisionSummary decision={selectedDecision} warnings={selectedWarnings} />
             <EvidencePanel title="Source blocks">
               {selectedBlocks.length ? (
@@ -116,7 +120,7 @@ export function EvidenceInspector({
                 <MissingText>Chunk output not recorded for this decision.</MissingText>
               )}
             </EvidencePanel>
-          </>
+          </div>
         ) : (
           <EmptyState
             icon={AlertCircle}
@@ -125,7 +129,7 @@ export function EvidenceInspector({
             className={cn(rs.bg.paper, rs.border.line)}
           />
         )}
-      </main>
+      </section>
 
       <ProofMetadataPanel evidence={evidence} />
     </div>
@@ -148,14 +152,18 @@ function EvidenceRail({
         <h2 className={cn("text-sm font-semibold", rs.text.ink)}>Decisions</h2>
       </div>
       {decisions.length ? (
-        <div className="grid gap-2">
+        <div className="grid gap-2" role="tablist" aria-label="Evidence decisions">
           {decisions.map((decision) => {
             const selected = decision.id === selectedDecisionId;
             return (
               <button
                 key={decision.id}
                 type="button"
-                aria-current={selected ? "true" : undefined}
+                id={tabIdForDecision(decision.id)}
+                role="tab"
+                aria-selected={selected}
+                aria-controls={panelIdForDecision(decision.id)}
+                tabIndex={selected ? 0 : -1}
                 onClick={() => onSelect(decision.id)}
                 className={cn(
                   "min-h-11 rounded-md border px-3 py-2 text-left text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-offset-2",
@@ -256,7 +264,7 @@ function DiffRow({
   label,
   text,
 }: {
-  label: "Added" | "Unchanged" | "Removed" | "Blocked";
+  label: "Added" | "Unchanged";
   text: string;
 }) {
   return (
@@ -292,12 +300,23 @@ function ProofMetadataPanel({ evidence }: { evidence: DocumentParseEvidence }) {
         <h2 className={cn("text-sm font-semibold", rs.text.ink)}>Proof metadata</h2>
       </div>
       <MetadataItem label="Commit" value={evidence.proof.source_commit ?? "Not recorded"} mono />
-      <MetadataItem label="Packet" value={evidence.proof.proof_packet_id ?? "Local evidence"} mono />
+      {evidence.proof.source_commit_href ? (
+        <MetadataLink href={evidence.proof.source_commit_href}>View source commit</MetadataLink>
+      ) : null}
+      <MetadataItem
+        label="Packet"
+        value={evidence.proof.proof_packet_id ?? "Local evidence"}
+        mono
+      />
+      {evidence.proof.proof_packet_href ? (
+        <MetadataLink href={evidence.proof.proof_packet_href}>Open proof packet</MetadataLink>
+      ) : null}
       <MetadataItem
         label="Replay"
         value={evidence.proof.replay_command ?? "Replay command not recorded"}
         mono
       />
+      {evidence.proof.replay_href ? <MetadataLink href={evidence.proof.replay_href}>Replay proof</MetadataLink> : null}
       <MetadataItem label="Mode" value={titleCase(evidence.proof.mode.replaceAll("-", " "))} />
 
       <div>
@@ -336,6 +355,11 @@ function ArtifactRow({ artifact }: { artifact: SourceArtifactEvidence }) {
             <Pill>{artifact.kind}</Pill>
             <Pill>{artifact.preview_available ? "Preview available" : "Preview unavailable"}</Pill>
           </div>
+          {artifact.href ? (
+            <div className="mt-2">
+              <MetadataLink href={artifact.href}>Open raw artifact</MetadataLink>
+            </div>
+          ) : null}
           {artifact.preview_capped ? (
             <p className={cn("mt-2", rs.text.warning)}>{artifact.hidden_count} hidden characters</p>
           ) : null}
@@ -390,6 +414,22 @@ function ListSection({
   );
 }
 
+function MetadataLink({ href, children }: { href: string; children: ReactNode }) {
+  return (
+    <a
+      href={href}
+      className={cn(
+        "inline-flex items-center text-sm underline underline-offset-2 outline-none focus-visible:ring-2 focus-visible:ring-offset-2",
+        rs.text.accent,
+        rs.focus.ring,
+        rs.focus.offset,
+      )}
+    >
+      {children}
+    </a>
+  );
+}
+
 function Pill({ children }: { children: ReactNode }) {
   return (
     <span className={cn("rounded-full border px-2 py-1", rs.border.line, rs.bg.field, rs.text.body)}>
@@ -410,4 +450,20 @@ function formatPageRange(pageStart?: number | null, pageEnd?: number | null) {
     return `page ${pageStart} -> ${pageEnd}`;
   }
   return `page ${pageStart ?? pageEnd ?? "?"}`;
+}
+
+function orderByIds<T extends { id: string }>(items: T[], ids: string[]) {
+  const itemsById = new Map(items.map((item) => [item.id, item]));
+  return ids.flatMap((id) => {
+    const item = itemsById.get(id);
+    return item ? [item] : [];
+  });
+}
+
+function tabIdForDecision(decisionId: string) {
+  return `evidence-tab-${decisionId}`;
+}
+
+function panelIdForDecision(decisionId: string) {
+  return `evidence-panel-${decisionId}`;
 }
