@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 
 import { apiClient } from "../../api/client";
-import type { RunOut, VariantOut } from "../../api/generated";
+import type { HybridSearchWeights, RunOut, VariantOut } from "../../api/generated";
 import { EmptyState } from "../../components/empty-state";
 import { StatusBadge } from "../../components/status-badge";
 import { Button } from "../../components/ui/button";
@@ -24,12 +24,27 @@ import {
   type NormalizedEvidence,
 } from "../evidence/evidence-viewer";
 import { QueryPathwayViewer } from "./query-pathway-viewer";
+import { SearchTuningPanel } from "./search-tuning-panel";
 
 const queryKeys = {
   documents: ["documents"],
   variants: ["variants"],
   runs: ["runs"],
+  simulateRetrieval: (
+    query: string,
+    documentIds: string[],
+    variantIds: string[],
+    limit: number,
+    weights: HybridSearchWeights,
+  ) => ["query", "simulate-retrieval", query, documentIds, variantIds, limit, weights],
 } as const;
+
+const defaultSearchWeights: HybridSearchWeights = {
+  reference_exact: 1,
+  term_coverage: 1,
+  metadata_boost: 1,
+  semantic_density: 1,
+};
 
 type QueryResponseMode = "fast" | "full";
 
@@ -43,6 +58,9 @@ export function QueryPage() {
   const [selectedDocumentIds, setSelectedDocumentIds] = useState<string[]>([]);
   const [selectedVariantIds, setSelectedVariantIds] = useState<string[]>([]);
   const [formError, setFormError] = useState("");
+  const [searchTuningOpen, setSearchTuningOpen] = useState(false);
+  const [searchWeights, setSearchWeights] = useState<HybridSearchWeights>(defaultSearchWeights);
+  const [hasCustomSearchWeights, setHasCustomSearchWeights] = useState(false);
 
   const runQuery = useMutation({
     mutationFn: apiClient.query,
@@ -74,6 +92,7 @@ export function QueryPage() {
       response_mode: responseMode,
       answer_budget_ms: responseMode === "fast" ? 3000 : null,
       response_budget_ms: responseMode === "fast" ? 15000 : null,
+      search_weights: hasCustomSearchWeights ? searchWeights : null,
     });
   };
 
@@ -90,6 +109,26 @@ export function QueryPage() {
     queryText.trim().length > 0 &&
     selectedDocumentIds.length > 0 &&
     selectedVariantIds.length > 0;
+  const canTune =
+    !isLoadingChoices && queryText.trim().length > 0 && selectedDocumentIds.length > 0;
+  const simulationQuery = useQuery({
+    queryKey: queryKeys.simulateRetrieval(
+      queryText.trim(),
+      selectedDocumentIds,
+      selectedVariantIds,
+      limit,
+      searchWeights,
+    ),
+    queryFn: () =>
+      apiClient.simulateRetrieval({
+        query: queryText.trim(),
+        document_ids: selectedDocumentIds,
+        variant_ids: selectedVariantIds,
+        limit,
+        search_weights: hasCustomSearchWeights ? searchWeights : null,
+      }),
+    enabled: searchTuningOpen && canTune,
+  });
 
   return (
     <div className="mx-auto grid max-w-7xl gap-6 xl:grid-cols-[minmax(340px,0.42fr)_minmax(0,0.58fr)]">
@@ -190,6 +229,15 @@ export function QueryPage() {
               className="h-10 w-full rounded-md border border-[#cfd8dd] bg-white px-3 text-sm text-[#1f2933] outline-none focus:border-[#176b87] focus:ring-2 focus:ring-[#176b87]/20"
             />
           </label>
+          <Button
+            type="button"
+            variant="secondary"
+            disabled={!canTune}
+            onClick={() => setSearchTuningOpen(true)}
+          >
+            <SlidersHorizontal className="h-4 w-4" aria-hidden="true" />
+            Tune
+          </Button>
           <Button type="submit" disabled={!canRun}>
             {runQuery.isPending ? (
               <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
@@ -204,6 +252,19 @@ export function QueryPage() {
           {formError || choiceError || runQuery.error?.message || (runQuery.isSuccess ? "Run complete" : "")}
         </p>
       </form>
+
+      <SearchTuningPanel
+        open={searchTuningOpen}
+        weights={searchWeights}
+        previewItems={simulationQuery.data?.items ?? []}
+        isLoading={simulationQuery.isFetching}
+        error={simulationQuery.error?.message}
+        onChange={(weights) => {
+          setHasCustomSearchWeights(true);
+          setSearchWeights(weights);
+        }}
+        onClose={() => setSearchTuningOpen(false)}
+      />
 
       <section className="min-w-0">
         <div className="mb-3 flex items-center gap-2">

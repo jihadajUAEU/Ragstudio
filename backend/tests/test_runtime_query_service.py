@@ -7,6 +7,7 @@ from ragstudio.db.models import (
     SettingsProfile,
     Variant,
 )
+from ragstudio.schemas.chunks import HybridSearchWeights
 from ragstudio.schemas.common import StageStatus
 from ragstudio.schemas.parsing import DomainMetadata, IndexDocumentIn
 from ragstudio.schemas.query import QueryIn
@@ -865,6 +866,80 @@ async def test_query_service_fast_mode_defaults_include_mandatory_planner_budget
     assert orchestrator.query_config["response_budget_ms"] == 15000
     assert orchestrator.query_config["query_hypothesis_timeout_ms"] == 5000
     assert orchestrator.query_config["query_hypothesis_required"] == "auto"
+
+
+@pytest.mark.asyncio
+async def test_query_config_includes_hybrid_search_weights(client):
+    app = client._transport.app
+
+    class CapturingOrchestrator:
+        def __init__(self):
+            self.query_config = None
+
+        async def query(self, *args, **kwargs):
+            self.query_config = kwargs["query_config"]
+            return type(
+                "Answer",
+                (),
+                {
+                    "answer": "ok",
+                    "sources": [],
+                    "chunk_traces": [],
+                    "reranker_traces": [],
+                    "token_metadata": {},
+                    "error": None,
+                    "error_type": None,
+                    "timings": {},
+                },
+            )()
+
+    orchestrator = CapturingOrchestrator()
+    async with app.state.session_factory() as session:
+        document, variant = await _create_runtime_records(session, app, indexed=False)
+        profile = await RuntimeProfileService(session, app.state.settings).get_active_profile()
+        session.add(
+            IndexRecord(
+                document_id=document.id,
+                runtime_profile_id=profile.id,
+                status=StageStatus.SUCCEEDED.value,
+                index_shape=profile.index_shape,
+                chunk_count=1,
+            )
+        )
+        await session.commit()
+
+        result = await QueryService(
+            session,
+            app.state.settings.data_dir,
+            settings=app.state.settings,
+            runtime_factory=FakeFactory(),
+            health_service=FakeHealthService(),
+            retrieval_orchestrator=orchestrator,
+        ).run_query(
+            QueryIn(
+                query="weighted search",
+                document_ids=[document.id],
+                variant_ids=[variant.id],
+                search_weights=HybridSearchWeights(
+                    reference_exact=1.2,
+                    term_coverage=0.8,
+                    metadata_boost=2,
+                    semantic_density=1.5,
+                ),
+            )
+        )
+
+    run = result.runs[0]
+    assert run.status == StageStatus.SUCCEEDED
+    assert orchestrator.query_config["hybrid_search_weights"] == {
+        "reference_exact": 1.2,
+        "term_coverage": 0.8,
+        "semantic_density": 1.5,
+        "metadata_boost": 2.0,
+    }
+    assert run.query_config["hybrid_search_weights"] == orchestrator.query_config[
+        "hybrid_search_weights"
+    ]
 
 
 @pytest.mark.asyncio

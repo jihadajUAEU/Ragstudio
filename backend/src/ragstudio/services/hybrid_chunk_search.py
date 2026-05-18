@@ -11,6 +11,7 @@ from ragstudio.services.arabic_text import (
     arabic_tokens,
     normalize_arabic_text,
 )
+from ragstudio.services.domain_search_policy import DomainSearchPolicy
 from ragstudio.services.reference_metadata import ReferenceSemantics
 from ragstudio.services.retrieval_explainer import build_retrieval_explain
 
@@ -55,13 +56,19 @@ class ChunkScore:
 
 
 class HybridChunkSearch:
-    def score(self, query: str, chunk: Chunk) -> ChunkScore:
+    def score(
+        self,
+        query: str,
+        chunk: Chunk,
+        search_weights: dict[str, float] | None = None,
+    ) -> ChunkScore:
         query_text = query.strip().lower()
         if not query_text:
             return ChunkScore(score=1.0, breakdown={"empty_query": 1.0})
 
         chunk_text = chunk.text.lower()
         metadata = chunk.metadata_json or {}
+        policy = DomainSearchPolicy.from_metadata(metadata)
         if _contains_arabic(query) and not self._quality_allows_exact_arabic(metadata):
             return ChunkScore(
                 score=0.0,
@@ -142,45 +149,58 @@ class HybridChunkSearch:
 
         exact_phrase = self._exact_phrase_score(query_text, chunk_text)
         query_terms = self._terms(query_text)
+        aliased_query_terms = self._terms(query_text, policy)
         chunk_terms = self._terms(chunk_text)
-        if query_terms and chunk_terms:
-            overlap = query_terms & chunk_terms
-            coverage = len(overlap) / len(query_terms)
-            density = len(overlap) / len(chunk_terms)
+        if aliased_query_terms and chunk_terms:
+            coverage_overlap = aliased_query_terms & chunk_terms
+            coverage = len(coverage_overlap) / len(aliased_query_terms)
         else:
             coverage = 0.0
+        if query_terms and chunk_terms:
+            raw_overlap = query_terms & chunk_terms
+            density = len(raw_overlap) / len(chunk_terms)
+        else:
             density = 0.0
 
         arabic_exact = self._arabic_exact_score(query, chunk)
         arabic_token = self._arabic_token_score(query, chunk)
         metadata_boost = self._metadata_boost(query_text, metadata)
-        answer_bearing_count = self._answer_bearing_count_boost(
-            query_text,
-            chunk.text,
-            metadata,
+        domain_intent = self._domain_intent_boost(
+            policy,
+            query_text=query_text,
+            query_terms=query_terms,
+            chunk_terms=chunk_terms,
+            evidence_text=f"{chunk.text} {self._metadata_title(metadata)}",
         )
-        guidance_request = self._guidance_request_boost(query_text, chunk_text)
         breakdown: dict[str, float] = {
             "reference_exact": reference_exact,
             "neighbor_match": neighbor_match,
             "same_chapter": same_chapter,
             "exact_phrase": exact_phrase,
             "term_coverage": coverage * 10.0,
-            "term_density": density * 2.0,
+            "semantic_density": density * 2.0,
             "arabic_exact": arabic_exact,
             "arabic_token": arabic_token,
             "metadata_boost": metadata_boost,
-            "answer_bearing_count": answer_bearing_count,
-            "guidance_request": guidance_request,
+            "domain_intent": domain_intent,
+        }
+        weights = self._effective_weights(policy, search_weights)
+        weighted_breakdown = {
+            key: value * weights.get(key, 1.0)
+            for key, value in breakdown.items()
         }
         explain = build_retrieval_explain(
             query_reference=self._query_reference_label(query_ref),
             metadata=metadata,
-            score_breakdown=breakdown,
+            score_breakdown=weighted_breakdown,
         )
         return ChunkScore(
-            score=sum(breakdown.values()),
-            breakdown={**breakdown, "retrieval_explain": explain.model_dump()},
+            score=sum(weighted_breakdown.values()),
+            breakdown={
+                **breakdown,
+                "weighted_score_breakdown": weighted_breakdown,
+                "retrieval_explain": explain.model_dump(),
+            },
         )
 
     def _semantics(self, metadata: dict[str, Any]) -> ReferenceSemantics | None:
@@ -189,7 +209,11 @@ class HybridChunkSearch:
             return None
         return ReferenceSemantics.from_metadata(DomainMetadata.model_validate(domain_metadata))
 
-    def _metadata_boost(self, query_text: str, metadata: dict[str, Any]) -> float:
+    def _metadata_boost(
+        self,
+        query_text: str,
+        metadata: dict[str, Any],
+    ) -> float:
         boost = 0.0
         domain_metadata = metadata.get("domain_metadata")
         if isinstance(domain_metadata, dict):
@@ -214,6 +238,24 @@ class HybridChunkSearch:
                     boost += min(10.0, len(shared_title_terms) * 2.0)
 
         return min(boost, 12.0)
+
+    def _domain_intent_boost(
+        self,
+        policy: DomainSearchPolicy | None,
+        *,
+        query_text: str,
+        query_terms: set[str],
+        chunk_terms: set[str],
+        evidence_text: str,
+    ) -> float:
+        if policy is None:
+            return 0.0
+        return policy.intent_boost(
+            query_text=query_text,
+            query_terms=query_terms,
+            chunk_terms=chunk_terms,
+            evidence_text=evidence_text,
+        )
 
     def _quality_allows_reference_boost(self, metadata: dict[str, Any]) -> bool:
         policy = metadata.get("quality_action_policy")
@@ -276,36 +318,6 @@ class HybridChunkSearch:
             is not None
         )
 
-    def _answer_bearing_count_boost(
-        self,
-        query_text: str,
-        chunk_text: str,
-        metadata: dict[str, Any],
-    ) -> float:
-        if not re.search(r"\b(how many|count|number of|total)\b", query_text):
-            return 0.0
-        combined = f"{chunk_text} {self._metadata_title(metadata)}".casefold()
-        if not re.search(r"\b\d{2,}\b", combined):
-            return 0.0
-        if not any(term in combined for term in ("hadith", "collection", "bukhari")):
-            return 0.0
-        return 30.0
-
-    def _guidance_request_boost(self, query_text: str, chunk_text: str) -> float:
-        query_terms = self._terms(query_text)
-        asks_for_guidance = (
-            {"ask", "asks", "asking", "request", "requests", "prayer"} & query_terms
-            and {"guidance", "guide", "guides", "guided"} & query_terms
-        )
-        if not asks_for_guidance:
-            return 0.0
-
-        if "straight path" not in query_text or "straight path" not in chunk_text:
-            return 0.0
-        if re.search(r"\bguide\s+us\b", chunk_text):
-            return 40.0
-        return 0.0
-
     def _exact_phrase_score(self, query_text: str, chunk_text: str) -> float:
         if query_text and query_text in chunk_text:
             return 8.0
@@ -334,7 +346,7 @@ class HybridChunkSearch:
         normalized: list[str] = []
         for phrase in phrases:
             phrase = re.sub(r"\s+", " ", phrase).strip().casefold()
-            if len(self._terms(phrase)) >= 4 and phrase not in normalized:
+            if len(self._terms(phrase, None)) >= 4 and phrase not in normalized:
                 normalized.append(phrase)
         return normalized
 
@@ -346,17 +358,31 @@ class HybridChunkSearch:
                 return title
         return ""
 
-    def _terms(self, value: str) -> set[str]:
+    def _terms(self, value: str, policy: DomainSearchPolicy | None = None) -> set[str]:
         terms: set[str] = set()
         for match in re.finditer(r"[\w\u0600-\u06FF]+", value, flags=re.UNICODE):
             term = match.group(0).lower()
             if term in _ENGLISH_STOPWORDS:
                 continue
-            if term == "eid":
-                terms.update({"id", "adha"})
-                continue
             terms.add(term)
+            if policy is not None:
+                terms.update(policy.aliases_for(term))
         return terms
+
+    def _effective_weights(
+        self,
+        policy: DomainSearchPolicy | None,
+        search_weights: dict[str, float] | None,
+    ) -> dict[str, float]:
+        weights: dict[str, float] = {}
+        if policy is not None and policy.hybrid_search_weights:
+            weights.update(policy.hybrid_search_weights)
+        if search_weights:
+            for key, value in search_weights.items():
+                if isinstance(value, bool) or not isinstance(value, int | float):
+                    continue
+                weights[key] = float(value)
+        return weights
 
     def _query_reference_label(self, query_ref: dict[str, Any] | None) -> str | None:
         if not isinstance(query_ref, dict):

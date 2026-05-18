@@ -3,7 +3,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from ragstudio.schemas.parsing import DomainMetadata
 from ragstudio.services.adapter import AdapterChunk
 from ragstudio.services.chunk_splitter import ChunkSplitter
@@ -124,6 +123,22 @@ def test_chunk_splitter_hard_splits_single_oversized_paragraph():
     assert split[2].metadata["parser_metadata"]["split_index"] == 2
     assert split[2].metadata["parser_metadata"]["split_count"] == 3
     assert split[2].metadata["parser_metadata"]["split_profile"] == "generic"
+
+
+def test_chunk_splitter_splits_long_sentence_at_nearest_semantic_boundary():
+    text = f"{words(39, 'lead')} boundary, {words(81, 'tail')}."
+
+    split = ChunkSplitter(max_words=50)._hard_split_text(text, 50)
+
+    assert split[0].endswith("boundary,")
+    assert len(split[0].split()) == 40
+    assert len(split[1].split()) == 50
+
+
+def test_chunk_splitter_falls_back_to_word_cap_when_no_boundary_exists():
+    split = ChunkSplitter(max_words=50)._hard_split_text(words(121), 50)
+
+    assert [len(item.split()) for item in split] == [50, 50, 21]
 
 
 def test_chunk_splitter_preserves_small_chunks_unchanged():

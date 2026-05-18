@@ -129,6 +129,9 @@ def validate_custom_json(value: dict[str, Any]) -> dict[str, Any]:
     _validate_mineru_parse_options(value.get("mineru_parse_options"))
     _validate_vision_recovery_policy(value.get("vision_recovery_policy"))
     _validate_retrieval(value.get("retrieval"))
+    _validate_search_intents(value.get("search_intents"))
+    _validate_domain_vocabulary(value.get("domain_vocabulary"))
+    _validate_hybrid_search_weights(value.get("hybrid_search_weights"))
     _validate_graph(value.get("graph"))
     return value
 
@@ -376,7 +379,11 @@ def _validate_layout_quality_policy(value: Any) -> None:
                     "strings to lists of strings."
                 )
 
-    for section_name in ("misclassified_block_policy", "disallowed_block_policy"):
+    for section_name in (
+        "misclassified_block_policy",
+        "disallowed_block_policy",
+        "block_type_policy",
+    ):
         section = value.get(section_name)
         if section is None:
             continue
@@ -390,24 +397,58 @@ def _validate_layout_quality_policy(value: Any) -> None:
                     f"custom_json.layout_quality_policy.{section_name} must map "
                     "strings to objects."
                 )
-            action = policy.get("action")
-            if action is not None and action not in LAYOUT_RECOVERY_ACTIONS:
+            _validate_layout_quality_policy_item(
+                policy,
+                f"custom_json.layout_quality_policy.{section_name}.{policy_name}",
+            )
+
+    warning_policy = value.get("warning_policy")
+    if warning_policy is not None:
+        if not isinstance(warning_policy, dict):
+            raise ValueError(
+                "custom_json.layout_quality_policy.warning_policy must be an object."
+            )
+        for warning_code, policy in warning_policy.items():
+            if not isinstance(warning_code, str) or not isinstance(policy, dict):
                 raise ValueError(
-                    "custom_json.layout_quality_policy."
-                    f"{section_name}.{policy_name}.action is invalid."
+                    "custom_json.layout_quality_policy.warning_policy must map "
+                    "strings to objects."
                 )
-            warning_level = policy.get("warning_level")
-            if warning_level is not None and warning_level not in LAYOUT_WARNING_LEVELS:
-                raise ValueError(
-                    "custom_json.layout_quality_policy."
-                    f"{section_name}.{policy_name}.warning_level is invalid."
+
+            default_policy = policy.get("default")
+            if default_policy is not None:
+                if not isinstance(default_policy, dict):
+                    raise ValueError(
+                        "custom_json.layout_quality_policy.warning_policy."
+                        f"{warning_code}.default must be an object."
+                    )
+                _validate_layout_quality_policy_item(
+                    default_policy,
+                    "custom_json.layout_quality_policy.warning_policy."
+                    f"{warning_code}.default",
                 )
-            treat_as = policy.get("treat_as")
-            if treat_as is not None and not isinstance(treat_as, str):
-                raise ValueError(
-                    "custom_json.layout_quality_policy."
-                    f"{section_name}.{policy_name}.treat_as must be a string."
-                )
+
+            by_block_type = policy.get("by_block_type")
+            if by_block_type is not None:
+                if not isinstance(by_block_type, dict):
+                    raise ValueError(
+                        "custom_json.layout_quality_policy.warning_policy."
+                        f"{warning_code}.by_block_type must be an object."
+                    )
+                for block_type, block_policy in by_block_type.items():
+                    if not isinstance(block_type, str) or not isinstance(
+                        block_policy,
+                        dict,
+                    ):
+                        raise ValueError(
+                            "custom_json.layout_quality_policy.warning_policy."
+                            f"{warning_code}.by_block_type must map strings to objects."
+                        )
+                    _validate_layout_quality_policy_item(
+                        block_policy,
+                        "custom_json.layout_quality_policy.warning_policy."
+                        f"{warning_code}.by_block_type.{block_type}",
+                    )
 
     failure_policy = value.get("failure_policy")
     if failure_policy is not None:
@@ -419,6 +460,18 @@ def _validate_layout_quality_policy(value: Any) -> None:
                     "custom_json.layout_quality_policy.failure_policy must map strings "
                     "to info, warn, or block."
                 )
+
+
+def _validate_layout_quality_policy_item(policy: dict[str, Any], path: str) -> None:
+    action = policy.get("action")
+    if action is not None and action not in LAYOUT_RECOVERY_ACTIONS:
+        raise ValueError(f"{path}.action is invalid.")
+    warning_level = policy.get("warning_level")
+    if warning_level is not None and warning_level not in LAYOUT_WARNING_LEVELS:
+        raise ValueError(f"{path}.warning_level is invalid.")
+    treat_as = policy.get("treat_as")
+    if treat_as is not None and not isinstance(treat_as, str):
+        raise ValueError(f"{path}.treat_as must be a string.")
 
 
 def _validate_reference_resolution(value: Any) -> None:
@@ -623,6 +676,60 @@ def _validate_retrieval(value: Any) -> None:
             raise ValueError("custom_json.retrieval values must be booleans.")
 
 
+def _validate_search_intents(value: Any) -> None:
+    if value is None:
+        return
+    if not isinstance(value, list):
+        raise ValueError("custom_json.search_intents must be a list.")
+    for index, intent in enumerate(value):
+        path = f"custom_json.search_intents[{index}]"
+        if not isinstance(intent, dict):
+            raise ValueError(f"{path} must be an object.")
+        _validate_string_list(intent.get("query_terms"), f"{path}.query_terms")
+        _validate_string_list(intent.get("vocabulary"), f"{path}.vocabulary")
+        requires_numeric = intent.get("requires_numeric_evidence")
+        if requires_numeric is not None and not isinstance(requires_numeric, bool):
+            raise ValueError(f"{path}.requires_numeric_evidence must be a boolean.")
+        boost = intent.get("boost")
+        if boost is not None:
+            _validate_non_negative_number(boost, f"{path}.boost")
+
+
+def _validate_domain_vocabulary(value: Any) -> None:
+    if value is None:
+        return
+    if not isinstance(value, dict):
+        raise ValueError("custom_json.domain_vocabulary must be an object.")
+    for key, vocabulary in value.items():
+        if not isinstance(key, str):
+            raise ValueError("custom_json.domain_vocabulary keys must be strings.")
+        if key == "term_aliases":
+            if not isinstance(vocabulary, dict):
+                raise ValueError("custom_json.domain_vocabulary.term_aliases must be an object.")
+            for term, aliases in vocabulary.items():
+                if not isinstance(term, str):
+                    raise ValueError(
+                        "custom_json.domain_vocabulary.term_aliases keys must be strings."
+                    )
+                _validate_string_list(
+                    aliases,
+                    f"custom_json.domain_vocabulary.term_aliases.{term}",
+                )
+            continue
+        _validate_string_list(vocabulary, f"custom_json.domain_vocabulary.{key}")
+
+
+def _validate_hybrid_search_weights(value: Any) -> None:
+    if value is None:
+        return
+    if not isinstance(value, dict):
+        raise ValueError("custom_json.hybrid_search_weights must be an object.")
+    for key, weight in value.items():
+        if not isinstance(key, str):
+            raise ValueError("custom_json.hybrid_search_weights keys must be strings.")
+        _validate_non_negative_number(weight, f"custom_json.hybrid_search_weights.{key}")
+
+
 def _validate_graph(value: Any) -> None:
     if value is None:
         return
@@ -644,3 +751,10 @@ def _validate_string_list(value: Any, name: str) -> None:
         return
     if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
         raise ValueError(f"{name} must be a list of strings.")
+
+
+def _validate_non_negative_number(value: Any, name: str) -> None:
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        raise ValueError(f"{name} must be a number.")
+    if value < 0:
+        raise ValueError(f"{name} must be greater than or equal to 0.")

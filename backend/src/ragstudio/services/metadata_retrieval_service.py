@@ -3,7 +3,7 @@ from __future__ import annotations
 from time import perf_counter
 from typing import Any
 
-from ragstudio.schemas.chunks import ChunkOut, ChunkSearchIn
+from ragstudio.schemas.chunks import ChunkOut, ChunkSearchIn, HybridSearchWeights
 from ragstudio.services.query_hypothesis_service import normalize_reference_hypothesis
 from ragstudio.services.query_understanding import QueryUnderstanding, RetrievalPass
 from ragstudio.services.retrieval_evidence import EvidenceCandidate
@@ -30,6 +30,7 @@ class MetadataRetrievalService:
         document_ids: list[str],
         variant_id: str,
         limit: int,
+        search_weights: dict[str, Any] | HybridSearchWeights | None = None,
     ) -> tuple[list[EvidenceCandidate], dict[str, Any]]:
         candidates: list[EvidenceCandidate] = []
         pass_traces: list[dict[str, Any]] = []
@@ -46,6 +47,11 @@ class MetadataRetrievalService:
                     limit=max(limit * retrieval_pass.limit_multiplier, limit),
                     explain=True,
                     include_neighbors=True,
+                    search_weights=(
+                        HybridSearchWeights.model_validate(search_weights)
+                        if search_weights is not None
+                        else None
+                    ),
                 )
             )
             pass_candidates: list[EvidenceCandidate] = []

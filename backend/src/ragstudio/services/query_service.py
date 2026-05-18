@@ -4,8 +4,9 @@ from typing import Any
 
 from ragstudio.config import AppSettings
 from ragstudio.db.models import Document, GraphProjectionRecord, IndexRecord, Run, Variant
+from ragstudio.schemas.chunks import ChunkSearchIn
 from ragstudio.schemas.common import StageStatus
-from ragstudio.schemas.query import QueryIn, QueryOut
+from ragstudio.schemas.query import QueryIn, QueryOut, SimulateRetrievalIn, SimulateRetrievalOut
 from ragstudio.schemas.runs import RunOut
 from ragstudio.schemas.runtime import RuntimeHealthCheck
 from ragstudio.services.adapter import RAGAnythingAdapter
@@ -151,6 +152,21 @@ class QueryService:
     async def list_runs(self) -> list[RunOut]:
         result = await self.session.execute(select(Run).order_by(Run.created_at.desc()))
         return [self._run_out(item) for item in result.scalars().all()]
+
+    async def simulate_retrieval(self, payload: SimulateRetrievalIn) -> SimulateRetrievalOut:
+        await self._validate_simulation_inputs(payload)
+        result = await ChunkService(self.session, self.data_dir, self.adapter).search(
+            ChunkSearchIn(
+                query=payload.query,
+                document_ids=payload.document_ids,
+                variant_id=payload.variant_ids[0] if payload.variant_ids else None,
+                limit=payload.limit,
+                explain=True,
+                include_neighbors=True,
+                search_weights=payload.search_weights,
+            )
+        )
+        return SimulateRetrievalOut(items=result.items, total=result.total)
 
     async def _run_runtime_query(self, payload: QueryIn, profile: Any) -> QueryOut:
         checks = await self.health_service.check(profile)
@@ -307,6 +323,15 @@ class QueryService:
         )
 
     async def _validate_query_inputs(self, payload: QueryIn) -> None:
+        missing_variants = await self._missing_ids(Variant, payload.variant_ids)
+        if missing_variants:
+            raise QueryResourceNotFoundError("Variant", missing_variants)
+
+        missing_documents = await self._missing_ids(Document, payload.document_ids)
+        if missing_documents:
+            raise QueryResourceNotFoundError("Document", missing_documents)
+
+    async def _validate_simulation_inputs(self, payload: SimulateRetrievalIn) -> None:
         missing_variants = await self._missing_ids(Variant, payload.variant_ids)
         if missing_variants:
             raise QueryResourceNotFoundError("Variant", missing_variants)
@@ -503,6 +528,10 @@ class QueryService:
         else:
             query_config["answer_budget_ms"] = payload.answer_budget_ms or profile.llm_timeout_ms
             query_config["response_budget_ms"] = payload.response_budget_ms
+        if payload.search_weights is not None:
+            query_config["hybrid_search_weights"] = payload.search_weights.model_dump(
+                exclude_none=True
+            )
         return query_config
 
     def _query_hypothesis_required_param(self, value: Any) -> bool | str:

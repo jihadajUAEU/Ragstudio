@@ -161,7 +161,19 @@ class ChunkService:
 
         ranked = sorted(
             (
-                (self.chunk_search.score(search_in.query, chunk), source_order, chunk)
+                (
+                    self.chunk_search.score(
+                        search_in.query,
+                        chunk,
+                        search_weights=(
+                            search_in.search_weights.model_dump(exclude_none=True)
+                            if search_in.search_weights is not None
+                            else None
+                        ),
+                    ),
+                    source_order,
+                    chunk,
+                )
                 for source_order, chunk in enumerate(chunks)
             ),
             key=lambda item: (

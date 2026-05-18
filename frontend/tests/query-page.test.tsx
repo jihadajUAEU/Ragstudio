@@ -12,6 +12,7 @@ vi.mock("../src/api/client", () => ({
     documents: vi.fn(),
     variants: vi.fn(),
     query: vi.fn(),
+    simulateRetrieval: vi.fn(),
   },
 }));
 
@@ -68,6 +69,20 @@ describe("QueryPage", () => {
         },
       ],
     });
+    vi.mocked(apiClient.simulateRetrieval).mockResolvedValue({
+      items: [
+        {
+          id: "chunk-1",
+          document_id: "doc-1",
+          text: "Preview evidence",
+          source_location: { page: 1 },
+          metadata: { score: 1 },
+          content_type: "text",
+          relationship_refs: {},
+        },
+      ],
+      total: 1,
+    });
   });
 
   it("summarizes reranker status outside raw JSON", async () => {
@@ -109,7 +124,35 @@ describe("QueryPage", () => {
         response_mode: "fast",
         answer_budget_ms: 3000,
         response_budget_ms: 15000,
+        search_weights: null,
       }),
+    );
+  });
+
+  it("opens search tuning and simulates with updated metadata boost", async () => {
+    renderQueryPage();
+
+    fireEvent.change(await screen.findByPlaceholderText("Ask a focused question against selected documents."), {
+      target: { value: "alpha" },
+    });
+    fireEvent.click(await screen.findByText("source.txt"));
+    fireEvent.click(screen.getByRole("button", { name: "Tune" }));
+
+    expect(await screen.findByRole("dialog", { name: "Search tuning" })).toBeVisible();
+    await waitFor(() =>
+      expect(apiClient.simulateRetrieval).toHaveBeenCalledWith(
+        expect.objectContaining({ search_weights: null }),
+      ),
+    );
+    const metadataBoost = screen.getByLabelText("Metadata boost");
+    fireEvent.change(metadataBoost, { target: { value: "2" } });
+
+    await waitFor(() =>
+      expect(apiClient.simulateRetrieval).toHaveBeenCalledWith(
+        expect.objectContaining({
+          search_weights: expect.objectContaining({ metadata_boost: 2 }),
+        }),
+      ),
     );
   });
 
