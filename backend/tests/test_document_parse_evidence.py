@@ -58,7 +58,10 @@ async def test_parse_evidence_groups_page_stitch_decision(client, tmp_path: Path
         session.add_all([document, chunk])
         await session.commit()
 
-        evidence = await DocumentParseEvidenceService(session).get_document_evidence("doc-stitch")
+        evidence = await DocumentParseEvidenceService(
+            session,
+            source_commit="test-commit",
+        ).get_document_evidence("doc-stitch")
 
     assert evidence.document.id == "doc-stitch"
     assert evidence.document.filename == "synthetic.pdf"
@@ -68,7 +71,7 @@ async def test_parse_evidence_groups_page_stitch_decision(client, tmp_path: Path
     assert evidence.chunks[0].page_start == 1
     assert evidence.chunks[0].page_end == 2
     assert any("document.artifact_path" in entry for entry in evidence.proof.redaction_summary)
-    assert evidence.proof.source_commit
+    assert evidence.proof.source_commit == "test-commit"
     assert evidence.proof.proof_packet_id == "local-document-parse-evidence"
     assert evidence.proof.replay_command == "./scripts/proof.sh --fixtures static-fixtures"
 
@@ -112,7 +115,10 @@ async def test_parse_evidence_groups_modal_and_warning_decisions(client, tmp_pat
         session.add_all([document, chunk])
         await session.commit()
 
-        evidence = await DocumentParseEvidenceService(session).get_document_evidence("doc-modal")
+        evidence = await DocumentParseEvidenceService(
+            session,
+            source_commit="test-commit",
+        ).get_document_evidence("doc-modal")
 
     assert [decision.decision_type for decision in evidence.normalization_decisions] == [
         "modal_route",
@@ -148,7 +154,10 @@ async def test_parse_evidence_redacts_unsafe_artifact_values(client, tmp_path: P
         session.add_all([document, chunk])
         await session.commit()
 
-        evidence = await DocumentParseEvidenceService(session).get_document_evidence("doc-redact")
+        evidence = await DocumentParseEvidenceService(
+            session,
+            source_commit="test-commit",
+        ).get_document_evidence("doc-redact")
 
     serialized = evidence.model_dump_json()
     assert str(tmp_path) not in serialized
@@ -177,7 +186,10 @@ async def test_parse_evidence_marks_missing_sections_for_document_without_chunks
         )
         await session.commit()
 
-        evidence = await DocumentParseEvidenceService(session).get_document_evidence("doc-empty")
+        evidence = await DocumentParseEvidenceService(
+            session,
+            source_commit="test-commit",
+        ).get_document_evidence("doc-empty")
 
     assert evidence.chunks == []
     assert evidence.parser_blocks == []
@@ -243,7 +255,10 @@ async def test_parse_evidence_links_warning_to_block_and_decision_when_page_is_k
         session.add_all([document, chunk])
         await session.commit()
 
-        evidence = await DocumentParseEvidenceService(session).get_document_evidence("doc-warning-link")
+        evidence = await DocumentParseEvidenceService(
+            session,
+            source_commit="test-commit",
+        ).get_document_evidence("doc-warning-link")
 
     warning = evidence.warnings[0]
     decision = next(
@@ -261,6 +276,106 @@ async def test_parse_evidence_links_warning_to_block_and_decision_when_page_is_k
 
 
 @pytest.mark.asyncio
+async def test_parse_evidence_counts_distinct_observed_pages_not_max_page_number(client, tmp_path: Path):
+    artifact = tmp_path / "page-312.pdf"
+    artifact.write_bytes(b"%PDF synthetic")
+    async with client._transport.app.state.session_factory() as session:
+        session.add(
+            Document(
+                id="doc-page-count",
+                filename="page-312.pdf",
+                content_type="application/pdf",
+                sha256="sha-page-count",
+                artifact_path=str(artifact),
+                status=StageStatus.SUCCEEDED.value,
+            )
+        )
+        session.add(
+            Chunk(
+                id="chunk-page-count",
+                document_id="doc-page-count",
+                text="Observed only one page.",
+                source_location={"page": 312},
+                metadata_json={},
+                extraction_quality={},
+            )
+        )
+        await session.commit()
+
+        evidence = await DocumentParseEvidenceService(
+            session,
+            source_commit="test-commit",
+        ).get_document_evidence("doc-page-count")
+
+    assert evidence.document.page_count == 1
+
+
+@pytest.mark.asyncio
+async def test_parse_evidence_redacts_embedded_private_urls_ipv6_and_root_paths(client, tmp_path: Path):
+    artifact = tmp_path / "network-private.pdf"
+    artifact.write_bytes(b"%PDF synthetic")
+    async with client._transport.app.state.session_factory() as session:
+        session.add(
+            Document(
+                id="doc-network-private",
+                filename="network-private.pdf",
+                content_type="application/pdf",
+                sha256="sha-network-private",
+                artifact_path="/var/private/file.pdf",
+                status=StageStatus.SUCCEEDED.value,
+            )
+        )
+        session.add(
+            Chunk(
+                id="chunk-network-private",
+                document_id="doc-network-private",
+                text=(
+                    "prefix http://10.0.0.5/private suffix and http://[::1]:8000/v1 and "
+                    "http://[fd00::1]/v1 plus /secret and /var/private/file.pdf and "
+                    "\\\\server\\share\\secret.pdf"
+                ),
+                source_location={
+                    "page": 1,
+                    "url_loopback_v6": "http://[::1]:8000/v1",
+                    "url_private_v6": "http://[fd00::1]/v1",
+                    "embedded_private_url": "prefix http://10.0.0.5/private suffix",
+                    "root_path": "/secret",
+                    "unix_path": "/var/private/file.pdf",
+                    "unc_path": "\\\\server\\share\\secret.pdf",
+                },
+                metadata_json={
+                    "provider_url": "prefix http://10.0.0.5/private suffix",
+                    "cache_url": "http://[::1]:8000/v1",
+                    "private_v6": "http://[fd00::1]/v1",
+                    "root_path_hint": "/secret",
+                    "export_path": "/var/private/file.pdf",
+                    "network_share": "\\\\server\\share\\secret.pdf",
+                },
+                extraction_quality={},
+            )
+        )
+        await session.commit()
+
+        evidence = await DocumentParseEvidenceService(
+            session,
+            source_commit="test-commit",
+        ).get_document_evidence("doc-network-private")
+
+    serialized = evidence.model_dump_json()
+    for unsafe in (
+        "http://[::1]:8000/v1",
+        "http://[fd00::1]/v1",
+        "http://10.0.0.5/private",
+        "/secret",
+        "/var/private/file.pdf",
+        "\\\\server\\share\\secret.pdf",
+    ):
+        assert unsafe not in serialized
+    assert any("private host" in entry for entry in evidence.proof.redaction_summary)
+    assert any("local path" in entry for entry in evidence.proof.redaction_summary)
+
+
+@pytest.mark.asyncio
 async def test_parse_evidence_route_returns_404_for_missing_document(client):
     response = await client.get("/api/documents/missing-doc/parse-evidence")
 
@@ -269,8 +384,9 @@ async def test_parse_evidence_route_returns_404_for_missing_document(client):
 
 
 @pytest.mark.asyncio
-async def test_parse_evidence_route_returns_contract(client, tmp_path: Path):
+async def test_parse_evidence_route_returns_contract(client, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     app = client._transport.app
+    monkeypatch.setenv("RAGSTUDIO_SOURCE_COMMIT", "env-commit")
     artifact = tmp_path / "route.pdf"
     artifact.write_bytes(b"%PDF synthetic")
     async with app.state.session_factory() as session:
@@ -303,3 +419,4 @@ async def test_parse_evidence_route_returns_contract(client, tmp_path: Path):
     assert body["document"]["id"] == "doc-route"
     assert body["chunks"][0]["id"] == "chunk-route"
     assert body["proof"]["proof_packet_id"] == "local-document-parse-evidence"
+    assert body["proof"]["source_commit"] == "env-commit"

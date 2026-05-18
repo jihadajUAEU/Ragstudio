@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import os
 import re
-import subprocess
+from ipaddress import ip_address
 from pathlib import Path, PurePath
 from typing import Any
 from urllib.parse import urlsplit
@@ -22,8 +23,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 TEXT_PREVIEW_LIMIT = 600
 SECRET_KEY_PATTERN = re.compile(r"(api[_-]?key|token|secret|password|authorization)", re.IGNORECASE)
-WINDOWS_ABSOLUTE_PATH_PATTERN = re.compile(r"^[A-Za-z]:[\\/]")
-UNIX_ABSOLUTE_PATH_PATTERN = re.compile(r"^/([^/]+/)+[^/]+$")
+OPENAI_KEY_VALUE_PATTERN = re.compile(r"sk-[A-Za-z0-9_-]+")
+BEARER_VALUE_PATTERN = re.compile(r"bearer\s+[A-Za-z0-9._=-]{12,}", re.IGNORECASE)
+URL_PATTERN = re.compile(r"https?://(?:\[[^\]\s]+\]|[^\s\"'\]]+)(?::\d+)?[^\s\"']*", re.IGNORECASE)
+WINDOWS_ABSOLUTE_PATH_PATTERN = re.compile(r"[A-Za-z]:[\\/][^\s\"']+")
+UNIX_ABSOLUTE_PATH_PATTERN = re.compile(r"(?<![:\w])/(?:[^\s\"'\\]+(?:/[^\s\"'\\]+)*)")
+UNC_PATH_PATTERN = re.compile(r"\\\\[^\s\\/:*?\"<>|]+\\[^\s\"']+")
 
 
 class DocumentParseEvidenceNotFoundError(LookupError):
@@ -31,9 +36,10 @@ class DocumentParseEvidenceNotFoundError(LookupError):
 
 
 class DocumentParseEvidenceService:
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(self, session: AsyncSession, *, source_commit: str | None = None) -> None:
         self.session = session
         self._redactions: set[str] = set()
+        self._source_commit = self._normalized_source_commit(source_commit)
 
     async def get_document_evidence(self, document_id: str) -> DocumentParseEvidence:
         document = await self.session.get(Document, document_id)
@@ -101,7 +107,7 @@ class DocumentParseEvidenceService:
             chunks=chunk_evidence,
             warnings=warnings,
             proof=ProofEvidence(
-                source_commit=self._source_commit(),
+                source_commit=self._source_commit,
                 proof_packet_id="local-document-parse-evidence",
                 mode="local",
                 replay_command="./scripts/proof.sh --fixtures static-fixtures",
@@ -419,8 +425,17 @@ class DocumentParseEvidenceService:
         return None
 
     def _page_count(self, chunks: list[Chunk]) -> int | None:
-        pages = [page for chunk in chunks for page in self._chunk_pages(chunk) if isinstance(page, int)]
-        return max(pages) if pages else None
+        pages: set[int] = set()
+        for chunk in chunks:
+            page_start, page_end = self._chunk_pages(chunk)
+            if page_start is not None and page_end is not None and page_end >= page_start:
+                pages.update(range(page_start, page_end + 1))
+                continue
+            if page_start is not None:
+                pages.add(page_start)
+            if page_end is not None:
+                pages.add(page_end)
+        return len(pages) if pages else None
 
     def _chunk_pages(self, chunk: Chunk) -> tuple[int | None, int | None]:
         page_start = self._page_value(chunk.source_location.get("page_start"))
@@ -560,43 +575,54 @@ class DocumentParseEvidenceService:
         return self._sanitize_string(str(value), context=context)
 
     def _sanitize_string(self, value: str, *, context: str) -> str:
-        if self._looks_like_secret(value):
-            self._redactions.add(f"Redacted secret value at {context}.")
-            return "[redacted]"
-        if self._contains_private_host(value):
-            self._redactions.add(f"Redacted private host at {context}.")
-            return "[redacted]"
-        if self._looks_like_absolute_path(value):
-            basename = PurePath(value).name or "[redacted]"
-            self._redactions.add(f"Redacted local path at {context}.")
-            return basename
-        return value
+        sanitized = value
+        sanitized = self._replace_pattern(
+            sanitized,
+            pattern=OPENAI_KEY_VALUE_PATTERN,
+            context=context,
+            redaction_kind="secret value",
+            replacement_factory=lambda _match: "[redacted]",
+        )
+        sanitized = self._replace_pattern(
+            sanitized,
+            pattern=BEARER_VALUE_PATTERN,
+            context=context,
+            redaction_kind="secret value",
+            replacement_factory=lambda _match: "[redacted]",
+        )
+        sanitized = self._replace_private_urls(sanitized, context=context)
+        sanitized = self._replace_pattern(
+            sanitized,
+            pattern=UNC_PATH_PATTERN,
+            context=context,
+            redaction_kind="local path",
+            replacement_factory=self._path_replacement,
+        )
+        sanitized = self._replace_pattern(
+            sanitized,
+            pattern=WINDOWS_ABSOLUTE_PATH_PATTERN,
+            context=context,
+            redaction_kind="local path",
+            replacement_factory=self._path_replacement,
+        )
+        sanitized = self._replace_pattern(
+            sanitized,
+            pattern=UNIX_ABSOLUTE_PATH_PATTERN,
+            context=context,
+            redaction_kind="local path",
+            replacement_factory=self._path_replacement,
+        )
+        return sanitized
 
     def _sanitize_artifact_path(self, value: str, *, context: str) -> str:
-        if self._looks_like_absolute_path(value):
-            self._redactions.add(f"Redacted local path at {context}.")
+        if self._is_absolute_path(value):
+            self._record_redaction("local path", context)
             return PurePath(value).name or "[redacted]"
         sanitized = self._sanitize_string(value, context=context)
         if sanitized == "[redacted]":
             basename = PurePath(value).name
             return basename or sanitized
         return sanitized
-
-    def _source_commit(self) -> str | None:
-        repo_root = Path(__file__).resolve().parents[4]
-        try:
-            result = subprocess.run(
-                ["git", "rev-parse", "--short", "HEAD"],
-                cwd=repo_root,
-                capture_output=True,
-                text=True,
-                check=True,
-                timeout=2,
-            )
-        except (FileNotFoundError, NotADirectoryError, OSError, subprocess.SubprocessError):
-            return None
-        commit = result.stdout.strip()
-        return commit or None
 
     def _looks_like_secret(self, value: str) -> bool:
         lower = value.casefold()
@@ -613,25 +639,25 @@ class DocumentParseEvidenceService:
             host = urlsplit(candidate).hostname
         elif re.fullmatch(r"(localhost|internal\.local)", candidate, flags=re.IGNORECASE):
             host = candidate
+        elif re.fullmatch(r"\[[0-9A-Fa-f:]+\]", candidate):
+            host = candidate[1:-1]
         elif re.fullmatch(r"\d+\.\d+\.\d+\.\d+", candidate):
             host = candidate
         if host is None:
             return False
-        normalized = host.casefold()
-        if normalized in {"localhost", "internal.local", "127.0.0.1", "0.0.0.0"}:
+        normalized = host.casefold().strip("[]")
+        if normalized in {"localhost", "internal.local", "127.0.0.1", "0.0.0.0", "::1"}:
             return True
-        octets = normalized.split(".")
-        if len(octets) != 4 or not all(part.isdigit() for part in octets):
+        try:
+            parsed = ip_address(normalized)
+        except ValueError:
             return False
-        first, second = int(octets[0]), int(octets[1])
-        if first == 10:
-            return True
-        if first == 192 and second == 168:
-            return True
-        return first == 172 and 16 <= second <= 31
+        return parsed.is_loopback or parsed.is_private or parsed.is_link_local
 
-    def _looks_like_absolute_path(self, value: str) -> bool:
-        return bool(WINDOWS_ABSOLUTE_PATH_PATTERN.match(value) or UNIX_ABSOLUTE_PATH_PATTERN.match(value))
+    def _is_absolute_path(self, value: str) -> bool:
+        return value.startswith("/") or value.startswith("\\\\") or bool(
+            re.fullmatch(r"[A-Za-z]:[\\/].*", value)
+        )
 
     def _preview(self, text: str) -> str:
         safe_text = self._sanitize_string(text, context="text_preview")
@@ -665,3 +691,43 @@ class DocumentParseEvidenceService:
             else:
                 return None
         return bbox
+
+    def _replace_private_urls(self, value: str, *, context: str) -> str:
+        def _replace(match: re.Match[str]) -> str:
+            candidate = match.group(0)
+            if self._contains_private_host(candidate):
+                self._record_redaction("private host", context)
+                return "[redacted]"
+            return candidate
+
+        return URL_PATTERN.sub(_replace, value)
+
+    def _replace_pattern(
+        self,
+        value: str,
+        *,
+        pattern: re.Pattern[str],
+        context: str,
+        redaction_kind: str,
+        replacement_factory: Any,
+    ) -> str:
+        def _replace(match: re.Match[str]) -> str:
+            self._record_redaction(redaction_kind, context)
+            return replacement_factory(match)
+
+        return pattern.sub(_replace, value)
+
+    def _path_replacement(self, match: re.Match[str]) -> str:
+        raw = match.group(0)
+        basename = PurePath(raw).name
+        return basename or "[redacted]"
+
+    def _record_redaction(self, redaction_kind: str, context: str) -> None:
+        self._redactions.add(f"Redacted {redaction_kind} at {context}.")
+
+    def _normalized_source_commit(self, source_commit: str | None) -> str | None:
+        candidate = source_commit if source_commit is not None else os.getenv("RAGSTUDIO_SOURCE_COMMIT")
+        if candidate is None:
+            return None
+        stripped = candidate.strip()
+        return stripped or None
