@@ -691,6 +691,52 @@ async def test_parse_evidence_redacts_secret_shaped_artifact_basenames(client):
 
 
 @pytest.mark.asyncio
+async def test_parse_evidence_redacts_windows_and_unc_paths_cross_platform(client):
+    windows_path = r"C:\Users\alice\private\windows-secret.pdf"
+    unc_path = r"\\server\share\unc-secret.pdf"
+    async with client._transport.app.state.session_factory() as session:
+        session.add(
+            Document(
+                id="doc-cross-platform-paths",
+                filename="cross-platform-paths.pdf",
+                content_type="application/pdf",
+                sha256="sha-cross-platform-paths",
+                artifact_path=windows_path,
+                status=StageStatus.SUCCEEDED.value,
+            )
+        )
+        session.add(
+            Chunk(
+                id="chunk-cross-platform-paths",
+                document_id="doc-cross-platform-paths",
+                text=f"Windows {windows_path} and UNC {unc_path} paths should be safe.",
+                source_location={
+                    "page": 1,
+                    "windows_artifact": windows_path,
+                    "artifact": unc_path,
+                },
+                metadata_json={"network_share": unc_path, "windows_path": windows_path},
+                extraction_quality={},
+            )
+        )
+        await session.commit()
+
+        evidence = await DocumentParseEvidenceService(
+            session,
+            source_commit="test-commit",
+        ).get_document_evidence("doc-cross-platform-paths")
+
+    serialized = evidence.model_dump_json()
+    assert windows_path not in serialized
+    assert unc_path not in serialized
+    assert "C:\\Users" not in serialized
+    assert "\\\\server\\share" not in serialized
+    assert "windows-secret.pdf" in serialized
+    assert "unc-secret.pdf" in serialized
+    assert any("local path" in entry for entry in evidence.proof.redaction_summary)
+
+
+@pytest.mark.asyncio
 async def test_parse_evidence_route_returns_404_for_missing_document(client):
     response = await client.get("/api/documents/missing-doc/parse-evidence")
 

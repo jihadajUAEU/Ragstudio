@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import re
 from ipaddress import ip_address
-from pathlib import Path, PurePath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 from urllib.parse import parse_qsl, unquote, urlencode, urlsplit, urlunsplit
 
@@ -641,10 +641,10 @@ class DocumentParseEvidenceService:
     def _sanitize_artifact_path(self, value: str, *, context: str) -> str:
         if self._is_absolute_path(value):
             self._record_redaction("local path", context)
-            return self._sanitize_artifact_basename(PurePath(value).name, context=context)
+            return self._sanitize_artifact_basename(self._path_basename(value), context=context)
         sanitized = self._sanitize_string(value, context=context)
         if sanitized == "[redacted]":
-            basename = PurePath(value).name
+            basename = self._path_basename(value)
             return self._sanitize_artifact_basename(basename, context=context)
         return sanitized
 
@@ -806,8 +806,13 @@ class DocumentParseEvidenceService:
 
     def _path_replacement(self, match: re.Match[str]) -> str:
         raw = match.group(0)
-        basename = PurePath(raw).name
+        basename = self._path_basename(raw)
         return basename or "[redacted]"
+
+    def _path_basename(self, value: str) -> str:
+        if value.startswith("\\\\") or re.fullmatch(r"[A-Za-z]:[\\/].*", value):
+            return PureWindowsPath(value).name
+        return PurePosixPath(value).name
 
     def _sanitize_artifact_basename(self, basename: str, *, context: str) -> str:
         if not basename:
