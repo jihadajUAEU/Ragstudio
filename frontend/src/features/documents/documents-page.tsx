@@ -161,6 +161,11 @@ export function DocumentsPage() {
     },
     [indexOptions, reindexDocument],
   );
+  const openDocumentEvidence = useCallback((document: DocumentOut) => {
+    const target = `/document-evidence?documentId=${encodeURIComponent(document.id)}`;
+    window.history.pushState(null, "", target);
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  }, []);
 
   const activateTab = useCallback((tab: DocumentsTab, focusPanel = false) => {
     setActiveTab(tab);
@@ -301,6 +306,15 @@ export function DocumentsPage() {
                 type="button"
                 variant="secondary"
                 size="sm"
+                onClick={() => openDocumentEvidence(document)}
+                aria-label={`Open parse evidence for ${document.filename}`}
+              >
+                Evidence
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
                 onClick={() => reindexExistingDocument(document)}
                 disabled={!canReindex || reindexDocument.isPending}
                 aria-label={`Reindex ${document.filename}`}
@@ -337,6 +351,7 @@ export function DocumentsPage() {
       deleteDocument.isPending,
       deleteDocument.variables,
       metadataValid,
+      openDocumentEvidence,
       reindexDocument.isPending,
       reindexDocument.variables,
       reindexExistingDocument,

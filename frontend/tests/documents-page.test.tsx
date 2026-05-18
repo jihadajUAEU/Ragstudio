@@ -346,6 +346,28 @@ describe("DocumentsPage", () => {
     expect(screen.queryByText("sha-hidden-from-documents-table")).not.toBeInTheDocument();
   });
 
+  it("opens document parse evidence from a document row action", async () => {
+    vi.mocked(apiClient.documents).mockResolvedValue({
+      items: [
+        {
+          id: "doc-evidence",
+          filename: "traceable.pdf",
+          content_type: "application/pdf",
+          status: "succeeded",
+          sha256: "sha-evidence",
+        },
+      ],
+      total: 1,
+    });
+
+    renderDocumentsPage();
+
+    fireEvent.click(await screen.findByRole("button", { name: /open parse evidence for traceable\.pdf/i }));
+
+    expect(window.location.pathname).toBe("/document-evidence");
+    expect(new URLSearchParams(window.location.search).get("documentId")).toBe("doc-evidence");
+  });
+
   it("searches the documents and jobs tables", async () => {
     vi.mocked(apiClient.documents).mockResolvedValue({
       items: [

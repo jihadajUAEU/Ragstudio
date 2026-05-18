@@ -36,16 +36,17 @@ export function DocumentEvidencePage() {
     );
   }
 
-  if (evidenceQuery.isError) {
+  const errorMessage =
+    evidenceQuery.error instanceof Error
+      ? evidenceQuery.error.message
+      : "Document parse evidence could not be loaded.";
+
+  if (evidenceQuery.isError && !evidenceQuery.data) {
     return (
       <EmptyState
         icon={AlertCircle}
         title="Evidence unavailable"
-        description={
-          evidenceQuery.error instanceof Error
-            ? evidenceQuery.error.message
-            : "Document parse evidence could not be loaded."
-        }
+        description={errorMessage}
         action={
           <Button type="button" variant="secondary" onClick={() => void evidenceQuery.refetch()}>
             Retry
@@ -65,5 +66,26 @@ export function DocumentEvidencePage() {
     );
   }
 
-  return <EvidenceInspector evidence={evidenceQuery.data} mode="local" />;
+  return (
+    <div className="space-y-4">
+      {evidenceQuery.isError ? (
+        <section
+          className="rounded-md border border-[#e5c36b] bg-[#fff8e6] p-4"
+          role="alert"
+          aria-live="polite"
+        >
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-[#5f4600]">Showing cached evidence</p>
+              <p className="mt-1 text-sm text-[#705300]">{errorMessage}</p>
+            </div>
+            <Button type="button" variant="secondary" onClick={() => void evidenceQuery.refetch()}>
+              Retry
+            </Button>
+          </div>
+        </section>
+      ) : null}
+      <EvidenceInspector evidence={evidenceQuery.data} mode="local" />
+    </div>
+  );
 }

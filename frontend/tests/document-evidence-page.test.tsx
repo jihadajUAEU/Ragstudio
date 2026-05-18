@@ -53,12 +53,12 @@ const evidence: DocumentParseEvidence = {
   missing_sections: [],
 };
 
-function renderPage(path = "/document-evidence?documentId=doc-1") {
+function renderPage(path = "/document-evidence?documentId=doc-1", client?: QueryClient) {
   window.history.pushState(null, "", path);
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const queryClient = client ?? new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
   return render(
-    <QueryClientProvider client={client}>
+    <QueryClientProvider client={queryClient}>
       <DocumentEvidencePage />
     </QueryClientProvider>,
   );
@@ -99,5 +99,18 @@ describe("DocumentEvidencePage", () => {
     renderPage();
 
     expect(await screen.findByText("Document not found")).toBeVisible();
+  });
+
+  it("keeps cached evidence visible when a refetch fails", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    client.setQueryData(["document-parse-evidence", "doc-1"], evidence);
+    vi.mocked(apiClient.documentParseEvidence).mockRejectedValue(new Error("Backend timed out"));
+
+    renderPage("/document-evidence?documentId=doc-1", client);
+
+    expect(await screen.findByText("synthetic.pdf")).toBeVisible();
+    expect(await screen.findByText("Showing cached evidence")).toBeVisible();
+    expect(screen.getByText("Backend timed out")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeVisible();
   });
 });

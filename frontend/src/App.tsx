@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 
 import { AppShell } from "./components/app-shell";
 import { ChunkInspector } from "./features/chunks/chunk-inspector";
@@ -39,49 +39,14 @@ const pageTitles: Record<string, string> = {
 export default function App() {
   const readLocation = () => `${window.location.pathname}${window.location.search}`;
   const [activeLocation, setActiveLocation] = useState(readLocation);
-  const route = useMemo(() => {
-    const pathname = new URL(activeLocation, window.location.origin).pathname;
-    return pageTitles[pathname] ? pathname : "/";
-  }, [activeLocation]);
+  const pathname = new URL(activeLocation, window.location.origin).pathname;
+  const route = pageTitles[pathname] ? pathname : "/";
 
   useEffect(() => {
     const handlePopState = () => setActiveLocation(readLocation());
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
   }, []);
-
-  const page = useMemo(() => {
-    switch (route) {
-      case "/pipeline":
-        return <PipelineBuilder />;
-      case "/documents":
-        return <DocumentsPage />;
-      case "/document-evidence":
-        return <DocumentEvidencePage />;
-      case "/chunks":
-        return <ChunkInspector />;
-      case "/query":
-        return <QueryPage />;
-      case "/evaluation":
-        return <EvaluationPage />;
-      case "/experiments":
-        return <ExperimentsPage />;
-      case "/comparison":
-        return <ComparisonPage />;
-      case "/optimizer":
-        return <OptimizerPage />;
-      case "/variants":
-        return <VariantsPage />;
-      case "/graph":
-        return <GraphPage />;
-      case "/diagnostics":
-        return <DiagnosticsPage />;
-      case "/settings":
-        return <SettingsPage />;
-      default:
-        return <DashboardPage />;
-    }
-  }, [route]);
 
   const navigate = (path: string) => {
     if (path === window.location.pathname && window.location.search.length === 0) {
@@ -93,7 +58,37 @@ export default function App() {
 
   return (
     <AppShell activePath={route} title={pageTitles[route]} onNavigate={navigate}>
-      <Suspense fallback={<div className="text-sm text-[#62717a]">Loading pipeline builder...</div>}>{page}</Suspense>
+      <Suspense fallback={<div className="text-sm text-[#62717a]">Loading pipeline builder...</div>}>
+        {route === "/pipeline" ? (
+          <PipelineBuilder />
+        ) : route === "/documents" ? (
+          <DocumentsPage />
+        ) : route === "/document-evidence" ? (
+          <DocumentEvidencePage />
+        ) : route === "/chunks" ? (
+          <ChunkInspector />
+        ) : route === "/query" ? (
+          <QueryPage />
+        ) : route === "/evaluation" ? (
+          <EvaluationPage />
+        ) : route === "/experiments" ? (
+          <ExperimentsPage />
+        ) : route === "/comparison" ? (
+          <ComparisonPage />
+        ) : route === "/optimizer" ? (
+          <OptimizerPage />
+        ) : route === "/variants" ? (
+          <VariantsPage />
+        ) : route === "/graph" ? (
+          <GraphPage />
+        ) : route === "/diagnostics" ? (
+          <DiagnosticsPage />
+        ) : route === "/settings" ? (
+          <SettingsPage />
+        ) : (
+          <DashboardPage />
+        )}
+      </Suspense>
     </AppShell>
   );
 }
