@@ -4,7 +4,18 @@ from pathlib import Path
 
 import pytest
 from ragstudio.db.models import Chunk, Document
+from ragstudio.schemas.document_parse_evidence import (
+    ChunkEvidence,
+    DocumentEvidenceSummary,
+    DocumentParseEvidence,
+    NormalizationDecisionEvidence,
+    ProofEvidence,
+)
 from ragstudio.schemas.common import StageStatus
+from ragstudio.services.document_parse_evidence_exporter import (
+    DocumentParseEvidenceExporter,
+    UnsafeProofExportError,
+)
 from ragstudio.services.document_parse_evidence_service import DocumentParseEvidenceService
 
 
@@ -706,3 +717,63 @@ async def test_parse_evidence_route_returns_contract(client, tmp_path: Path, mon
     assert body["chunks"][0]["id"] == "chunk-route"
     assert body["proof"]["proof_packet_id"] == "local-document-parse-evidence"
     assert body["proof"]["source_commit"] == "env-commit"
+
+
+def test_document_parse_evidence_exporter_writes_static_artifact(tmp_path: Path):
+    evidence = DocumentParseEvidence(
+        document=DocumentEvidenceSummary(
+            id="doc-public",
+            filename="synthetic.pdf",
+            content_type="application/pdf",
+            status="succeeded",
+            page_count=2,
+            parser_mode="mineru_strict",
+        ),
+        normalization_decisions=[
+            NormalizationDecisionEvidence(
+                id="decision-1",
+                decision_type="page_stitch",
+                title="Page 1 -> 2 stitch",
+                summary="Semantic unit crossed a physical page boundary.",
+                output_chunk_ids=["chunk-1"],
+            )
+        ],
+        chunks=[ChunkEvidence(id="chunk-1", text_preview="safe preview", page_start=1, page_end=2)],
+        proof=ProofEvidence(mode="local", redaction_summary=[]),
+    )
+
+    output = DocumentParseEvidenceExporter().export(
+        evidence,
+        packet_dir=tmp_path,
+        proof_packet_id="ragstudio-oss-proof-v1",
+        source_commit="abc1234",
+    )
+
+    assert output.relative_path == "artifacts/document-parse-evidence.export.json"
+    exported = (tmp_path / output.relative_path).read_text(encoding="utf-8")
+    assert '"mode":"export"' in exported
+    assert '"proof_packet_id":"ragstudio-oss-proof-v1"' in exported
+    assert '"source_commit":"abc1234"' in exported
+    assert '"replay_command":"./scripts/proof.sh --fixtures static-fixtures"' in exported
+    assert output.bytes_written == len(exported.encode("utf-8"))
+
+
+def test_document_parse_evidence_exporter_rejects_unsafe_values(tmp_path: Path):
+    evidence = DocumentParseEvidence(
+        document=DocumentEvidenceSummary(
+            id="doc-private",
+            filename="private.pdf",
+            content_type="application/pdf",
+            status="succeeded",
+        ),
+        chunks=[ChunkEvidence(id="chunk-1", text_preview="http://10.0.0.5/private")],
+        proof=ProofEvidence(mode="local"),
+    )
+
+    with pytest.raises(UnsafeProofExportError, match="private host"):
+        DocumentParseEvidenceExporter().export(
+            evidence,
+            packet_dir=tmp_path,
+            proof_packet_id="packet",
+            source_commit="abc1234",
+        )

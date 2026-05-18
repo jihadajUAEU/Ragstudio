@@ -34,6 +34,7 @@
   "artifacts": [
     "artifacts/parser-quality.export.json",
     "artifacts/chunks.export.json",
+    "artifacts/document-parse-evidence.export.json",
     "artifacts/retrieval-run.export.json",
     "artifacts/graph-projection.export.json",
     "artifacts/reranker-trace.export.json"
