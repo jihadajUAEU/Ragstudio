@@ -8,7 +8,7 @@ const statusClasses: Record<StageStatus, string> = {
   running: `${rs.border.accent} ${rs.bg.accentSoft} ${rs.text.accentDeep}`,
   succeeded: `${rs.border.success} ${rs.bg.successSoft} ${rs.text.success}`,
   failed: `${rs.border.danger} ${rs.bg.dangerSoft} ${rs.text.danger}`,
-  unsupported: `${rs.border.line} ${rs.bg.field} ${rs.text.muted}`,
+  unsupported: `${rs.border.line} ${rs.bg.field} ${rs.text.body}`,
 };
 
 export function StatusBadge({

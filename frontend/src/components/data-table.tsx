@@ -54,7 +54,7 @@ export function DataTable<TData>({
     >
       <div className="max-w-full overflow-x-auto">
         <table aria-label={ariaLabel} className="w-full min-w-[720px] table-fixed text-left text-sm">
-          <thead className={`border-b ${rs.border.line} ${rs.bg.field} text-xs uppercase ${rs.text.muted}`}>
+          <thead className={`border-b ${rs.border.line} ${rs.bg.field} text-xs uppercase ${rs.text.body}`}>
             {table.getHeaderGroups().map((headerGroup) => (
               <tr key={headerGroup.id}>
                 {headerGroup.headers.map((header) => (
