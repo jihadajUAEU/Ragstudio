@@ -9,6 +9,7 @@ from typing import Any
 from ragstudio.schemas.parsing import DomainMetadata, ParserMode
 from ragstudio.services.adapter import AdapterChunk
 from ragstudio.services.chunk_quality_gate import ChunkQualityGate
+from ragstudio.services.modal_preprocessor import MODAL_ROUTER_PROCESSED_FLAG
 from ragstudio.services.parser_warning_utils import (
     merge_parser_warnings as _shared_merge_parser_warnings,
 )
@@ -198,6 +199,9 @@ class ChunkSplitter:
         expected_profile: ExpectedContentProfile,
         domain_metadata: DomainMetadata,
     ) -> ContentListSplitResult | None:
+        if chunk.metadata.get(MODAL_ROUTER_PROCESSED_FLAG) is True:
+            return None
+
         parser_metadata = self._parser_metadata(chunk)
         extract_dir = parser_metadata.get("artifact_extract_dir")
         content_ref = parser_metadata.get("content_list_ref")

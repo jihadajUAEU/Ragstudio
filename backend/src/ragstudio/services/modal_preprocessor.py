@@ -34,6 +34,8 @@ class ModalPreprocessor:
             return adapter_chunks
         if not extract_dir.strip() or not content_ref.strip():
             return adapter_chunks
+        if not self._has_shared_content_list(adapter_chunks, extract_dir, content_ref):
+            return adapter_chunks
 
         root = Path(extract_dir).resolve()
         target = (root / content_ref).resolve()
@@ -73,3 +75,19 @@ class ModalPreprocessor:
             )
 
         return results if results else adapter_chunks
+
+    def _has_shared_content_list(
+        self,
+        adapter_chunks: list[AdapterChunk],
+        extract_dir: str,
+        content_ref: str,
+    ) -> bool:
+        for chunk in adapter_chunks:
+            parser_metadata = chunk.metadata.get("parser_metadata", {})
+            if not isinstance(parser_metadata, dict):
+                return False
+            if parser_metadata.get("artifact_extract_dir") != extract_dir:
+                return False
+            if parser_metadata.get("content_list_ref") != content_ref:
+                return False
+        return True

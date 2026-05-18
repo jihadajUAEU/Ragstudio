@@ -1,3 +1,4 @@
+import asyncio
 import json
 from pathlib import Path
 
@@ -5,6 +6,7 @@ from ragstudio.schemas.parsing import DomainMetadata
 from ragstudio.services.adapter import AdapterChunk
 from ragstudio.services.chunk_splitter import ChunkSplitter
 from ragstudio.services.domain_metadata_service import DomainMetadataService
+from ragstudio.services.modal_preprocessor import MODAL_ROUTER_PROCESSED_FLAG
 
 
 def words(count: int, prefix: str = "word") -> str:
@@ -183,6 +185,38 @@ def test_chunk_splitter_uses_mineru_content_list_when_available(tmp_path: Path):
     assert split[0].source_location["page_end"] == 1
     assert split[1].source_location["page_start"] == 2
     assert split[1].source_location["page_end"] == 2
+
+
+def test_chunk_splitter_does_not_reparse_modal_router_processed_chunk(tmp_path: Path):
+    content_list = tmp_path / "source_content_list.json"
+    content_list.write_text(
+        json.dumps([{"type": "text", "text": "This should not be reread"}]),
+        encoding="utf-8",
+    )
+    chunk = AdapterChunk(
+        text="Table: Scores\n\n| Name | Score |\n| A | 10 |",
+        source_location={"artifact": "source/auto/source.md", "block_index": 1},
+        metadata={
+            MODAL_ROUTER_PROCESSED_FLAG: True,
+            "parser_metadata": {
+                "backend": "mineru",
+                "artifact_extract_dir": str(tmp_path),
+                "content_list_ref": "source_content_list.json",
+                "chunk_index": 1,
+            },
+        },
+    )
+
+    split = asyncio.run(
+        ChunkSplitter(max_words=1500).split(
+            [chunk],
+            domain_metadata=DomainMetadata(domain="generic", document_type="table"),
+            parser_mode="mineru_strict",
+        )
+    )
+
+    assert split[0].text.startswith("Table: Scores")
+    assert "This should not be reread" not in "\n".join(item.text for item in split)
 
 
 def test_chunk_splitter_invalid_content_list_falls_back_to_markdown(tmp_path: Path):
