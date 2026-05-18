@@ -480,9 +480,14 @@ function ListSection({
 }
 
 function MetadataLink({ href, children }: { href: string; children: ReactNode }) {
+  const safeHref = safeLinkHref(href);
+  if (!safeHref) {
+    return <MissingText>Unsafe link hidden.</MissingText>;
+  }
+
   return (
     <a
-      href={href}
+      href={safeHref}
       className={cn(
         "inline-flex items-center text-sm underline underline-offset-2 outline-none focus-visible:ring-2 focus-visible:ring-offset-2",
         rs.text.accent,
@@ -537,4 +542,20 @@ function diffKindLabel(kind: DiffRowEvidence["kind"]) {
 
 function cssEscape(value: string) {
   return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
+function safeLinkHref(href: string) {
+  const trimmed = href.trim();
+  if (!trimmed) {
+    return null;
+  }
+  if (trimmed.startsWith("/") || trimmed.startsWith("./") || trimmed.startsWith("../") || trimmed.startsWith("#")) {
+    return trimmed;
+  }
+  try {
+    const url = new URL(trimmed);
+    return url.protocol === "https:" || url.protocol === "http:" ? trimmed : null;
+  } catch {
+    return null;
+  }
 }

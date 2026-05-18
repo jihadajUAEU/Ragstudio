@@ -294,4 +294,31 @@ describe("EvidenceInspector", () => {
     const metadata = screen.getByRole("region", { name: "Proof metadata" });
     expect(within(metadata).getByText("42 hidden characters")).toBeVisible();
   });
+
+  it("hides unsafe public proof links", () => {
+    render(
+      <EvidenceInspector
+        evidence={{
+          ...evidence,
+          source_artifacts: [
+            {
+              ...evidence.source_artifacts[0],
+              href: "javascript:alert(1)",
+            },
+          ],
+          proof: {
+            ...evidence.proof,
+            source_commit_href: "data:text/html,unsafe",
+            replay_href: "/proof/replay",
+          },
+        }}
+        mode="public"
+      />,
+    );
+
+    expect(screen.queryByRole("link", { name: "Open raw artifact" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "View source commit" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Replay proof" })).toHaveAttribute("href", "/proof/replay");
+    expect(screen.getAllByText("Unsafe link hidden.").length).toBeGreaterThanOrEqual(2);
+  });
 });
