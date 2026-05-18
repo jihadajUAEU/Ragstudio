@@ -11,24 +11,26 @@ from ragstudio.services.parser_normalization import (
     _parse_vision_recovery_text,
 )
 
+pytestmark = pytest.mark.asyncio
+
 
 class FakeVisionRecoveryClient:
     def __init__(self, text: str):
         self.text = text
         self.calls = []
 
-    def recover_text(self, **kwargs):
+    async def recover_text(self, **kwargs):
         self.calls.append(kwargs)
         return self.text
 
 
-def test_text_blocks_preserved_by_page():
+async def test_text_blocks_preserved_by_page():
     data = [
         {"type": "text", "text": "Page one heading", "page_idx": 0},
         {"type": "paragraph", "content": "Page two body", "page_idx": 1},
     ]
 
-    blocks = MinerUContentNormalizer().normalize_content_list(data)
+    blocks = await MinerUContentNormalizer().normalize_content_list(data)
 
     assert [(block.text, block.page, block.block_type) for block in blocks] == [
         ("Page one heading", 1, "text"),
@@ -37,7 +39,59 @@ def test_text_blocks_preserved_by_page():
     assert blocks[0].warning_metadata() == []
 
 
-def test_suspicious_arabic_prose_equation_is_quarantined_without_latex_insertion():
+async def test_semantic_page_boundary_stitches_continuation_paragraph():
+    data = [
+        {
+            "type": "paragraph",
+            "text": "The runtime quality gate records parser warnings before retrieval",
+            "page_idx": 0,
+        },
+        {
+            "type": "paragraph",
+            "text": "so reviewers can stop weak evidence before it reaches an answer.",
+            "page_idx": 1,
+        },
+    ]
+
+    blocks = await MinerUContentNormalizer().normalize_content_list(data)
+
+    assert len(blocks) == 1
+    assert blocks[0].text == (
+        "The runtime quality gate records parser warnings before retrieval "
+        "so reviewers can stop weak evidence before it reaches an answer."
+    )
+    assert blocks[0].page == 1
+    assert blocks[0].block_type == "paragraph"
+    assert blocks[0].warning_metadata() == []
+    assert blocks[0].source_item["semantic_stitch"] == "page_boundary"
+    assert blocks[0].source_item["page_start"] == 1
+    assert blocks[0].source_item["page_end"] == 2
+    assert blocks[0].source_item["stitched_pages"] == [1, 2]
+
+
+async def test_semantic_page_boundary_does_not_stitch_complete_sentence():
+    data = [
+        {
+            "type": "paragraph",
+            "text": "The first page ends with a complete sentence.",
+            "page_idx": 0,
+        },
+        {
+            "type": "paragraph",
+            "text": "The next page starts a new paragraph.",
+            "page_idx": 1,
+        },
+    ]
+
+    blocks = await MinerUContentNormalizer().normalize_content_list(data)
+
+    assert [block.text for block in blocks] == [
+        "The first page ends with a complete sentence.",
+        "The next page starts a new paragraph.",
+    ]
+
+
+async def test_suspicious_arabic_prose_equation_is_quarantined_without_latex_insertion():
     data = [
         {"type": "text", "text": "Surah 1", "page_idx": 0},
         {"type": "equation_interline", "text": "$$ \\theta = \\alpha \\beta $$", "page_idx": 0},
@@ -52,7 +106,7 @@ def test_suspicious_arabic_prose_equation_is_quarantined_without_latex_insertion
         tags=["quran", "arabic", "english"],
     )
 
-    blocks = MinerUContentNormalizer().normalize_content_list(data, domain_metadata=metadata)
+    blocks = await MinerUContentNormalizer().normalize_content_list(data, domain_metadata=metadata)
 
     assert [block.text for block in blocks] == ["Surah 1", "", "الحمد لله رب العالمين"]
     assert "$$" not in "\n".join(block.text for block in blocks)
@@ -62,7 +116,7 @@ def test_suspicious_arabic_prose_equation_is_quarantined_without_latex_insertion
     assert warning["page"] == 1
 
 
-def test_recovered_text_is_used_with_recovery_warning():
+async def test_recovered_text_is_used_with_recovery_warning():
     data = [
         {
             "type": "equation",
@@ -73,7 +127,7 @@ def test_recovered_text_is_used_with_recovery_warning():
     ]
     metadata = DomainMetadata(domain="hadith", script="mixed", reference_pattern="Book N, Hadith N")
 
-    blocks = MinerUContentNormalizer().normalize_content_list(data, domain_metadata=metadata)
+    blocks = await MinerUContentNormalizer().normalize_content_list(data, domain_metadata=metadata)
 
     assert blocks[0].text == "Recovered prose sentence."
     assert blocks[0].recovery is not None
@@ -92,7 +146,7 @@ def test_recovered_text_is_used_with_recovery_warning():
     ]
 
 
-def test_image_only_equation_recovers_overlapping_pdf_text_layer(tmp_path: Path):
+async def test_image_only_equation_recovers_overlapping_pdf_text_layer(tmp_path: Path):
     fitz = pytest.importorskip("fitz")
     pdf_path = tmp_path / "source_origin.pdf"
     document = fitz.open()
@@ -118,7 +172,7 @@ def test_image_only_equation_recovers_overlapping_pdf_text_layer(tmp_path: Path)
         reference_pattern="surah_number:verse_number",
     )
 
-    blocks = MinerUContentNormalizer().normalize_content_list(
+    blocks = await MinerUContentNormalizer().normalize_content_list(
         data,
         domain_metadata=metadata,
         artifact_root=tmp_path,
@@ -133,7 +187,7 @@ def test_image_only_equation_recovers_overlapping_pdf_text_layer(tmp_path: Path)
     assert warning["recovery_source"] == "pdf_text_layer:source_origin.pdf"
 
 
-def test_image_block_recovers_overlapping_pdf_text_layer(tmp_path: Path):
+async def test_image_block_recovers_overlapping_pdf_text_layer(tmp_path: Path):
     fitz = pytest.importorskip("fitz")
     pdf_path = tmp_path / "source_origin.pdf"
     document = fitz.open()
@@ -159,7 +213,7 @@ def test_image_block_recovers_overlapping_pdf_text_layer(tmp_path: Path):
         reference_pattern="surah_number:verse_number",
     )
 
-    blocks = MinerUContentNormalizer().normalize_content_list(
+    blocks = await MinerUContentNormalizer().normalize_content_list(
         data,
         domain_metadata=metadata,
         artifact_root=tmp_path,
@@ -175,7 +229,7 @@ def test_image_block_recovers_overlapping_pdf_text_layer(tmp_path: Path):
     assert warning["recovery_source"] == "pdf_text_layer:source_origin.pdf"
 
 
-def test_image_block_uses_targeted_vision_recovery_when_text_layer_missing(tmp_path: Path):
+async def test_image_block_uses_targeted_vision_recovery_when_text_layer_missing(tmp_path: Path):
     image_dir = tmp_path / "images"
     image_dir.mkdir()
     image_path = image_dir / "ayah.png"
@@ -208,7 +262,7 @@ def test_image_block_uses_targeted_vision_recovery_when_text_layer_missing(tmp_p
         }
     ]
 
-    blocks = MinerUContentNormalizer(vision_recovery_client=client).normalize_content_list(
+    blocks = await MinerUContentNormalizer(vision_recovery_client=client).normalize_content_list(
         data,
         domain_metadata=metadata,
         artifact_root=tmp_path,
@@ -227,7 +281,7 @@ def test_image_block_uses_targeted_vision_recovery_when_text_layer_missing(tmp_p
     assert warning["recovery_source"] == "vision_model:vision-ocr"
 
 
-def test_vision_recovery_does_not_replace_existing_required_script_text(tmp_path: Path):
+async def test_vision_recovery_does_not_replace_existing_required_script_text(tmp_path: Path):
     image_dir = tmp_path / "images"
     image_dir.mkdir()
     (image_dir / "ayah.png").write_bytes(b"\x89PNG\r\n\x1a\nfake-image")
@@ -251,7 +305,7 @@ def test_vision_recovery_does_not_replace_existing_required_script_text(tmp_path
         }
     ]
 
-    blocks = MinerUContentNormalizer(vision_recovery_client=client).normalize_content_list(
+    blocks = await MinerUContentNormalizer(vision_recovery_client=client).normalize_content_list(
         data,
         domain_metadata=metadata,
         artifact_root=tmp_path,
@@ -264,7 +318,7 @@ def test_vision_recovery_does_not_replace_existing_required_script_text(tmp_path
     assert blocks[0].warning_metadata()[0]["code"] == "disallowed_block_type_quarantined"
 
 
-def test_vision_recovery_keeps_pdf_text_layer_when_required_script_present(tmp_path: Path):
+async def test_vision_recovery_keeps_pdf_text_layer_when_required_script_present(tmp_path: Path):
     fitz = pytest.importorskip("fitz")
     pdf_path = tmp_path / "source_origin.pdf"
     document = fitz.open()
@@ -292,7 +346,7 @@ def test_vision_recovery_keeps_pdf_text_layer_when_required_script_present(tmp_p
         }
     ]
 
-    blocks = MinerUContentNormalizer(vision_recovery_client=client).normalize_content_list(
+    blocks = await MinerUContentNormalizer(vision_recovery_client=client).normalize_content_list(
         data,
         domain_metadata=metadata,
         artifact_root=tmp_path,
@@ -306,7 +360,7 @@ def test_vision_recovery_keeps_pdf_text_layer_when_required_script_present(tmp_p
     assert blocks[0].recovery.source == "pdf_text_layer:source_origin.pdf"
 
 
-def test_vision_recovery_rejects_plain_text_or_refusal_payloads():
+async def test_vision_recovery_rejects_plain_text_or_refusal_payloads():
     assert (
         _parse_vision_recovery_text(
             {"choices": [{"message": {"content": "I cannot read this image."}}]}
@@ -321,7 +375,7 @@ def test_vision_recovery_rejects_plain_text_or_refusal_payloads():
     )
 
 
-def test_vision_recovery_respects_total_and_per_page_caps(tmp_path: Path):
+async def test_vision_recovery_respects_total_and_per_page_caps(tmp_path: Path):
     image_dir = tmp_path / "images"
     image_dir.mkdir()
     for index in range(3):
@@ -349,7 +403,7 @@ def test_vision_recovery_respects_total_and_per_page_caps(tmp_path: Path):
         for index in range(3)
     ]
 
-    blocks = MinerUContentNormalizer(vision_recovery_client=client).normalize_content_list(
+    blocks = await MinerUContentNormalizer(vision_recovery_client=client).normalize_content_list(
         data,
         domain_metadata=metadata,
         artifact_root=tmp_path,
@@ -362,7 +416,7 @@ def test_vision_recovery_respects_total_and_per_page_caps(tmp_path: Path):
     assert blocks[1].warning_metadata()[0]["code"] == "disallowed_block_type_quarantined"
 
 
-def test_image_block_recovers_multiline_pdf_text_layer_band(tmp_path: Path):
+async def test_image_block_recovers_multiline_pdf_text_layer_band(tmp_path: Path):
     fitz = pytest.importorskip("fitz")
     pdf_path = tmp_path / "source_origin.pdf"
     document = fitz.open()
@@ -390,7 +444,7 @@ def test_image_block_recovers_multiline_pdf_text_layer_band(tmp_path: Path):
         reference_pattern="surah_number:verse_number",
     )
 
-    blocks = MinerUContentNormalizer().normalize_content_list(
+    blocks = await MinerUContentNormalizer().normalize_content_list(
         data,
         domain_metadata=metadata,
         artifact_root=tmp_path,
@@ -405,7 +459,7 @@ def test_image_block_recovers_multiline_pdf_text_layer_band(tmp_path: Path):
     assert blocks[0].recovery.source == "pdf_text_layer:source_origin.pdf"
 
 
-def test_reference_header_gap_recovers_pdf_text_layer_between_header_and_translation(
+async def test_reference_header_gap_recovers_pdf_text_layer_between_header_and_translation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ):
@@ -442,7 +496,7 @@ def test_reference_header_gap_recovers_pdf_text_layer_between_header_and_transla
         reference_pattern="surah_number:verse_number",
     )
 
-    blocks = MinerUContentNormalizer().normalize_content_list(
+    blocks = await MinerUContentNormalizer().normalize_content_list(
         data,
         domain_metadata=metadata,
         artifact_root=tmp_path,
@@ -462,7 +516,7 @@ def test_reference_header_gap_recovers_pdf_text_layer_between_header_and_transla
     assert warning["block_type"] == "pdf_text_gap"
 
 
-def test_arabic_hadith_misclassified_as_equation_is_flagged_outside_quran_examples():
+async def test_arabic_hadith_misclassified_as_equation_is_flagged_outside_quran_examples():
     data = [
         {
             "type": "equation",
@@ -479,13 +533,13 @@ def test_arabic_hadith_misclassified_as_equation_is_flagged_outside_quran_exampl
         tags=["hadith", "arabic"],
     )
 
-    blocks = MinerUContentNormalizer().normalize_content_list(data, domain_metadata=metadata)
+    blocks = await MinerUContentNormalizer().normalize_content_list(data, domain_metadata=metadata)
 
     assert blocks[0].text == ""
     assert blocks[0].warning_metadata()[0]["code"] == "suspected_text_misclassified_as_equation"
 
 
-def test_mixed_arabic_english_paragraph_text_is_preserved():
+async def test_mixed_arabic_english_paragraph_text_is_preserved():
     data = [
         {
             "type": "paragraph",
@@ -495,14 +549,14 @@ def test_mixed_arabic_english_paragraph_text_is_preserved():
     ]
     metadata = DomainMetadata(language="mixed", script="mixed", tags=["arabic", "english"])
 
-    blocks = MinerUContentNormalizer().normalize_content_list(data, domain_metadata=metadata)
+    blocks = await MinerUContentNormalizer().normalize_content_list(data, domain_metadata=metadata)
 
     assert blocks[0].text == "In the name of Allah الرحمن الرحيم"
     assert blocks[0].page == 9
     assert blocks[0].warning_metadata() == []
 
 
-def test_math_science_equation_blocks_remain_valid_and_warning_free():
+async def test_math_science_equation_blocks_remain_valid_and_warning_free():
     profile = ExpectedContentProfile(
         expected_scripts=frozenset({"latin"}),
         allowed_block_types=TEXT_BLOCK_TYPES | EQUATION_BLOCK_TYPES,
@@ -511,14 +565,14 @@ def test_math_science_equation_blocks_remain_valid_and_warning_free():
     )
     data = [{"type": "equation_interline", "text": "E = mc^2", "page_idx": 0}]
 
-    blocks = MinerUContentNormalizer().normalize_content_list(data, expected_profile=profile)
+    blocks = await MinerUContentNormalizer().normalize_content_list(data, expected_profile=profile)
 
     assert blocks[0].text == "E = mc^2"
     assert blocks[0].block_type == "equation_interline"
     assert blocks[0].warning_metadata() == []
 
 
-def test_allowed_math_equation_extracts_latex_payload():
+async def test_allowed_math_equation_extracts_latex_payload():
     profile = ExpectedContentProfile(
         expected_scripts=frozenset({"latin"}),
         allowed_block_types=TEXT_BLOCK_TYPES | EQUATION_BLOCK_TYPES,
@@ -526,31 +580,31 @@ def test_allowed_math_equation_extracts_latex_payload():
     )
     data = [{"type": "equation", "latex": "E = mc^2", "page_idx": 0}]
 
-    blocks = MinerUContentNormalizer().normalize_content_list(data, expected_profile=profile)
+    blocks = await MinerUContentNormalizer().normalize_content_list(data, expected_profile=profile)
 
     assert blocks[0].text == "E = mc^2"
     assert blocks[0].warning_metadata() == []
 
 
-def test_expected_structure_can_allow_equation_blocks_without_warning():
+async def test_expected_structure_can_allow_equation_blocks_without_warning():
     data = [{"type": "equation", "text": "a^2 + b^2 = c^2", "page_idx": 2}]
     metadata = DomainMetadata(expected_structure="math_equation_sections")
 
-    blocks = MinerUContentNormalizer().normalize_content_list(data, domain_metadata=metadata)
+    blocks = await MinerUContentNormalizer().normalize_content_list(data, domain_metadata=metadata)
 
     assert blocks[0].text == "a^2 + b^2 = c^2"
     assert blocks[0].block_type == "equation"
     assert blocks[0].warning_metadata() == []
 
 
-def test_text_bearing_disallowed_block_type_is_quarantined_with_warning():
+async def test_text_bearing_disallowed_block_type_is_quarantined_with_warning():
     profile = ExpectedContentProfile(allowed_block_types=frozenset({"paragraph"}))
     data = [
         {"type": "heading", "text": "Excluded title", "page_idx": 0},
         {"type": "paragraph", "text": "Included body", "page_idx": 0},
     ]
 
-    blocks = MinerUContentNormalizer().normalize_content_list(data, expected_profile=profile)
+    blocks = await MinerUContentNormalizer().normalize_content_list(data, expected_profile=profile)
 
     assert [block.text for block in blocks] == ["", "Included body"]
     assert blocks[0].warning_metadata()[0]["code"] == "disallowed_block_type_quarantined"
@@ -558,7 +612,7 @@ def test_text_bearing_disallowed_block_type_is_quarantined_with_warning():
     assert blocks[1].warning_metadata() == []
 
 
-def test_disallowed_block_type_uses_recovered_text_when_available():
+async def test_disallowed_block_type_uses_recovered_text_when_available():
     profile = ExpectedContentProfile(allowed_block_types=frozenset({"paragraph"}))
     data = [
         {
@@ -569,13 +623,13 @@ def test_disallowed_block_type_uses_recovered_text_when_available():
         }
     ]
 
-    blocks = MinerUContentNormalizer().normalize_content_list(data, expected_profile=profile)
+    blocks = await MinerUContentNormalizer().normalize_content_list(data, expected_profile=profile)
 
     assert blocks[0].text == "Recovered caption text."
     assert blocks[0].warning_metadata()[0]["code"] == "recovered_text_from_disallowed_block"
 
 
-def test_repair_metadata_recovers_text_bearing_disallowed_block_as_prose():
+async def test_repair_metadata_recovers_text_bearing_disallowed_block_as_prose():
     metadata = DomainMetadata(
         custom_json={
             "parser_normalization": {
@@ -588,13 +642,13 @@ def test_repair_metadata_recovers_text_bearing_disallowed_block_as_prose():
         {"type": "heading", "text": "Hadith text misclassified as heading", "page_idx": 0}
     ]
 
-    blocks = MinerUContentNormalizer().normalize_content_list(data, domain_metadata=metadata)
+    blocks = await MinerUContentNormalizer().normalize_content_list(data, domain_metadata=metadata)
 
     assert blocks[0].text == "Hadith text misclassified as heading"
     assert blocks[0].warning_metadata()[0]["code"] == "recovered_text_from_disallowed_block"
 
 
-def test_repair_metadata_recovers_text_bearing_equation_as_prose():
+async def test_repair_metadata_recovers_text_bearing_equation_as_prose():
     metadata = DomainMetadata(
         custom_json={
             "parser_normalization": {
@@ -604,23 +658,23 @@ def test_repair_metadata_recovers_text_bearing_equation_as_prose():
     )
     data = [{"type": "equation", "text": "Arabic prose misclassified as equation", "page_idx": 0}]
 
-    blocks = MinerUContentNormalizer().normalize_content_list(data, domain_metadata=metadata)
+    blocks = await MinerUContentNormalizer().normalize_content_list(data, domain_metadata=metadata)
 
     assert blocks[0].text == "Arabic prose misclassified as equation"
     assert blocks[0].warning_metadata()[0]["code"] == "recovered_text_from_misclassified_block"
 
 
-def test_top_level_table_body_is_extracted_for_table_blocks():
+async def test_top_level_table_body_is_extracted_for_table_blocks():
     data = [{"type": "table", "table_body": "Column A | Column B", "page_idx": 1}]
 
-    blocks = MinerUContentNormalizer().normalize_content_list(data)
+    blocks = await MinerUContentNormalizer().normalize_content_list(data)
 
     assert blocks[0].text == "Column A | Column B"
     assert blocks[0].block_type == "table"
     assert blocks[0].page == 2
 
 
-def test_reference_patterns_are_preserved_exactly_and_in_order():
+async def test_reference_patterns_are_preserved_exactly_and_in_order():
     metadata = DomainMetadata(
         reference_pattern=r"Book\s+\d+, Hadith\s+\d+",
         custom_json={
@@ -639,7 +693,7 @@ def test_reference_patterns_are_preserved_exactly_and_in_order():
     )
 
 
-def test_custom_json_content_profile_configures_allowed_block_types_and_scripts():
+async def test_custom_json_content_profile_configures_allowed_block_types_and_scripts():
     metadata = DomainMetadata(
         custom_json={
             "content_profile": {
@@ -654,7 +708,7 @@ def test_custom_json_content_profile_configures_allowed_block_types_and_scripts(
     ]
 
     profile = ExpectedContentProfile.from_domain_metadata(metadata)
-    blocks = MinerUContentNormalizer().normalize_content_list(data, expected_profile=profile)
+    blocks = await MinerUContentNormalizer().normalize_content_list(data, expected_profile=profile)
 
     assert profile.expected_scripts == frozenset({"arabic", "latin"})
     assert profile.allowed_block_types == frozenset({"paragraph"})
@@ -662,18 +716,18 @@ def test_custom_json_content_profile_configures_allowed_block_types_and_scripts(
     assert blocks[0].warning_metadata()[0]["code"] == "disallowed_block_type_quarantined"
 
 
-def test_bool_page_values_are_not_treated_as_page_numbers():
+async def test_bool_page_values_are_not_treated_as_page_numbers():
     data = [
         {"type": "text", "text": "No page", "page_idx": True},
         {"type": "paragraph", "text": "Still no page", "page": False},
     ]
 
-    blocks = MinerUContentNormalizer().normalize_content_list(data)
+    blocks = await MinerUContentNormalizer().normalize_content_list(data)
 
     assert [block.page for block in blocks] == [None, None]
 
 
-def test_nested_content_paragraph_content_and_null_character_cleanup():
+async def test_nested_content_paragraph_content_and_null_character_cleanup():
     data = [
         {
             "type": "paragraph",
@@ -687,17 +741,17 @@ def test_nested_content_paragraph_content_and_null_character_cleanup():
         },
     ]
 
-    blocks = MinerUContentNormalizer().normalize_content_list(data)
+    blocks = await MinerUContentNormalizer().normalize_content_list(data)
 
     assert [block.text for block in blocks] == ["First second third", "Nested text"]
     assert [block.page for block in blocks] == [1, 2]
 
 
-def test_reference_header_gap_recovery_stays_inside_header_column(
+async def test_reference_header_gap_recovery_stays_inside_header_column(
     tmp_path: Path,
     monkeypatch,
 ):
-    import fitz
+    fitz = pytest.importorskip("fitz")
     from ragstudio.services import parser_normalization
 
     pdf_path = tmp_path / "source_origin.pdf"
@@ -735,7 +789,7 @@ def test_reference_header_gap_recovery_stays_inside_header_column(
         },
     ]
 
-    blocks = MinerUContentNormalizer().normalize_content_list(
+    blocks = await MinerUContentNormalizer().normalize_content_list(
         data,
         domain_metadata=DomainMetadata(domain="quran_tafseer"),
         artifact_root=tmp_path,

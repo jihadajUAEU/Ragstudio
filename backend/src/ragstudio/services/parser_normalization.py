@@ -436,6 +436,7 @@ class MinerUContentNormalizer:
                     normalized,
                     pdf_recovery_context=pdf_recovery_context,
                 )
+            normalized = self._stitch_page_boundary_paragraphs(normalized)
         finally:
             if pdf_recovery_context is not None:
                 pdf_recovery_context.close()
@@ -816,6 +817,18 @@ class MinerUContentNormalizer:
             recovered.extend(insertions.get(index, []))
         return recovered
 
+    def _stitch_page_boundary_paragraphs(
+        self,
+        normalized: list[NormalizedBlock],
+    ) -> list[NormalizedBlock]:
+        stitched: list[NormalizedBlock] = []
+        for block in normalized:
+            if stitched and _should_stitch_page_boundary(stitched[-1], block):
+                stitched[-1] = _stitch_blocks_across_page_boundary(stitched[-1], block)
+                continue
+            stitched.append(block)
+        return stitched
+
 
 def _dict_value(value: dict[str, Any], key: str) -> dict[str, Any] | None:
     candidate = value.get(key)
@@ -1160,6 +1173,133 @@ def _page_number(item: dict[str, Any]) -> int | None:
         return page_idx + 1
     page = item.get("page")
     return page if type(page) is int else None
+
+
+def _source_page_start(block: NormalizedBlock) -> int | None:
+    page_start = block.source_item.get("page_start")
+    if type(page_start) is int:
+        return page_start
+    return block.page
+
+
+def _source_page_end(block: NormalizedBlock) -> int | None:
+    page_end = block.source_item.get("page_end")
+    if type(page_end) is int:
+        return page_end
+    return block.page
+
+
+def _should_stitch_page_boundary(previous: NormalizedBlock, current: NormalizedBlock) -> bool:
+    previous_page_end = _source_page_end(previous)
+    current_page_start = _source_page_start(current)
+    if previous_page_end is None or current_page_start is None:
+        return False
+    if current_page_start != previous_page_end + 1:
+        return False
+    if previous.warnings or current.warnings or previous.recovery or current.recovery:
+        return False
+    if not _is_page_stitch_text_block(previous) or not _is_page_stitch_text_block(current):
+        return False
+    if _ends_with_terminal_punctuation(previous.text):
+        return False
+    if _looks_like_page_stitch_boundary(current.text):
+        return False
+    return _starts_like_sentence_continuation(previous.text, current.text)
+
+
+def _is_page_stitch_text_block(block: NormalizedBlock) -> bool:
+    return _normalize_token(block.block_type) in {"paragraph", "para", "text"}
+
+
+def _ends_with_terminal_punctuation(text: str) -> bool:
+    stripped = text.rstrip()
+    if not stripped:
+        return True
+    stripped = stripped.rstrip("\"')]}\u00bb\u201d\u2019")
+    return bool(stripped) and stripped[-1] in ".!?;:\u3002\u061f\u061b\u2026"
+
+
+def _looks_like_page_stitch_boundary(text: str) -> bool:
+    stripped = text.strip()
+    if not stripped:
+        return True
+    if _looks_like_reference_header(stripped):
+        return True
+    return (
+        re.match(r"^(?:#{1,6}\s+|[-*•]\s+|\d{1,3}[.)]\s+|[A-Z][A-Z0-9 ,:/-]{4,})", stripped)
+        is not None
+    )
+
+
+def _starts_like_sentence_continuation(previous_text: str, current_text: str) -> bool:
+    del previous_text
+    stripped = current_text.lstrip()
+    if not stripped:
+        return False
+    first = stripped[0].lstrip("\"'([{\u00ab\u201c\u2018")
+    if not first:
+        return False
+    if first[0].islower():
+        return True
+    if first[0] in ",;:)]}\u00bb\u201d\u2019":
+        return True
+    return _has_arabic_script(stripped)
+
+
+def _stitch_blocks_across_page_boundary(
+    previous: NormalizedBlock,
+    current: NormalizedBlock,
+) -> NormalizedBlock:
+    page_start = _source_page_start(previous)
+    page_end = _source_page_end(current)
+    source_item = dict(previous.source_item)
+    source_item.update(
+        {
+            "semantic_stitch": "page_boundary",
+            "page_start": page_start,
+            "page_end": page_end,
+            "stitched_pages": [
+                page
+                for page in (page_start, page_end)
+                if page is not None
+            ],
+            "stitched_block_types": [previous.block_type, current.block_type],
+        }
+    )
+    previous_sources = previous.source_item.get("stitched_sources")
+    stitched_sources = (
+        list(previous_sources)
+        if isinstance(previous_sources, list)
+        else [_stitch_source_summary(previous)]
+    )
+    stitched_sources.append(_stitch_source_summary(current))
+    source_item["stitched_sources"] = stitched_sources
+    return NormalizedBlock(
+        text=_join_page_boundary_text(previous.text, current.text),
+        page=page_start,
+        block_type=previous.block_type,
+        source_item=source_item,
+    )
+
+
+def _stitch_source_summary(block: NormalizedBlock) -> dict[str, Any]:
+    summary: dict[str, Any] = {
+        "block_type": block.block_type,
+        "page_start": _source_page_start(block),
+        "page_end": _source_page_end(block),
+    }
+    bbox = block.source_item.get("bbox")
+    if _bbox(bbox) is not None:
+        summary["bbox"] = bbox
+    return summary
+
+
+def _join_page_boundary_text(previous_text: str, current_text: str) -> str:
+    previous = previous_text.rstrip()
+    current = current_text.lstrip()
+    if previous.endswith("-"):
+        return f"{previous[:-1]}{current}"
+    return f"{previous} {current}"
 
 
 def _page_index(item: dict[str, Any]) -> int | None:
