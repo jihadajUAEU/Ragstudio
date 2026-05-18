@@ -265,6 +265,101 @@ async def test_chunk_splitter_stitches_continuation_across_pages(tmp_path: Path)
     assert split[0].source_location["page_end"] == 2
 
 
+@pytest.mark.asyncio
+async def test_chunk_splitter_removes_stale_page_when_setting_page_range(tmp_path: Path):
+    content_list = tmp_path / "source_content_list.json"
+    content_list.write_text(
+        json.dumps(
+            [
+                {
+                    "type": "text",
+                    "text": "This paragraph starts on the first page and",
+                    "page_idx": 0,
+                },
+                {
+                    "type": "text",
+                    "text": "continues onto the second page.",
+                    "page_idx": 1,
+                },
+            ]
+        ),
+        encoding="utf-8",
+    )
+    chunk = AdapterChunk(
+        text="fallback markdown should not be used",
+        source_location={"artifact": "source.md", "page": 1},
+        metadata={
+            "parser_metadata": {
+                "artifact_extract_dir": str(tmp_path),
+                "content_list_ref": "source_content_list.json",
+                "parser_mode": "mineru_strict",
+            }
+        },
+    )
+
+    split = await ChunkSplitter(max_words=1500).split(
+        [chunk],
+        domain_metadata=DomainMetadata(domain="general", document_type="report"),
+        parser_mode="mineru_strict",
+    )
+
+    assert len(split) == 1
+    assert split[0].source_location["page_start"] == 1
+    assert split[0].source_location["page_end"] == 2
+    assert "page" not in split[0].source_location
+
+
+@pytest.mark.asyncio
+async def test_chunk_splitter_preserves_page_provenance_for_split_content_list_references(
+    tmp_path: Path,
+):
+    content_list = tmp_path / "source_content_list.json"
+    content_list.write_text(
+        json.dumps(
+            [
+                {"type": "text", "text": "[1:1] Page one reference text.", "page_idx": 0},
+                {"type": "text", "text": "[1:2] Page two reference text.", "page_idx": 1},
+            ]
+        ),
+        encoding="utf-8",
+    )
+    chunk = AdapterChunk(
+        text="fallback markdown should not be used",
+        source_location={"artifact": "source.md", "page": 1},
+        metadata={
+            "parser_metadata": {
+                "artifact_extract_dir": str(tmp_path),
+                "content_list_ref": "source_content_list.json",
+                "parser_mode": "mineru_strict",
+            }
+        },
+    )
+
+    split = await ChunkSplitter(max_words=1500).split(
+        [chunk],
+        domain_metadata=DomainMetadata(
+            domain="religion",
+            tags=["quran"],
+            custom_json={
+                "reference_schema": {"type": "surah_ayah"},
+                "chunking": {"unit": "verse"},
+            },
+        ),
+        parser_mode="mineru_strict",
+    )
+
+    assert [item.metadata["reference_metadata"]["references"] for item in split] == [
+        ["1:1"],
+        ["1:2"],
+    ]
+    assert split[0].source_location["page_start"] == 1
+    assert split[0].source_location["page_end"] == 1
+    assert split[1].source_location["page_start"] == 2
+    assert split[1].source_location["page_end"] == 2
+    assert "page" not in split[0].source_location
+    assert "page" not in split[1].source_location
+
+
 def test_chunk_splitter_invalid_content_list_falls_back_to_markdown(tmp_path: Path):
     content_list = tmp_path / "source_content_list.json"
     content_list.write_text("{not json", encoding="utf-8")

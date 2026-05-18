@@ -54,11 +54,21 @@ class ContentListSplitResult:
 
 
 @dataclass(frozen=True)
+class OrderedTextBlock:
+    text: str
+    page: int | None
+    warnings: list[dict[str, Any]]
+    start: int
+    end: int
+
+
+@dataclass(frozen=True)
 class OrderedTextGroup:
     text: str
     page_start: int | None
     page_end: int | None
     warnings: list[dict[str, Any]]
+    blocks: list[OrderedTextBlock]
 
 
 class ChunkSplitter:
@@ -248,11 +258,11 @@ class ChunkSplitter:
 
         pieces: list[SplitPiece] = []
         for group in self._ordered_text_groups(normalized_blocks):
-            source_location = dict(chunk.source_location)
-            if group.page_start is not None:
-                source_location["page_start"] = group.page_start
-            if group.page_end is not None:
-                source_location["page_end"] = group.page_end
+            source_location = self._source_location_with_page_range(
+                chunk.source_location,
+                page_start=group.page_start,
+                page_end=group.page_end,
+            )
 
             if not group.text.strip():
                 if group.warnings:
@@ -266,6 +276,23 @@ class ChunkSplitter:
                     )
                 continue
 
+            grouped_chunk = AdapterChunk(
+                text=group.text,
+                source_location=source_location,
+                metadata=dict(chunk.metadata),
+                runtime_source_id=chunk.runtime_source_id,
+                content_type=chunk.content_type,
+                preview_ref=chunk.preview_ref,
+            )
+            reference_units = self._reference_unit_sections_for_ordered_group(
+                grouped_chunk,
+                group,
+                profile,
+                domain_metadata,
+            )
+            if reference_units:
+                pieces.extend(reference_units)
+                continue
             metadata = dict(chunk.metadata)
             if group.warnings:
                 self._merge_parser_warnings(metadata, group.warnings)
@@ -277,14 +304,6 @@ class ChunkSplitter:
                 content_type=chunk.content_type,
                 preview_ref=chunk.preview_ref,
             )
-            reference_units = self._reference_unit_sections(
-                grouped_chunk,
-                profile,
-                domain_metadata,
-            )
-            if reference_units:
-                pieces.extend(reference_units)
-                continue
             for part in self._hard_split_text(group.text, profile.hard_max_words):
                 pieces.append(
                     self._piece_from_parent(grouped_chunk, part, source_location=source_location)
@@ -294,6 +313,7 @@ class ChunkSplitter:
     def _ordered_text_groups(self, blocks: list[NormalizedBlock]) -> list[OrderedTextGroup]:
         groups: list[OrderedTextGroup] = []
         current_text_parts: list[str] = []
+        current_blocks: list[OrderedTextBlock] = []
         current_warnings: list[dict[str, Any]] = []
         current_page_start: int | None = None
         current_page_end: int | None = None
@@ -317,9 +337,11 @@ class ChunkSplitter:
                     page_start=current_page_start,
                     page_end=current_page_end,
                     warnings=list(current_warnings),
+                    blocks=list(current_blocks),
                 )
             )
             current_text_parts.clear()
+            current_blocks.clear()
             current_warnings.clear()
             current_page_start = None
             current_page_end = None
@@ -339,7 +361,17 @@ class ChunkSplitter:
             if current_text_parts and self._starts_new_logical_section(text):
                 flush()
 
+            start = sum(len(part) for part in current_text_parts) + 2 * len(current_text_parts)
             current_text_parts.append(text)
+            current_blocks.append(
+                OrderedTextBlock(
+                    text=text,
+                    page=block.page,
+                    warnings=warnings,
+                    start=start,
+                    end=start + len(text),
+                )
+            )
             current_warnings.extend(warnings)
             merge_page(block.page)
 
@@ -496,13 +528,7 @@ class ChunkSplitter:
         }:
             return []
 
-        if (
-            profile.semantics.inline_reference_policy == "cross_reference_only"
-            and profile.semantics.primary_anchor_pattern
-        ):
-            units = profile.semantics.split_primary_anchor_units(chunk.text)
-        else:
-            units = profile.semantics.split_reference_units(chunk.text)
+        units = self._reference_text_units(chunk.text, profile)
         if len(units) <= 1:
             return []
 
@@ -512,6 +538,137 @@ class ChunkSplitter:
             for text in self._hard_split_text(unit, profile.hard_max_words)
             if text.strip()
         ]
+
+    def _reference_unit_sections_for_ordered_group(
+        self,
+        chunk: AdapterChunk,
+        group: OrderedTextGroup,
+        profile: ChunkProfile,
+        domain_metadata: DomainMetadata,
+    ) -> list[SplitPiece]:
+        del domain_metadata
+
+        if profile.semantics is None or profile.semantics.chunk_unit not in {
+            "hadith",
+            "verse",
+            "verse_section",
+            "reference",
+            "section",
+        }:
+            return []
+
+        units = self._reference_text_units(chunk.text, profile)
+        if len(units) <= 1:
+            return []
+
+        pieces: list[SplitPiece] = []
+        cursor = 0
+        for unit in units:
+            unit_start = chunk.text.find(unit, cursor)
+            if unit_start < 0:
+                unit_start = chunk.text.find(unit)
+            unit_end = unit_start + len(unit) if unit_start >= 0 else len(chunk.text)
+            cursor = unit_end
+            unit_location = self._source_location_for_text_span(
+                chunk.source_location,
+                group,
+                start=unit_start,
+                end=unit_end,
+            )
+            metadata = dict(chunk.metadata)
+            warnings = self._warnings_for_text_span(group, start=unit_start, end=unit_end)
+            if warnings:
+                self._merge_parser_warnings(metadata, warnings)
+            unit_chunk = AdapterChunk(
+                text=unit,
+                source_location=unit_location,
+                metadata=metadata,
+                runtime_source_id=chunk.runtime_source_id,
+                content_type=chunk.content_type,
+                preview_ref=chunk.preview_ref,
+            )
+            for text in self._hard_split_text(unit, profile.hard_max_words):
+                if text.strip():
+                    pieces.append(
+                        self._piece_from_parent(
+                            unit_chunk,
+                            text,
+                            source_location=unit_location,
+                        )
+                    )
+        return pieces
+
+    def _reference_text_units(self, text: str, profile: ChunkProfile) -> list[str]:
+        if profile.semantics is None:
+            return []
+        if (
+            profile.semantics.inline_reference_policy == "cross_reference_only"
+            and profile.semantics.primary_anchor_pattern
+        ):
+            return profile.semantics.split_primary_anchor_units(text)
+        return profile.semantics.split_reference_units(text)
+
+    def _source_location_for_text_span(
+        self,
+        source_location: dict[str, Any],
+        group: OrderedTextGroup,
+        *,
+        start: int,
+        end: int,
+    ) -> dict[str, Any]:
+        blocks = self._blocks_for_text_span(group, start=start, end=end)
+        pages = [block.page for block in blocks if block.page is not None]
+        if not pages:
+            return dict(source_location)
+        return self._source_location_with_page_range(
+            source_location,
+            page_start=min(pages),
+            page_end=max(pages),
+        )
+
+    def _warnings_for_text_span(
+        self,
+        group: OrderedTextGroup,
+        *,
+        start: int,
+        end: int,
+    ) -> list[dict[str, Any]]:
+        warnings: list[dict[str, Any]] = []
+        for block in self._blocks_for_text_span(group, start=start, end=end):
+            warnings.extend(block.warnings)
+        return warnings
+
+    def _blocks_for_text_span(
+        self,
+        group: OrderedTextGroup,
+        *,
+        start: int,
+        end: int,
+    ) -> list[OrderedTextBlock]:
+        if start < 0:
+            return group.blocks
+        blocks = [
+            block
+            for block in group.blocks
+            if block.end > start and block.start < end
+        ]
+        return blocks or group.blocks
+
+    def _source_location_with_page_range(
+        self,
+        source_location: dict[str, Any],
+        *,
+        page_start: int | None,
+        page_end: int | None,
+    ) -> dict[str, Any]:
+        updated = dict(source_location)
+        if page_start is not None:
+            updated["page_start"] = page_start
+        if page_end is not None:
+            updated["page_end"] = page_end
+        if page_start is not None or page_end is not None:
+            updated.pop("page", None)
+        return updated
 
     def _markdown_sections(self, text: str) -> list[str]:
         blocks = [block.strip() for block in re.split(r"\n{2,}", text) if block.strip()]
@@ -762,6 +919,7 @@ class ChunkSplitter:
         if pages:
             source_location["page_start"] = min(pages)
             source_location["page_end"] = max(pages)
+            source_location.pop("page", None)
 
         return SplitPiece(
             text=(
