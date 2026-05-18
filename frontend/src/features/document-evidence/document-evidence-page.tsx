@@ -85,7 +85,7 @@ export function DocumentEvidencePage() {
           </div>
         </section>
       ) : null}
-      <EvidenceInspector evidence={evidenceQuery.data} mode="local" />
+      <EvidenceInspector key={evidenceQuery.data.document.id} evidence={evidenceQuery.data} mode="local" />
     </div>
   );
 }
