@@ -22,6 +22,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 TEXT_PREVIEW_LIMIT = 600
+MAX_EVIDENCE_CHUNKS = 200
 SECRET_KEY_PATTERN = re.compile(r"(api[_-]?key|token|secret|password|authorization)", re.IGNORECASE)
 OPENAI_KEY_VALUE_PATTERN = re.compile(r"sk-[A-Za-z0-9_-]+")
 BEARER_VALUE_PATTERN = re.compile(r"bearer\s+[A-Za-z0-9._=-]{12,}", re.IGNORECASE)
@@ -46,17 +47,20 @@ class DocumentParseEvidenceService:
         if document is None:
             raise DocumentParseEvidenceNotFoundError(document_id)
 
-        chunks = list(
+        all_chunks = list(
             (
                 await self.session.execute(
                     select(Chunk)
                     .where(Chunk.document_id == document_id)
                     .order_by(Chunk.created_at.asc(), Chunk.id.asc())
+                    .limit(MAX_EVIDENCE_CHUNKS + 1)
                 )
             )
             .scalars()
             .all()
         )
+        chunks = all_chunks[:MAX_EVIDENCE_CHUNKS]
+        omitted_chunk_count = max(len(all_chunks) - MAX_EVIDENCE_CHUNKS, 0)
         jobs = list(
             (
                 await self.session.execute(
@@ -95,7 +99,7 @@ class DocumentParseEvidenceService:
         parser_blocks = self._attach_block_warning_ids(parser_blocks, warnings)
         chunk_evidence = self._build_chunks(chunks, warning_ids_by_chunk)
         source_artifacts = self._build_source_artifacts(document, chunks)
-        limitations = self._proof_limitations(chunks, graph_records)
+        limitations = self._proof_limitations(chunks, graph_records, omitted_chunk_count)
         missing_sections = self._missing_sections(chunks, parser_blocks, decisions)
 
         return DocumentParseEvidence(
@@ -405,10 +409,17 @@ class DocumentParseEvidenceService:
         self,
         chunks: list[Chunk],
         graph_records: list[GraphProjectionRecord],
+        omitted_chunk_count: int = 0,
     ) -> list[str]:
         limitations: list[str] = []
         if not chunks:
             limitations.append("No chunks have been materialized for this document.")
+        if omitted_chunk_count:
+            limitations.append(
+                "Evidence preview is capped at "
+                f"{MAX_EVIDENCE_CHUNKS} chunks; at least {omitted_chunk_count} "
+                "additional chunks are omitted from this response."
+            )
         if not graph_records:
             limitations.append("No graph projection record is available for this document.")
         elif graph_records[0].status != "succeeded":

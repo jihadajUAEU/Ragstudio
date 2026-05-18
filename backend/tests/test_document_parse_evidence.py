@@ -22,6 +22,46 @@ from ragstudio.services.document_parse_evidence_service import DocumentParseEvid
 
 
 @pytest.mark.asyncio
+async def test_parse_evidence_caps_large_documents(client, tmp_path: Path):
+    artifact = tmp_path / "large.pdf"
+    artifact.write_bytes(b"%PDF synthetic")
+    async with client._transport.app.state.session_factory() as session:
+        session.add(
+            Document(
+                id="doc-large",
+                filename="large.pdf",
+                content_type="application/pdf",
+                sha256="sha-large",
+                artifact_path=str(artifact),
+                status=StageStatus.SUCCEEDED.value,
+            )
+        )
+        session.add_all(
+            [
+                Chunk(
+                    id=f"chunk-large-{index:03d}",
+                    document_id="doc-large",
+                    text=f"Chunk {index}",
+                    source_location={"page": index + 1},
+                    metadata_json={},
+                    extraction_quality={},
+                )
+                for index in range(205)
+            ]
+        )
+        await session.commit()
+
+        evidence = await DocumentParseEvidenceService(
+            session,
+            source_commit="test-commit",
+        ).get_document_evidence("doc-large")
+
+    assert len(evidence.chunks) == 200
+    assert len(evidence.parser_blocks) == 200
+    assert any("capped at 200 chunks" in limitation for limitation in evidence.proof.limitations)
+
+
+@pytest.mark.asyncio
 async def test_parse_evidence_groups_page_stitch_decision(client, tmp_path: Path):
     artifact = tmp_path / "source.pdf"
     artifact.write_bytes(b"%PDF synthetic")
