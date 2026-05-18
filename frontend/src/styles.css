@@ -69,7 +69,7 @@ pre,
     monospace;
 }
 
-a:visited {
+.rs-prose a:visited {
   color: var(--rs-visited);
 }
 

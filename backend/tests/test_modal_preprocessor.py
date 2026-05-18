@@ -43,6 +43,8 @@ def test_modal_preprocessor_routes_content_list_once(tmp_path):
 
     assert len(chunks) == 2
     assert all(item.metadata[MODAL_ROUTER_PROCESSED_FLAG] is True for item in chunks)
+    assert chunks[0].metadata["page"] == 1
+    assert chunks[1].metadata["page"] == 2
     assert chunks[1].metadata["modality"] == "table"
     assert chunks[1].metadata["parser_metadata"]["content_list_ref"] == (
         "source_content_list.json"

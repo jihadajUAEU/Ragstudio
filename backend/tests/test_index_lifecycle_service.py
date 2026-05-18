@@ -651,6 +651,7 @@ async def test_reindex_document_applies_modal_preprocessor(session, app, tmp_pat
     first_chunk = runtime.preparsed_chunks[0]
     assert first_chunk.metadata["modal_router_processed"] is True
     assert first_chunk.metadata["modality"] == "table"
+    assert first_chunk.metadata["page"] == 1
 
 
 @pytest.mark.asyncio

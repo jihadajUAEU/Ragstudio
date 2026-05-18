@@ -67,9 +67,7 @@ class StudioModalRouter:
         for index, item in enumerate(content_list):
             block_type = str(item.get("type", "text")).strip().lower()
             modality = classify_block(block_type)
-            page = item.get("page_idx") or item.get("page")
-            if not isinstance(page, int):
-                page = None
+            page = _page_number(item)
 
             if modality == BlockModality.TABLE:
                 blocks.append(self._process_table(item, page, index))
@@ -218,3 +216,11 @@ class StudioModalRouter:
             source_block=item,
             page=page,
         )
+
+
+def _page_number(item: dict[str, Any]) -> int | None:
+    page_idx = item.get("page_idx")
+    if type(page_idx) is int:
+        return page_idx + 1
+    page = item.get("page")
+    return page if type(page) is int else None
