@@ -360,6 +360,60 @@ async def test_chunk_splitter_preserves_page_provenance_for_split_content_list_r
     assert "page" not in split[1].source_location
 
 
+@pytest.mark.asyncio
+async def test_chunk_splitter_scopes_hard_split_stitched_reference_warnings(
+    tmp_path: Path,
+):
+    page_one_text = words(80, "pageone")
+    page_two_text = words(80, "pagetwo")
+    content_list = tmp_path / "source_content_list.json"
+    content_list.write_text(
+        json.dumps(
+            [
+                {"type": "text", "text": f"[1:1] {page_one_text}", "page_idx": 0},
+                {"type": "equation", "text": page_two_text, "page_idx": 1},
+                {"type": "text", "text": "[1:2] Next reference.", "page_idx": 2},
+            ]
+        ),
+        encoding="utf-8",
+    )
+    chunk = AdapterChunk(
+        text="fallback markdown should not be used",
+        source_location={"artifact": "source.md", "page": 1},
+        metadata={
+            "parser_metadata": {
+                "artifact_extract_dir": str(tmp_path),
+                "content_list_ref": "source_content_list.json",
+                "parser_mode": "mineru_strict",
+            }
+        },
+    )
+
+    split = await ChunkSplitter(max_words=50).split(
+        [chunk],
+        domain_metadata=DomainMetadata(
+            domain="religion",
+            tags=["quran"],
+            custom_json={
+                "reference_schema": {"type": "surah_ayah"},
+                "chunking": {"unit": "verse"},
+                "parser_normalization": {"recover_text_bearing_blocks_as_prose": True},
+            },
+        ),
+        parser_mode="mineru_strict",
+    )
+
+    assert len(split) > 2
+    first_child = split[0]
+    assert "pageone0" in first_child.text
+    assert "pagetwo0" not in first_child.text
+    assert first_child.source_location["page_start"] == 1
+    assert first_child.source_location["page_end"] == 1
+    assert "page" not in first_child.source_location
+    assert "recovered_text_from_misclassified_block" not in parser_warning_codes(first_child)
+    assert all(warning.get("page") != 2 for warning in parser_warnings(first_child))
+
+
 def test_chunk_splitter_invalid_content_list_falls_back_to_markdown(tmp_path: Path):
     content_list = tmp_path / "source_content_list.json"
     content_list.write_text("{not json", encoding="utf-8")

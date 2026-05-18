@@ -575,27 +575,38 @@ class ChunkSplitter:
                 start=unit_start,
                 end=unit_end,
             )
-            metadata = dict(chunk.metadata)
-            warnings = self._warnings_for_text_span(group, start=unit_start, end=unit_end)
-            if warnings:
-                self._merge_parser_warnings(metadata, warnings)
             unit_chunk = AdapterChunk(
                 text=unit,
                 source_location=unit_location,
-                metadata=metadata,
+                metadata=dict(chunk.metadata),
                 runtime_source_id=chunk.runtime_source_id,
                 content_type=chunk.content_type,
                 preview_ref=chunk.preview_ref,
             )
-            for text in self._hard_split_text(unit, profile.hard_max_words):
-                if text.strip():
-                    pieces.append(
-                        self._piece_from_parent(
-                            unit_chunk,
-                            text,
-                            source_location=unit_location,
-                        )
-                    )
+            hard_split_parts = self._hard_split_text(unit, profile.hard_max_words)
+            if len(hard_split_parts) <= 1:
+                metadata = dict(chunk.metadata)
+                warnings = self._warnings_for_text_span(group, start=unit_start, end=unit_end)
+                if warnings:
+                    self._merge_parser_warnings(metadata, warnings)
+                unit_chunk = AdapterChunk(
+                    text=unit,
+                    source_location=unit_location,
+                    metadata=metadata,
+                    runtime_source_id=chunk.runtime_source_id,
+                    content_type=chunk.content_type,
+                    preview_ref=chunk.preview_ref,
+                )
+
+            pieces.extend(
+                self._reference_unit_hard_split_pieces(
+                    unit_chunk,
+                    group,
+                    hard_split_parts,
+                    unit_start=unit_start,
+                    unit_end=unit_end,
+                )
+            )
         return pieces
 
     def _reference_text_units(self, text: str, profile: ChunkProfile) -> list[str]:
@@ -637,6 +648,112 @@ class ChunkSplitter:
         for block in self._blocks_for_text_span(group, start=start, end=end):
             warnings.extend(block.warnings)
         return warnings
+
+    def _reference_unit_hard_split_pieces(
+        self,
+        chunk: AdapterChunk,
+        group: OrderedTextGroup,
+        parts: list[str],
+        *,
+        unit_start: int,
+        unit_end: int,
+    ) -> list[SplitPiece]:
+        if len(parts) <= 1:
+            return [
+                self._piece_from_parent(
+                    chunk,
+                    part,
+                    source_location=dict(chunk.source_location),
+                )
+                for part in parts
+                if part.strip()
+            ]
+
+        pieces: list[SplitPiece] = []
+        word_cursor = 0
+        for part in parts:
+            if not part.strip():
+                continue
+            span = self._text_span_for_split_child(
+                group.text,
+                part,
+                start=unit_start,
+                end=unit_end,
+                word_cursor=word_cursor,
+            )
+            metadata = dict(chunk.metadata)
+            if span is None:
+                source_location = self._broad_source_location(chunk.source_location)
+            else:
+                child_start, child_end, word_cursor = span
+                source_location = self._source_location_for_text_span(
+                    chunk.source_location,
+                    group,
+                    start=child_start,
+                    end=child_end,
+                )
+                warnings = self._warnings_for_text_span(group, start=child_start, end=child_end)
+                if warnings:
+                    self._merge_parser_warnings(metadata, warnings)
+
+            child_chunk = AdapterChunk(
+                text=part,
+                source_location=source_location,
+                metadata=metadata,
+                runtime_source_id=chunk.runtime_source_id,
+                content_type=chunk.content_type,
+                preview_ref=chunk.preview_ref,
+            )
+            pieces.append(
+                self._piece_from_parent(
+                    child_chunk,
+                    part,
+                    source_location=source_location,
+                )
+            )
+        return pieces
+
+    def _text_span_for_split_child(
+        self,
+        text: str,
+        child_text: str,
+        *,
+        start: int,
+        end: int,
+        word_cursor: int,
+    ) -> tuple[int, int, int] | None:
+        child_words = child_text.split()
+        if not child_words:
+            return None
+
+        word_spans = [
+            (match.group(0), match.start(), match.end())
+            for match in re.finditer(r"\S+", text)
+            if match.end() > start and match.start() < end
+        ]
+        if not word_spans:
+            return None
+
+        search_start = max(word_cursor, 0)
+        max_start = len(word_spans) - len(child_words)
+        for index in range(search_start, max_start + 1):
+            candidate = [
+                word
+                for word, _start, _end in word_spans[index : index + len(child_words)]
+            ]
+            if candidate == child_words:
+                return (
+                    word_spans[index][1],
+                    word_spans[index + len(child_words) - 1][2],
+                    index + len(child_words),
+                )
+        return None
+
+    def _broad_source_location(self, source_location: dict[str, Any]) -> dict[str, Any]:
+        updated = dict(source_location)
+        if "page_start" in updated or "page_end" in updated:
+            updated.pop("page", None)
+        return updated
 
     def _blocks_for_text_span(
         self,
