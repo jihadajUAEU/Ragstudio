@@ -79,6 +79,11 @@
       "value": "76bf85b1c8c369fbb7ad2453c54855f00bc456a728d07f0a4a6103438387f8e0",
       "redaction_status": "passed"
     },
+    "artifacts/document-parse-evidence.export.json": {
+      "algorithm": "sha256",
+      "value": "116435490be8a3854890cd71822f05b4b10168d7cf23d6f583a1d95e174d7b3b",
+      "redaction_status": "passed"
+    },
     "artifacts/graph-projection.export.json": {
       "algorithm": "sha256",
       "value": "dd8d4c305fdef0f42538226efd037151609beed2d15247141d795a0fa9902e87",

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from pathlib import Path
 
 import pytest
@@ -777,3 +779,54 @@ def test_document_parse_evidence_exporter_rejects_unsafe_values(tmp_path: Path):
             proof_packet_id="packet",
             source_commit="abc1234",
         )
+
+
+@pytest.mark.parametrize(
+    ("text_preview", "expected_message"),
+    [
+        ("ghp_abcdefghijklmnopqrstuvwxyz123456", "secret-shaped value"),
+        ("Bearer abc.def.ghi", "secret-shaped value"),
+        ("Authorization: Bearer secret", "secret-shaped value"),
+        ("http://0.0.0.0:8000/private", "private host"),
+    ],
+)
+def test_document_parse_evidence_exporter_rejects_additional_unsafe_values(
+    tmp_path: Path,
+    text_preview: str,
+    expected_message: str,
+):
+    evidence = DocumentParseEvidence(
+        document=DocumentEvidenceSummary(
+            id="doc-unsafe",
+            filename="unsafe.pdf",
+            content_type="application/pdf",
+            status="succeeded",
+        ),
+        chunks=[ChunkEvidence(id="chunk-unsafe", text_preview=text_preview)],
+        proof=ProofEvidence(mode="local"),
+    )
+
+    with pytest.raises(UnsafeProofExportError, match=expected_message):
+        DocumentParseEvidenceExporter().export(
+            evidence,
+            packet_dir=tmp_path,
+            proof_packet_id="packet",
+            source_commit="abc1234",
+        )
+
+
+def test_document_parse_evidence_manifest_registers_fixture_artifact():
+    repo_root = Path(__file__).resolve().parents[2]
+    manifest_path = repo_root / "docs/benchmarks/ragstudio-oss-proof-v1/manifest.json"
+    artifact_relative_path = "artifacts/document-parse-evidence.export.json"
+    artifact_path = manifest_path.parent / artifact_relative_path
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert artifact_relative_path in manifest["artifacts"]
+    assert artifact_path.exists()
+
+    artifact_hash = hashlib.sha256(artifact_path.read_bytes()).hexdigest()
+    hash_entry = manifest["artifact_hashes"][artifact_relative_path]
+    assert hash_entry["algorithm"] == "sha256"
+    assert hash_entry["value"] == artifact_hash
+    assert hash_entry["redaction_status"] == "passed"
