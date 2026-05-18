@@ -730,8 +730,13 @@ class DocumentParseEvidenceService:
             hostname = split.hostname or ""
             if ":" in hostname and not hostname.startswith("["):
                 hostname = f"[{hostname}]"
-            port = f":{split.port}" if split.port is not None else ""
+            port_value = self._safe_port(split)
+            port = f":{port_value}" if port_value is not None else ""
             netloc = f"{hostname}{port}"
+        elif self._has_malformed_port(split):
+            netloc = self._sanitize_malformed_netloc(split, context=context)
+
+        path = self._sanitize_public_url_path(split.path, context=context)
 
         sanitized_query: list[tuple[str, str]] = []
         for key, raw_value in parse_qsl(split.query, keep_blank_values=True):
@@ -758,7 +763,7 @@ class DocumentParseEvidenceService:
                 fragment = "[redacted]"
 
         query = urlencode(sanitized_query, doseq=True)
-        return urlunsplit((split.scheme, netloc, split.path, query, fragment))
+        return urlunsplit((split.scheme, netloc, path, query, fragment))
 
     def _replace_pattern(
         self,
@@ -788,6 +793,59 @@ class DocumentParseEvidenceService:
             return "[redacted]"
         sanitized = self._sanitize_string(basename, context=f"{context}.basename")
         return sanitized if sanitized != basename else basename
+
+    def _sanitize_public_url_path(self, path: str, *, context: str) -> str:
+        if not path:
+            return path
+        leading_slash = path.startswith("/")
+        trailing_slash = path.endswith("/") and path != "/"
+        segments = path.split("/")
+        sanitized_segments: list[str] = []
+        for index, segment in enumerate(segments):
+            if segment == "":
+                sanitized_segments.append("")
+                continue
+            decoded = segment
+            if self._looks_like_secret(decoded):
+                self._record_redaction("secret value", f"{context}.path.{index}")
+                sanitized_segments.append("[redacted-secret]")
+            else:
+                sanitized_segments.append(segment)
+        sanitized_path = "/".join(sanitized_segments)
+        if leading_slash and not sanitized_path.startswith("/"):
+            sanitized_path = f"/{sanitized_path}"
+        if trailing_slash and not sanitized_path.endswith("/"):
+            sanitized_path = f"{sanitized_path}/"
+        return sanitized_path
+
+    def _safe_port(self, split_result: Any) -> int | None:
+        try:
+            return split_result.port
+        except ValueError:
+            return None
+
+    def _has_malformed_port(self, split_result: Any) -> bool:
+        try:
+            split_result.port
+        except ValueError:
+            return True
+        return False
+
+    def _sanitize_malformed_netloc(self, split_result: Any, *, context: str) -> str:
+        self._record_redaction("malformed url", f"{context}.port")
+        netloc = split_result.netloc
+        if "@" in netloc:
+            self._record_redaction("secret value", f"{context}.userinfo")
+            netloc = netloc.rsplit("@", 1)[-1]
+        if "/" in netloc:
+            netloc = netloc.split("/", 1)[0]
+        if netloc.count(":") > 1 and not netloc.startswith("["):
+            return netloc
+        if ":" in netloc:
+            host_candidate, port_candidate = netloc.rsplit(":", 1)
+            if host_candidate and not port_candidate.isdigit():
+                return host_candidate
+        return netloc or "[redacted-url]"
 
     def _record_redaction(self, redaction_kind: str, context: str) -> None:
         self._redactions.add(f"Redacted {redaction_kind} at {context}.")

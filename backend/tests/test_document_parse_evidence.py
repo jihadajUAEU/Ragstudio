@@ -295,6 +295,87 @@ async def test_parse_evidence_redacts_public_url_userinfo_but_preserves_public_h
 
 
 @pytest.mark.asyncio
+async def test_parse_evidence_redacts_secret_public_url_path_segments(client, tmp_path: Path):
+    artifact = tmp_path / "public-path-secret.pdf"
+    artifact.write_bytes(b"%PDF synthetic")
+    public_url = "https://example.com/sk-secret/path"
+    async with client._transport.app.state.session_factory() as session:
+        session.add(
+            Document(
+                id="doc-public-path-secret",
+                filename="public-path-secret.pdf",
+                content_type="application/pdf",
+                sha256="sha-public-path-secret",
+                artifact_path=str(artifact),
+                status=StageStatus.SUCCEEDED.value,
+            )
+        )
+        session.add(
+            Chunk(
+                id="chunk-public-path-secret",
+                document_id="doc-public-path-secret",
+                text=f"Public URL with secret path segment {public_url}",
+                source_location={"page": 1, "url": public_url},
+                metadata_json={"public_url": public_url},
+                extraction_quality={},
+            )
+        )
+        await session.commit()
+
+        evidence = await DocumentParseEvidenceService(
+            session,
+            source_commit="test-commit",
+        ).get_document_evidence("doc-public-path-secret")
+
+    serialized = evidence.model_dump_json()
+    assert "https://example.com/sk-secret/path" not in serialized
+    assert "sk-secret" not in serialized
+    assert "https://example.com/[redacted-secret]/path" in serialized
+    assert any(".path." in entry for entry in evidence.proof.redaction_summary)
+
+
+@pytest.mark.asyncio
+async def test_parse_evidence_handles_malformed_public_url_ports_without_throwing(client, tmp_path: Path):
+    artifact = tmp_path / "malformed-port.pdf"
+    artifact.write_bytes(b"%PDF synthetic")
+    malformed_url = "https://user:pw@example.com:bad/v1"
+    async with client._transport.app.state.session_factory() as session:
+        session.add(
+            Document(
+                id="doc-malformed-port",
+                filename="malformed-port.pdf",
+                content_type="application/pdf",
+                sha256="sha-malformed-port",
+                artifact_path=str(artifact),
+                status=StageStatus.SUCCEEDED.value,
+            )
+        )
+        session.add(
+            Chunk(
+                id="chunk-malformed-port",
+                document_id="doc-malformed-port",
+                text=f"Malformed public URL {malformed_url}",
+                source_location={"page": 1, "url": malformed_url},
+                metadata_json={"provider_url": malformed_url},
+                extraction_quality={},
+            )
+        )
+        await session.commit()
+
+        evidence = await DocumentParseEvidenceService(
+            session,
+            source_commit="test-commit",
+        ).get_document_evidence("doc-malformed-port")
+
+    serialized = evidence.model_dump_json()
+    assert "user:" not in serialized
+    assert "pw@" not in serialized
+    assert "example.com" in serialized
+    assert "/v1" in serialized
+    assert any(".port" in entry or ".userinfo" in entry for entry in evidence.proof.redaction_summary)
+
+
+@pytest.mark.asyncio
 async def test_parse_evidence_marks_missing_sections_for_document_without_chunks(client, tmp_path: Path):
     artifact = tmp_path / "empty.pdf"
     artifact.write_bytes(b"%PDF synthetic")
