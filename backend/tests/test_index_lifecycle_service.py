@@ -1,7 +1,9 @@
 import asyncio
+import json
 from pathlib import Path
 
 import pytest
+import pytest_asyncio
 from ragstudio.db.models import Chunk, Document, GraphProjectionRecord, IndexRecord, SettingsProfile
 from ragstudio.schemas.common import StageStatus
 from ragstudio.schemas.parsing import DomainMetadata, IndexDocumentIn
@@ -15,6 +17,17 @@ from ragstudio.services.graph_projection_runner import (
 from ragstudio.services.index_lifecycle_service import IndexLifecycleService
 from ragstudio.services.runtime_types import RuntimeChunk
 from sqlalchemy import select
+
+
+@pytest.fixture
+def app(client):
+    return client._transport.app
+
+
+@pytest_asyncio.fixture
+async def session(app):
+    async with app.state.session_factory() as active_session:
+        yield active_session
 
 
 class FakeRuntime:
@@ -562,6 +575,82 @@ async def test_lifecycle_uses_preparsed_mineru_chunks_for_strict_runtime_reindex
     ]
     assert chunks is not None
     assert [chunk.text for chunk in chunks] == ["Remote MinerU chunk"]
+
+
+@pytest.mark.asyncio
+async def test_reindex_document_applies_modal_preprocessor(session, app, tmp_path):
+    content_list = tmp_path / "source_content_list.json"
+    content_list.write_text(
+        json.dumps(
+            [
+                {
+                    "type": "table",
+                    "table_caption": ["Scores"],
+                    "table_body": [["Name", "Score"], ["A", "9"]],
+                    "page_idx": 0,
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    artifact_path = tmp_path / "modal.pdf"
+    artifact_path.write_bytes(b"%PDF-1.4\n")
+
+    document = Document(
+        id="doc-modal-production",
+        filename="modal.pdf",
+        content_type="application/pdf",
+        artifact_path=str(artifact_path),
+        sha256="abc123",
+        status=StageStatus.SUCCEEDED.value,
+    )
+    session.add_all(
+        [
+            SettingsProfile(
+                id="default",
+                provider="openai-compatible",
+                llm_model="gpt-4o",
+                embedding_model="text-embedding-3-large",
+                storage_backend="postgres_pgvector_neo4j",
+                runtime_mode="native",
+                mineru_enabled=True,
+                mineru_base_url="http://mineru.test",
+            ),
+            document,
+        ]
+    )
+    await session.commit()
+
+    parser_chunk = AdapterChunk(
+        text="raw parser placeholder",
+        source_location={"artifact": "source.md"},
+        metadata={
+            "parser_metadata": {
+                "artifact_extract_dir": str(tmp_path),
+                "content_list_ref": "source_content_list.json",
+                "parser_mode": "mineru_strict",
+            }
+        },
+        runtime_source_id="runtime-modal",
+    )
+    runtime = PreparsedRuntime()
+
+    result = await IndexLifecycleService(
+        session,
+        app.state.settings,
+        runtime_factory=FakeFactory(runtime),
+        health_service=FakeHealthService(),
+        document_parser=FakeDocumentParser([parser_chunk]),
+    ).reindex_document(
+        document.id,
+        options=IndexDocumentIn(domain_metadata=DomainMetadata(domain="general")),
+    )
+
+    assert result is not None
+    assert runtime.preparsed_chunks
+    first_chunk = runtime.preparsed_chunks[0]
+    assert first_chunk.metadata["modal_router_processed"] is True
+    assert first_chunk.metadata["modality"] == "table"
 
 
 @pytest.mark.asyncio

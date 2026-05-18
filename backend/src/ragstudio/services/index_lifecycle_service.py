@@ -19,6 +19,7 @@ from ragstudio.services.index_progress import IndexStage
 from ragstudio.services.index_quality_gate import IndexQualityGate
 from ragstudio.services.index_stage_scheduler import IndexStageBranch, IndexStageScheduler
 from ragstudio.services.mineru_relationship_builder import MinerURelationshipBuilder
+from ragstudio.services.modal_preprocessor import ModalPreprocessor
 from ragstudio.services.parser_normalization import VisionRecoveryConfig
 from ragstudio.services.runtime_factory import RAGAnythingRuntimeFactory
 from ragstudio.services.runtime_health_service import RuntimeHealthService
@@ -136,6 +137,10 @@ class IndexLifecycleService:
         else:
             normalized_chunks = preparsed_chunks
 
+        normalized_chunks = ModalPreprocessor().preprocess(
+            normalized_chunks,
+            domain_metadata=options.domain_metadata,
+        )
         adapter_chunks = ChunkSplitter(
             vision_recovery_config=VisionRecoveryConfig.from_runtime_profile(
                 options.domain_metadata,
