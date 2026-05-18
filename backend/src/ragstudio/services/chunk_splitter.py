@@ -53,6 +53,14 @@ class ContentListSplitResult:
     pieces: list[SplitPiece]
 
 
+@dataclass(frozen=True)
+class OrderedTextGroup:
+    text: str
+    page_start: int | None
+    page_end: int | None
+    warnings: list[dict[str, Any]]
+
+
 class ChunkSplitter:
     def __init__(
         self,
@@ -238,83 +246,31 @@ class ChunkSplitter:
         if canonical_pieces:
             return ContentListSplitResult(handled=True, pieces=canonical_pieces)
 
-        page_parts: dict[int, list[str]] = {}
-        page_warnings: dict[int, list[dict[str, Any]]] = {}
-        unpaged_parts: list[str] = []
-        unpaged_warnings: list[dict[str, Any]] = []
-        for block in normalized_blocks:
-            warnings = block.warning_metadata()
-            if block.page is None:
-                if warnings:
-                    unpaged_warnings.extend(warnings)
-                if block.text.strip():
-                    unpaged_parts.append(block.text.strip())
-                continue
-            if warnings:
-                page_warnings.setdefault(block.page, []).extend(warnings)
-            if block.text.strip():
-                page_parts.setdefault(block.page, []).append(block.text.strip())
-
         pieces: list[SplitPiece] = []
-        if unpaged_parts:
-            text = "\n\n".join(unpaged_parts)
-            metadata = dict(chunk.metadata)
-            if unpaged_warnings:
-                self._merge_parser_warnings(metadata, unpaged_warnings)
-            unpaged_chunk = AdapterChunk(
-                text=text,
-                source_location=dict(chunk.source_location),
-                metadata=metadata,
-                runtime_source_id=chunk.runtime_source_id,
-                content_type=chunk.content_type,
-                preview_ref=chunk.preview_ref,
-            )
-            reference_units = self._reference_unit_sections(
-                unpaged_chunk,
-                profile,
-                domain_metadata,
-            )
-            if reference_units:
-                pieces.extend(reference_units)
-            else:
-                for part in self._hard_split_text(text, profile.hard_max_words):
-                    pieces.append(
-                        self._piece_from_parent(
-                            unpaged_chunk,
-                            part,
-                            source_location=dict(chunk.source_location),
-                        )
-                    )
-        elif unpaged_warnings:
-            pieces.append(
-                self._warning_only_piece(
-                    chunk,
-                    unpaged_warnings,
-                    content_ref=content_ref,
-                )
-            )
-        for page in sorted(set(page_parts) | set(page_warnings)):
-            text = "\n\n".join(page_parts.get(page, []))
-            if not text.strip():
-                warnings = page_warnings.get(page, [])
-                if warnings:
+        for group in self._ordered_text_groups(normalized_blocks):
+            source_location = dict(chunk.source_location)
+            if group.page_start is not None:
+                source_location["page_start"] = group.page_start
+            if group.page_end is not None:
+                source_location["page_end"] = group.page_end
+
+            if not group.text.strip():
+                if group.warnings:
                     pieces.append(
                         self._warning_only_piece(
                             chunk,
-                            warnings,
+                            group.warnings,
+                            source_location=source_location,
                             content_ref=content_ref,
                         )
                     )
                 continue
-            source_location = dict(chunk.source_location)
-            source_location["page_start"] = page
-            source_location["page_end"] = page
+
             metadata = dict(chunk.metadata)
-            warnings = page_warnings.get(page, [])
-            if warnings:
-                self._merge_parser_warnings(metadata, warnings)
-            page_chunk = AdapterChunk(
-                text=text,
+            if group.warnings:
+                self._merge_parser_warnings(metadata, group.warnings)
+            grouped_chunk = AdapterChunk(
+                text=group.text,
                 source_location=source_location,
                 metadata=metadata,
                 runtime_source_id=chunk.runtime_source_id,
@@ -322,18 +278,76 @@ class ChunkSplitter:
                 preview_ref=chunk.preview_ref,
             )
             reference_units = self._reference_unit_sections(
-                page_chunk,
+                grouped_chunk,
                 profile,
                 domain_metadata,
             )
             if reference_units:
                 pieces.extend(reference_units)
                 continue
-            for part in self._hard_split_text(text, profile.hard_max_words):
+            for part in self._hard_split_text(group.text, profile.hard_max_words):
                 pieces.append(
-                    self._piece_from_parent(page_chunk, part, source_location=source_location)
+                    self._piece_from_parent(grouped_chunk, part, source_location=source_location)
                 )
         return ContentListSplitResult(handled=True, pieces=pieces)
+
+    def _ordered_text_groups(self, blocks: list[NormalizedBlock]) -> list[OrderedTextGroup]:
+        groups: list[OrderedTextGroup] = []
+        current_text_parts: list[str] = []
+        current_warnings: list[dict[str, Any]] = []
+        current_page_start: int | None = None
+        current_page_end: int | None = None
+
+        def merge_page(page: int | None) -> None:
+            nonlocal current_page_start, current_page_end
+            if page is None:
+                return
+            current_page_start = (
+                page if current_page_start is None else min(current_page_start, page)
+            )
+            current_page_end = page if current_page_end is None else max(current_page_end, page)
+
+        def flush() -> None:
+            nonlocal current_page_start, current_page_end
+            if not current_text_parts and not current_warnings:
+                return
+            groups.append(
+                OrderedTextGroup(
+                    text="\n\n".join(current_text_parts).strip(),
+                    page_start=current_page_start,
+                    page_end=current_page_end,
+                    warnings=list(current_warnings),
+                )
+            )
+            current_text_parts.clear()
+            current_warnings.clear()
+            current_page_start = None
+            current_page_end = None
+
+        for block in blocks:
+            text = block.text.strip()
+            warnings = block.warning_metadata()
+
+            if not text:
+                if warnings:
+                    flush()
+                    current_warnings.extend(warnings)
+                    merge_page(block.page)
+                    flush()
+                continue
+
+            if current_text_parts and self._starts_new_logical_section(text):
+                flush()
+
+            current_text_parts.append(text)
+            current_warnings.extend(warnings)
+            merge_page(block.page)
+
+        flush()
+        return groups
+
+    def _starts_new_logical_section(self, text: str) -> bool:
+        return bool(re.match(r"^#{1,4}\s+", text.strip()))
 
     def _canonical_reference_pieces(
         self,
@@ -729,6 +743,7 @@ class ChunkSplitter:
         chunk: AdapterChunk,
         warnings: list[dict[str, Any]],
         *,
+        source_location: dict[str, Any] | None = None,
         content_ref: str,
     ) -> SplitPiece:
         metadata = dict(chunk.metadata)
@@ -743,7 +758,7 @@ class ChunkSplitter:
             for warning in warnings
             if isinstance(warning.get("page"), int)
         ]
-        source_location = dict(chunk.source_location)
+        source_location = dict(source_location or chunk.source_location)
         if pages:
             source_location["page_start"] = min(pages)
             source_location["page_end"] = max(pages)

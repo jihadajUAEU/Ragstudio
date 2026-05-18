@@ -2,6 +2,8 @@ import asyncio
 import json
 from pathlib import Path
 
+import pytest
+
 from ragstudio.schemas.parsing import DomainMetadata
 from ragstudio.services.adapter import AdapterChunk
 from ragstudio.services.chunk_splitter import ChunkSplitter
@@ -217,6 +219,50 @@ def test_chunk_splitter_does_not_reparse_modal_router_processed_chunk(tmp_path: 
 
     assert split[0].text.startswith("Table: Scores")
     assert "This should not be reread" not in "\n".join(item.text for item in split)
+
+
+@pytest.mark.asyncio
+async def test_chunk_splitter_stitches_continuation_across_pages(tmp_path: Path):
+    content_list = tmp_path / "source_content_list.json"
+    content_list.write_text(
+        json.dumps(
+            [
+                {
+                    "type": "text",
+                    "text": "This paragraph starts on page one and",
+                    "page_idx": 0,
+                },
+                {
+                    "type": "text",
+                    "text": "continues on page two before ending.",
+                    "page_idx": 1,
+                },
+            ]
+        ),
+        encoding="utf-8",
+    )
+    chunk = AdapterChunk(
+        text="fallback markdown should not be used",
+        source_location={"artifact": "source.md"},
+        metadata={
+            "parser_metadata": {
+                "artifact_extract_dir": str(tmp_path),
+                "content_list_ref": "source_content_list.json",
+                "parser_mode": "mineru_strict",
+            }
+        },
+    )
+
+    split = await ChunkSplitter(max_words=1500).split(
+        [chunk],
+        domain_metadata=DomainMetadata(domain="general", document_type="report"),
+        parser_mode="mineru_strict",
+    )
+
+    assert len(split) == 1
+    assert "page one and\n\ncontinues" in split[0].text
+    assert split[0].source_location["page_start"] == 1
+    assert split[0].source_location["page_end"] == 2
 
 
 def test_chunk_splitter_invalid_content_list_falls_back_to_markdown(tmp_path: Path):
