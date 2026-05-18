@@ -18,7 +18,7 @@ from ragstudio.services.hybrid_chunk_search import ChunkScore, HybridChunkSearch
 from ragstudio.services.index_quality_gate import IndexQualityGate
 from ragstudio.services.mineru_client import MinerUClient
 from ragstudio.services.mineru_relationship_builder import MinerURelationshipBuilder
-from ragstudio.services.modal_router import StudioModalRouter
+from ragstudio.services.modal_preprocessor import ModalPreprocessor
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -78,7 +78,7 @@ class ChunkService:
             for adapter_chunk in adapter_chunks
         ]
         
-        adapter_chunks = self._apply_modal_router(
+        adapter_chunks = ModalPreprocessor().preprocess(
             adapter_chunks,
             domain_metadata=options.domain_metadata,
         )
@@ -117,57 +117,6 @@ class ChunkService:
             options,
             on_mineru_status=on_mineru_status,
         )
-
-    def _apply_modal_router(
-        self,
-        adapter_chunks: list[AdapterChunk],
-        *,
-        domain_metadata: DomainMetadata,
-    ) -> list[AdapterChunk]:
-        if not adapter_chunks:
-            return adapter_chunks
-
-        parser_metadata = adapter_chunks[0].metadata.get("parser_metadata", {})
-        extract_dir = parser_metadata.get("artifact_extract_dir")
-        content_ref = parser_metadata.get("content_list_ref")
-        if not extract_dir or not content_ref:
-            return adapter_chunks
-
-        root = Path(extract_dir).resolve()
-        target = (root / content_ref).resolve()
-        try:
-            data = json.loads(target.read_text(encoding="utf-8"))
-            if not isinstance(data, list):
-                return adapter_chunks
-        except (OSError, json.JSONDecodeError):
-            return adapter_chunks
-
-        router = StudioModalRouter()
-        modal_blocks = router.route(data, domain_metadata=domain_metadata)
-        
-        results: list[AdapterChunk] = []
-        for index, block in enumerate(modal_blocks):
-            metadata = {
-                "parser_metadata": parser_metadata,
-                "modality": block.modality.value,
-                "structured_data": block.structured_data,
-                "chunk_index": index,
-            }
-            if block.page is not None:
-                metadata["page"] = block.page
-            if block.warnings:
-                metadata["extraction_quality"] = {"parser_warnings": block.warnings}
-
-            results.append(
-                AdapterChunk(
-                    text=block.text,
-                    source_location={"artifact": content_ref, "block_index": index},
-                    metadata=metadata,
-                    runtime_source_id=adapter_chunks[0].runtime_source_id,
-                    content_type="application/json",
-                )
-            )
-        return results if results else adapter_chunks
 
     async def validate_strict_mineru_sidecar(self, options: IndexDocumentIn) -> None:
         await self.document_parser.validate_strict_mineru_sidecar(options)
