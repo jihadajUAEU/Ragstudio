@@ -16,8 +16,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ragstudio.api.deps import get_session
 from ragstudio.api.upload_utils import read_upload_file
 from ragstudio.config import AppSettings
-from ragstudio.schemas.documents import DocumentOut
 from ragstudio.schemas.document_parse_evidence import DocumentParseEvidence
+from ragstudio.schemas.documents import DocumentOut
 from ragstudio.schemas.parsing import IndexDocumentIn
 from ragstudio.services.chunk_service import ChunkService
 from ragstudio.services.document_parse_evidence_service import (

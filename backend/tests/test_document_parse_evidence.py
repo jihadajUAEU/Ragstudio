@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 from ragstudio.db.models import Chunk, Document
+from ragstudio.schemas.common import StageStatus
 from ragstudio.schemas.document_parse_evidence import (
     ChunkEvidence,
     DocumentEvidenceSummary,
@@ -13,7 +14,6 @@ from ragstudio.schemas.document_parse_evidence import (
     NormalizationDecisionEvidence,
     ProofEvidence,
 )
-from ragstudio.schemas.common import StageStatus
 from ragstudio.services.document_parse_evidence_exporter import (
     DocumentParseEvidenceExporter,
     UnsafeProofExportError,
@@ -393,7 +393,9 @@ async def test_parse_evidence_redacts_percent_encoded_secret_public_url_path_seg
 
 
 @pytest.mark.asyncio
-async def test_parse_evidence_handles_malformed_public_url_ports_without_throwing(client, tmp_path: Path):
+async def test_parse_evidence_handles_malformed_public_url_ports_without_throwing(
+    client, tmp_path: Path
+):
     artifact = tmp_path / "malformed-port.pdf"
     artifact.write_bytes(b"%PDF synthetic")
     malformed_url = "https://user:pw@example.com:bad/v1"
@@ -430,11 +432,15 @@ async def test_parse_evidence_handles_malformed_public_url_ports_without_throwin
     assert "pw@" not in serialized
     assert "example.com" in serialized
     assert "/v1" in serialized
-    assert any(".port" in entry or ".userinfo" in entry for entry in evidence.proof.redaction_summary)
+    assert any(
+        ".port" in entry or ".userinfo" in entry for entry in evidence.proof.redaction_summary
+    )
 
 
 @pytest.mark.asyncio
-async def test_parse_evidence_marks_missing_sections_for_document_without_chunks(client, tmp_path: Path):
+async def test_parse_evidence_marks_missing_sections_for_document_without_chunks(
+    client, tmp_path: Path
+):
     artifact = tmp_path / "empty.pdf"
     artifact.write_bytes(b"%PDF synthetic")
     async with client._transport.app.state.session_factory() as session:
@@ -482,7 +488,11 @@ async def test_parse_evidence_links_warning_to_block_and_decision_when_page_is_k
             id="chunk-warning-link",
             document_id="doc-warning-link",
             text="Heading\n\nBody block on page eight.",
-            source_location={"page_start": 7, "page_end": 8, "artifact": "source_content_list.json"},
+            source_location={
+                "page_start": 7,
+                "page_end": 8,
+                "artifact": "source_content_list.json",
+            },
             metadata_json={
                 "parser_metadata": {"content_list_ref": "source_content_list.json"},
                 "split": {
@@ -540,7 +550,9 @@ async def test_parse_evidence_links_warning_to_block_and_decision_when_page_is_k
 
 
 @pytest.mark.asyncio
-async def test_parse_evidence_counts_distinct_observed_pages_not_max_page_number(client, tmp_path: Path):
+async def test_parse_evidence_counts_distinct_observed_pages_not_max_page_number(
+    client, tmp_path: Path
+):
     artifact = tmp_path / "page-312.pdf"
     artifact.write_bytes(b"%PDF synthetic")
     async with client._transport.app.state.session_factory() as session:
@@ -575,7 +587,9 @@ async def test_parse_evidence_counts_distinct_observed_pages_not_max_page_number
 
 
 @pytest.mark.asyncio
-async def test_parse_evidence_redacts_embedded_private_urls_ipv6_and_root_paths(client, tmp_path: Path):
+async def test_parse_evidence_redacts_embedded_private_urls_ipv6_and_root_paths(
+    client, tmp_path: Path
+):
     artifact = tmp_path / "network-private.pdf"
     artifact.write_bytes(b"%PDF synthetic")
     async with client._transport.app.state.session_factory() as session:
@@ -671,7 +685,9 @@ async def test_parse_evidence_redacts_secret_shaped_artifact_basenames(client):
 
     serialized = evidence.model_dump_json()
     assert "sk-secret.json" not in serialized
-    assert any("document.artifact_path.basename" in entry for entry in evidence.proof.redaction_summary)
+    assert any(
+        "document.artifact_path.basename" in entry for entry in evidence.proof.redaction_summary
+    )
 
 
 @pytest.mark.asyncio
@@ -683,7 +699,9 @@ async def test_parse_evidence_route_returns_404_for_missing_document(client):
 
 
 @pytest.mark.asyncio
-async def test_parse_evidence_route_returns_contract(client, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+async def test_parse_evidence_route_returns_contract(
+    client, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     app = client._transport.app
     monkeypatch.setenv("RAGSTUDIO_SOURCE_COMMIT", "env-commit")
     artifact = tmp_path / "route.pdf"

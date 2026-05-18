@@ -73,7 +73,9 @@ class DocumentParseEvidenceService:
                 await self.session.execute(
                     select(GraphProjectionRecord)
                     .where(GraphProjectionRecord.document_id == document_id)
-                    .order_by(GraphProjectionRecord.created_at.desc(), GraphProjectionRecord.id.desc())
+                    .order_by(
+                        GraphProjectionRecord.created_at.desc(), GraphProjectionRecord.id.desc()
+                    )
                 )
             )
             .scalars()
@@ -84,8 +86,12 @@ class DocumentParseEvidenceService:
         warning_ids_by_chunk = self._warning_ids_by_chunk(warnings)
         parser_blocks = self._build_parser_blocks(chunks)
         block_ids_by_chunk = self._parser_block_ids_by_chunk(chunks, parser_blocks)
-        decisions = self._build_decisions(chunks, graph_records, warning_ids_by_chunk, block_ids_by_chunk)
-        warnings = self._attach_warning_links(warnings, parser_blocks, block_ids_by_chunk, decisions)
+        decisions = self._build_decisions(
+            chunks, graph_records, warning_ids_by_chunk, block_ids_by_chunk
+        )
+        warnings = self._attach_warning_links(
+            warnings, parser_blocks, block_ids_by_chunk, decisions
+        )
         parser_blocks = self._attach_block_warning_ids(parser_blocks, warnings)
         chunk_evidence = self._build_chunks(chunks, warning_ids_by_chunk)
         source_artifacts = self._build_source_artifacts(document, chunks)
@@ -133,9 +139,12 @@ class DocumentParseEvidenceService:
                     WarningEvidence(
                         id=f"warning-{chunk.id}-{index}",
                         code=code,
-                        message=self._sanitize_string(message, context=f"warning:{chunk.id}:{code}"),
+                        message=self._sanitize_string(
+                            message, context=f"warning:{chunk.id}:{code}"
+                        ),
                         severity=self._coerce_string(item.get("severity")) or "warning",
-                        page=self._page_value(item.get("page")) or self._page_value(chunk.source_location.get("page")),
+                        page=self._page_value(item.get("page"))
+                        or self._page_value(chunk.source_location.get("page")),
                         block_id=self._coerce_string(item.get("block_id")),
                         affected_chunk_ids=[chunk.id],
                     )
@@ -154,7 +163,10 @@ class DocumentParseEvidenceService:
                 for fallback_index, item in enumerate(source_blocks):
                     if not isinstance(item, dict):
                         continue
-                    block_id = self._coerce_string(item.get("block_id")) or f"{chunk.id}-block-{fallback_index}"
+                    block_id = (
+                        self._coerce_string(item.get("block_id"))
+                        or f"{chunk.id}-block-{fallback_index}"
+                    )
                     if block_id in seen_ids:
                         continue
                     seen_ids.add(block_id)
@@ -213,8 +225,8 @@ class DocumentParseEvidenceService:
                         decision_type="page_stitch",
                         title="Page stitch",
                         summary=(
-                            f"Chunk spans pages {page_start} to {page_end} after joining parser blocks "
-                            "into one normalized unit."
+                            f"Chunk spans pages {page_start} to {page_end} after joining "
+                            "parser blocks into one normalized unit."
                         ),
                         input_block_ids=input_block_ids,
                         output_chunk_ids=[chunk.id],
@@ -228,8 +240,8 @@ class DocumentParseEvidenceService:
                         decision_type="modal_route",
                         title="Modal route",
                         summary=(
-                            f"Chunk was preserved as {self._chunk_modality(chunk)} content during parser "
-                            "normalization."
+                            f"Chunk was preserved as {self._chunk_modality(chunk)} content "
+                            "during parser normalization."
                         ),
                         input_block_ids=input_block_ids,
                         output_chunk_ids=[chunk.id],
@@ -253,8 +265,14 @@ class DocumentParseEvidenceService:
 
         latest_graph = graph_records[0] if graph_records else None
         if latest_graph is not None:
-            decision_type = "chunk_materialization" if latest_graph.status == "succeeded" else "quality_gate"
-            title = "Chunk materialization" if decision_type == "chunk_materialization" else "Quality gate"
+            decision_type = (
+                "chunk_materialization" if latest_graph.status == "succeeded" else "quality_gate"
+            )
+            title = (
+                "Chunk materialization"
+                if decision_type == "chunk_materialization"
+                else "Quality gate"
+            )
             summary = (
                 f"Latest graph projection status is {latest_graph.status} "
                 f"with {latest_graph.node_count} nodes and {latest_graph.edge_count} edges."
@@ -356,7 +374,9 @@ class DocumentParseEvidenceService:
         chunks: list[Chunk],
     ) -> list[SourceArtifactEvidence]:
         artifacts: dict[str, SourceArtifactEvidence] = {}
-        document_path = self._sanitize_artifact_path(document.artifact_path, context="document.artifact_path")
+        document_path = self._sanitize_artifact_path(
+            document.artifact_path, context="document.artifact_path"
+        )
         artifacts["document"] = SourceArtifactEvidence(
             id="document",
             kind="upload",
@@ -366,7 +386,9 @@ class DocumentParseEvidenceService:
         )
         for chunk in chunks:
             for raw_artifact in self._artifact_refs(chunk):
-                safe_path = self._sanitize_artifact_path(raw_artifact, context=f"chunk:{chunk.id}:artifact")
+                safe_path = self._sanitize_artifact_path(
+                    raw_artifact, context=f"chunk:{chunk.id}:artifact"
+                )
                 if safe_path in artifacts:
                     continue
                 artifacts[safe_path] = SourceArtifactEvidence(
@@ -391,7 +413,8 @@ class DocumentParseEvidenceService:
             limitations.append("No graph projection record is available for this document.")
         elif graph_records[0].status != "succeeded":
             limitations.append(
-                f"Latest graph projection status is {graph_records[0].status}; graph-backed proof is incomplete."
+                f"Latest graph projection status is {graph_records[0].status}; "
+                "graph-backed proof is incomplete."
             )
         return limitations
 
@@ -492,8 +515,7 @@ class DocumentParseEvidenceService:
     ) -> dict[str, list[str]]:
         generated_block_ids_by_chunk = self._block_ids_by_chunk(parser_blocks)
         return {
-            chunk.id: self._input_block_ids(chunk, generated_block_ids_by_chunk)
-            for chunk in chunks
+            chunk.id: self._input_block_ids(chunk, generated_block_ids_by_chunk) for chunk in chunks
         }
 
     def _input_block_ids(
@@ -657,8 +679,10 @@ class DocumentParseEvidenceService:
         return parsed.is_loopback or parsed.is_private or parsed.is_link_local
 
     def _is_absolute_path(self, value: str) -> bool:
-        return value.startswith("/") or value.startswith("\\\\") or bool(
-            re.fullmatch(r"[A-Za-z]:[\\/].*", value)
+        return (
+            value.startswith("/")
+            or value.startswith("\\\\")
+            or bool(re.fullmatch(r"[A-Za-z]:[\\/].*", value))
         )
 
     def _preview(self, text: str) -> str:
@@ -709,7 +733,7 @@ class DocumentParseEvidenceService:
         parts: list[str] = []
         last_index = 0
         for index, match in enumerate(URL_PATTERN.finditer(value)):
-            parts.append(value[last_index:match.start()])
+            parts.append(value[last_index : match.start()])
             candidate = match.group(0)
             if self._contains_private_host(candidate):
                 self._record_redaction("private host", context)
@@ -826,7 +850,7 @@ class DocumentParseEvidenceService:
 
     def _has_malformed_port(self, split_result: Any) -> bool:
         try:
-            split_result.port
+            _ = split_result.port
         except ValueError:
             return True
         return False
@@ -851,7 +875,9 @@ class DocumentParseEvidenceService:
         self._redactions.add(f"Redacted {redaction_kind} at {context}.")
 
     def _normalized_source_commit(self, source_commit: str | None) -> str | None:
-        candidate = source_commit if source_commit is not None else os.getenv("RAGSTUDIO_SOURCE_COMMIT")
+        candidate = (
+            source_commit if source_commit is not None else os.getenv("RAGSTUDIO_SOURCE_COMMIT")
+        )
         if candidate is None:
             return None
         stripped = candidate.strip()

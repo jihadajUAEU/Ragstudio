@@ -20,11 +20,17 @@ UNSAFE_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
         ),
         "private host",
     ),
-    (re.compile(r"\"(?:api[_-]?key|token|secret|password|authorization)\"\s*:", re.IGNORECASE), "secret-like key"),
+    (
+        re.compile(r"\"(?:api[_-]?key|token|secret|password|authorization)\"\s*:", re.IGNORECASE),
+        "secret-like key",
+    ),
     (re.compile(r"sk-[A-Za-z0-9_-]{8,}"), "secret-shaped value"),
     (re.compile(r"ghp_[A-Za-z0-9_]{20,}", re.IGNORECASE), "secret-shaped value"),
     (re.compile(r"\bBearer\s+[A-Za-z0-9._=-]{6,}\b", re.IGNORECASE), "secret-shaped value"),
-    (re.compile(r"Authorization\s*:\s*Bearer\s+[A-Za-z0-9._=-]{6,}\b", re.IGNORECASE), "secret-shaped value"),
+    (
+        re.compile(r"Authorization\s*:\s*Bearer\s+[A-Za-z0-9._=-]{6,}\b", re.IGNORECASE),
+        "secret-shaped value",
+    ),
 )
 
 
