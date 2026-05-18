@@ -303,7 +303,7 @@ describe("EvidenceInspector", () => {
           source_artifacts: [
             {
               ...evidence.source_artifacts[0],
-              href: "javascript:alert(1)",
+              href: "//evil.example/proof",
             },
           ],
           proof: {

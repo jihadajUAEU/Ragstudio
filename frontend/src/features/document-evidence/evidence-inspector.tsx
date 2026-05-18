@@ -549,6 +549,9 @@ function safeLinkHref(href: string) {
   if (!trimmed) {
     return null;
   }
+  if (trimmed.startsWith("//")) {
+    return null;
+  }
   if (trimmed.startsWith("/") || trimmed.startsWith("./") || trimmed.startsWith("../") || trimmed.startsWith("#")) {
     return trimmed;
   }
