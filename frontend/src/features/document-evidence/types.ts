@@ -80,6 +80,9 @@ export interface WarningEvidence {
   severity: string;
   page?: number | null;
   block_id?: string | null;
+  block_type?: string | null;
+  quality_gate_action?: string | null;
+  suppressed_from_counts?: boolean;
   decision_id?: string | null;
   affected_chunk_ids: string[];
 }

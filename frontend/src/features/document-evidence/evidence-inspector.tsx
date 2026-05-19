@@ -35,6 +35,7 @@ export function EvidenceInspector({
     : [];
   const selectedChunks = selectedDecision ? orderByIds(evidence.chunks, selectedDecision.output_chunk_ids) : [];
   const selectedWarnings = selectedDecision ? orderByIds(evidence.warnings, selectedDecision.warning_ids) : [];
+  const warningsById = new Map(evidence.warnings.map((warning) => [warning.id, warning]));
   return (
     <div className={cn(rs.font.body, "mx-auto grid max-w-7xl gap-4 xl:grid-cols-[280px_minmax(0,1fr)_300px]")}>
       <section className="xl:col-span-3">
@@ -94,7 +95,7 @@ export function EvidenceInspector({
               {selectedBlocks.length ? (
                 <div className="grid gap-2">
                   {selectedBlocks.map((block) => (
-                    <BlockCard key={block.id} block={block} />
+                    <BlockCard key={block.id} block={block} warningsById={warningsById} />
                   ))}
                 </div>
               ) : (
@@ -241,15 +242,28 @@ function DecisionSummary({
       <p className={cn("mt-2 text-sm leading-6", rs.text.body)}>{decision.summary}</p>
       {warnings.length ? (
         <div className="mt-3 grid gap-2">
-          {warnings.map((warning) => (
-            <div
-              key={warning.id}
-              className={cn("rounded-md border px-3 py-2 text-sm", rs.border.warning, rs.bg.warningSoft)}
-            >
-              <p className={cn("font-semibold", rs.text.warning)}>{warning.code}</p>
-              <p className={cn("mt-1", rs.text.body)}>{warning.message}</p>
-            </div>
-          ))}
+          {warnings.map((warning) => {
+            const recovery = isAcceptedRecoveryWarning(warning);
+            return (
+              <div
+                key={warning.id}
+                className={cn(
+                  "rounded-md border px-3 py-2 text-sm",
+                  recovery ? cn(rs.border.success, rs.bg.successSoft) : cn(rs.border.warning, rs.bg.warningSoft),
+                )}
+              >
+                <p className={cn("font-semibold", recovery ? rs.text.success : rs.text.warning)}>
+                  {recovery ? "Recovered text" : warning.code}
+                </p>
+                <p className={cn("mt-1", rs.text.body)}>{warning.message}</p>
+                {recovery ? (
+                  <p className={cn("mt-1 text-xs font-semibold", rs.text.success)}>
+                    {recoveryLabel(warning)}. Audit evidence only; not a counted parser warning.
+                  </p>
+                ) : null}
+              </div>
+            );
+          })}
         </div>
       ) : null}
     </section>
@@ -265,14 +279,36 @@ function EvidencePanel({ title, children }: { title: string; children: ReactNode
   );
 }
 
-function BlockCard({ block }: { block: ParserBlockEvidence }) {
+function BlockCard({
+  block,
+  warningsById,
+}: {
+  block: ParserBlockEvidence;
+  warningsById: Map<string, WarningEvidence>;
+}) {
+  const recoveryWarning = block.warning_ids.map((id) => warningsById.get(id)).find(isAcceptedRecoveryWarning);
+  const isRecovered = Boolean(recoveryWarning);
+
   return (
-    <article className={cn("rounded-md border p-3", rs.border.line, rs.bg.field)}>
+    <article
+      className={cn(
+        "rounded-md border p-3",
+        isRecovered ? cn(rs.border.success, rs.bg.successSoft) : cn(rs.border.line, rs.bg.field),
+      )}
+    >
       <div className="flex flex-wrap gap-2 text-xs font-semibold">
         <span className={rs.text.muted}>{titleCase(block.block_type)}</span>
         <span className={rs.text.muted}>page {block.page ?? "?"}</span>
         <span className={rs.text.muted}>block {block.block_index ?? "?"}</span>
         {block.modality ? <span className={rs.text.accent}>mode {block.modality}</span> : null}
+        {isRecovered ? (
+          <>
+            <span className={cn("rounded-md border px-2 py-0.5", rs.border.success, rs.bg.paper, rs.text.success)}>
+              Recovered text
+            </span>
+            <span className={rs.text.success}>{recoveryLabel(recoveryWarning)}</span>
+          </>
+        ) : null}
       </div>
       <p className={cn("mt-2 whitespace-pre-wrap text-sm leading-6", rs.text.body)}>{block.text_preview}</p>
     </article>
@@ -528,6 +564,20 @@ function orderByIds<T extends { id: string }>(items: T[], ids: string[]) {
     const item = itemsById.get(id);
     return item ? [item] : [];
   });
+}
+
+function isAcceptedRecoveryWarning(warning?: WarningEvidence | null) {
+  return Boolean(
+    warning &&
+      (warning.code === "recovered_text_from_disallowed_block" ||
+        warning.quality_gate_action === "accepted_recovery" ||
+        warning.suppressed_from_counts),
+  );
+}
+
+function recoveryLabel(warning?: WarningEvidence | null) {
+  const blockType = warning?.block_type ? ` from ${titleCase(warning.block_type)}` : "";
+  return `Accepted recovery${blockType}`;
 }
 
 function diffKindLabel(kind: DiffRowEvidence["kind"]) {

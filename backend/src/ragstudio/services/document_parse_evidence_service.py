@@ -139,6 +139,17 @@ class DocumentParseEvidenceService:
                     continue
                 code = self._coerce_string(item.get("code")) or "parser_warning"
                 message = self._coerce_string(item.get("message")) or "Parser warning recorded."
+                warning_payload = self._dict_value(item.get("warning"))
+                quality_gate_action = self._coerce_string(
+                    warning_payload.get("quality_gate_action") or item.get("quality_gate_action")
+                )
+                suppressed_from_counts = bool(
+                    warning_payload.get("suppressed_from_counts")
+                    or item.get("suppressed_from_counts")
+                )
+                block_type = self._coerce_string(
+                    item.get("block_type") or warning_payload.get("block_type")
+                )
                 warnings.append(
                     WarningEvidence(
                         id=f"warning-{chunk.id}-{index}",
@@ -150,6 +161,9 @@ class DocumentParseEvidenceService:
                         page=self._page_value(item.get("page"))
                         or self._page_value(chunk.source_location.get("page")),
                         block_id=self._coerce_string(item.get("block_id")),
+                        block_type=block_type,
+                        quality_gate_action=quality_gate_action,
+                        suppressed_from_counts=suppressed_from_counts,
                         affected_chunk_ids=[chunk.id],
                     )
                 )

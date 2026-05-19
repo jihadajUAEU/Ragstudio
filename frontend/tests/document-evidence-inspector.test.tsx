@@ -235,6 +235,61 @@ describe("EvidenceInspector", () => {
     expect(within(normalizedUnit).getByText("Capped preview · 120 hidden characters")).toBeVisible();
   });
 
+  it("highlights accepted recovered text in source blocks", () => {
+    render(
+      <EvidenceInspector
+        evidence={{
+          ...evidence,
+          parser_blocks: [
+            {
+              id: "block-recovered",
+              page: 7,
+              block_index: 3,
+              block_type: "header",
+              text_preview: "Recovered Arabic header text kept with provenance.",
+              warning_ids: ["warning-recovered"],
+            },
+          ],
+          normalization_decisions: [
+            {
+              id: "decision-recovered",
+              decision_type: "quality_warning",
+              title: "Recovered parser text",
+              summary: "Recovered text was accepted as audit evidence.",
+              input_block_ids: ["block-recovered"],
+              output_chunk_ids: [],
+              warning_ids: ["warning-recovered"],
+              status: "recorded",
+            },
+          ],
+          chunks: [],
+          warnings: [
+            {
+              id: "warning-recovered",
+              code: "recovered_text_from_disallowed_block",
+              message: "Used parser-provided recovered text for a disallowed block type.",
+              severity: "info",
+              page: 7,
+              block_id: "block-recovered",
+              block_type: "header",
+              quality_gate_action: "accepted_recovery",
+              suppressed_from_counts: true,
+              affected_chunk_ids: [],
+            },
+          ],
+        }}
+      />,
+    );
+
+    const sourceBlocks = screen.getByRole("region", { name: "Source blocks" });
+    expect(within(sourceBlocks).getByText("Recovered text")).toBeVisible();
+    expect(within(sourceBlocks).getByText("Accepted recovery from Header")).toBeVisible();
+    expect(within(sourceBlocks).getByText("Recovered Arabic header text kept with provenance.")).toBeVisible();
+    expect(
+      screen.getByText("Accepted recovery from Header. Audit evidence only; not a counted parser warning."),
+    ).toBeVisible();
+  });
+
   it("preserves decision-defined ordering for source blocks and chunks", () => {
     render(
       <EvidenceInspector

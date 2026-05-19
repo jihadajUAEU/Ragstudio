@@ -957,7 +957,7 @@ describe("DocumentsPage", () => {
     ).toBeVisible();
   });
 
-  it("keeps audit warning rows visible without counted warning chips", async () => {
+  it("shows suppressed parser recovery rows without counting them", async () => {
     vi.mocked(apiClient.documents).mockResolvedValue({
       items: [
         {
@@ -1006,15 +1006,16 @@ describe("DocumentsPage", () => {
           source_location: { page: 12 },
           parser_metadata: {},
           reference_metadata: null,
-          code: "recovered_text_from_misclassified_block",
+          code: "recovered_text_from_disallowed_block",
           message: "Used parser-provided recovered text.",
           block_type: "equation",
           page: 12,
           warning: {
-            code: "recovered_text_from_misclassified_block",
+            code: "recovered_text_from_disallowed_block",
             message: "Used parser-provided recovered text.",
             severity: "info",
             quality_gate_action: "accepted_recovery",
+            suppressed_from_counts: true,
           },
         },
       ],
@@ -1030,6 +1031,11 @@ describe("DocumentsPage", () => {
     );
 
     expect(await screen.findByText("No counted parser warnings.")).toBeVisible();
+    expect(screen.getByText("Recovered text")).toBeVisible();
+    expect(screen.getByText("Accepted recovery")).toBeVisible();
+    expect(
+      screen.getByText("This row is audit evidence, not a counted parser warning."),
+    ).toBeVisible();
     expect(screen.getByText("counted_affected_chunks=0")).toBeVisible();
     expect(screen.getByText("display_rows=1")).toBeVisible();
     expect(screen.getByText("Audit-only recovered parser text.")).toBeVisible();

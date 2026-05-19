@@ -1472,18 +1472,30 @@ function QualityWarningsPanel({
       {
         accessorKey: "code",
         header: "Warning",
-        cell: ({ row }) => (
-          <div className="min-w-0 space-y-1">
-            <span className="inline-flex max-w-full rounded-md bg-[#fff8df] px-2 py-1 text-xs font-medium text-[#705000]">
-              <span className="truncate">{row.original.code ?? "parser_warning"}</span>
-            </span>
-            {row.original.message ? (
-              <p className="line-clamp-2 text-xs leading-5 text-[#3a4a53]">
-                {row.original.message}
-              </p>
-            ) : null}
-          </div>
-        ),
+        cell: ({ row }) => {
+          const tone = warningDisplayTone(row.original);
+
+          return (
+            <div className="min-w-0 space-y-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <span
+                  className={`rounded-md border px-2 py-1 text-xs font-semibold ${tone.className}`}
+                >
+                  {warningDisplayLabel(row.original)}
+                </span>
+                <span
+                  className={`rounded-md border px-2 py-1 text-xs font-semibold ${tone.className}`}
+                >
+                  {tone.label}
+                </span>
+              </div>
+              {row.original.message ? (
+                <p className="break-words text-sm text-[#1f2933]">{row.original.message}</p>
+              ) : null}
+              {tone.note ? <p className="text-xs text-[#235c2f]">{tone.note}</p> : null}
+            </div>
+          );
+        },
       },
       {
         accessorKey: "page",
@@ -1668,6 +1680,34 @@ function QualityWarningsPanel({
       ) : null}
     </div>
   );
+}
+
+function isAcceptedRecoveryWarning(item: ParserQualityWarningOut) {
+  const warningRecord = item.warning as Record<string, unknown> | null | undefined;
+
+  return (
+    item.code === "recovered_text_from_disallowed_block" ||
+    warningRecord?.quality_gate_action === "accepted_recovery" ||
+    warningRecord?.suppressed_from_counts === true
+  );
+}
+
+function warningDisplayLabel(item: ParserQualityWarningOut) {
+  return isAcceptedRecoveryWarning(item) ? "Recovered text" : (item.code ?? "parser_warning");
+}
+
+function warningDisplayTone(item: ParserQualityWarningOut) {
+  return isAcceptedRecoveryWarning(item)
+    ? {
+        label: "Accepted recovery",
+        className: "border-[#5ca66b] bg-[#ecf8ee] text-[#235c2f]",
+        note: "This row is audit evidence, not a counted parser warning.",
+      }
+    : {
+        label: "Parser warning",
+        className: "border-[#e2c46b] bg-[#fff8df] text-[#705000]",
+        note: "",
+      };
 }
 
 function WarningMetadataCell({ item }: { item: ParserQualityWarningOut }) {

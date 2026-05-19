@@ -74,6 +74,9 @@ class WarningEvidence(StudioModel):
     severity: str = "warning"
     page: int | None = None
     block_id: str | None = None
+    block_type: str | None = None
+    quality_gate_action: str | None = None
+    suppressed_from_counts: bool = False
     decision_id: str | None = None
     affected_chunk_ids: list[str] = Field(default_factory=list)
 
