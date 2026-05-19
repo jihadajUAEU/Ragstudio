@@ -145,6 +145,38 @@ class FakeDocumentParser:
         return self.chunks
 
 
+class RecordingModalPreprocessor:
+    def __init__(self) -> None:
+        self.calls: list[list[AdapterChunk]] = []
+
+    def preprocess(
+        self,
+        adapter_chunks: list[AdapterChunk],
+        *,
+        domain_metadata: DomainMetadata,
+    ) -> list[AdapterChunk]:
+        self.calls.append(adapter_chunks)
+        return [
+            AdapterChunk(
+                text="router table text",
+                source_location={"artifact": "source_content_list.json", "page_start": 1, "page_end": 1},
+                metadata={
+                    "modal_router_processed": True,
+                    "modality": "table",
+                    "structured_data": {"markdown": "| A |"},
+                    "parser_metadata": {
+                        "artifact_extract_dir": adapter_chunks[0].metadata["parser_metadata"][
+                            "artifact_extract_dir"
+                        ],
+                        "content_list_ref": "source_content_list.json",
+                    },
+                },
+                runtime_source_id=adapter_chunks[0].runtime_source_id,
+            )
+        ]
+
+
+
 class FakeGraphMaterializationService:
     def __init__(
         self,
@@ -654,6 +686,68 @@ async def test_reindex_document_applies_modal_preprocessor(session, app, tmp_pat
     assert first_chunk.metadata["page"] == 1
     assert first_chunk.source_location["page_start"] == 1
     assert first_chunk.source_location["page_end"] == 1
+
+
+@pytest.mark.asyncio
+async def test_reindex_document_uses_injected_modal_preprocessor(session, app, tmp_path):
+    artifact_path = tmp_path / "modal.pdf"
+    artifact_path.write_bytes(b"%PDF-1.4\n")
+    document = Document(
+        id="doc-modal-injected",
+        filename="modal.pdf",
+        content_type="application/pdf",
+        artifact_path=str(artifact_path),
+        sha256="modal-injected",
+        status=StageStatus.SUCCEEDED.value,
+    )
+    session.add_all(
+        [
+            SettingsProfile(
+                id="default",
+                provider="openai-compatible",
+                llm_model="gpt-4o",
+                embedding_model="text-embedding-3-large",
+                storage_backend="postgres_pgvector_neo4j",
+                runtime_mode="runtime",
+                mineru_enabled=True,
+                mineru_base_url="http://mineru.test",
+            ),
+            document,
+        ]
+    )
+    await session.commit()
+
+    parser_chunk = AdapterChunk(
+        text="raw parser placeholder",
+        source_location={"artifact": "source.md"},
+        metadata={
+            "parser_metadata": {
+                "artifact_extract_dir": str(tmp_path),
+                "content_list_ref": "source_content_list.json",
+                "parser_mode": "mineru_strict",
+            }
+        },
+        runtime_source_id="runtime-modal",
+    )
+    modal_preprocessor = RecordingModalPreprocessor()
+    runtime = PreparsedRuntime()
+
+    result = await IndexLifecycleService(
+        session,
+        app.state.settings,
+        runtime_factory=FakeFactory(runtime),
+        health_service=FakeHealthService(),
+        document_parser=FakeDocumentParser([parser_chunk]),
+        modal_preprocessor=modal_preprocessor,
+    ).reindex_document(
+        document.id,
+        options=IndexDocumentIn(domain_metadata=DomainMetadata(domain="general")),
+    )
+
+    assert result is not None
+    assert len(modal_preprocessor.calls) == 1
+    assert runtime.preparsed_chunks[0].metadata["modal_router_processed"] is True
+    assert runtime.preparsed_chunks[0].metadata["modality"] == "table"
 
 
 @pytest.mark.asyncio

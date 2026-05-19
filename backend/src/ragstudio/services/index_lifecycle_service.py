@@ -66,6 +66,7 @@ class IndexLifecycleService:
         normalizer: TraceNormalizer | None = None,
         document_parser: DocumentParserService | None = None,
         quality_gate: IndexQualityGate | None = None,
+        modal_preprocessor: Any | None = None,
     ):
         self.session = session
         self.settings = settings
@@ -81,6 +82,7 @@ class IndexLifecycleService:
             settings.data_dir,
             commit_before_remote_parse=True,
         )
+        self.modal_preprocessor = modal_preprocessor or ModalPreprocessor()
 
     async def reindex_document(
         self,
@@ -139,7 +141,7 @@ class IndexLifecycleService:
             normalized_chunks = preparsed_chunks
 
         if not self._uses_canonical_reference_units(options.domain_metadata):
-            normalized_chunks = ModalPreprocessor().preprocess(
+            normalized_chunks = self.modal_preprocessor.preprocess(
                 normalized_chunks,
                 domain_metadata=options.domain_metadata,
             )
