@@ -113,6 +113,12 @@ class BlockRecovery:
 
 
 @dataclass(frozen=True)
+class PageStitchDecision:
+    stitch: bool
+    reason: str
+
+
+@dataclass(frozen=True)
 class VisionRecoveryConfig:
     base_url: str
     model: str
@@ -436,7 +442,10 @@ class MinerUContentNormalizer:
                     normalized,
                     pdf_recovery_context=pdf_recovery_context,
                 )
-            normalized = self._stitch_page_boundary_paragraphs(normalized)
+            normalized = self._stitch_page_boundary_paragraphs(
+                normalized,
+                domain_metadata=domain_metadata,
+            )
         finally:
             if pdf_recovery_context is not None:
                 pdf_recovery_context.close()
@@ -820,12 +829,24 @@ class MinerUContentNormalizer:
     def _stitch_page_boundary_paragraphs(
         self,
         normalized: list[NormalizedBlock],
+        *,
+        domain_metadata: DomainMetadata,
     ) -> list[NormalizedBlock]:
         stitched: list[NormalizedBlock] = []
         for block in normalized:
-            if stitched and _should_stitch_page_boundary(stitched[-1], block):
-                stitched[-1] = _stitch_blocks_across_page_boundary(stitched[-1], block)
-                continue
+            if stitched:
+                decision = _page_stitch_decision(
+                    stitched[-1],
+                    block,
+                    domain_metadata=domain_metadata,
+                )
+                if decision.stitch:
+                    stitched[-1] = _stitch_blocks_across_page_boundary(
+                        stitched[-1],
+                        block,
+                        stitch_decision=decision,
+                    )
+                    continue
             stitched.append(block)
         return stitched
 
@@ -1189,22 +1210,35 @@ def _source_page_end(block: NormalizedBlock) -> int | None:
     return block.page
 
 
-def _should_stitch_page_boundary(previous: NormalizedBlock, current: NormalizedBlock) -> bool:
+def _page_stitch_decision(
+    previous: NormalizedBlock,
+    current: NormalizedBlock,
+    *,
+    domain_metadata: DomainMetadata,
+) -> PageStitchDecision:
+    custom_json = (
+        domain_metadata.custom_json if isinstance(domain_metadata.custom_json, dict) else {}
+    )
+    policy = _dict_value(custom_json, "page_boundary_stitching") or {}
+    if policy.get("enabled") is False:
+        return PageStitchDecision(False, "disabled_by_domain_policy")
     previous_page_end = _source_page_end(previous)
     current_page_start = _source_page_start(current)
     if previous_page_end is None or current_page_start is None:
-        return False
+        return PageStitchDecision(False, "missing_page_boundary")
     if current_page_start != previous_page_end + 1:
-        return False
+        return PageStitchDecision(False, "non_adjacent_pages")
     if previous.warnings or current.warnings or previous.recovery or current.recovery:
-        return False
+        return PageStitchDecision(False, "quality_or_recovery_present")
     if not _is_page_stitch_text_block(previous) or not _is_page_stitch_text_block(current):
-        return False
+        return PageStitchDecision(False, "non_text_block")
     if _ends_with_terminal_punctuation(previous.text):
-        return False
+        return PageStitchDecision(False, "previous_terminal_punctuation")
     if _looks_like_page_stitch_boundary(current.text):
-        return False
-    return _starts_like_sentence_continuation(previous.text, current.text)
+        return PageStitchDecision(False, "current_starts_new_boundary")
+    if _starts_like_sentence_continuation(previous.text, current.text):
+        return PageStitchDecision(True, "sentence_continuation")
+    return PageStitchDecision(False, "no_continuation_signal")
 
 
 def _is_page_stitch_text_block(block: NormalizedBlock) -> bool:
@@ -1249,6 +1283,8 @@ def _starts_like_sentence_continuation(previous_text: str, current_text: str) ->
 def _stitch_blocks_across_page_boundary(
     previous: NormalizedBlock,
     current: NormalizedBlock,
+    *,
+    stitch_decision: PageStitchDecision,
 ) -> NormalizedBlock:
     page_start = _source_page_start(previous)
     page_end = _source_page_end(current)
@@ -1264,6 +1300,10 @@ def _stitch_blocks_across_page_boundary(
                 if page is not None
             ],
             "stitched_block_types": [previous.block_type, current.block_type],
+            "stitch_decision": {
+                "reason": stitch_decision.reason,
+                "strategy": "deterministic_page_boundary",
+            },
         }
     )
     previous_sources = previous.source_item.get("stitched_sources")

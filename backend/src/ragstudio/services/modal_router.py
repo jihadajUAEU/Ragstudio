@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any
 
 from ragstudio.schemas.parsing import DomainMetadata
@@ -43,6 +42,32 @@ def _try_import_raganything() -> bool:
 
 
 _HAS_RAGANYTHING = _try_import_raganything()
+
+
+def _string_list(value: Any) -> list[str]:
+    if isinstance(value, str) and value.strip():
+        return [value.strip()]
+    if isinstance(value, list | tuple):
+        return [item.strip() for item in value if isinstance(item, str) and item.strip()]
+    return []
+
+
+def _fallback_table_markdown(table_body: Any) -> str:
+    if isinstance(table_body, str):
+        return table_body.strip()
+    if not isinstance(table_body, list) or not table_body:
+        return ""
+    rows: list[list[str]] = []
+    for row in table_body:
+        if not isinstance(row, list | tuple):
+            return ""
+        rows.append([str(cell) for cell in row])
+    if not rows:
+        return ""
+    header = rows[0]
+    divider = ["---" for _ in header]
+    rendered = [header, divider, *rows[1:]]
+    return "\n".join("| " + " | ".join(row) + " |" for row in rendered)
 
 
 class StudioModalRouter:
@@ -125,6 +150,15 @@ class StudioModalRouter:
                 )
             except Exception:
                 logger.debug("RAG-Anything table utils failed, using fallback", exc_info=True)
+
+        if not structured.get("raw_body") and item.get("table_body") is not None:
+            table_body = item.get("table_body")
+            structured["raw_body"] = table_body
+            structured["markdown"] = _fallback_table_markdown(table_body)
+        if "caption" not in structured:
+            structured["caption"] = _string_list(item.get("table_caption"))
+        if "footnote" not in structured:
+            structured["footnote"] = _string_list(item.get("table_footnote"))
 
         # Build searchable text
         text_parts = []

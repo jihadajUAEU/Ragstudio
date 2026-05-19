@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import pytest
 from ragstudio.db.engine import init_db, make_engine, make_session_factory
 from ragstudio.db.models import Chunk, Document
@@ -261,6 +263,74 @@ async def test_persist_chunks_replaces_existing_chunks(tmp_path, database_url):
     assert len(rows) == 1
     assert rows[0]._mapping["text"] == "new chunk"
     assert rows[0]._mapping["metadata_json"]["chunk_identity"].startswith("doc-bukhari|")
+
+
+@pytest.mark.asyncio
+async def test_persist_returns_chunks_in_adapter_input_order(tmp_path, database_url):
+    engine = make_engine(database_url)
+    await init_db(engine)
+    factory = make_session_factory(engine)
+
+    async with factory() as session:
+        document = Document(
+            id="doc-order",
+            filename="order.pdf",
+            content_type="application/pdf",
+            artifact_path=str(tmp_path / "order.pdf"),
+            sha256="order",
+            status="succeeded",
+        )
+        session.add(document)
+        await session.commit()
+
+        adapter_chunks = [
+            AdapterChunk(
+                text="first chunk",
+                source_location={"page": 1},
+                metadata={"parser_metadata": {"chunk_index": 0}},
+            ),
+            AdapterChunk(
+                text="second chunk",
+                source_location={"page": 2},
+                metadata={"parser_metadata": {"chunk_index": 1}},
+            ),
+            AdapterChunk(
+                text="third chunk",
+                source_location={"page": 3},
+                metadata={"parser_metadata": {"chunk_index": 2}},
+            ),
+        ]
+
+        chunks = await ChunkPersistenceService(session).persist(
+            document,
+            adapter_chunks,
+            IndexDocumentIn(domain_metadata=DomainMetadata()),
+        )
+
+    await engine.dispose()
+
+    assert [chunk.text for chunk in chunks] == [
+        "first chunk",
+        "second chunk",
+        "third chunk",
+    ]
+    assert [
+        chunk.metadata["parser_metadata"]["chunk_index"]
+        for chunk in chunks
+    ] == [0, 1, 2]
+
+
+def test_order_chunks_by_ids_restores_bulk_refresh_order():
+    first = SimpleNamespace(id="chunk-1", text="first")
+    second = SimpleNamespace(id="chunk-2", text="second")
+    third = SimpleNamespace(id="chunk-3", text="third")
+
+    ordered = ChunkPersistenceService._order_chunks_by_ids(
+        [third, first, second],
+        ["chunk-1", "chunk-2", "chunk-3"],
+    )
+
+    assert [chunk.text for chunk in ordered] == ["first", "second", "third"]
 
 
 @pytest.mark.asyncio

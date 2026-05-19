@@ -1,12 +1,11 @@
-import asyncio
 import json
 from pathlib import Path
 
 import pytest
-
 from ragstudio.schemas.parsing import DomainMetadata
 from ragstudio.services.adapter import AdapterChunk
 from ragstudio.services.chunk_splitter import ChunkSplitter
+from ragstudio.services.domain_metadata_quality_gate import DomainMetadataQualityGate
 from ragstudio.services.domain_metadata_service import DomainMetadataService
 from ragstudio.services.modal_preprocessor import MODAL_ROUTER_PROCESSED_FLAG
 
@@ -146,7 +145,8 @@ def test_chunk_splitter_preserves_small_chunks_unchanged():
     assert "split_strategy" not in split[0].metadata["parser_metadata"]
 
 
-def test_chunk_splitter_uses_mineru_content_list_when_available(tmp_path: Path):
+@pytest.mark.asyncio
+async def test_chunk_splitter_uses_mineru_content_list_when_available(tmp_path: Path):
     content_list = tmp_path / "source_content_list.json"
     content_list.write_text(
         """
@@ -173,20 +173,67 @@ def test_chunk_splitter_uses_mineru_content_list_when_available(tmp_path: Path):
         },
     )
 
-    split = ChunkSplitter(max_words=1500).split(
+    split = await ChunkSplitter(max_words=1500).split(
         [chunk],
         domain_metadata=DomainMetadata(domain="tafseer", document_type="book"),
         parser_mode="mineru_strict",
     )
 
     assert [item.text for item in split] == [
-        "Page one heading\n\nPage one body",
-        "Page two heading\n\nPage two body",
+        "Page one heading\n\nPage one body\n\nPage two heading\n\nPage two body",
     ]
     assert split[0].source_location["page_start"] == 1
-    assert split[0].source_location["page_end"] == 1
-    assert split[1].source_location["page_start"] == 2
-    assert split[1].source_location["page_end"] == 2
+    assert split[0].source_location["page_end"] == 2
+
+
+@pytest.mark.asyncio
+async def test_chunk_splitter_processes_shared_content_list_once(tmp_path, monkeypatch):
+    content_list = tmp_path / "source_content_list.json"
+    content_list.write_text(
+        json.dumps(
+            [
+                {"type": "text", "text": "First paragraph.", "page_idx": 0},
+                {"type": "text", "text": "Second paragraph.", "page_idx": 0},
+            ]
+        ),
+        encoding="utf-8",
+    )
+    parser_metadata = {
+        "backend": "mineru",
+        "artifact_extract_dir": str(tmp_path),
+        "content_list_ref": "source_content_list.json",
+    }
+    chunks = [
+        AdapterChunk(
+            text=f"placeholder {index}",
+            source_location={"artifact": "source.md"},
+            metadata={"parser_metadata": parser_metadata},
+        )
+        for index in range(3)
+    ]
+    splitter = ChunkSplitter(max_words=1500)
+    calls = 0
+    original = splitter.content_normalizer.normalize_content_list
+
+    async def counted_normalize(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return await original(*args, **kwargs)
+
+    monkeypatch.setattr(
+        splitter.content_normalizer,
+        "normalize_content_list",
+        counted_normalize,
+    )
+
+    split = await splitter.split(
+        chunks,
+        domain_metadata=DomainMetadata(domain="general"),
+        parser_mode="mineru_strict",
+    )
+
+    assert calls == 1
+    assert [chunk.text for chunk in split] == ["First paragraph.\n\nSecond paragraph."]
 
 
 def test_chunk_splitter_does_not_reparse_modal_router_processed_chunk(tmp_path: Path):
@@ -209,12 +256,10 @@ def test_chunk_splitter_does_not_reparse_modal_router_processed_chunk(tmp_path: 
         },
     )
 
-    split = asyncio.run(
-        ChunkSplitter(max_words=1500).split(
-            [chunk],
-            domain_metadata=DomainMetadata(domain="generic", document_type="table"),
-            parser_mode="mineru_strict",
-        )
+    split = ChunkSplitter(max_words=1500).split(
+        [chunk],
+        domain_metadata=DomainMetadata(domain="generic", document_type="table"),
+        parser_mode="mineru_strict",
     )
 
     assert split[0].text.startswith("Table: Scores")
@@ -260,7 +305,7 @@ async def test_chunk_splitter_stitches_continuation_across_pages(tmp_path: Path)
     )
 
     assert len(split) == 1
-    assert "page one and\n\ncontinues" in split[0].text
+    assert "page one and continues" in split[0].text
     assert split[0].source_location["page_start"] == 1
     assert split[0].source_location["page_end"] == 2
 
@@ -632,9 +677,12 @@ def test_chunk_splitter_uses_explicit_domain_metadata_for_content_list_normaliza
         parser_mode="mineru_strict",
     )
 
-    assert "$$" not in split[0].text
-    assert "suspected_text_misclassified_as_equation" in parser_warning_codes(split[0])
-    assert "reference_unit_missing_expected_script" in parser_warning_codes(split[0])
+    warning_codes = {
+        code for chunk in split for code in parser_warning_codes(chunk)
+    }
+    assert all("$$" not in chunk.text for chunk in split)
+    assert "suspected_text_misclassified_as_equation" in warning_codes
+    assert "reference_unit_missing_expected_script" in warning_codes
 
 
 def test_chunk_splitter_quarantines_quran_like_equation_from_content_list(tmp_path: Path):
@@ -673,7 +721,7 @@ def test_chunk_splitter_quarantines_quran_like_equation_from_content_list(tmp_pa
 
     assert split[0].text == "[1:2] The Entirely Merciful."
     assert "$$" not in split[0].text
-    assert "suspected_text_misclassified_as_equation" in parser_warning_codes(split[0])
+    assert "suspected_text_misclassified_as_equation" in parser_warning_codes(split[1])
 
 
 def test_chunk_splitter_emits_warning_only_piece_for_quarantined_page(tmp_path: Path):
@@ -1119,7 +1167,8 @@ def test_chunk_splitter_builds_canonical_quran_verse_from_header_body_blocks(
     assert "reference_unit_missing_expected_script" not in parser_warning_codes(split[0])
 
 
-def test_chunk_splitter_dedupes_existing_quality_gate_warning():
+@pytest.mark.asyncio
+async def test_chunk_splitter_dedupes_existing_quality_gate_warning():
     warning = {
         "code": "reference_unit_missing_expected_script",
         "message": (
@@ -1137,7 +1186,7 @@ def test_chunk_splitter_dedupes_existing_quality_gate_warning():
         },
     )
 
-    split = ChunkSplitter(max_words=1500).split(
+    split = await ChunkSplitter(max_words=1500).split(
         [chunk],
         domain_metadata=DomainMetadata(domain="religion", tags=["quran"], script="arabic"),
         parser_mode="mineru_strict",
@@ -1145,9 +1194,75 @@ def test_chunk_splitter_dedupes_existing_quality_gate_warning():
 
     warnings = parser_warnings(split[0])
     assert warnings == [warning]
+    assert "parser_warnings" not in split[0].metadata
 
 
-def test_chunk_splitter_allows_mixed_arabic_english_reference_chunk():
+@pytest.mark.asyncio
+async def test_chunk_splitter_writes_quality_gate_warnings_to_extraction_quality():
+    chunk = AdapterChunk(
+        text="[1:1] English translation only.",
+        source_location={"page_start": 1, "page_end": 1},
+        metadata={"parser_metadata": {"backend": "mineru", "chunk_index": 0}},
+    )
+
+    split = await ChunkSplitter(max_words=1500).split(
+        [chunk],
+        domain_metadata=DomainMetadata(domain="religion", tags=["quran"], script="arabic"),
+        parser_mode="mineru_strict",
+    )
+
+    warnings = parser_warnings(split[0])
+    assert [warning["code"] for warning in warnings] == [
+        "reference_unit_missing_expected_script"
+    ]
+    assert "parser_warnings" not in split[0].metadata
+    assert DomainMetadataQualityGate().parser_warnings_for_chunk(split[0]) == warnings
+
+
+@pytest.mark.asyncio
+async def test_chunk_splitter_does_not_enrich_unchanged_piece_for_info_only_warning():
+    chunk = AdapterChunk(
+        text="Verse 18:30 Indeed, those who have believed.",
+        source_location={"page_start": 809, "page_end": 809},
+        metadata={
+            "parser_metadata": {"backend": "mineru", "chunk_index": 0},
+            "extraction_quality": {
+                "parser_warnings": [
+                    {
+                        "code": "recovered_text_from_misclassified_block",
+                        "block_type": "equation",
+                        "message": "Used parser-provided recovered text.",
+                    }
+                ]
+            },
+        },
+    )
+
+    metadata = DomainMetadata(
+        domain="general",
+        custom_json={
+            "layout_quality_policy": {
+                "misclassified_block_policy": {
+                    "equation_with_recovered_text": {
+                        "action": "recover_as_text",
+                        "warning_level": "info",
+                    }
+                },
+            },
+        },
+    )
+
+    split = await ChunkSplitter(max_words=1500).split(
+        [chunk],
+        domain_metadata=metadata,
+        parser_mode="mineru_strict",
+    )
+
+    assert split == [chunk]
+
+
+@pytest.mark.asyncio
+async def test_chunk_splitter_allows_mixed_arabic_english_reference_chunk():
     arabic_text = (
         "\u0625\u064a\u0627\u0643 \u0646\u0639\u0628\u062f "
         "\u0648\u0625\u064a\u0627\u0643 \u0646\u0633\u062a\u0639\u064a\u0646"
@@ -1158,7 +1273,7 @@ def test_chunk_splitter_allows_mixed_arabic_english_reference_chunk():
         metadata={"parser_metadata": {"backend": "mineru", "chunk_index": 0}},
     )
 
-    split = ChunkSplitter(max_words=1500).split(
+    split = await ChunkSplitter(max_words=1500).split(
         [chunk],
         domain_metadata=DomainMetadata(domain="religion", tags=["quran"], script="arabic"),
         parser_mode="mineru_strict",
@@ -1167,7 +1282,8 @@ def test_chunk_splitter_allows_mixed_arabic_english_reference_chunk():
     assert "reference_unit_missing_expected_script" not in parser_warning_codes(split[0])
 
 
-def test_chunk_splitter_keeps_tafseer_inline_cross_references_inside_primary_anchor(
+@pytest.mark.asyncio
+async def test_chunk_splitter_keeps_tafseer_inline_cross_references_inside_primary_anchor(
     tmp_path: Path,
 ):
     content_list = tmp_path / "source_content_list.json"
@@ -1212,7 +1328,7 @@ def test_chunk_splitter_keeps_tafseer_inline_cross_references_inside_primary_anc
     )
     metadata = tafseer_cross_reference_metadata()
 
-    split = ChunkSplitter(max_words=1500).split(
+    split = await ChunkSplitter(max_words=1500).split(
         [chunk],
         domain_metadata=metadata,
         parser_mode="mineru_strict",
@@ -1231,7 +1347,7 @@ def test_chunk_splitter_recovers_tafseer_verse_image_text_from_pdf_layer(
     tmp_path: Path,
     monkeypatch,
 ):
-    import fitz
+    fitz = pytest.importorskip("fitz")
     from ragstudio.services import parser_normalization
 
     arabic_text = "إن الذين ءامنوا وعملوا الصالحات إنا لا نضيع أجر من أحسن عملا"
@@ -1477,7 +1593,7 @@ def test_chunk_splitter_recovers_cross_page_verse_header_gap_from_pdf_layer(
     tmp_path: Path,
     monkeypatch,
 ):
-    import fitz
+    fitz = pytest.importorskip("fitz")
     from ragstudio.services import parser_normalization
 
     arabic_text = "أو كصيب من السماء فيه ظلمات ورعد وبرق"

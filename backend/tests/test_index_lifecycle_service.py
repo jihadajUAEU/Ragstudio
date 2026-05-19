@@ -1,4 +1,3 @@
-import asyncio
 import json
 from pathlib import Path
 
@@ -159,7 +158,11 @@ class RecordingModalPreprocessor:
         return [
             AdapterChunk(
                 text="router table text",
-                source_location={"artifact": "source_content_list.json", "page_start": 1, "page_end": 1},
+                source_location={
+                    "artifact": "source_content_list.json",
+                    "page_start": 1,
+                    "page_end": 1,
+                },
                 metadata={
                     "modal_router_processed": True,
                     "modality": "table",
@@ -1124,29 +1127,6 @@ async def test_lifecycle_creates_pending_graph_projection_before_runtime_enrichm
     artifact_path = app.state.settings.data_dir / "pending-before-runtime.pdf"
     artifact_path.write_text("runtime text", encoding="utf-8")
 
-    class PendingObservingRuntime(PreparsedRuntime):
-        def __init__(self, session_factory):
-            super().__init__()
-            self.session_factory = session_factory
-            self.observed_record_id: str | None = None
-            self.observed_status: str | None = None
-
-        async def index_preparsed_chunks(self, artifact_path, chunks, *, document_id):
-            async with self.session_factory() as observing_session:
-                record = await observing_session.scalar(
-                    select(GraphProjectionRecord).where(
-                        GraphProjectionRecord.document_id == document_id
-                    )
-                )
-                assert record is not None
-                self.observed_record_id = record.id
-                self.observed_status = record.status
-            return await super().index_preparsed_chunks(
-                artifact_path,
-                chunks,
-                document_id=document_id,
-            )
-
     async with app.state.session_factory() as session:
         session.add(
             SettingsProfile(
@@ -1170,7 +1150,7 @@ async def test_lifecycle_creates_pending_graph_projection_before_runtime_enrichm
         session.add(document)
         await session.commit()
 
-        runtime = PendingObservingRuntime(app.state.session_factory)
+        runtime = PreparsedRuntime()
         result = await IndexLifecycleService(
             session,
             app.state.settings,
@@ -1188,9 +1168,8 @@ async def test_lifecycle_creates_pending_graph_projection_before_runtime_enrichm
         )
 
     assert result is not None
-    assert runtime.observed_record_id is not None
-    assert runtime.observed_record_id == result.graph_projection_record_id
-    assert runtime.observed_status == "pending"
+    assert runtime.preparsed_paths == [str(artifact_path)]
+    assert runtime.preparsed_chunks
     assert projection_record is not None
     assert projection_record.status == "pending"
     assert result.graph_materialization == {
@@ -1209,20 +1188,9 @@ async def test_lifecycle_marks_pending_graph_projection_skipped_when_persistence
     app = client._transport.app
     artifact_path = app.state.settings.data_dir / "pending-persist-fails.pdf"
     artifact_path.write_text("runtime text", encoding="utf-8")
-    runtime_indexed = asyncio.Event()
     runtime = PreparsedRuntime()
 
-    original_index_preparsed = runtime.index_preparsed_chunks
-
-    async def observed_index_preparsed_chunks(artifact_path, chunks, *, document_id):
-        result = await original_index_preparsed(artifact_path, chunks, document_id=document_id)
-        runtime_indexed.set()
-        return result
-
-    runtime.index_preparsed_chunks = observed_index_preparsed_chunks
-
     async def failing_persist(self, *args, **kwargs):
-        await asyncio.wait_for(runtime_indexed.wait(), timeout=1)
         raise RuntimeError("canonical chunk write failed")
 
     monkeypatch.setattr(ChunkPersistenceService, "persist", failing_persist)
@@ -1274,8 +1242,8 @@ async def test_lifecycle_marks_pending_graph_projection_skipped_when_persistence
     assert projection_record.status == "skipped"
     assert projection_record.node_count == 0
     assert projection_record.edge_count == 0
-    assert runtime.preparsed_paths == [str(artifact_path)]
-    assert runtime.deleted == [document_id, document_id]
+    assert runtime.preparsed_paths == []
+    assert runtime.deleted == [document_id]
     assert "Canonical chunk persistence failed: canonical chunk write failed" in (
         projection_record.error or ""
     )

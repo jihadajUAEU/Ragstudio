@@ -351,6 +351,51 @@ def test_domain_quality_gate_blocks_layout_policy_materialization(
     ]
 
 
+def test_domain_quality_gate_persists_modal_table_warning():
+    chunks = [
+        AdapterChunk(
+            text=" ",
+            source_location={"page": 1},
+            metadata={"modality": "table", "structured_data": {}},
+        )
+    ]
+
+    report = DomainMetadataQualityGate().validate_adapter_chunks(
+        chunks,
+        domain_metadata=DomainMetadata(domain="generic", language="english"),
+    )
+
+    warnings = chunks[0].metadata["extraction_quality"]["parser_warnings"]
+    policy = chunks[0].metadata["quality_action_policy"]
+    assert report["status"] == "passed_with_warnings"
+    assert report["modal_validation"] == warnings
+    assert warnings[0]["code"] == "table_missing_structure"
+    assert warnings[0]["severity"] == "block"
+    assert warnings[0]["quality_gate_action"] == "block"
+    assert policy["index_vector"] is False
+    assert policy["project_graph"] is False
+    assert "parser_quality_block:table_missing_structure" in policy["quality_flags"]
+
+
+def test_domain_quality_gate_persists_modal_image_warning():
+    chunks = [
+        AdapterChunk(
+            text=" ",
+            source_location={"page": 1},
+            metadata={"modality": "image", "structured_data": {"caption": []}},
+        )
+    ]
+
+    DomainMetadataQualityGate().validate_adapter_chunks(
+        chunks,
+        domain_metadata=DomainMetadata(domain="generic", language="english"),
+    )
+
+    warnings = chunks[0].metadata["extraction_quality"]["parser_warnings"]
+    assert warnings[0]["code"] == "image_missing_description"
+    assert warnings[0]["source"] == "modal_validation"
+
+
 def test_domain_quality_gate_warns_when_optional_script_action_is_warn():
     chunks = [
         AdapterChunk(
