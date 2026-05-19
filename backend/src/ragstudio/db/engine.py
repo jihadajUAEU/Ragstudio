@@ -362,6 +362,14 @@ def _ensure_chunk_search_indexes(connection) -> None:
     connection.execute(
         text(
             """
+            CREATE INDEX IF NOT EXISTS ix_chunks_text_trgm
+            ON chunks USING gin (text gin_trgm_ops)
+            """
+        )
+    )
+    connection.execute(
+        text(
+            """
             CREATE INDEX IF NOT EXISTS ix_chunks_text_search_ar_trgm
             ON chunks USING gin (text_search_ar gin_trgm_ops)
             """

@@ -117,6 +117,12 @@ class Chunk(Base, TimestampMixin):
         Index("ix_chunks_document_id", "document_id"),
         Index("ix_chunks_document_preview_ref", "document_id", "preview_ref"),
         Index(
+            "ix_chunks_text_trgm",
+            "text",
+            postgresql_using="gin",
+            postgresql_ops={"text": "gin_trgm_ops"},
+        ),
+        Index(
             "ix_chunks_text_search_ar_trgm",
             "text_search_ar",
             postgresql_using="gin",

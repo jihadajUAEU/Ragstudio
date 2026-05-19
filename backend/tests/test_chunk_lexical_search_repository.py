@@ -3,6 +3,7 @@ from ragstudio.db.engine import init_db, make_engine, make_session_factory
 from ragstudio.db.models import Chunk, Document
 from ragstudio.services.arabic_text import arabic_tokens, normalize_arabic_text
 from ragstudio.services.chunk_lexical_search_repository import ChunkLexicalSearchRepository
+from sqlalchemy import text
 
 
 @pytest.mark.asyncio
@@ -45,3 +46,28 @@ async def test_repository_prefilters_arabic_token_with_postgres_columns(
         )
 
     assert [chunk.id for chunk in chunks] == ["chunk-19-13"]
+
+
+@pytest.mark.asyncio
+async def test_init_db_creates_english_text_trigram_index(database_url):
+    engine = make_engine(database_url)
+    await init_db(engine)
+    factory = make_session_factory(engine)
+
+    async with factory() as session:
+        indexdef = await session.scalar(
+            text(
+                """
+                SELECT indexdef
+                FROM pg_indexes
+                WHERE schemaname = 'public'
+                  AND tablename = 'chunks'
+                  AND indexname = 'ix_chunks_text_trgm'
+                """
+            )
+        )
+
+    assert indexdef is not None
+    assert "USING gin" in indexdef
+    assert "text gin_trgm_ops" in indexdef
+    await engine.dispose()

@@ -11,6 +11,7 @@ from ragstudio.schemas.runtime import RuntimeHealthCheck
 from ragstudio.services.adapter import RAGAnythingAdapter
 from ragstudio.services.chunk_service import ChunkService
 from ragstudio.services.index_progress import index_shape_compatible
+from ragstudio.services.metadata_retrieval_service import MetadataRetrievalService
 from ragstudio.services.query_pathway_diagnostics_service import (
     QueryPathwayDiagnosticsService,
 )
@@ -24,7 +25,7 @@ from ragstudio.services.runtime_profile_service import (
 )
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 
 class QueryResourceNotFoundError(LookupError):
@@ -60,6 +61,7 @@ class QueryService:
         health_service: Any | None = None,
         reranker_service: RerankerService | None = None,
         retrieval_orchestrator: RetrievalOrchestrator | None = None,
+        session_factory: async_sessionmaker[AsyncSession] | None = None,
     ):
         self.session = session
         self.data_dir = data_dir
@@ -74,6 +76,7 @@ class QueryService:
             allowed_hosts=settings.allowed_reranker_hosts if settings else None
         )
         self.retrieval_orchestrator = retrieval_orchestrator
+        self.session_factory = session_factory
 
     async def run_query(self, payload: QueryIn) -> QueryOut:
         await self._validate_query_inputs(payload)
@@ -301,10 +304,25 @@ class QueryService:
     def _retrieval_orchestrator(self) -> RetrievalOrchestrator:
         if self.retrieval_orchestrator is not None:
             return self.retrieval_orchestrator
+        chunk_service = ChunkService(self.session, self.data_dir, self.adapter)
         return RetrievalOrchestrator(
-            chunk_service=ChunkService(self.session, self.data_dir, self.adapter),
+            chunk_service=chunk_service,
             reranker_service=self.reranker_service,
+            metadata_retrieval_service=MetadataRetrievalService(
+                chunk_service,
+                parallel_search=self._parallel_metadata_search(),
+            ),
         )
+
+    def _parallel_metadata_search(self):
+        if self.session_factory is None:
+            return None
+
+        async def search(search_in):
+            async with self.session_factory() as session:
+                return await ChunkService(session, self.data_dir, self.adapter).search(search_in)
+
+        return search
 
     async def _validate_query_inputs(self, payload: QueryIn) -> None:
         missing_variants = await self._missing_ids(Variant, payload.variant_ids)
