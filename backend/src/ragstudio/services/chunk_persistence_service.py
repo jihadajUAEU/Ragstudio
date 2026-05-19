@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
-from pathlib import Path, PureWindowsPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
 from ragstudio.db.models import Chunk, Document
@@ -81,9 +81,17 @@ class ChunkPersistenceService:
             result = await self.session.execute(
                 select(Chunk).where(Chunk.id.in_(chunk_ids))
             )
-            chunks = list(result.scalars().all())
+            chunks = self._order_chunks_by_ids(
+                list(result.scalars().all()),
+                chunk_ids,
+            )
 
         return [ChunkOut.model_validate(chunk) for chunk in chunks]
+
+    @staticmethod
+    def _order_chunks_by_ids(chunks: list[Chunk], chunk_ids: list[str]) -> list[Chunk]:
+        by_id = {chunk.id: chunk for chunk in chunks}
+        return [by_id[chunk_id] for chunk_id in chunk_ids if chunk_id in by_id]
 
     def _chunk_row(
         self,
@@ -175,7 +183,11 @@ class ChunkPersistenceService:
     def _is_absolute_path_value(self, value: Any) -> bool:
         if not isinstance(value, str):
             return False
-        return Path(value).is_absolute() or PureWindowsPath(value).is_absolute()
+        return (
+            Path(value).is_absolute()
+            or PurePosixPath(value).is_absolute()
+            or PureWindowsPath(value).is_absolute()
+        )
 
     def _scrub_path_metadata(self, value: Any) -> Any:
         if isinstance(value, dict):

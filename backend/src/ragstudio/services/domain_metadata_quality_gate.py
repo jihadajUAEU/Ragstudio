@@ -225,13 +225,12 @@ class DomainMetadataQualityGate:
                     expected_profile=expected_profile,
                 )
             index_quality_report = self.index_quality_report_from_chunks(chunks)
+        # Modal-aware validation: verify structure integrity per modality.
+        modal_warnings = self._validate_modal_chunks(chunks)
         self._apply_intelligent_parser_gate(chunks, domain_metadata=domain_metadata)
         self._apply_parser_quality_action_policy(chunks)
         quality_summary = self.parser_quality_summary(chunks)
         status = "passed_with_warnings" if quality_summary["warning_counts"] else "passed"
-
-        # Modal-aware validation: verify structure integrity per modality.
-        modal_warnings = self._validate_modal_chunks(chunks)
 
         return {
             "status": status,
@@ -790,12 +789,12 @@ class DomainMetadataQualityGate:
                     "end": len(text),
                 }
             ]
-        if len(references) > 1:
-            return []
 
         label_units = self._labelled_reference_units(text)
         if label_units:
             return label_units
+        if len(references) > 1:
+            return []
 
         semantic_refs = semantics.extract_chunk_references(text)
         if len(semantic_refs) == 1:
@@ -1390,35 +1389,60 @@ class DomainMetadataQualityGate:
         """Validate modality-specific structural integrity."""
         warnings: list[dict[str, Any]] = []
         for index, chunk in enumerate(chunks):
+            chunk_warnings: list[dict[str, Any]] = []
             modality = chunk.metadata.get("modality", "text")
             if modality == "table":
                 structured = chunk.metadata.get("structured_data", {})
                 if not structured.get("markdown") and not structured.get("raw_body"):
-                    warnings.append({
-                        "chunk_index": index,
-                        "modality": "table",
-                        "code": "table_missing_structure",
-                        "message": "Table chunk has no structured body data.",
-                    })
+                    chunk_warnings.append(
+                        {
+                            "chunk_index": index,
+                            "modality": "table",
+                            "code": "table_missing_structure",
+                            "message": "Table chunk has no structured body data.",
+                            "source": "modal_validation",
+                            "severity": "block",
+                            "quality_gate_action": "block",
+                            "quality_gate_reason": "modal_validation.table_missing_structure",
+                            "suppressed_from_counts": False,
+                        }
+                    )
             elif modality == "image":
                 structured = chunk.metadata.get("structured_data", {})
                 caption = structured.get("caption", [])
                 if not caption and not chunk.text.strip():
-                    warnings.append({
-                        "chunk_index": index,
-                        "modality": "image",
-                        "code": "image_missing_description",
-                        "message": "Image chunk has no caption or description.",
-                    })
+                    chunk_warnings.append(
+                        {
+                            "chunk_index": index,
+                            "modality": "image",
+                            "code": "image_missing_description",
+                            "message": "Image chunk has no caption or description.",
+                            "source": "modal_validation",
+                            "severity": "block",
+                            "quality_gate_action": "block",
+                            "quality_gate_reason": "modal_validation.image_missing_description",
+                            "suppressed_from_counts": False,
+                        }
+                    )
             elif modality == "equation":
                 structured = chunk.metadata.get("structured_data", {})
                 if not structured.get("latex"):
-                    warnings.append({
-                        "chunk_index": index,
-                        "modality": "equation",
-                        "code": "equation_missing_latex",
-                        "message": "Equation chunk has no LaTeX content.",
-                    })
+                    chunk_warnings.append(
+                        {
+                            "chunk_index": index,
+                            "modality": "equation",
+                            "code": "equation_missing_latex",
+                            "message": "Equation chunk has no LaTeX content.",
+                            "source": "modal_validation",
+                            "severity": "block",
+                            "quality_gate_action": "block",
+                            "quality_gate_reason": "modal_validation.equation_missing_latex",
+                            "suppressed_from_counts": False,
+                        }
+                    )
+            if chunk_warnings:
+                self.merge_parser_warnings(chunk.metadata, chunk_warnings)
+                warnings.extend(chunk_warnings)
 
         if warnings:
             logger.info(

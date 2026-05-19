@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import re
+from collections.abc import Awaitable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -9,16 +11,15 @@ from typing import Any
 from ragstudio.schemas.parsing import DomainMetadata, ParserMode
 from ragstudio.services.adapter import AdapterChunk
 from ragstudio.services.chunk_quality_gate import ChunkQualityGate
+from ragstudio.services.domain_metadata_quality_gate import DomainMetadataQualityGate
 from ragstudio.services.modal_preprocessor import MODAL_ROUTER_PROCESSED_FLAG
-from ragstudio.services.parser_warning_utils import (
-    merge_parser_warnings as _shared_merge_parser_warnings,
-)
 from ragstudio.services.parser_normalization import (
     ExpectedContentProfile,
     MinerUContentNormalizer,
     NormalizedBlock,
     VisionRecoveryConfig,
 )
+from ragstudio.services.parser_quality_intelligent_gate import ParserQualityIntelligentGate
 from ragstudio.services.reference_metadata import ReferenceSemantics
 from ragstudio.services.reference_unit_assembler import (
     AssembledReferenceUnit,
@@ -54,6 +55,12 @@ class ContentListSplitResult:
 
 
 @dataclass(frozen=True)
+class ContentListKey:
+    root: Path
+    content_ref: str
+
+
+@dataclass(frozen=True)
 class OrderedTextBlock:
     text: str
     page: int | None
@@ -83,24 +90,49 @@ class ChunkSplitter:
         self.content_normalizer = MinerUContentNormalizer()
         self.reference_unit_assembler = ReferenceUnitAssembler()
 
-    async def split(
+    def split(
         self,
         chunks: list[AdapterChunk],
         *,
         domain_metadata: DomainMetadata,
-        parser_mode: ParserMode,  # noqa: ARG002 — reserved for future use
+        parser_mode: ParserMode,
+    ) -> list[AdapterChunk] | Awaitable[list[AdapterChunk]]:
+        split_task = self._split_async(
+            chunks,
+            domain_metadata=domain_metadata,
+            parser_mode=parser_mode,
+        )
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(split_task)
+        return split_task
+
+    async def _split_async(
+        self,
+        chunks: list[AdapterChunk],
+        *,
+        domain_metadata: DomainMetadata,
+        parser_mode: ParserMode,
     ) -> list[AdapterChunk]:
 
         profile = self._profile(domain_metadata)
         expected_profile = ExpectedContentProfile.from_domain_metadata(domain_metadata)
         output: list[AdapterChunk] = []
+        processed_content_lists: set[ContentListKey] = set()
         for chunk in chunks:
-            pieces = await self._split_chunk(
+            content_list_key = self._content_list_key(chunk)
+            if content_list_key is not None and content_list_key in processed_content_lists:
+                continue
+            split_result = await self._split_chunk(
                 chunk,
                 profile,
                 expected_profile,
                 domain_metadata,
             )
+            pieces = split_result.pieces
+            if content_list_key is not None and split_result.handled:
+                processed_content_lists.add(content_list_key)
             if len(pieces) == 1 and pieces[0].text == chunk.text:
                 if self._should_preserve_piece(pieces[0], chunk) or self._should_enrich_unchanged(
                     pieces[0],
@@ -173,7 +205,7 @@ class ChunkSplitter:
         profile: ChunkProfile,
         expected_profile: ExpectedContentProfile,
         domain_metadata: DomainMetadata,
-    ) -> list[SplitPiece]:
+    ) -> ContentListSplitResult:
         content_list_result = await self._chunks_from_content_list(
             chunk,
             profile,
@@ -181,7 +213,7 @@ class ChunkSplitter:
             domain_metadata,
         )
         if content_list_result is not None:
-            return content_list_result.pieces
+            return content_list_result
 
         sections = self._markdown_sections(chunk.text)
         title_sections, body_sections = self._split_title_sections(sections, chunk, profile)
@@ -201,14 +233,29 @@ class ChunkSplitter:
         )
         reference_units = self._reference_unit_sections(body_chunk, profile, domain_metadata)
         if reference_units:
-            return [*title_pieces, *reference_units]
+            return ContentListSplitResult(handled=False, pieces=[*title_pieces, *reference_units])
 
         pieces = [*title_sections, *self._pack_sections(body_sections, profile)]
-        return [
-            self._piece_from_parent(chunk, text, source_location=dict(chunk.source_location))
-            for text in pieces
-            if text.strip()
-        ]
+        return ContentListSplitResult(
+            handled=False,
+            pieces=[
+                self._piece_from_parent(chunk, text, source_location=dict(chunk.source_location))
+                for text in pieces
+                if text.strip()
+            ],
+        )
+
+    def _content_list_key(self, chunk: AdapterChunk) -> ContentListKey | None:
+        if chunk.metadata.get(MODAL_ROUTER_PROCESSED_FLAG) is True:
+            return None
+        parser_metadata = self._parser_metadata(chunk)
+        extract_dir = parser_metadata.get("artifact_extract_dir")
+        content_ref = parser_metadata.get("content_list_ref")
+        if not isinstance(extract_dir, str) or not isinstance(content_ref, str):
+            return None
+        if not extract_dir.strip() or not content_ref.strip():
+            return None
+        return ContentListKey(Path(extract_dir).resolve(), content_ref)
 
     async def _chunks_from_content_list(
         self,
@@ -318,14 +365,22 @@ class ChunkSplitter:
         current_page_start: int | None = None
         current_page_end: int | None = None
 
-        def merge_page(page: int | None) -> None:
+        def merge_page_range(page_start: int | None, page_end: int | None) -> None:
             nonlocal current_page_start, current_page_end
-            if page is None:
+            if page_start is None:
+                page_start = page_end
+            if page_end is None:
+                page_end = page_start
+            if page_start is None or page_end is None:
                 return
             current_page_start = (
-                page if current_page_start is None else min(current_page_start, page)
+                page_start
+                if current_page_start is None
+                else min(current_page_start, page_start)
             )
-            current_page_end = page if current_page_end is None else max(current_page_end, page)
+            current_page_end = (
+                page_end if current_page_end is None else max(current_page_end, page_end)
+            )
 
         def flush() -> None:
             nonlocal current_page_start, current_page_end
@@ -354,7 +409,10 @@ class ChunkSplitter:
                 if warnings:
                     flush()
                     current_warnings.extend(warnings)
-                    merge_page(block.page)
+                    merge_page_range(
+                        self._normalized_page_start(block),
+                        self._normalized_page_end(block),
+                    )
                     flush()
                 continue
 
@@ -373,10 +431,21 @@ class ChunkSplitter:
                 )
             )
             current_warnings.extend(warnings)
-            merge_page(block.page)
+            merge_page_range(
+                self._normalized_page_start(block),
+                self._normalized_page_end(block),
+            )
 
         flush()
         return groups
+
+    def _normalized_page_start(self, block: NormalizedBlock) -> int | None:
+        page_start = block.source_item.get("page_start")
+        return page_start if type(page_start) is int else block.page
+
+    def _normalized_page_end(self, block: NormalizedBlock) -> int | None:
+        page_end = block.source_item.get("page_end")
+        return page_end if type(page_end) is int else block.page
 
     def _starts_new_logical_section(self, text: str) -> bool:
         return bool(re.match(r"^#{1,4}\s+", text.strip()))
@@ -899,9 +968,11 @@ class ChunkSplitter:
         if not self._is_provenance_only_piece(piece):
             self._merge_parser_warnings(
                 metadata,
-                ChunkQualityGate(expected_profile, domain_metadata).warnings_for(
+                self._classified_quality_warnings(
                     piece.text,
                     metadata,
+                    expected_profile=expected_profile,
+                    domain_metadata=domain_metadata,
                 ),
             )
         parser_metadata = dict(self._parser_metadata(parent))
@@ -971,16 +1042,86 @@ class ChunkSplitter:
         expected_profile: ExpectedContentProfile,
         domain_metadata: DomainMetadata,
     ) -> bool:
-        if ChunkQualityGate(expected_profile, domain_metadata).warnings_for(
-            piece.text,
-            piece.metadata,
-        ):
+        warnings = [
+            *self._classified_existing_parser_warnings(
+                piece.metadata,
+                domain_metadata=domain_metadata,
+            ),
+            *self._classified_quality_warnings(
+                piece.text,
+                piece.metadata,
+                expected_profile=expected_profile,
+                domain_metadata=domain_metadata,
+            ),
+        ]
+        if self._warnings_require_chunk_enrichment(warnings):
             return True
         if profile.semantics is None:
             return False
         if profile.semantics.derive_reference_metadata(piece.text, piece.source_location):
             return True
         return self._document_title(piece.text, piece.source_location) is not None
+
+    def _classified_quality_warnings(
+        self,
+        text: str,
+        metadata: dict[str, Any],
+        *,
+        expected_profile: ExpectedContentProfile,
+        domain_metadata: DomainMetadata,
+    ) -> list[dict[str, Any]]:
+        warnings = ChunkQualityGate(expected_profile, domain_metadata).warnings_for(
+            text,
+            metadata,
+        )
+        existing_codes = self._existing_parser_warning_codes(metadata)
+        warnings = [
+            warning
+            for warning in warnings
+            if not isinstance(warning.get("code"), str) or warning["code"] not in existing_codes
+        ]
+        return ParserQualityIntelligentGate().classify_warnings(
+            warnings,
+            domain_metadata=domain_metadata,
+        )
+
+    def _classified_existing_parser_warnings(
+        self,
+        metadata: dict[str, Any],
+        *,
+        domain_metadata: DomainMetadata,
+    ) -> list[dict[str, Any]]:
+        extraction_quality = metadata.get("extraction_quality")
+        if not isinstance(extraction_quality, dict):
+            return []
+        warnings = extraction_quality.get("parser_warnings")
+        if not isinstance(warnings, list):
+            return []
+        return ParserQualityIntelligentGate().classify_warnings(
+            [warning for warning in warnings if isinstance(warning, dict)],
+            domain_metadata=domain_metadata,
+        )
+
+    def _existing_parser_warning_codes(self, metadata: dict[str, Any]) -> set[str]:
+        extraction_quality = metadata.get("extraction_quality")
+        if not isinstance(extraction_quality, dict):
+            return set()
+        warnings = extraction_quality.get("parser_warnings")
+        if not isinstance(warnings, list):
+            return set()
+        return {
+            code
+            for warning in warnings
+            if isinstance(warning, dict)
+            for code in (warning.get("code"),)
+            if isinstance(code, str) and code
+        }
+
+    def _warnings_require_chunk_enrichment(
+        self,
+        warnings: list[dict[str, Any]],
+    ) -> bool:
+        return any(not bool(warning.get("suppressed_from_counts")) for warning in warnings)
 
     def _enrich_metadata(
         self,
@@ -1010,7 +1151,7 @@ class ChunkSplitter:
         metadata: dict[str, Any],
         warnings: list[dict[str, Any]],
     ) -> None:
-        _shared_merge_parser_warnings(metadata, warnings)
+        DomainMetadataQualityGate.merge_parser_warnings(metadata, warnings)
 
     def _warning_only_piece(
         self,

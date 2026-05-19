@@ -91,6 +91,45 @@ async def test_semantic_page_boundary_does_not_stitch_complete_sentence():
     ]
 
 
+async def test_normalizer_respects_domain_disabled_page_boundary_stitching():
+    normalizer = MinerUContentNormalizer()
+    content_list = [
+        {"type": "text", "text": "This sentence continues", "page_idx": 0},
+        {"type": "text", "text": "on the next page", "page_idx": 1},
+    ]
+
+    blocks = await normalizer.normalize_content_list(
+        content_list,
+        domain_metadata=DomainMetadata(
+            custom_json={"page_boundary_stitching": {"enabled": False}}
+        ),
+        expected_profile=ExpectedContentProfile(),
+    )
+
+    assert [block.text for block in blocks] == [
+        "This sentence continues",
+        "on the next page",
+    ]
+
+
+async def test_normalizer_records_page_boundary_stitch_reason():
+    normalizer = MinerUContentNormalizer()
+    content_list = [
+        {"type": "text", "text": "This sentence continues", "page_idx": 0},
+        {"type": "text", "text": "on the next page", "page_idx": 1},
+    ]
+
+    blocks = await normalizer.normalize_content_list(
+        content_list,
+        domain_metadata=DomainMetadata(),
+        expected_profile=ExpectedContentProfile(),
+    )
+
+    assert len(blocks) == 1
+    assert blocks[0].source_item["semantic_stitch"] == "page_boundary"
+    assert blocks[0].source_item["stitch_decision"]["reason"] == "sentence_continuation"
+
+
 async def test_suspicious_arabic_prose_equation_is_quarantined_without_latex_insertion():
     data = [
         {"type": "text", "text": "Surah 1", "page_idx": 0},
