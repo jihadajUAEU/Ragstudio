@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import asyncio
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from time import perf_counter
 from typing import Any
 
@@ -18,9 +21,28 @@ _METADATA_PASS_NAMES = {
 }
 
 
+MetadataSearch = Callable[[ChunkSearchIn], Awaitable[Any]]
+
+
+@dataclass(frozen=True)
+class MetadataPassResult:
+    retrieval_pass: RetrievalPass
+    pass_query: str
+    started_at: float
+    search: Any
+
+
 class MetadataRetrievalService:
-    def __init__(self, chunk_service: Any):
+    def __init__(
+        self,
+        chunk_service: Any,
+        *,
+        parallel_search: MetadataSearch | None = None,
+        max_parallel_passes: int = 4,
+    ):
         self.chunk_service = chunk_service
+        self.parallel_search = parallel_search
+        self.max_parallel_passes = max(1, max_parallel_passes)
 
     async def retrieve(
         self,
@@ -35,45 +57,129 @@ class MetadataRetrievalService:
         pass_traces: list[dict[str, Any]] = []
         seen_chunk_ids: set[str] = set()
 
-        for retrieval_pass in self._metadata_passes(understanding):
-            pass_started = perf_counter()
-            pass_query = retrieval_pass.query or query
-            search = await self.chunk_service.search(
-                ChunkSearchIn(
-                    query=pass_query,
+        metadata_passes = self._metadata_passes(understanding)
+        if self.parallel_search is None or len(metadata_passes) <= 1:
+            for retrieval_pass in metadata_passes:
+                pass_result = await self._run_one_pass(
+                    query,
+                    retrieval_pass=retrieval_pass,
                     document_ids=document_ids,
                     variant_id=variant_id,
-                    limit=max(limit * retrieval_pass.limit_multiplier, limit),
-                    explain=True,
-                    include_neighbors=True,
+                    limit=limit,
+                    search=self.chunk_service.search,
                 )
-            )
-            pass_candidates: list[EvidenceCandidate] = []
-            for index, chunk in enumerate(search.items, start=1):
-                chunk_id = _chunk_id(chunk)
-                if chunk_id in seen_chunk_ids:
-                    continue
-                candidate = self._candidate_from_chunk(chunk, index, retrieval_pass)
-                if candidate.retrieval_pass != "reference_hypothesis":
-                    seen_chunk_ids.add(chunk_id)
-                pass_candidates.append(candidate)
+                if self._append_pass_result(
+                    pass_result,
+                    candidates=candidates,
+                    pass_traces=pass_traces,
+                    seen_chunk_ids=seen_chunk_ids,
+                ):
+                    break
+            return candidates, {"stage": "metadata_retrieval", "passes": pass_traces}
 
-            candidates.extend(pass_candidates)
-            pass_traces.append(
-                {
-                    "name": retrieval_pass.name,
-                    "query": pass_query,
-                    "candidate_count": len(pass_candidates),
-                    "latency_ms": _elapsed_ms(pass_started),
-                    "top_candidate_ids": [
-                        candidate.candidate_id for candidate in pass_candidates[:5]
-                    ],
-                }
-            )
-            if _has_direct_evidence_candidates(retrieval_pass, pass_candidates):
+        pass_results = await self._run_metadata_passes(
+            query,
+            retrieval_passes=metadata_passes,
+            document_ids=document_ids,
+            variant_id=variant_id,
+            limit=limit,
+        )
+        for pass_result in pass_results:
+            if self._append_pass_result(
+                pass_result,
+                candidates=candidates,
+                pass_traces=pass_traces,
+                seen_chunk_ids=seen_chunk_ids,
+            ):
                 break
 
         return candidates, {"stage": "metadata_retrieval", "passes": pass_traces}
+
+    async def _run_metadata_passes(
+        self,
+        query: str,
+        *,
+        retrieval_passes: list[RetrievalPass],
+        document_ids: list[str],
+        variant_id: str,
+        limit: int,
+    ) -> list[MetadataPassResult]:
+        semaphore = asyncio.Semaphore(self.max_parallel_passes)
+
+        async def run_limited(retrieval_pass: RetrievalPass) -> MetadataPassResult:
+            async with semaphore:
+                return await self._run_one_pass(
+                    query,
+                    retrieval_pass=retrieval_pass,
+                    document_ids=document_ids,
+                    variant_id=variant_id,
+                    limit=limit,
+                    search=self.parallel_search,
+                )
+
+        return list(await asyncio.gather(*(run_limited(item) for item in retrieval_passes)))
+
+    def _append_pass_result(
+        self,
+        pass_result: MetadataPassResult,
+        *,
+        candidates: list[EvidenceCandidate],
+        pass_traces: list[dict[str, Any]],
+        seen_chunk_ids: set[str],
+    ) -> bool:
+        retrieval_pass = pass_result.retrieval_pass
+        pass_candidates: list[EvidenceCandidate] = []
+        for index, chunk in enumerate(pass_result.search.items, start=1):
+            chunk_id = _chunk_id(chunk)
+            if chunk_id in seen_chunk_ids:
+                continue
+            candidate = self._candidate_from_chunk(chunk, index, retrieval_pass)
+            if candidate.retrieval_pass != "reference_hypothesis":
+                seen_chunk_ids.add(chunk_id)
+            pass_candidates.append(candidate)
+
+        candidates.extend(pass_candidates)
+        pass_traces.append(
+            {
+                "name": retrieval_pass.name,
+                "query": pass_result.pass_query,
+                "candidate_count": len(pass_candidates),
+                "latency_ms": _elapsed_ms(pass_result.started_at),
+                "top_candidate_ids": [
+                    candidate.candidate_id for candidate in pass_candidates[:5]
+                ],
+            }
+        )
+        return _has_direct_evidence_candidates(retrieval_pass, pass_candidates)
+
+    async def _run_one_pass(
+        self,
+        query: str,
+        *,
+        retrieval_pass: RetrievalPass,
+        document_ids: list[str],
+        variant_id: str,
+        limit: int,
+        search: MetadataSearch,
+    ) -> MetadataPassResult:
+        pass_started = perf_counter()
+        pass_query = retrieval_pass.query or query
+        result = await search(
+            ChunkSearchIn(
+                query=pass_query,
+                document_ids=document_ids,
+                variant_id=variant_id,
+                limit=max(limit * retrieval_pass.limit_multiplier, limit),
+                explain=True,
+                include_neighbors=True,
+            )
+        )
+        return MetadataPassResult(
+            retrieval_pass=retrieval_pass,
+            pass_query=pass_query,
+            started_at=pass_started,
+            search=result,
+        )
 
     def _metadata_passes(self, understanding: QueryUnderstanding) -> list[RetrievalPass]:
         return [

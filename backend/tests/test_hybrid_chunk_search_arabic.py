@@ -1,5 +1,13 @@
-from ragstudio.db.models import Chunk
-from ragstudio.services.hybrid_chunk_search import HybridChunkSearch
+from types import SimpleNamespace
+
+from ragstudio.services.hybrid_chunk_search import (
+    HybridChunkSearch,
+    _arabic_phrase_boundary_pattern,
+)
+
+
+class Chunk(SimpleNamespace):
+    pass
 
 
 def test_arabic_query_matches_diacritized_chunk_text():
@@ -143,3 +151,27 @@ def test_cross_reference_only_inline_reference_does_not_get_reference_exact_boos
 
     assert inline_score.breakdown["reference_exact"] == 0.0
     assert primary_score.breakdown["reference_exact"] == 100.0
+
+
+def test_arabic_phrase_boundary_pattern_is_cached():
+    first = _arabic_phrase_boundary_pattern("\u0648\u062d\u0646\u0627\u0646\u0627")
+    second = _arabic_phrase_boundary_pattern("\u0648\u062d\u0646\u0627\u0646\u0627")
+
+    assert first is second
+
+
+def test_compiled_answer_bearing_phrase_patterns_preserve_phrase_boost():
+    chunk = Chunk(
+        id="chunk-phrase",
+        document_id="doc-1",
+        text="This section is translated as guide us to the straight path.",
+        source_location={"page": 1},
+        metadata_json={},
+    )
+
+    score = HybridChunkSearch().score(
+        'Which verse is translated as "guide us to the straight path"?',
+        chunk,
+    )
+
+    assert score.breakdown["exact_phrase"] >= 24.0

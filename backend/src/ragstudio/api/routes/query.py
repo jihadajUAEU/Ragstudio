@@ -19,6 +19,7 @@ async def query(
             session,
             request.app.state.settings.data_dir,
             settings=request.app.state.settings,
+            session_factory=request.app.state.session_factory,
         ).run_query(payload)
     except QueryResourceNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc

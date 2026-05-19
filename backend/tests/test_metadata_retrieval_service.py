@@ -1,3 +1,6 @@
+import asyncio
+from time import perf_counter
+
 import pytest
 from ragstudio.db.models import Chunk, Document
 from ragstudio.schemas.chunks import ChunkOut
@@ -145,11 +148,169 @@ class HypothesisReferenceChunkService:
         return type("SearchResult", (), {"items": [], "total": 0})()
 
 
+class SlowMetadataPassChunkService:
+    def __init__(self):
+        self.started: list[str] = []
+        self.finished: list[str] = []
+
+    async def search(self, search_in):
+        self.started.append(search_in.query)
+        await asyncio.sleep(0.05)
+        self.finished.append(search_in.query)
+        return type(
+            "SearchResult",
+            (),
+            {
+                "items": [
+                    ChunkOut(
+                        id=f"chunk-{search_in.query}",
+                        document_id="doc-1",
+                        text=f"Result for {search_in.query}",
+                        source_location={},
+                        metadata={"score": 10.0},
+                    )
+                ],
+                "total": 1,
+            },
+        )()
+
+
+class DirectEvidenceParallelChunkService:
+    def __init__(self):
+        self.calls: list[str] = []
+
+    async def search(self, search_in):
+        self.calls.append(search_in.query)
+        if search_in.query == "direct":
+            items = [
+                ChunkOut(
+                    id="direct",
+                    document_id="doc-1",
+                    text="Direct evidence",
+                    source_location={},
+                    metadata={"score": 100.0},
+                )
+            ]
+        else:
+            items = [
+                ChunkOut(
+                    id="later",
+                    document_id="doc-1",
+                    text="Later evidence",
+                    source_location={},
+                    metadata={"score": 50.0},
+                )
+            ]
+        return type("SearchResult", (), {"items": items, "total": len(items)})()
+
+
 class LegacyLexicalExpandedPass:
     name = "lexical_expanded_token"
     query = "حنانا"
     limit_multiplier = 1
     direct_evidence = True
+
+
+@pytest.mark.asyncio
+async def test_metadata_service_runs_non_blocking_passes_concurrently():
+    chunk_service = SlowMetadataPassChunkService()
+    understanding = QueryUnderstanding(
+        query="query",
+        intent="mixed",
+        answer_type="text",
+        retrieval_passes=[
+            RetrievalPass("phrase_exact", "phrase"),
+            RetrievalPass("semantic_metadata", "semantic"),
+        ],
+    )
+
+    started = perf_counter()
+    candidates, trace = await MetadataRetrievalService(
+        chunk_service,
+        parallel_search=chunk_service.search,
+    ).retrieve(
+        "query",
+        understanding=understanding,
+        document_ids=["doc-1"],
+        variant_id="variant-1",
+        limit=5,
+    )
+    elapsed = perf_counter() - started
+
+    assert elapsed < 0.09
+    assert chunk_service.started == ["phrase", "semantic"]
+    assert sorted(chunk_service.finished) == ["phrase", "semantic"]
+    assert [candidate.chunk_id for candidate in candidates] == [
+        "chunk-phrase",
+        "chunk-semantic",
+    ]
+    assert [item["name"] for item in trace["passes"]] == [
+        "phrase_exact",
+        "semantic_metadata",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_metadata_service_uses_sequential_search_without_parallel_callable():
+    chunk_service = SlowMetadataPassChunkService()
+    understanding = QueryUnderstanding(
+        query="query",
+        intent="mixed",
+        answer_type="text",
+        retrieval_passes=[
+            RetrievalPass("phrase_exact", "phrase"),
+            RetrievalPass("semantic_metadata", "semantic"),
+        ],
+    )
+
+    started = perf_counter()
+    candidates, trace = await MetadataRetrievalService(chunk_service).retrieve(
+        "query",
+        understanding=understanding,
+        document_ids=["doc-1"],
+        variant_id="variant-1",
+        limit=5,
+    )
+    elapsed = perf_counter() - started
+
+    assert elapsed >= 0.09
+    assert [candidate.chunk_id for candidate in candidates] == [
+        "chunk-phrase",
+        "chunk-semantic",
+    ]
+    assert [item["name"] for item in trace["passes"]] == [
+        "phrase_exact",
+        "semantic_metadata",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_metadata_service_replays_parallel_results_in_pass_order_and_stops_trace():
+    chunk_service = DirectEvidenceParallelChunkService()
+    understanding = QueryUnderstanding(
+        query="query",
+        intent="mixed",
+        answer_type="text",
+        retrieval_passes=[
+            RetrievalPass("phrase_exact", "direct", direct_evidence=True),
+            RetrievalPass("semantic_metadata", "later"),
+        ],
+    )
+
+    candidates, trace = await MetadataRetrievalService(
+        chunk_service,
+        parallel_search=chunk_service.search,
+    ).retrieve(
+        "query",
+        understanding=understanding,
+        document_ids=["doc-1"],
+        variant_id="variant-1",
+        limit=5,
+    )
+
+    assert sorted(chunk_service.calls) == ["direct", "later"]
+    assert [candidate.chunk_id for candidate in candidates] == ["direct"]
+    assert [item["name"] for item in trace["passes"]] == ["phrase_exact"]
 
 
 @pytest.mark.asyncio

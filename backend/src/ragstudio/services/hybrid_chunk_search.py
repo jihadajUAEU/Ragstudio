@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Any
+from functools import lru_cache
+from typing import TYPE_CHECKING, Any
 
-from ragstudio.db.models import Chunk
 from ragstudio.schemas.parsing import DomainMetadata
 from ragstudio.services.arabic_text import (
     arabic_query_variants,
@@ -13,6 +13,9 @@ from ragstudio.services.arabic_text import (
 )
 from ragstudio.services.reference_metadata import ReferenceSemantics
 from ragstudio.services.retrieval_explainer import build_retrieval_explain
+
+if TYPE_CHECKING:
+    from ragstudio.db.models import Chunk
 
 _ENGLISH_STOPWORDS = {
     "a",
@@ -46,6 +49,20 @@ _ENGLISH_STOPWORDS = {
     "whose",
     "with",
 }
+
+_ARABIC_RE = re.compile(r"[\u0600-\u06FF]")
+_COUNT_QUERY_RE = re.compile(r"\b(how many|count|number of|total)\b")
+_NUMBER_RE = re.compile(r"\b\d{2,}\b")
+_GUIDE_US_RE = re.compile(r"\bguide\s+us\b")
+_QUOTED_PHRASE_RE = re.compile(r'"([^"]{8,160})"')
+_ANSWER_BEARING_PATTERNS = (
+    re.compile(r"\b(?:that|which)\s+says?\s+(.+?)(?:[.?!]|$)"),
+    re.compile(r"\bsays?\s+(.+?)(?:[.?!]|$)"),
+    re.compile(r"\btranslated\s+as\s+(.+?)(?:[.?!]|$)"),
+)
+_LEADING_PHRASE_NOISE_RE = re.compile(r"^(?:that|which|the verse)\s+")
+_SPACE_RE = re.compile(r"\s+")
+_TERM_RE = re.compile(r"[\w\u0600-\u06FF]+", flags=re.UNICODE)
 
 
 @dataclass(frozen=True)
@@ -270,11 +287,7 @@ class HybridChunkSearch:
         return 0.0
 
     def _has_arabic_phrase_boundary(self, searchable: str, variant: str) -> bool:
-        escaped = re.escape(variant)
-        return (
-            re.search(rf"(?<![\u0600-\u06FF]){escaped}(?![\u0600-\u06FF])", searchable)
-            is not None
-        )
+        return _arabic_phrase_boundary_pattern(variant).search(searchable) is not None
 
     def _answer_bearing_count_boost(
         self,
@@ -282,10 +295,10 @@ class HybridChunkSearch:
         chunk_text: str,
         metadata: dict[str, Any],
     ) -> float:
-        if not re.search(r"\b(how many|count|number of|total)\b", query_text):
+        if not _COUNT_QUERY_RE.search(query_text):
             return 0.0
         combined = f"{chunk_text} {self._metadata_title(metadata)}".casefold()
-        if not re.search(r"\b\d{2,}\b", combined):
+        if not _NUMBER_RE.search(combined):
             return 0.0
         if not any(term in combined for term in ("hadith", "collection", "bukhari")):
             return 0.0
@@ -302,7 +315,7 @@ class HybridChunkSearch:
 
         if "straight path" not in query_text or "straight path" not in chunk_text:
             return 0.0
-        if re.search(r"\bguide\s+us\b", chunk_text):
+        if _GUIDE_US_RE.search(chunk_text):
             return 40.0
         return 0.0
 
@@ -317,23 +330,19 @@ class HybridChunkSearch:
 
     def _answer_bearing_phrases(self, query_text: str) -> list[str]:
         phrases: list[str] = []
-        for match in re.finditer(r'"([^"]{8,160})"', query_text):
+        for match in _QUOTED_PHRASE_RE.finditer(query_text):
             phrases.append(match.group(1).strip())
 
-        for pattern in (
-            r"\b(?:that|which)\s+says?\s+(.+?)(?:[.?!]|$)",
-            r"\bsays?\s+(.+?)(?:[.?!]|$)",
-            r"\btranslated\s+as\s+(.+?)(?:[.?!]|$)",
-        ):
-            for match in re.finditer(pattern, query_text):
+        for pattern in _ANSWER_BEARING_PATTERNS:
+            for match in pattern.finditer(query_text):
                 phrase = match.group(1).strip()
-                phrase = re.sub(r"^(?:that|which|the verse)\s+", "", phrase)
+                phrase = _LEADING_PHRASE_NOISE_RE.sub("", phrase)
                 if phrase:
                     phrases.append(phrase)
 
         normalized: list[str] = []
         for phrase in phrases:
-            phrase = re.sub(r"\s+", " ", phrase).strip().casefold()
+            phrase = _SPACE_RE.sub(" ", phrase).strip().casefold()
             if len(self._terms(phrase)) >= 4 and phrase not in normalized:
                 normalized.append(phrase)
         return normalized
@@ -348,7 +357,7 @@ class HybridChunkSearch:
 
     def _terms(self, value: str) -> set[str]:
         terms: set[str] = set()
-        for match in re.finditer(r"[\w\u0600-\u06FF]+", value, flags=re.UNICODE):
+        for match in _TERM_RE.finditer(value):
             term = match.group(0).lower()
             if term in _ENGLISH_STOPWORDS:
                 continue
@@ -373,5 +382,11 @@ class HybridChunkSearch:
         return None
 
 
+@lru_cache(maxsize=2048)
+def _arabic_phrase_boundary_pattern(variant: str) -> re.Pattern[str]:
+    escaped = re.escape(variant)
+    return re.compile(rf"(?<![\u0600-\u06FF]){escaped}(?![\u0600-\u06FF])")
+
+
 def _contains_arabic(value: str) -> bool:
-    return re.search(r"[\u0600-\u06FF]", value) is not None
+    return _ARABIC_RE.search(value) is not None
