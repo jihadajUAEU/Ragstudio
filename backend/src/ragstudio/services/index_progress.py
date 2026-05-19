@@ -8,6 +8,7 @@ class IndexStage(StrEnum):
     QUEUED = "queued"
     MINERU_PARSING = "mineru_parsing"
     MINERU_VALIDATED = "mineru_validated"
+    CHUNKS_PERSISTING = "chunks_persisting"
     CHUNKS_PERSISTED = "chunks_persisted"
     SEARCH_READY = "search_ready"
     RUNTIME_ENRICHING = "runtime_enriching"
@@ -21,6 +22,7 @@ _STAGE_PROGRESS = {
     IndexStage.QUEUED: 1,
     IndexStage.MINERU_PARSING: 25,
     IndexStage.MINERU_VALIDATED: 45,
+    IndexStage.CHUNKS_PERSISTING: 55,
     IndexStage.CHUNKS_PERSISTED: 65,
     IndexStage.SEARCH_READY: 75,
     IndexStage.RUNTIME_ENRICHING: 85,
@@ -34,6 +36,7 @@ _STAGE_LABELS = {
     IndexStage.QUEUED: "Queued",
     IndexStage.MINERU_PARSING: "MinerU parsing",
     IndexStage.MINERU_VALIDATED: "MinerU validated",
+    IndexStage.CHUNKS_PERSISTING: "Persisting chunks",
     IndexStage.CHUNKS_PERSISTED: "Chunks persisted",
     IndexStage.SEARCH_READY: "Search ready",
     IndexStage.RUNTIME_ENRICHING: "Runtime enrichment",
