@@ -11,6 +11,7 @@ from typing import Any
 from ragstudio.schemas.parsing import DomainMetadata, ParserMode
 from ragstudio.services.adapter import AdapterChunk
 from ragstudio.services.chunk_quality_gate import ChunkQualityGate
+from ragstudio.services.canonical_assembly import CanonicalAssemblyStrategy
 from ragstudio.services.domain_metadata_quality_gate import DomainMetadataQualityGate
 from ragstudio.services.modal_preprocessor import MODAL_ROUTER_PROCESSED_FLAG
 from ragstudio.services.parser_normalization import (
@@ -89,6 +90,7 @@ class ChunkSplitter:
         self.vision_recovery_config = vision_recovery_config
         self.content_normalizer = MinerUContentNormalizer()
         self.reference_unit_assembler = ReferenceUnitAssembler()
+        self.canonical_assembly = CanonicalAssemblyStrategy()
 
     def split(
         self,
@@ -299,6 +301,7 @@ class ChunkSplitter:
             profile,
             normalized_blocks,
             content_ref=content_ref,
+            domain_metadata=domain_metadata,
         )
         if canonical_pieces:
             return ContentListSplitResult(handled=True, pieces=canonical_pieces)
@@ -457,13 +460,33 @@ class ChunkSplitter:
         normalized_blocks: list[NormalizedBlock],
         *,
         content_ref: str,
+        domain_metadata: DomainMetadata,
     ) -> list[SplitPiece]:
         semantics = profile.semantics
         if semantics is None or not semantics.canonical_units_enabled:
             return []
 
+        ordered_blocks = self._canonical_block_order(normalized_blocks)
+        strategy_units = self.canonical_assembly.assemble(
+            [block for _, block in ordered_blocks],
+            domain_metadata=domain_metadata,
+            content_list_ref=content_ref,
+            block_indices=[index for index, _ in ordered_blocks],
+            parent_metadata=dict(chunk.metadata),
+            parent_source_location=dict(chunk.source_location),
+            runtime_source_id=chunk.runtime_source_id,
+            content_type=chunk.content_type,
+            preview_ref=chunk.preview_ref,
+            max_page_gap=semantics.max_page_gap,
+            preserve_original_blocks=semantics.preserve_original_blocks,
+            block_preview_chars=semantics.block_preview_chars,
+            store_text_hash=semantics.store_text_hash,
+        )
+        if strategy_units:
+            return [self._piece_from_assembled(unit) for unit in strategy_units]
+
         blocks: list[ReferenceSourceBlock] = []
-        for index, block in self._canonical_block_order(normalized_blocks):
+        for index, block in ordered_blocks:
             warning_metadata = tuple(block.warning_metadata())
             warning_codes = tuple(
                 warning["code"]

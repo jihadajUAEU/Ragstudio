@@ -1359,18 +1359,18 @@ interface ParserQualityExample {
 }
 
 function ParserQualityDetails({ groups }: { groups: ParserQualityGroup[] }) {
-  const totalChunks = groups.reduce((total, group) => total + group.chunkCount, 0);
+  const totalWarnings = groups.reduce((total, group) => total + group.warningCount, 0);
 
   return (
     <details className="rounded-md border border-[#ead9a7] bg-[#fffaf0] p-2 text-[#5f4600]">
       <summary className="cursor-pointer font-medium">
-        Parser warning details · {groups.length} types · {totalChunks} chunks
+        Parser warning details · {groups.length} types · {totalWarnings} grouped warnings
       </summary>
       <div className="mt-2 max-h-72 space-y-3 overflow-auto pr-1">
         {groups.map((group) => (
           <div key={group.code} className="space-y-1 border-t border-[#ead9a7] pt-2 first:border-t-0 first:pt-0">
             <p className="font-medium text-[#3a2f12]">
-              {group.code} · {group.chunkCount} chunks · {group.warningCount} warnings
+              {group.code} · {group.chunkCount} grouped chunk rows · {group.warningCount} warnings
             </p>
             {group.message ? <p>{group.message}</p> : null}
             <ParserQualityBreakdown label="Block types" values={group.blockTypes} />
@@ -1603,10 +1603,13 @@ function QualityWarningsPanel({
                 </button>
               ))
             ) : (
-              <span className="text-[#62717a]">No parser warning rows found.</span>
+              <span className="text-[#62717a]">No counted parser warnings.</span>
             )}
             <span className="rounded-md border border-[#d6dde1] bg-white px-2 py-1 text-[#3a4a53]">
-              affected_chunks={details.affected_chunks}
+              counted_affected_chunks={details.affected_chunks}
+            </span>
+            <span className="rounded-md border border-[#d6dde1] bg-white px-2 py-1 text-[#3a4a53]">
+              display_rows={details.total}
             </span>
             {details.truncated ? (
               <span className="rounded-md border border-[#d6dde1] bg-white px-2 py-1 text-[#3a4a53]">

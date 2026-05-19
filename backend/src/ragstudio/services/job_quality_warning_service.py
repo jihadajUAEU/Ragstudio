@@ -305,8 +305,6 @@ class JobQualityWarningService:
     ) -> dict[str, Any]:
         warning_counts = self._repair_warning_counts(items, parser_quality, index_quality_report)
         affected_chunks = self._affected_chunks(parser_quality, items)
-        if affected_chunks == 0 and warning_counts:
-            affected_chunks = sum(warning_counts.values())
         steps = [
             step
             for step in (
@@ -1111,7 +1109,7 @@ class JobQualityWarningService:
     ) -> dict[str, int]:
         counts: dict[str, int] = {}
         for item in items:
-            if bool(item.warning.get("suppressed_from_counts")):
+            if not self._is_counted_warning(item.warning):
                 continue
             if item.code:
                 counts[item.code] = counts.get(item.code, 0) + 1
@@ -1122,16 +1120,24 @@ class JobQualityWarningService:
         parser_quality: dict[str, Any],
         items: list[ParserQualityWarningOut],
     ) -> int:
+        if items:
+            return len(
+                {
+                    item.chunk_id
+                    for item in items
+                    if self._is_counted_warning(item.warning)
+                }
+            )
         affected = parser_quality.get("affected_chunks")
         if isinstance(affected, int):
             return affected
-        return len(
-            {
-                item.chunk_id
-                for item in items
-                if not bool(item.warning.get("suppressed_from_counts"))
-            }
-        )
+        return 0
+
+    def _is_counted_warning(self, warning: dict[str, Any]) -> bool:
+        if bool(warning.get("suppressed_from_counts")):
+            return False
+        severity = warning.get("severity")
+        return not (isinstance(severity, str) and severity.lower() == "info")
 
     def _dict_value(self, value: Any) -> dict[str, Any]:
         return dict(value) if isinstance(value, dict) else {}

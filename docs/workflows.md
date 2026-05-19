@@ -173,6 +173,14 @@ Common warning codes:
   warning. `optional_scripts` are enrichment signals and do not warn when absent
   if `missing_optional_script_action` is `no_warning`.
 
+Domain-aware orchestration runs before reference quality validation for
+configured canonical-unit domains. It can re-associate parser blocks when layout
+evidence shows that a reference header, body text, translation, or recovered
+layout block belongs to the same canonical unit. A warning is cleared only after
+the assembled unit passes the same quality gate that produced the warning. If
+required evidence is still missing, the warning remains with a more specific
+reason.
+
 For commentary, translation, legal analysis, manuals, and other secondary-source
 documents, autosuggest can mark a primary-source script as optional. For example,
 an English Tafseer organized by `Verse 18:30` may require Latin text for

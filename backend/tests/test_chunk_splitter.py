@@ -1014,6 +1014,99 @@ def test_chunk_splitter_builds_canonical_hadith_units_from_header_body_blocks(
     assert parser_warning_codes(header_only) == []
 
 
+def test_chunk_splitter_uses_layout_aware_hadith_strategy_for_late_header(
+    tmp_path: Path,
+):
+    arabic_body = "\u0642\u0627\u0644 \u0631\u0633\u0648\u0644 \u0627\u0644\u0644\u0647 \u0635\u0644\u0649 \u0627\u0644\u0644\u0647 \u0639\u0644\u064a\u0647 \u0648\u0633\u0644\u0645"
+    content_list = tmp_path / "source_content_list.json"
+    content_list.write_text(
+        json.dumps(
+            [
+                {"type": "text", "text": arabic_body, "page_idx": 126},
+                {
+                    "type": "text",
+                    "text": "It was narrated that Anas said...",
+                    "page_idx": 126,
+                },
+                {
+                    "type": "header",
+                    "recovered_text": "Book 2, Hadith 29 - Grade: Sahih",
+                    "page_idx": 126,
+                },
+            ],
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    chunk = AdapterChunk(
+        text="fallback markdown should not be used",
+        source_location={"artifact": "source/auto/source.md"},
+        metadata={
+            "parser_metadata": {
+                "backend": "mineru",
+                "artifact_extract_dir": str(tmp_path),
+                "content_list_ref": "source_content_list.json",
+                "chunk_index": 0,
+            }
+        },
+    )
+    metadata = DomainMetadata(
+        domain="hadith",
+        document_type="collection",
+        tags=["hadith", "arabic", "english"],
+        script="arabic",
+        custom_json={
+            "reference_schema": {
+                "type": "book_hadith",
+                "canonical_ref_template": "book:{book}:hadith:{hadith}",
+            },
+            "chunking": {"unit": "hadith", "preserve_parallel_text": True},
+            "reference_resolution": {
+                "enabled": True,
+                "build_canonical_units": True,
+                "carry_forward_body_blocks": True,
+                "header_only_policy": "provenance_only",
+                "max_page_gap": 1,
+            },
+            "provenance": {
+                "preserve_original_blocks": True,
+                "store_text_hash": True,
+            },
+        },
+    )
+
+    split = ChunkSplitter(max_words=1500).split(
+        [chunk],
+        domain_metadata=metadata,
+        parser_mode="mineru_strict",
+    )
+
+    assert len(split) == 1
+    canonical = split[0]
+    assert canonical.preview_ref == "book:2:hadith:29"
+    assert "Book 2, Hadith 29" in canonical.text
+    assert arabic_body in canonical.text
+    assert "It was narrated" in canonical.text
+    assert canonical.metadata["canonical_reference_unit"]["assembly_strategy"] == (
+        "domain_evidence_graph"
+    )
+    warnings = parser_warnings(canonical)
+    assert [warning["code"] for warning in warnings] == [
+        "recovered_text_from_disallowed_block"
+    ]
+    provenance_blocks = canonical.metadata["provenance"]["blocks"]
+    assert [block["role"] for block in provenance_blocks] == [
+        "reference_header",
+        "reference_body",
+        "reference_continuation",
+    ]
+    assert provenance_blocks[0]["warning_codes"] == [
+        "recovered_text_from_disallowed_block"
+    ]
+    assert all("text_hash" in block for block in provenance_blocks)
+    assert "reference_unit_missing_expected_script" not in parser_warning_codes(canonical)
+
+
 def test_chunk_splitter_preserves_unassigned_canonical_blocks_as_provenance(
     tmp_path: Path,
 ):

@@ -781,11 +781,13 @@ describe("DocumentsPage", () => {
     ).toBeVisible();
     expect(screen.getByText("Graph extraction skipped because Neo4j is unavailable")).toBeVisible();
     expect(screen.getByText("Some chunk metadata could not be normalized")).toBeVisible();
-    const parserDetails = screen.getByText("Parser warning details · 1 types · 2847 chunks");
+    const parserDetails = screen.getByText("Parser warning details · 1 types · 2847 grouped warnings");
     expect(parserDetails).toBeVisible();
     fireEvent.click(parserDetails);
     expect(
-      screen.getByText("reference_unit_missing_expected_script · 2847 chunks · 2847 warnings"),
+      screen.getByText(
+        "reference_unit_missing_expected_script · 2847 grouped chunk rows · 2847 warnings",
+      ),
     ).toBeVisible();
     expect(screen.getByText("Expected scripts: arabic=2847")).toBeVisible();
     expect(screen.getByText("References: 19:13")).toBeVisible();
@@ -914,6 +916,8 @@ describe("DocumentsPage", () => {
     });
     expect(await screen.findByText("Warning details")).toBeVisible();
     expect(screen.getByText("disallowed_block_type_quarantined=176")).toBeVisible();
+    expect(screen.getByText("counted_affected_chunks=176")).toBeVisible();
+    expect(screen.getByText("display_rows=176")).toBeVisible();
     expect(
       screen.getByText("Index quality: Passed With Warnings · 2 missing expected script · 1 unresolved references"),
     ).toBeVisible();
@@ -951,6 +955,84 @@ describe("DocumentsPage", () => {
     expect(
       screen.getByText("AI suggestion: Preserve Arabic and English hadith text in the same reference unit."),
     ).toBeVisible();
+  });
+
+  it("keeps audit warning rows visible without counted warning chips", async () => {
+    vi.mocked(apiClient.documents).mockResolvedValue({
+      items: [
+        {
+          id: "doc-1",
+          filename: "quran.pdf",
+          content_type: "application/pdf",
+          status: "succeeded",
+          sha256: "sha-1",
+        },
+      ],
+      total: 1,
+    });
+    vi.mocked(apiClient.jobs).mockResolvedValue({
+      items: [
+        {
+          ...jobDefaults,
+          id: "job-1",
+          type: "index_document",
+          status: "succeeded",
+          target_id: "doc-1",
+          progress: 100,
+          logs: ["Parser quality warnings were audited"],
+          result: {
+            warnings: ["Parser quality warnings were audited"],
+          },
+        },
+      ],
+      total: 1,
+    });
+    vi.mocked(apiClient.jobQualityWarnings).mockResolvedValue({
+      job_id: "job-1",
+      document_id: "doc-1",
+      parser_quality: { warning_counts: {}, affected_chunks: 0 },
+      index_quality_report: null,
+      job_warnings: [],
+      warning_counts: {},
+      affected_chunks: 0,
+      total: 1,
+      offset: 0,
+      limit: 5000,
+      truncated: false,
+      items: [
+        {
+          chunk_id: "chunk-audit-1",
+          chunk_preview: "Audit-only recovered parser text.",
+          source_location: { page: 12 },
+          parser_metadata: {},
+          reference_metadata: null,
+          code: "recovered_text_from_misclassified_block",
+          message: "Used parser-provided recovered text.",
+          block_type: "equation",
+          page: 12,
+          warning: {
+            code: "recovered_text_from_misclassified_block",
+            message: "Used parser-provided recovered text.",
+            severity: "info",
+            quality_gate_action: "accepted_recovery",
+          },
+        },
+      ],
+    });
+
+    renderDocumentsPage();
+    openJobsWarningsTab();
+
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: /inspect warning details for index quran\.pdf/i,
+      }),
+    );
+
+    expect(await screen.findByText("No counted parser warnings.")).toBeVisible();
+    expect(screen.getByText("counted_affected_chunks=0")).toBeVisible();
+    expect(screen.getByText("display_rows=1")).toBeVisible();
+    expect(screen.getByText("Audit-only recovered parser text.")).toBeVisible();
   });
 
   it("polls jobs and documents while work is active", async () => {

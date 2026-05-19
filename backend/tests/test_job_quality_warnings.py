@@ -199,6 +199,141 @@ async def test_job_quality_warnings_keeps_suppressed_recovery_visible_but_uncoun
 
 
 @pytest.mark.asyncio
+async def test_job_quality_warnings_keeps_info_severity_visible_but_uncounted(client):
+    app = client._transport.app
+    audit_warning = {
+        "code": "optional_script_observed",
+        "message": "Optional Arabic script was observed for audit only.",
+        "severity": "info",
+        "quality_gate_action": "audit",
+    }
+
+    async with app.state.session_factory() as session:
+        document = Document(
+            id="doc-quality-audit-info",
+            filename="quality-audit-info.pdf",
+            content_type="application/pdf",
+            sha256="quality-audit-info-sha",
+            artifact_path=str(app.state.settings.data_dir / "quality-audit-info.pdf"),
+            status=StageStatus.SUCCEEDED.value,
+        )
+        session.add(document)
+        session.add(
+            Job(
+                id="job-quality-audit-info",
+                type="index_document",
+                target_id=document.id,
+                status=StageStatus.SUCCEEDED.value,
+                progress=100,
+                logs=[],
+                result={},
+            )
+        )
+        session.add(
+            Chunk(
+                id="chunk-quality-audit-info",
+                document_id=document.id,
+                text="Audit-only optional script evidence.",
+                source_location={"page": 12},
+                extraction_quality={"parser_warnings": [audit_warning]},
+                metadata_json={"extraction_quality": {"parser_warnings": [audit_warning]}},
+            )
+        )
+        await session.commit()
+
+    response = await client.get("/api/jobs/job-quality-audit-info/quality-warnings")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["warning_counts"] == {}
+    assert payload["affected_chunks"] == 0
+    assert payload["total"] == 1
+    assert payload["items"][0]["code"] == "optional_script_observed"
+
+
+@pytest.mark.asyncio
+async def test_fix_job_quality_warnings_does_not_sum_warning_counts_as_affected_chunks(
+    client,
+    monkeypatch,
+):
+    app = client._transport.app
+    parser_warnings = [
+        {
+            "code": "reference_unit_missing_expected_script",
+            "message": "Expected Arabic text in reference unit.",
+        },
+        {
+            "code": "reference_unit_unresolved",
+            "message": "Could not tie this chunk to one reference.",
+        },
+    ]
+
+    async def fake_ai_repair_suggestion(
+        self,
+        repair_plan,
+        *,
+        options,
+        settings,
+    ):
+        return {"status": "skipped", "reason": "test"}
+
+    monkeypatch.setattr(
+        JobQualityWarningService,
+        "_ai_repair_suggestion",
+        fake_ai_repair_suggestion,
+    )
+
+    async with app.state.session_factory() as session:
+        document = Document(
+            id="doc-quality-warning-overlap",
+            filename="quality-overlap.pdf",
+            content_type="application/pdf",
+            sha256="quality-warning-overlap-sha",
+            artifact_path=str(app.state.settings.data_dir / "quality-overlap.pdf"),
+            status=StageStatus.SUCCEEDED.value,
+        )
+        session.add(document)
+        session.add(
+            Job(
+                id="job-quality-warning-overlap",
+                type="index_document",
+                target_id=document.id,
+                status=StageStatus.SUCCEEDED.value,
+                progress=100,
+                logs=[],
+                result={
+                    "document_id": document.id,
+                    "index_options": {"parser_mode": "mineru_strict", "domain_metadata": {}},
+                },
+                job_options={"parser_mode": "mineru_strict", "domain_metadata": {}},
+            )
+        )
+        session.add(
+            Chunk(
+                id="chunk-warning-overlap",
+                document_id=document.id,
+                text="English-only reference continuation.",
+                source_location={"page": 8},
+                extraction_quality={"parser_warnings": parser_warnings},
+                metadata_json={"extraction_quality": {"parser_warnings": parser_warnings}},
+            )
+        )
+        await session.commit()
+
+    response = await client.post(
+        "/api/jobs/job-quality-warning-overlap/quality-warnings/fix"
+    )
+
+    assert response.status_code == 202
+    repair_plan = response.json()["repair_plan"]
+    assert repair_plan["warning_counts"] == {
+        "reference_unit_missing_expected_script": 1,
+        "reference_unit_unresolved": 1,
+    }
+    assert repair_plan["affected_chunks"] == 1
+
+
+@pytest.mark.asyncio
 async def test_job_quality_warnings_reads_index_report_from_existing_index_record(client):
     app = client._transport.app
 
