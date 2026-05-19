@@ -612,7 +612,7 @@ async def test_reindex_document_applies_modal_preprocessor(session, app, tmp_pat
                 llm_model="gpt-4o",
                 embedding_model="text-embedding-3-large",
                 storage_backend="postgres_pgvector_neo4j",
-                runtime_mode="native",
+                runtime_mode="runtime",
                 mineru_enabled=True,
                 mineru_base_url="http://mineru.test",
             ),
@@ -654,6 +654,136 @@ async def test_reindex_document_applies_modal_preprocessor(session, app, tmp_pat
     assert first_chunk.metadata["page"] == 1
     assert first_chunk.source_location["page_start"] == 1
     assert first_chunk.source_location["page_end"] == 1
+
+
+@pytest.mark.asyncio
+async def test_reindex_document_assembles_canonical_references_before_modal_preprocessing(
+    session,
+    app,
+    tmp_path,
+):
+    arabic_body = "\u0642\u0627\u0644 \u0631\u0633\u0648\u0644 \u0627\u0644\u0644\u0647"
+    content_list = tmp_path / "source_content_list.json"
+    content_list.write_text(
+        json.dumps(
+            [
+                {"type": "text", "text": "Sunan Ibn Majah", "page_idx": 0},
+                {"type": "text", "text": "Book 1, Hadith 1", "page_idx": 1},
+                {"type": "text", "text": arabic_body, "page_idx": 1},
+                {
+                    "type": "text",
+                    "text": "The Messenger of Allah said a short narration.",
+                    "page_idx": 1,
+                },
+                {"type": "text", "text": "Book 1, Hadith 2", "page_idx": 1},
+            ],
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    artifact_path = tmp_path / "hadith.pdf"
+    artifact_path.write_bytes(b"%PDF-1.4\n")
+
+    document = Document(
+        id="doc-canonical-lifecycle",
+        filename="hadith.pdf",
+        content_type="application/pdf",
+        artifact_path=str(artifact_path),
+        sha256="canonical-lifecycle",
+        status=StageStatus.SUCCEEDED.value,
+    )
+    session.add_all(
+        [
+            SettingsProfile(
+                id="default",
+                provider="openai-compatible",
+                llm_model="gpt-4o",
+                embedding_model="text-embedding-3-large",
+                storage_backend="postgres_pgvector_neo4j",
+                runtime_mode="runtime",
+                mineru_enabled=True,
+                mineru_base_url="http://mineru.test",
+            ),
+            document,
+        ]
+    )
+    await session.commit()
+
+    parser_chunk = AdapterChunk(
+        text="fallback markdown should not be used",
+        source_location={"artifact": "source/auto/source.md"},
+        metadata={
+            "parser_metadata": {
+                "backend": "mineru",
+                "artifact_extract_dir": str(tmp_path),
+                "content_list_ref": "source_content_list.json",
+                "parser_mode": "mineru_strict",
+            }
+        },
+        runtime_source_id="runtime-canonical",
+    )
+    runtime = PreparsedRuntime()
+    metadata = DomainMetadata(
+        domain="hadith",
+        document_type="collection",
+        tags=["hadith", "arabic", "english"],
+        script="mixed",
+        custom_json={
+            "reference_schema": {
+                "type": "book_hadith",
+                "display": "Book {book}, Hadith {hadith}",
+                "canonical_ref_template": "book:{book}:hadith:{hadith}",
+            },
+            "chunking": {"unit": "hadith", "preserve_parallel_text": True},
+            "reference_resolution": {
+                "enabled": True,
+                "build_canonical_units": True,
+                "carry_forward_body_blocks": True,
+                "header_only_policy": "provenance_only",
+                "continuation_policy": "until_next_reference",
+                "max_page_gap": 2,
+                "require_single_reference_per_answerable_chunk": True,
+            },
+            "provenance": {"preserve_original_blocks": True},
+            "quality_policy": {
+                "required_scripts": ["arabic"],
+                "optional_scripts": ["latin"],
+                "required_scripts_by_unit_role": {"hadith": ["arabic"]},
+                "optional_scripts_by_unit_role": {"hadith": ["latin"]},
+                "missing_optional_script_action": "no_warning",
+                "missing_required_script_action": "warn",
+                "materialization_policy": "allow_if_required_scripts_present",
+            },
+        },
+    )
+
+    result = await IndexLifecycleService(
+        session,
+        app.state.settings,
+        runtime_factory=FakeFactory(runtime),
+        health_service=FakeHealthService(),
+        document_parser=FakeDocumentParser([parser_chunk]),
+    ).reindex_document(
+        document.id,
+        options=IndexDocumentIn(parser_mode="mineru_strict", domain_metadata=metadata),
+    )
+
+    assert result is not None
+    assert runtime.preparsed_chunks
+    first_chunk = runtime.preparsed_chunks[0]
+    assert "Book 1, Hadith 1" in first_chunk.text
+    assert arabic_body in first_chunk.text
+    assert "The Messenger of Allah" in first_chunk.text
+    assert first_chunk.metadata["reference_metadata"]["references"] == [
+        "book:1:hadith:1"
+    ]
+    assert first_chunk.metadata.get("modal_router_processed") is None
+    assert "reference_unit_missing_expected_script" not in {
+        warning["code"]
+        for warning in first_chunk.metadata.get("extraction_quality", {}).get(
+            "parser_warnings", []
+        )
+    }
 
 
 @pytest.mark.asyncio

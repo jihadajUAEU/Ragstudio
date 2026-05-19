@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import logging
 import re
 from dataclasses import dataclass
@@ -477,7 +476,7 @@ class DomainMetadataQualityGate:
         for chunk in chunks:
             codes = sorted(
                 {
-                    warning.get("code")
+                    str(warning.get("code"))
                     for warning in self.parser_warnings_for_chunk(chunk)
                     if isinstance(warning.get("code"), str)
                     and not bool(warning.get("suppressed_from_counts"))
@@ -751,6 +750,16 @@ class DomainMetadataQualityGate:
         profile: MetadataQualityProfile,
     ) -> list[dict[str, Any]]:
         semantics = ReferenceSemantics.from_metadata(domain_metadata)
+        canonical_reference = self._canonical_reference_unit_reference(metadata)
+        if canonical_reference:
+            return [
+                {
+                    "reference": canonical_reference,
+                    "text": text,
+                    "start": 0,
+                    "end": len(text),
+                }
+            ]
         if (
             semantics.inline_reference_policy == "cross_reference_only"
             and semantics.primary_anchor_pattern
@@ -771,10 +780,6 @@ class DomainMetadataQualityGate:
             if len(references) > 1:
                 return []
 
-        label_units = self._labelled_reference_units(text)
-        if label_units:
-            return label_units
-
         references = self._metadata_references(metadata)
         if len(references) == 1:
             return [
@@ -787,6 +792,10 @@ class DomainMetadataQualityGate:
             ]
         if len(references) > 1:
             return []
+
+        label_units = self._labelled_reference_units(text)
+        if label_units:
+            return label_units
 
         semantic_refs = semantics.extract_chunk_references(text)
         if len(semantic_refs) == 1:
@@ -1062,11 +1071,11 @@ class DomainMetadataQualityGate:
     def _quality_action_policy(self, records: list[dict[str, Any]]) -> dict[str, Any] | None:
         if not records:
             return None
-        policies = [
-            record.get("materialization")
-            for record in records
-            if isinstance(record.get("materialization"), dict)
-        ]
+        policies: list[dict[str, Any]] = []
+        for record in records:
+            materialization = record.get("materialization")
+            if isinstance(materialization, dict):
+                policies.append(materialization)
         if not policies:
             return None
         flags = sorted(
@@ -1327,6 +1336,19 @@ class DomainMetadataQualityGate:
                 reference for reference in values if isinstance(reference, str) and reference
             )
         return list(dict.fromkeys(references))
+
+    def _canonical_reference_unit_reference(self, metadata: dict[str, Any] | None) -> str | None:
+        if not isinstance(metadata, dict):
+            return None
+        canonical_unit = metadata.get("canonical_reference_unit")
+        if not isinstance(canonical_unit, dict):
+            return None
+        if canonical_unit.get("answerable") is False:
+            return None
+        reference = canonical_unit.get("reference")
+        if isinstance(reference, str) and reference.strip():
+            return reference.strip()
+        return None
 
     def _chunk_metadata(self, chunk: Any) -> dict[str, Any]:
         metadata = getattr(chunk, "metadata", None)

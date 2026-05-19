@@ -19,6 +19,7 @@ from ragstudio.services.index_quality_gate import IndexQualityGate
 from ragstudio.services.mineru_client import MinerUClient
 from ragstudio.services.mineru_relationship_builder import MinerURelationshipBuilder
 from ragstudio.services.modal_preprocessor import ModalPreprocessor
+from ragstudio.services.reference_metadata import ReferenceSemantics
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -78,10 +79,11 @@ class ChunkService:
             for adapter_chunk in adapter_chunks
         ]
         
-        adapter_chunks = ModalPreprocessor().preprocess(
-            adapter_chunks,
-            domain_metadata=options.domain_metadata,
-        )
+        if not self._uses_canonical_reference_units(options.domain_metadata):
+            adapter_chunks = ModalPreprocessor().preprocess(
+                adapter_chunks,
+                domain_metadata=options.domain_metadata,
+            )
 
         adapter_chunks = await self.chunk_splitter.split(
             adapter_chunks,
@@ -121,6 +123,9 @@ class ChunkService:
     async def validate_strict_mineru_sidecar(self, options: IndexDocumentIn) -> None:
         await self.document_parser.validate_strict_mineru_sidecar(options)
 
+    def _uses_canonical_reference_units(self, domain_metadata: DomainMetadata) -> bool:
+        return ReferenceSemantics.from_metadata(domain_metadata).canonical_units_enabled
+
     async def search(self, search_in: ChunkSearchIn) -> ChunkSearchOut:
         limit = max(search_in.limit, 0)
         repository = ChunkLexicalSearchRepository(self.session)
@@ -146,18 +151,16 @@ class ChunkService:
             prefiltered_ids = {
                 chunk.id for chunk in [*english_prefiltered, *arabic_prefiltered]
             }
-            statement = select(Chunk)
-            if search_in.document_ids:
-                statement = statement.where(Chunk.document_id.in_(search_in.document_ids))
-            result = await self.session.execute(
-                statement.order_by(Chunk.created_at.asc(), Chunk.id.asc())
-            )
-            all_chunks = list(result.scalars().all())
-            chunks = [
-                *english_prefiltered,
-                *arabic_prefiltered,
-                *[chunk for chunk in all_chunks if chunk.id not in prefiltered_ids],
-            ]
+            if prefiltered_ids:
+                chunks = [*english_prefiltered, *arabic_prefiltered]
+            else:
+                statement = select(Chunk)
+                if search_in.document_ids:
+                    statement = statement.where(Chunk.document_id.in_(search_in.document_ids))
+                result = await self.session.execute(
+                    statement.order_by(Chunk.created_at.asc(), Chunk.id.asc())
+                )
+                chunks = list(result.scalars().all())
 
         ranked = sorted(
             (

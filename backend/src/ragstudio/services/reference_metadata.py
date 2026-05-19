@@ -103,7 +103,7 @@ class ReferenceSemantics:
         chunk_unit = cls._string_value(
             chunking.get("unit"),
             default=primary_anchor_unit or "section",
-        )
+        ) or "section"
         if chunk_unit == "section" and structured_reference:
             chunk_unit = "verse"
         default_primary_anchor = cls._default_primary_anchor_pattern(
@@ -179,11 +179,13 @@ class ReferenceSemantics:
             header_only_policy=cls._string_value(
                 reference_resolution.get("header_only_policy"),
                 default="answerable",
-            ),
+            )
+            or "answerable",
             continuation_policy=cls._string_value(
                 reference_resolution.get("continuation_policy"),
                 default="until_next_reference",
-            ),
+            )
+            or "until_next_reference",
             max_page_gap=cls._optional_nonnegative_int(
                 reference_resolution.get("max_page_gap")
             ),
@@ -210,7 +212,7 @@ class ReferenceSemantics:
                 default="verse_section" if default_primary_anchor else None,
             ),
             inline_reference_pattern=inline_reference_pattern,
-            inline_reference_policy=inline_reference_policy,
+            inline_reference_policy=inline_reference_policy or "starts_unit",
         )
 
     def extract_query_reference(self, query: str) -> dict[str, int | str] | None:
@@ -443,9 +445,8 @@ class ReferenceSemantics:
             except re.error:
                 pass
         reference_type = (self.reference_type or "").casefold()
-        if (
-            reference_type in {"surah_ayah", "chapter_verse"}
-            or self.profile_name == "scripture_reference"
+        if reference_type in {"surah_ayah", "chapter_verse"} or (
+            self.profile_name == "scripture_reference" and not reference_type
         ):
             patterns.append(REFERENCE_PATTERN)
             if include_chapter_only:

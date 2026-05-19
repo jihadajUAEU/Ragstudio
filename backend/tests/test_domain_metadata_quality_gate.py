@@ -125,6 +125,101 @@ def _role_scoped_quality_policy_metadata() -> DomainMetadata:
     )
 
 
+def _hadith_quality_policy_metadata() -> DomainMetadata:
+    return DomainMetadata(
+        domain="hadith",
+        document_type="collection",
+        tags=["hadith", "arabic", "english"],
+        script="mixed",
+        custom_json={
+            "reference_schema": {
+                "type": "book_hadith",
+                "display": "Book {book}, Hadith {hadith}",
+                "canonical_ref_template": "book:{book}:hadith:{hadith}",
+            },
+            "chunking": {"unit": "hadith", "preserve_parallel_text": True},
+            "quality_policy": {
+                "required_scripts": ["arabic"],
+                "optional_scripts": ["latin"],
+                "required_scripts_by_unit_role": {"hadith": ["arabic"]},
+                "optional_scripts_by_unit_role": {"hadith": ["latin"]},
+                "missing_optional_script_action": "no_warning",
+                "missing_required_script_action": "warn",
+                "materialization_policy": "allow_if_required_scripts_present",
+            },
+        },
+    )
+
+
+def test_domain_quality_gate_uses_canonical_hadith_reference_before_inline_verse():
+    chunks = [
+        AdapterChunk(
+            text=(
+                "Book 5, Hadith 14\n\n"
+                "\u0633\u0645\u0639 \u0627\u0644\u0646\u0628\u064a \u064a\u0642\u0631\u0623 "
+                "\u0641\u064a \u0627\u0644\u0635\u0628\u062d. "
+                "It was narrated that he recited [50:10] in the Subh."
+            ),
+            source_location={"page": 169},
+            metadata={
+                "reference_metadata": {"references": ["book:5:hadith:14"]},
+                "canonical_reference_unit": {
+                    "reference": "book:5:hadith:14",
+                    "unit": "hadith",
+                    "answerable": True,
+                    "body_status": "assembled",
+                },
+            },
+        )
+    ]
+
+    report = DomainMetadataQualityGate().validate_adapter_chunks(
+        chunks,
+        domain_metadata=_hadith_quality_policy_metadata(),
+    )
+
+    assert report["status"] == "passed"
+    assert report["parser_quality"]["warning_counts"] == {}
+    assert "extraction_quality" not in chunks[0].metadata
+    references = report["index_quality_report"]["references"]
+    assert [record["reference"] for record in references] == ["book:5:hadith:14"]
+
+
+def test_domain_quality_gate_uses_canonical_reference_for_any_structured_domain():
+    chunks = [
+        AdapterChunk(
+            text=(
+                "Verse 18:30\n\n"
+                "Indeed, those who believed will have gardens. "
+                "The explanation also mentions 25:75-76."
+            ),
+            source_location={"page": 809},
+            metadata={
+                "reference_metadata": {
+                    "references": ["18:30"],
+                    "cross_references": ["25:75"],
+                },
+                "canonical_reference_unit": {
+                    "reference": "18:30",
+                    "unit": "verse_section",
+                    "answerable": True,
+                    "body_status": "assembled",
+                },
+            },
+        )
+    ]
+
+    report = DomainMetadataQualityGate().validate_adapter_chunks(
+        chunks,
+        domain_metadata=_tafseer_quality_policy_metadata(),
+    )
+
+    assert report["status"] == "passed"
+    assert report["parser_quality"]["warning_counts"] == {}
+    references = report["index_quality_report"]["references"]
+    assert [record["reference"] for record in references] == ["18:30"]
+
+
 def test_domain_quality_gate_allows_tafseer_commentary_when_optional_arabic_is_missing():
     chunks = [
         AdapterChunk(

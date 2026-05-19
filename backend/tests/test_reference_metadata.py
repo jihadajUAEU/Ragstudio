@@ -147,6 +147,7 @@ def test_reference_semantics_supports_book_hadith_schema():
             "ref": "book:1:hadith:2",
         }
     ]
+    assert semantics.extract_chunk_references("English cross reference [1:2] only") == []
     assert semantics.derive_reference_metadata("Book 1, Hadith 2 text") == {
         "reference_type": "book_hadith",
         "references": ["book:1:hadith:2"],

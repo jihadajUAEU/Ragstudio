@@ -1464,6 +1464,20 @@ def test_ai_metadata_autosuggest_backfills_hadith_reference_defaults():
     assert normalized["quality_policy"]["observed_scripts"] == ["arabic", "latin"]
     assert normalized["quality_policy"]["required_scripts"] == ["latin"]
     assert normalized["quality_policy"]["optional_scripts"] == ["arabic"]
+    assert normalized["reference_resolution"] == {
+        "enabled": True,
+        "build_canonical_units": True,
+        "carry_forward_body_blocks": True,
+        "header_only_policy": "provenance_only",
+        "continuation_policy": "until_next_reference",
+        "max_page_gap": 2,
+        "require_single_reference_per_answerable_chunk": True,
+    }
+    assert normalized["provenance"] == {
+        "preserve_original_blocks": True,
+        "block_preview_chars": 160,
+        "store_text_hash": True,
+    }
     validate_custom_json(normalized)
 
 

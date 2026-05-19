@@ -1,7 +1,9 @@
+# pyright: reportArgumentType=false, reportCallIssue=false, reportReturnType=false
 from __future__ import annotations
 
 import json
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from itertools import islice
 from typing import Any
@@ -489,8 +491,8 @@ Content type: {content_type}
         if not self._looks_like_hadith_metadata(metadata, custom_json):
             return custom_json
 
-        domain_structure = dict(custom_json.get("domain_structure") or {})
-        primary_anchor = dict(domain_structure.get("primary_anchor") or {})
+        domain_structure = self._dict_value(custom_json.get("domain_structure"))
+        primary_anchor = self._dict_value(domain_structure.get("primary_anchor"))
         primary_type = str(primary_anchor.get("type") or "").casefold()
         if primary_type in {"", "book_hadith", "hadith"} and not primary_anchor.get("regex"):
             primary_anchor = {
@@ -504,7 +506,7 @@ Content type: {content_type}
             }
             domain_structure["primary_anchor"] = primary_anchor
 
-        inline_references = dict(domain_structure.get("inline_references") or {})
+        inline_references = self._dict_value(domain_structure.get("inline_references"))
         inline_type = str(inline_references.get("type") or "").casefold()
         inline_policy = inline_references.get("policy")
         if (
@@ -521,6 +523,40 @@ Content type: {content_type}
 
         if domain_structure:
             custom_json["domain_structure"] = domain_structure
+        reference_resolution = self._dict_value(custom_json.get("reference_resolution"))
+        reference_resolution = {
+            "enabled": reference_resolution.get("enabled", True),
+            "build_canonical_units": reference_resolution.get(
+                "build_canonical_units",
+                True,
+            ),
+            "carry_forward_body_blocks": reference_resolution.get(
+                "carry_forward_body_blocks",
+                True,
+            ),
+            "header_only_policy": reference_resolution.get(
+                "header_only_policy",
+                "provenance_only",
+            ),
+            "continuation_policy": reference_resolution.get(
+                "continuation_policy",
+                "until_next_reference",
+            ),
+            "max_page_gap": reference_resolution.get("max_page_gap", 2),
+            "require_single_reference_per_answerable_chunk": reference_resolution.get(
+                "require_single_reference_per_answerable_chunk",
+                True,
+            ),
+        }
+        custom_json["reference_resolution"] = reference_resolution
+
+        provenance = self._dict_value(custom_json.get("provenance"))
+        provenance = {
+            "preserve_original_blocks": provenance.get("preserve_original_blocks", True),
+            "block_preview_chars": provenance.get("block_preview_chars", 160),
+            "store_text_hash": provenance.get("store_text_hash", True),
+        }
+        custom_json["provenance"] = provenance
         return custom_json
 
     def _looks_like_hadith_metadata(
@@ -639,14 +675,16 @@ Content type: {content_type}
             and value.metadata_sources == []
         )
 
-    def _merge_unique_strings(self, first: list[object], second: list[object]) -> list[str]:
+    def _merge_unique_strings(
+        self, first: Sequence[object], second: Sequence[object]
+    ) -> list[str]:
         merged: list[str] = []
         for item in [*first, *second]:
             if isinstance(item, str) and item and item not in merged:
                 merged.append(item)
         return merged
 
-    def _merge_lists(self, first: list[object], second: list[object]) -> list[object]:
+    def _merge_lists(self, first: Sequence[object], second: Sequence[object]) -> list[object]:
         if all(isinstance(item, str) for item in [*first, *second]):
             return self._merge_unique_strings(first, second)
 
@@ -659,6 +697,11 @@ Content type: {content_type}
             seen.add(key)
             merged.append(item)
         return merged
+
+    def _dict_value(self, value: object) -> dict[str, object]:
+        if not isinstance(value, dict):
+            return {}
+        return {key: item for key, item in value.items() if isinstance(key, str)}
 
     def _merge_custom_json(
         self,

@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass
@@ -17,10 +18,10 @@ from ragstudio.services.graph_workspace import workspace_label
 from ragstudio.services.index_artifact_cleanup import cleanup_document_index_artifacts
 from ragstudio.services.index_progress import IndexStage
 from ragstudio.services.index_quality_gate import IndexQualityGate
-from ragstudio.services.index_stage_scheduler import IndexStageBranch, IndexStageScheduler
 from ragstudio.services.mineru_relationship_builder import MinerURelationshipBuilder
 from ragstudio.services.modal_preprocessor import ModalPreprocessor
 from ragstudio.services.parser_normalization import VisionRecoveryConfig
+from ragstudio.services.reference_metadata import ReferenceSemantics
 from ragstudio.services.runtime_factory import RAGAnythingRuntimeFactory
 from ragstudio.services.runtime_health_service import RuntimeHealthService
 from ragstudio.services.runtime_profile_service import RuntimeProfileService
@@ -137,11 +138,12 @@ class IndexLifecycleService:
         else:
             normalized_chunks = preparsed_chunks
 
-        normalized_chunks = ModalPreprocessor().preprocess(
-            normalized_chunks,
-            domain_metadata=options.domain_metadata,
-        )
-        adapter_chunks = ChunkSplitter(
+        if not self._uses_canonical_reference_units(options.domain_metadata):
+            normalized_chunks = ModalPreprocessor().preprocess(
+                normalized_chunks,
+                domain_metadata=options.domain_metadata,
+            )
+        adapter_chunks = await ChunkSplitter(
             vision_recovery_config=VisionRecoveryConfig.from_runtime_profile(
                 options.domain_metadata,
                 profile,
@@ -177,6 +179,12 @@ class IndexLifecycleService:
         }
 
         async def persist_studio_chunks() -> list[ChunkOut]:
+            if on_stage is not None:
+                await on_stage(
+                    IndexStage.CHUNKS_PERSISTING,
+                    detail=f"Persisting {len(adapter_chunks)} canonical chunks.",
+                    chunk_count=len(adapter_chunks),
+                )
             chunks = await ChunkPersistenceService(self.session).persist(
                 document,
                 adapter_chunks,
@@ -223,18 +231,15 @@ class IndexLifecycleService:
         async def enrich_runtime() -> list[Any] | None:
             if runtime_chunks is not None:
                 return runtime_chunks
-            await runtime.delete_document_index(document.id)
             if not runtime_adapter_chunks:
                 return []
-            return await self._index_runtime_document(
+            return await asyncio.to_thread(
+                self._run_runtime_enrichment_in_thread,
                 runtime,
                 artifact_path,
                 document.id,
-                preparsed_chunks=runtime_adapter_chunks,
+                runtime_adapter_chunks,
             )
-
-        studio_branch_name = IndexStage.CHUNKS_PERSISTED.value
-        runtime_branch_name = IndexStage.RUNTIME_ENRICHING.value
 
         async def cleanup_runtime_index_best_effort() -> None:
             try:
@@ -242,37 +247,32 @@ class IndexLifecycleService:
             except Exception:
                 logger.exception("Failed to clean runtime index for %s.", document.id)
 
+        try:
+            chunks = await persist_studio_chunks()
+        except Exception as exc:
+            reason = f"Canonical chunk persistence failed: {exc}"
+            await cleanup_runtime_index_best_effort()
+            await self._mark_graph_projection_skipped(projection_record.id, reason)
+            raise
+
         if on_stage is not None:
             await on_stage(
                 IndexStage.RUNTIME_ENRICHING,
                 detail="Runtime enrichment is running.",
                 chunk_count=len(adapter_chunks),
             )
-        try:
-            branch_results = await IndexStageScheduler(max_parallel_branches=2).run(
-                [
-                    IndexStageBranch(
-                        studio_branch_name,
-                        persist_studio_chunks,
-                        critical=True,
-                    ),
-                    IndexStageBranch(
-                        runtime_branch_name,
-                        enrich_runtime,
-                        critical=False,
-                    ),
-                ]
-            )
-        except Exception as exc:
-            reason = f"Canonical chunk persistence failed: {exc}"
-            await cleanup_runtime_index_best_effort()
-            await self._mark_graph_projection_skipped(projection_record.id, reason)
-            raise
-        chunks = branch_results[studio_branch_name].value
 
-        runtime_result = branch_results[runtime_branch_name]
-        if runtime_result.status == "skipped":
-            reason = runtime_result.warning or "Runtime enrichment skipped."
+        try:
+            runtime_value = await enrich_runtime()
+            runtime_status = "succeeded"
+            runtime_warning = None
+        except Exception as exc:
+            runtime_value = None
+            runtime_status = "skipped"
+            runtime_warning = str(exc)
+
+        if runtime_status == "skipped":
+            reason = runtime_warning or "Runtime enrichment skipped."
             await cleanup_runtime_index_best_effort()
             await self._mark_runtime_index_failed(document.id, profile.id, reason)
             projection_record = await self._mark_graph_projection_skipped(
@@ -290,7 +290,7 @@ class IndexLifecycleService:
                 },
             )
 
-        runtime_chunk_count = len(runtime_result.value or [])
+        runtime_chunk_count = len(runtime_value or [])
         expected_runtime_chunk_count = len(runtime_adapter_chunks)
         if chunks and expected_runtime_chunk_count == 0:
             reason = "No chunks passed the runtime materialization quality gate."
@@ -368,6 +368,9 @@ class IndexLifecycleService:
             on_mineru_status=on_mineru_status,
         )
 
+    def _uses_canonical_reference_units(self, domain_metadata: DomainMetadata) -> bool:
+        return ReferenceSemantics.from_metadata(domain_metadata).canonical_units_enabled
+
     async def _index_runtime_document(
         self,
         runtime: Any,
@@ -386,6 +389,24 @@ class IndexLifecycleService:
         if "document_id" in parameters:
             return await runtime.index_document(artifact_path, document_id=document_id)
         return await runtime.index_document(artifact_path)
+
+    def _run_runtime_enrichment_in_thread(
+        self,
+        runtime: Any,
+        artifact_path: str,
+        document_id: str,
+        preparsed_chunks: list[AdapterChunk],
+    ) -> list[Any]:
+        async def run() -> list[Any]:
+            await runtime.delete_document_index(document_id)
+            return await self._index_runtime_document(
+                runtime,
+                artifact_path,
+                document_id,
+                preparsed_chunks=preparsed_chunks,
+            )
+
+        return asyncio.run(run())
 
     def _runtime_materializable_chunks(
         self,
