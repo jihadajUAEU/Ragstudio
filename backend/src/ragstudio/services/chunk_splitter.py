@@ -477,6 +477,7 @@ class ChunkSplitter:
             runtime_source_id=chunk.runtime_source_id,
             content_type=chunk.content_type,
             preview_ref=chunk.preview_ref,
+            reference_semantics=semantics,
             max_page_gap=semantics.max_page_gap,
             preserve_original_blocks=semantics.preserve_original_blocks,
             block_preview_chars=semantics.block_preview_chars,

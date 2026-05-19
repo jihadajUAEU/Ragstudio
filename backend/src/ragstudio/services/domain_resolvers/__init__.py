@@ -3,9 +3,12 @@ from ragstudio.services.domain_resolvers.base import (
     CanonicalUnit,
     DomainResolver,
     ResolverContext,
-    resolver_key,
 )
 from ragstudio.services.domain_resolvers.hadith import HadithResolver
+from ragstudio.services.domain_resolvers.registry import (
+    resolver_key,
+    resolvers_for_context,
+)
 
 __all__ = [
     "AssemblyDecision",
@@ -14,4 +17,5 @@ __all__ = [
     "HadithResolver",
     "ResolverContext",
     "resolver_key",
+    "resolvers_for_context",
 ]

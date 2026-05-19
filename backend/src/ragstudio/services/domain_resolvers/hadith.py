@@ -19,7 +19,14 @@ HADITH_HEADER_RE = re.compile(
 
 class HadithResolver:
     def can_resolve(self, context: ResolverContext) -> bool:
-        return (context.domain_metadata.domain or "").strip().casefold() == "hadith"
+        if (context.domain_metadata.domain or "").strip().casefold() != "hadith":
+            return False
+        semantics = context.reference_semantics
+        if semantics is None:
+            return True
+        return semantics.reference_type in {"book_hadith", "hadith"} and (
+            semantics.chunk_unit in {"hadith", "section", "verse"}
+        )
 
     def resolve_units(
         self,
@@ -33,7 +40,7 @@ class HadithResolver:
         header_blocks = [
             block
             for block in graph.blocks
-            if self._is_primary_anchor(block)
+            if self._is_primary_anchor(block, context=context)
         ]
         if not header_blocks:
             return []
@@ -51,9 +58,45 @@ class HadithResolver:
                 for body in self._visual_body_blocks_for_header(graph, block, context=context)
                 if body.source_ref.key not in used_body_refs
             ]
-            if not body_blocks or not any("arabic" in item.scripts for item in body_blocks):
+            if not body_blocks:
+                units.append(
+                    self._header_only_unit(
+                        header=block,
+                        match=match,
+                        context=context,
+                        reason="Reference anchor did not have Arabic body evidence in the visual window.",
+                    )
+                )
+                continue
+            if not any("arabic" in item.scripts for item in body_blocks):
+                units.append(
+                    self._unit_from_blocks(
+                        header=block,
+                        body_blocks=body_blocks,
+                        match=match,
+                        context=context,
+                        answerable=True,
+                        body_status=(
+                            "assembled" if len(body_blocks) > 1 else "single_block"
+                        ),
+                        decision_code="reference_anchor_retained_missing_required_script",
+                        decision_reason=(
+                            "Reference anchor and body were retained so quality gates "
+                            "can report the missing expected script."
+                        ),
+                    )
+                )
+                used_body_refs.update(body.source_ref.key for body in body_blocks)
                 continue
             if self._has_competing_anchor_between(graph, header=block, body_blocks=body_blocks):
+                units.append(
+                    self._header_only_unit(
+                        header=block,
+                        match=match,
+                        context=context,
+                        reason="Reference anchor was separated from candidate body by a competing anchor.",
+                    )
+                )
                 continue
             units.append(
                 self._unit_from_blocks(
@@ -66,8 +109,29 @@ class HadithResolver:
             used_body_refs.update(body.source_ref.key for body in body_blocks)
         return units
 
-    def _is_primary_anchor(self, block: EvidenceBlockView) -> bool:
-        return bool(block.has_text and HADITH_HEADER_RE.search(block.text))
+    def _is_primary_anchor(
+        self,
+        block: EvidenceBlockView,
+        *,
+        context: ResolverContext | None = None,
+    ) -> bool:
+        if not block.has_text:
+            return False
+        text = block.text.strip()
+        pattern = HADITH_HEADER_RE
+        if context and context.reference_semantics and context.reference_semantics.primary_anchor_pattern:
+            try:
+                pattern = re.compile(
+                    context.reference_semantics.primary_anchor_pattern,
+                    re.IGNORECASE,
+                )
+            except re.error:
+                pattern = HADITH_HEADER_RE
+        match = pattern.search(text)
+        if match is None or match.start() != 0:
+            return False
+        remainder = text[match.end() :].strip()
+        return not remainder or remainder[0] in {":", "-", "–", "—"}
 
     def _is_late_header(self, block: EvidenceBlockView) -> bool:
         return block.block_type in {"header", "footer", "page_footnote", "page_header"}
@@ -84,7 +148,7 @@ class HadithResolver:
     ) -> list[EvidenceBlockView]:
         window = graph.visual_window_after_anchor(
             header,
-            is_anchor=self._is_primary_anchor,
+            is_anchor=lambda block: self._is_primary_anchor(block, context=context),
             accepts_body=self._is_answerable_body_block,
             max_page_gap=context.max_page_gap,
         )
@@ -93,17 +157,13 @@ class HadithResolver:
 
         if not self._is_late_header(header):
             return []
-        candidates = graph.neighborhood(header, before=3, after=0)
-        if any(self._is_primary_anchor(candidate) for candidate in candidates):
-            return []
-        selected = [
-            candidate
-            for candidate in candidates
-            if self._is_answerable_body_block(candidate)
-        ]
-        if not self._within_page_gap(selected, header, max_page_gap=context.max_page_gap):
-            return []
-        return selected
+        reverse_window = graph.visual_window_before_anchor(
+            header,
+            is_anchor=lambda block: self._is_primary_anchor(block, context=context),
+            accepts_body=self._is_answerable_body_block,
+            max_page_gap=context.max_page_gap,
+        )
+        return list(reverse_window.body_blocks)
 
     def _has_competing_anchor_between(
         self,
@@ -149,6 +209,25 @@ class HadithResolver:
                 return False
         return True
 
+    def _header_only_unit(
+        self,
+        *,
+        header: EvidenceBlockView,
+        match: re.Match[str],
+        context: ResolverContext,
+        reason: str,
+    ) -> CanonicalUnit:
+        return self._unit_from_blocks(
+            header=header,
+            body_blocks=[],
+            match=match,
+            context=context,
+            answerable=False,
+            body_status="header_only",
+            decision_code="reference_anchor_retained_without_body",
+            decision_reason=reason,
+        )
+
     def _unit_from_blocks(
         self,
         *,
@@ -156,6 +235,10 @@ class HadithResolver:
         body_blocks: list[EvidenceBlockView],
         match: re.Match[str],
         context: ResolverContext,
+        answerable: bool = True,
+        body_status: str = "assembled",
+        decision_code: str = "late_header_body_reassociated",
+        decision_reason: str = "Reference header appeared after nearby body blocks in parser order.",
     ) -> CanonicalUnit:
         book = int(match.group("book"))
         hadith = int(match.group("hadith"))
@@ -172,8 +255,8 @@ class HadithResolver:
 
         source_block_refs = tuple(block.source_ref.key for block in blocks)
         decision = AssemblyDecision(
-            code="late_header_body_reassociated",
-            reason="Reference header appeared after nearby body blocks in parser order.",
+            code=decision_code,
+            reason=decision_reason,
             source_block_refs=source_block_refs,
             confidence="medium",
         )
@@ -195,8 +278,8 @@ class HadithResolver:
             "reference": reference,
             "raw_reference": match.group(0),
             "unit": "hadith",
-            "answerable": True,
-            "body_status": "assembled",
+            "answerable": answerable,
+            "body_status": body_status,
             "assembly_strategy": "domain_evidence_graph",
         }
         metadata["orchestration"] = {
@@ -261,7 +344,13 @@ class HadithResolver:
             source_location=source_location,
             metadata=metadata,
             runtime_source_id=context.runtime_source_id,
-            content_type=context.content_type,
+            content_type=(
+                "reference_provenance"
+                if not answerable
+                and context.reference_semantics
+                and context.reference_semantics.header_only_policy == "provenance_only"
+                else context.content_type
+            ),
             preview_ref=reference,
             decisions=(decision,),
         )

@@ -1229,13 +1229,23 @@ def test_chunk_splitter_reassociates_recovered_hadith_header_on_dense_visual_pag
 
     by_ref = {piece.preview_ref: piece for piece in split if piece.preview_ref}
     hadith_12 = by_ref["book:2:hadith:12"]
+    assert set(by_ref) == {
+        "book:2:hadith:12",
+        "book:2:hadith:13",
+        "book:2:hadith:14",
+    }
     assert "Book 2, Hadith 12" in hadith_12.text
     assert arabic_12 in hadith_12.text
     assert english_12 in hadith_12.text
     assert "Book 2, Hadith 13" not in hadith_12.text
+    assert arabic_13 in by_ref["book:2:hadith:13"].text
+    assert english_13 in by_ref["book:2:hadith:13"].text
+    assert by_ref["book:2:hadith:14"].content_type == "reference_provenance"
     assert hadith_12.metadata["canonical_reference_unit"]["assembly_strategy"] == (
         "domain_evidence_graph"
     )
+    assert hadith_12.source_location["page_start"] == 15
+    assert hadith_12.source_location["page_end"] == 15
     assert "reference_unit_missing_expected_script" not in parser_warning_codes(hadith_12)
     assert "recovered_text_from_disallowed_block" in parser_warning_codes(hadith_12)
 
@@ -1315,7 +1325,11 @@ def test_chunk_splitter_keeps_next_hadith_footer_as_provenance_boundary(
     by_ref = {piece.preview_ref: piece for piece in split if piece.preview_ref}
     assert arabic_14 in by_ref["book:2:hadith:14"].text
     assert arabic_15 not in by_ref["book:2:hadith:14"].text
-    assert by_ref["book:2:hadith:15"].content_type in {"text", "reference_provenance"}
+    assert arabic_15 in by_ref["book:2:hadith:15"].text
+    assert by_ref["book:2:hadith:15"].content_type == "text"
+    assert "recovered_text_from_disallowed_block" in parser_warning_codes(
+        by_ref["book:2:hadith:15"]
+    )
 
 
 def test_chunk_splitter_keeps_missing_arabic_warning_when_visual_unit_has_no_arabic(
@@ -1427,6 +1441,11 @@ def test_chunk_splitter_keeps_hadith_body_across_page_until_next_anchor(
     assert arabic in by_ref["book:3:hadith:4"].text
     assert english_page_two in by_ref["book:3:hadith:4"].text
     assert "Book 3, Hadith 5" not in by_ref["book:3:hadith:4"].text
+    assert by_ref["book:3:hadith:4"].source_location["page_start"] == 31
+    assert by_ref["book:3:hadith:4"].source_location["page_end"] == 32
+    assert "reference_unit_missing_expected_script" not in parser_warning_codes(
+        by_ref["book:3:hadith:4"]
+    )
 
 
 def test_chunk_splitter_stops_hadith_body_at_competing_recovered_anchor(
@@ -1504,8 +1523,89 @@ def test_chunk_splitter_stops_hadith_body_at_competing_recovered_anchor(
 
     by_ref = {piece.preview_ref: piece for piece in split if piece.preview_ref}
     assert arabic_20 in by_ref["book:5:hadith:20"].text
+    assert english_20 in by_ref["book:5:hadith:20"].text
     assert arabic_21 not in by_ref["book:5:hadith:20"].text
     assert arabic_21 in by_ref["book:5:hadith:21"].text
+    assert by_ref["book:5:hadith:20"].metadata["reference_metadata"]["references"] == [
+        "book:5:hadith:20"
+    ]
+    assert by_ref["book:5:hadith:21"].metadata["reference_metadata"]["references"] == [
+        "book:5:hadith:21"
+    ]
+
+
+def test_chunk_splitter_preserves_genuine_warning_when_dense_page_has_partial_success(
+    tmp_path: Path,
+):
+    arabic_12 = "\u0642\u0627\u0644 \u0631\u0633\u0648\u0644 \u0627\u0644\u0644\u0647"
+    english_12 = "Narrated first companion: Arabic-backed translation."
+    english_13 = "Narrated second companion: English translation only."
+    content_list = tmp_path / "source_content_list.json"
+    content_list.write_text(
+        json.dumps(
+            [
+                {
+                    "type": "header",
+                    "recovered_text": "Book 2, Hadith 12",
+                    "bbox": [93, 75, 217, 89],
+                    "page_idx": 14,
+                },
+                {
+                    "type": "text",
+                    "text": arabic_12,
+                    "bbox": [101, 103, 906, 229],
+                    "page_idx": 14,
+                },
+                {
+                    "type": "text",
+                    "text": english_12,
+                    "bbox": [89, 239, 900, 291],
+                    "page_idx": 14,
+                },
+                {
+                    "type": "text",
+                    "text": "Book 2, Hadith 13",
+                    "bbox": [91, 309, 218, 324],
+                    "page_idx": 14,
+                },
+                {
+                    "type": "text",
+                    "text": english_13,
+                    "bbox": [89, 506, 803, 613],
+                    "page_idx": 14,
+                },
+            ],
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    chunk = AdapterChunk(
+        text="fallback markdown should not be used",
+        source_location={"artifact": "source/auto/source.md"},
+        metadata={
+            "parser_metadata": {
+                "backend": "mineru",
+                "artifact_extract_dir": str(tmp_path),
+                "content_list_ref": "source_content_list.json",
+            }
+        },
+    )
+
+    split = ChunkSplitter(max_words=1500).split(
+        [chunk],
+        domain_metadata=bukhari_hadith_metadata(),
+        parser_mode="mineru_strict",
+    )
+
+    by_ref = {piece.preview_ref: piece for piece in split if piece.preview_ref}
+    assert arabic_12 in by_ref["book:2:hadith:12"].text
+    assert "reference_unit_missing_expected_script" not in parser_warning_codes(
+        by_ref["book:2:hadith:12"]
+    )
+    assert english_13 in by_ref["book:2:hadith:13"].text
+    assert "reference_unit_missing_expected_script" in parser_warning_codes(
+        by_ref["book:2:hadith:13"]
+    )
 
 
 def test_chunk_splitter_preserves_unassigned_canonical_blocks_as_provenance(

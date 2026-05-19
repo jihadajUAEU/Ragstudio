@@ -97,6 +97,46 @@ class EvidenceGraph:
             previous_anchor=previous_anchor,
         )
 
+    def visual_window_before_anchor(
+        self,
+        anchor: EvidenceBlockView,
+        *,
+        is_anchor: Callable[[EvidenceBlockView], bool],
+        accepts_body: Callable[[EvidenceBlockView], bool],
+        max_page_gap: int | None,
+    ) -> ReferenceWindow:
+        anchor_index = self.index_of(anchor)
+        if anchor_index is None:
+            return ReferenceWindow(anchor=anchor, body_blocks=())
+
+        body_blocks: list[EvidenceBlockView] = []
+        previous_anchor: EvidenceBlockView | None = None
+        for candidate in reversed(self.blocks[:anchor_index]):
+            if not candidate.has_text:
+                continue
+            if is_anchor(candidate):
+                previous_anchor = candidate
+                break
+            if not self._within_page_gap(anchor, candidate, max_page_gap=max_page_gap):
+                break
+            if accepts_body(candidate):
+                body_blocks.append(candidate)
+
+        next_anchor = next(
+            (
+                candidate
+                for candidate in self.blocks[anchor_index + 1 :]
+                if candidate.has_text and is_anchor(candidate)
+            ),
+            None,
+        )
+        return ReferenceWindow(
+            anchor=anchor,
+            body_blocks=tuple(reversed(body_blocks)),
+            next_anchor=next_anchor,
+            previous_anchor=previous_anchor,
+        )
+
     def _within_page_gap(
         self,
         anchor: EvidenceBlockView,
@@ -110,4 +150,4 @@ class EvidenceGraph:
         candidate_page = candidate.page_end if candidate.page_end is not None else candidate.page_start
         if anchor_page is None or candidate_page is None:
             return True
-        return candidate_page - anchor_page <= max_page_gap
+        return abs(candidate_page - anchor_page) <= max_page_gap

@@ -5,6 +5,7 @@ from typing import Protocol
 
 from ragstudio.schemas.parsing import DomainMetadata
 from ragstudio.services.evidence_graph import EvidenceGraph
+from ragstudio.services.reference_metadata import ReferenceSemantics
 
 
 @dataclass(frozen=True)
@@ -34,6 +35,7 @@ class ResolverContext:
     runtime_source_id: str | None
     content_type: str
     preview_ref: str | None
+    reference_semantics: ReferenceSemantics | None = None
     max_page_gap: int | None = None
     preserve_original_blocks: bool = False
     block_preview_chars: int = 160

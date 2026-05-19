@@ -5,6 +5,7 @@ from typing import Any
 
 from ragstudio.schemas.parsing import DomainMetadata
 from ragstudio.services.parser_normalization import NormalizedBlock
+from ragstudio.services.reference_metadata import ReferenceSemantics
 from ragstudio.services.reference_unit_assembler import AssembledReferenceUnit
 from ragstudio.services.script_detection import detect_scripts
 
@@ -110,12 +111,16 @@ class CanonicalAssemblyStrategy:
         runtime_source_id: str | None,
         content_type: str,
         preview_ref: str | None,
+        reference_semantics: ReferenceSemantics | None = None,
         max_page_gap: int | None = None,
         preserve_original_blocks: bool = False,
         block_preview_chars: int = 160,
         store_text_hash: bool = False,
     ) -> list[AssembledReferenceUnit]:
-        from ragstudio.services.domain_resolvers import HadithResolver, ResolverContext
+        from ragstudio.services.domain_resolvers import (
+            ResolverContext,
+            resolvers_for_context,
+        )
         from ragstudio.services.evidence_graph import EvidenceGraph
 
         context = ResolverContext(
@@ -125,6 +130,7 @@ class CanonicalAssemblyStrategy:
             runtime_source_id=runtime_source_id,
             content_type=content_type,
             preview_ref=preview_ref,
+            reference_semantics=reference_semantics,
             max_page_gap=max_page_gap,
             preserve_original_blocks=preserve_original_blocks,
             block_preview_chars=block_preview_chars,
@@ -137,9 +143,7 @@ class CanonicalAssemblyStrategy:
                 block_indices=block_indices,
             )
         )
-        for resolver in (HadithResolver(),):
-            if not resolver.can_resolve(context):
-                continue
+        for resolver in resolvers_for_context(context):
             units = resolver.resolve_units(graph, context=context)
             if units:
                 return [

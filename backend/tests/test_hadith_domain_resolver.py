@@ -60,7 +60,7 @@ def test_hadith_resolver_attaches_body_that_unambiguously_precedes_late_header()
     assert unit.decisions[0].code == "late_header_body_reassociated"
 
 
-def test_hadith_resolver_returns_no_unit_when_required_arabic_evidence_is_absent():
+def test_hadith_resolver_retains_translation_unit_when_required_arabic_evidence_is_absent():
     blocks = [
         block("It was narrated that Abu Umamah said...", 0, scripts={"latin"}),
         block("Book 36, Hadith 152 - Grade: Da'if", 1, block_type="header"),
@@ -71,10 +71,14 @@ def test_hadith_resolver_returns_no_unit_when_required_arabic_evidence_is_absent
         context=context(),
     )
 
-    assert units == []
+    assert len(units) == 1
+    assert units[0].preview_ref == "book:36:hadith:152"
+    assert units[0].metadata["canonical_reference_unit"]["answerable"] is True
+    assert units[0].metadata["canonical_reference_unit"]["body_status"] == "single_block"
+    assert units[0].decisions[0].code == "reference_anchor_retained_missing_required_script"
 
 
-def test_hadith_resolver_returns_no_unit_when_intervening_header_makes_body_ambiguous():
+def test_hadith_resolver_retains_ambiguous_headers_without_stealing_body():
     blocks = [
         block(
             "\u0642\u0627\u0644 \u0631\u0633\u0648\u0644 \u0627\u0644\u0644\u0647 \u0635\u0644\u0649 \u0627\u0644\u0644\u0647 \u0639\u0644\u064a\u0647 \u0648\u0633\u0644\u0645",
@@ -91,10 +95,13 @@ def test_hadith_resolver_returns_no_unit_when_intervening_header_makes_body_ambi
         context=context(),
     )
 
-    assert units == []
+    by_ref = {unit.preview_ref: unit for unit in units}
+    assert by_ref["book:2:hadith:30"].metadata["canonical_reference_unit"]["answerable"] is False
+    assert by_ref["book:2:hadith:29"].metadata["canonical_reference_unit"]["answerable"] is False
+    assert "\u0642\u0627\u0644 \u0631\u0633\u0648\u0644" not in by_ref["book:2:hadith:29"].text
 
 
-def test_hadith_resolver_returns_no_unit_when_multiple_headers_would_drop_fallback_units():
+def test_hadith_resolver_keeps_partial_success_from_dropping_later_header():
     blocks = [
         block(
             "\u0642\u0627\u0644 \u0631\u0633\u0648\u0644 \u0627\u0644\u0644\u0647",
@@ -111,7 +118,57 @@ def test_hadith_resolver_returns_no_unit_when_multiple_headers_would_drop_fallba
         context=context(),
     )
 
-    assert units == []
+    by_ref = {unit.preview_ref: unit for unit in units}
+    assert by_ref["book:2:hadith:29"].metadata["canonical_reference_unit"]["answerable"] is True
+    assert by_ref["book:2:hadith:30"].metadata["canonical_reference_unit"]["answerable"] is False
+    assert by_ref["book:2:hadith:30"].metadata["canonical_reference_unit"]["body_status"] == "header_only"
+
+
+def test_hadith_resolver_ignores_inline_cross_reference_as_anchor_boundary():
+    blocks = [
+        block("Book 3, Hadith 9", 0, block_type="header"),
+        block(
+            "\u0642\u0627\u0644 \u0631\u0633\u0648\u0644 \u0627\u0644\u0644\u0647",
+            1,
+            scripts={"arabic"},
+        ),
+        block("See Book 3, Hadith 10 for related context.", 2, scripts={"latin"}),
+        block("The English translation continues after the inline citation.", 3, scripts={"latin"}),
+    ]
+
+    units = HadithResolver().resolve_units(
+        EvidenceGraph.from_blocks(blocks),
+        context=context(),
+    )
+
+    assert len(units) == 1
+    assert units[0].preview_ref == "book:3:hadith:9"
+    assert "inline citation" in units[0].text
+
+
+def test_hadith_resolver_reverse_window_is_not_limited_to_three_blocks():
+    blocks = [
+        block(
+            "\u0642\u0627\u0644 \u0631\u0633\u0648\u0644 \u0627\u0644\u0644\u0647",
+            0,
+            scripts={"arabic"},
+        ),
+        block("First translation line.", 1, scripts={"latin"}),
+        block("Second translation line.", 2, scripts={"latin"}),
+        block("Third translation line.", 3, scripts={"latin"}),
+        block("Fourth translation line.", 4, scripts={"latin"}),
+        block("Book 4, Hadith 7", 5, block_type="header"),
+    ]
+
+    units = HadithResolver().resolve_units(
+        EvidenceGraph.from_blocks(blocks),
+        context=context(),
+    )
+
+    assert len(units) == 1
+    assert units[0].preview_ref == "book:4:hadith:7"
+    assert "Fourth translation line." in units[0].text
+    assert "\u0642\u0627\u0644 \u0631\u0633\u0648\u0644" in units[0].text
 
 
 def test_hadith_resolver_ignores_non_hadith_domains():
