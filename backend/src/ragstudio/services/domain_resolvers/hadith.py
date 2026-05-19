@@ -33,20 +33,27 @@ class HadithResolver:
         header_blocks = [
             block
             for block in graph.blocks
-            if block.has_text and HADITH_HEADER_RE.search(block.text)
+            if self._is_primary_anchor(block)
         ]
-        if len(header_blocks) != 1:
+        if not header_blocks:
+            return []
+        if not any(self._is_late_header(block) for block in header_blocks):
             return []
 
         units: list[CanonicalUnit] = []
+        used_body_refs: set[str] = set()
         for block in header_blocks:
             match = HADITH_HEADER_RE.search(block.text)
-            if match is None or not self._is_late_header(block):
+            if match is None:
                 continue
-            body_blocks = self._prior_unambiguous_body_blocks(graph, block, context=context)
+            body_blocks = [
+                body
+                for body in self._visual_body_blocks_for_header(graph, block, context=context)
+                if body.source_ref.key not in used_body_refs
+            ]
             if not body_blocks or not any("arabic" in item.scripts for item in body_blocks):
                 continue
-            if not self._covers_all_text_blocks(graph, header=block, body_blocks=body_blocks):
+            if self._has_competing_anchor_between(graph, header=block, body_blocks=body_blocks):
                 continue
             units.append(
                 self._unit_from_blocks(
@@ -56,40 +63,71 @@ class HadithResolver:
                     context=context,
                 )
             )
+            used_body_refs.update(body.source_ref.key for body in body_blocks)
         return units
+
+    def _is_primary_anchor(self, block: EvidenceBlockView) -> bool:
+        return bool(block.has_text and HADITH_HEADER_RE.search(block.text))
 
     def _is_late_header(self, block: EvidenceBlockView) -> bool:
         return block.block_type in {"header", "footer", "page_footnote", "page_header"}
 
-    def _prior_unambiguous_body_blocks(
+    def _is_answerable_body_block(self, block: EvidenceBlockView) -> bool:
+        return block.has_text and ("arabic" in block.scripts or "latin" in block.scripts)
+
+    def _visual_body_blocks_for_header(
         self,
         graph: EvidenceGraph,
         header: EvidenceBlockView,
         *,
         context: ResolverContext,
     ) -> list[EvidenceBlockView]:
+        window = graph.visual_window_after_anchor(
+            header,
+            is_anchor=self._is_primary_anchor,
+            accepts_body=self._is_answerable_body_block,
+            max_page_gap=context.max_page_gap,
+        )
+        if window.body_blocks:
+            return list(window.body_blocks)
+
+        if not self._is_late_header(header):
+            return []
         candidates = graph.neighborhood(header, before=3, after=0)
-        if any(HADITH_HEADER_RE.search(candidate.text) for candidate in candidates):
+        if any(self._is_primary_anchor(candidate) for candidate in candidates):
             return []
         selected = [
             candidate
             for candidate in candidates
-            if candidate.has_text and ("arabic" in candidate.scripts or "latin" in candidate.scripts)
+            if self._is_answerable_body_block(candidate)
         ]
         if not self._within_page_gap(selected, header, max_page_gap=context.max_page_gap):
             return []
         return selected
 
-    def _covers_all_text_blocks(
+    def _has_competing_anchor_between(
         self,
         graph: EvidenceGraph,
         *,
         header: EvidenceBlockView,
         body_blocks: list[EvidenceBlockView],
     ) -> bool:
-        handled_refs = {header.source_ref.key, *(block.source_ref.key for block in body_blocks)}
-        text_refs = {block.source_ref.key for block in graph.blocks if block.has_text}
-        return handled_refs == text_refs
+        header_index = graph.index_of(header)
+        body_indices = [graph.index_of(block) for block in body_blocks]
+        concrete_indices = [index for index in body_indices if index is not None]
+        if header_index is None or not concrete_indices:
+            return True
+        start = min(header_index, *concrete_indices)
+        end = max(header_index, *concrete_indices)
+        body_refs = {block.source_ref.key for block in body_blocks}
+        for candidate in graph.blocks[start + 1 : end]:
+            if candidate.source_ref.key == header.source_ref.key:
+                continue
+            if candidate.source_ref.key in body_refs:
+                continue
+            if self._is_primary_anchor(candidate):
+                return True
+        return False
 
     def _within_page_gap(
         self,
@@ -107,7 +145,7 @@ class HadithResolver:
             block_page = block.page_end if block.page_end is not None else block.page_start
             if block_page is None:
                 continue
-            if header_page - block_page > max_page_gap:
+            if abs(header_page - block_page) > max_page_gap:
                 return False
         return True
 

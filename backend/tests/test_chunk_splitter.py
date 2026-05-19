@@ -62,6 +62,34 @@ def tafseer_cross_reference_metadata() -> DomainMetadata:
     )
 
 
+def bukhari_hadith_metadata() -> DomainMetadata:
+    return DomainMetadata(
+        domain="hadith",
+        document_type="collection",
+        tags=["hadith", "arabic", "english"],
+        script="arabic",
+        custom_json={
+            "reference_schema": {
+                "type": "book_hadith",
+                "canonical_ref_template": "book:{book}:hadith:{hadith}",
+            },
+            "chunking": {"unit": "hadith", "preserve_parallel_text": True},
+            "reference_resolution": {
+                "enabled": True,
+                "build_canonical_units": True,
+                "carry_forward_body_blocks": True,
+                "header_only_policy": "provenance_only",
+                "continuation_policy": "until_next_reference",
+                "max_page_gap": 1,
+            },
+            "provenance": {
+                "preserve_original_blocks": True,
+                "store_text_hash": True,
+            },
+        },
+    )
+
+
 def test_chunk_splitter_splits_tafseer_book_markdown_under_hard_cap():
     text = "\n\n".join(
         [
@@ -1105,6 +1133,379 @@ def test_chunk_splitter_uses_layout_aware_hadith_strategy_for_late_header(
     ]
     assert all("text_hash" in block for block in provenance_blocks)
     assert "reference_unit_missing_expected_script" not in parser_warning_codes(canonical)
+
+
+def test_chunk_splitter_reassociates_recovered_hadith_header_on_dense_visual_page(
+    tmp_path: Path,
+):
+    arabic_12 = (
+        "\u0627\u0644\u0645\u0633\u0644\u0645 \u063a\u0646\u0645 "
+        "\u064a\u062a\u0628\u0639 \u0628\u0647\u0627 \u0634\u0639\u0641 "
+        "\u0627\u0644\u062c\u0628\u0627\u0644 \u0648\u0645\u0648\u0627\u0642\u0639 "
+        "\u0627\u0644\u0642\u0637\u0631\u060c \u064a\u0641\u0631 "
+        "\u0628\u062f\u064a\u0646\u0647 \u0645\u0646 \u0627\u0644\u0641\u062a\u0646"
+    )
+    english_12 = (
+        "Narrated Abu Said Al-Khudri: Allah's Messenger (■) said, "
+        '"A time will soon come when the best property of a Muslim will be sheep."'
+    )
+    arabic_13 = (
+        "\u062d\u062a\u0649 \u064a\u0639\u0631\u0641 \u0627\u0644\u063a\u0636\u0628 "
+        "\u0641\u064a \u0648\u062c\u0647\u0647 \u062b\u0645 \u064a\u0642\u0648\u0644 "
+        "\u0625\u0646 \u0623\u062a\u0642\u0627\u0643\u0645 "
+        "\u0648\u0623\u0639\u0644\u0645\u0643\u0645 \u0628\u0627\u0644\u0644\u0647 "
+        "\u0623\u0646\u0627"
+    )
+    english_13 = "Narrated 'Aisha: Whenever Allah's Messenger ordered the Muslims."
+    content_list = tmp_path / "source_content_list.json"
+    content_list.write_text(
+        json.dumps(
+            [
+                {
+                    "type": "text",
+                    "text": arabic_12,
+                    "bbox": [101, 103, 906, 229],
+                    "page_idx": 14,
+                },
+                {
+                    "type": "text",
+                    "text": english_12,
+                    "bbox": [89, 239, 900, 291],
+                    "page_idx": 14,
+                },
+                {
+                    "type": "text",
+                    "text": "Book 2, Hadith 13",
+                    "bbox": [91, 309, 218, 324],
+                    "page_idx": 14,
+                },
+                {
+                    "type": "text",
+                    "text": arabic_13,
+                    "bbox": [91, 334, 905, 496],
+                    "page_idx": 14,
+                },
+                {
+                    "type": "text",
+                    "text": english_13,
+                    "bbox": [89, 506, 803, 613],
+                    "page_idx": 14,
+                },
+                {
+                    "type": "header",
+                    "recovered_text": "Book 2, Hadith 12",
+                    "bbox": [93, 75, 217, 89],
+                    "page_idx": 14,
+                },
+                {
+                    "type": "footer",
+                    "recovered_text": "Book 2, Hadith 14",
+                    "bbox": [93, 901, 217, 915],
+                    "page_idx": 14,
+                },
+            ],
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    chunk = AdapterChunk(
+        text="fallback markdown should not be used",
+        source_location={"artifact": "source/auto/source.md"},
+        metadata={
+            "parser_metadata": {
+                "backend": "mineru",
+                "artifact_extract_dir": str(tmp_path),
+                "content_list_ref": "source_content_list.json",
+                "chunk_index": 0,
+            }
+        },
+    )
+
+    split = ChunkSplitter(max_words=1500).split(
+        [chunk],
+        domain_metadata=bukhari_hadith_metadata(),
+        parser_mode="mineru_strict",
+    )
+
+    by_ref = {piece.preview_ref: piece for piece in split if piece.preview_ref}
+    hadith_12 = by_ref["book:2:hadith:12"]
+    assert "Book 2, Hadith 12" in hadith_12.text
+    assert arabic_12 in hadith_12.text
+    assert english_12 in hadith_12.text
+    assert "Book 2, Hadith 13" not in hadith_12.text
+    assert hadith_12.metadata["canonical_reference_unit"]["assembly_strategy"] == (
+        "domain_evidence_graph"
+    )
+    assert "reference_unit_missing_expected_script" not in parser_warning_codes(hadith_12)
+    assert "recovered_text_from_disallowed_block" in parser_warning_codes(hadith_12)
+
+
+def test_chunk_splitter_keeps_next_hadith_footer_as_provenance_boundary(
+    tmp_path: Path,
+):
+    arabic_14 = (
+        "\u0648\u0645\u0646 \u064a\u0643\u0631\u0647 \u0623\u0646 "
+        "\u064a\u0639\u0648\u062f \u0641\u064a \u0627\u0644\u0643\u0641\u0631 "
+        "\u0628\u0639\u062f \u0625\u0630 \u0623\u0646\u0642\u0630\u0647 "
+        "\u0627\u0644\u0644\u0647"
+    )
+    english_14 = "Narrated Anas: The Prophet said whoever possesses three qualities."
+    arabic_15 = (
+        "\u0635\u0641\u0631\u0627\u0621 \u0645\u0644\u062a\u0648\u064a\u0629 "
+        "\u0642\u0627\u0644 \u0648\u0647\u064a\u0628 \u062d\u062f\u062b\u0646\u0627 "
+        "\u0639\u0645\u0631\u0648"
+    )
+    content_list = tmp_path / "source_content_list.json"
+    content_list.write_text(
+        json.dumps(
+            [
+                {
+                    "type": "text",
+                    "text": "Book 2, Hadith 14",
+                    "bbox": [91, 631, 218, 645],
+                    "page_idx": 14,
+                },
+                {
+                    "type": "text",
+                    "text": arabic_14,
+                    "bbox": [99, 655, 905, 784],
+                    "page_idx": 14,
+                },
+                {
+                    "type": "text",
+                    "text": english_14,
+                    "bbox": [89, 795, 905, 866],
+                    "page_idx": 14,
+                },
+                {
+                    "type": "footer",
+                    "recovered_text": "Book 2, Hadith 15",
+                    "bbox": [93, 901, 217, 915],
+                    "page_idx": 14,
+                },
+                {
+                    "type": "text",
+                    "text": arabic_15,
+                    "bbox": [96, 75, 906, 299],
+                    "page_idx": 15,
+                },
+            ],
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    chunk = AdapterChunk(
+        text="fallback markdown should not be used",
+        source_location={"artifact": "source/auto/source.md"},
+        metadata={
+            "parser_metadata": {
+                "backend": "mineru",
+                "artifact_extract_dir": str(tmp_path),
+                "content_list_ref": "source_content_list.json",
+            }
+        },
+    )
+
+    split = ChunkSplitter(max_words=1500).split(
+        [chunk],
+        domain_metadata=bukhari_hadith_metadata(),
+        parser_mode="mineru_strict",
+    )
+
+    by_ref = {piece.preview_ref: piece for piece in split if piece.preview_ref}
+    assert arabic_14 in by_ref["book:2:hadith:14"].text
+    assert arabic_15 not in by_ref["book:2:hadith:14"].text
+    assert by_ref["book:2:hadith:15"].content_type in {"text", "reference_provenance"}
+
+
+def test_chunk_splitter_keeps_missing_arabic_warning_when_visual_unit_has_no_arabic(
+    tmp_path: Path,
+):
+    content_list = tmp_path / "source_content_list.json"
+    content_list.write_text(
+        json.dumps(
+            [
+                {
+                    "type": "text",
+                    "text": "Book 2, Hadith 20",
+                    "bbox": [91, 100, 218, 116],
+                    "page_idx": 20,
+                },
+                {
+                    "type": "text",
+                    "text": "Narrated Abu Huraira: English translation only.",
+                    "bbox": [91, 130, 900, 160],
+                    "page_idx": 20,
+                },
+            ],
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    chunk = AdapterChunk(
+        text="fallback markdown should not be used",
+        source_location={"artifact": "source/auto/source.md"},
+        metadata={
+            "parser_metadata": {
+                "backend": "mineru",
+                "artifact_extract_dir": str(tmp_path),
+                "content_list_ref": "source_content_list.json",
+            }
+        },
+    )
+
+    split = ChunkSplitter(max_words=1500).split(
+        [chunk],
+        domain_metadata=bukhari_hadith_metadata(),
+        parser_mode="mineru_strict",
+    )
+
+    assert "reference_unit_missing_expected_script" in parser_warning_codes(split[0])
+
+
+def test_chunk_splitter_keeps_hadith_body_across_page_until_next_anchor(
+    tmp_path: Path,
+):
+    arabic = (
+        "\u0642\u0627\u0644 \u0631\u0633\u0648\u0644 \u0627\u0644\u0644\u0647 "
+        "\u0635\u0644\u0649 \u0627\u0644\u0644\u0647 \u0639\u0644\u064a\u0647 "
+        "\u0648\u0633\u0644\u0645"
+    )
+    english_page_two = "The translation continues on the next page before a new hadith."
+    content_list = tmp_path / "source_content_list.json"
+    content_list.write_text(
+        json.dumps(
+            [
+                {
+                    "type": "text",
+                    "text": "Book 3, Hadith 4",
+                    "bbox": [91, 880, 218, 896],
+                    "page_idx": 30,
+                },
+                {
+                    "type": "text",
+                    "text": arabic,
+                    "bbox": [91, 904, 906, 940],
+                    "page_idx": 30,
+                },
+                {
+                    "type": "text",
+                    "text": english_page_two,
+                    "bbox": [91, 74, 900, 120],
+                    "page_idx": 31,
+                },
+                {
+                    "type": "text",
+                    "text": "Book 3, Hadith 5",
+                    "bbox": [91, 140, 218, 156],
+                    "page_idx": 31,
+                },
+            ],
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    chunk = AdapterChunk(
+        text="fallback markdown should not be used",
+        source_location={"artifact": "source/auto/source.md"},
+        metadata={
+            "parser_metadata": {
+                "backend": "mineru",
+                "artifact_extract_dir": str(tmp_path),
+                "content_list_ref": "source_content_list.json",
+            }
+        },
+    )
+
+    split = ChunkSplitter(max_words=1500).split(
+        [chunk],
+        domain_metadata=bukhari_hadith_metadata(),
+        parser_mode="mineru_strict",
+    )
+
+    by_ref = {piece.preview_ref: piece for piece in split if piece.preview_ref}
+    assert arabic in by_ref["book:3:hadith:4"].text
+    assert english_page_two in by_ref["book:3:hadith:4"].text
+    assert "Book 3, Hadith 5" not in by_ref["book:3:hadith:4"].text
+
+
+def test_chunk_splitter_stops_hadith_body_at_competing_recovered_anchor(
+    tmp_path: Path,
+):
+    arabic_20 = (
+        "\u0642\u0627\u0644 \u0631\u0633\u0648\u0644 \u0627\u0644\u0644\u0647 "
+        "\u0635\u0644\u0649 \u0627\u0644\u0644\u0647 \u0639\u0644\u064a\u0647 "
+        "\u0648\u0633\u0644\u0645 \u0641\u064a \u0627\u0644\u062d\u062f\u064a\u062b "
+        "\u0627\u0644\u0623\u0648\u0644"
+    )
+    english_20 = "Narrated first companion: first translation."
+    arabic_21 = (
+        "\u0642\u0627\u0644 \u0631\u0633\u0648\u0644 \u0627\u0644\u0644\u0647 "
+        "\u0635\u0644\u0649 \u0627\u0644\u0644\u0647 \u0639\u0644\u064a\u0647 "
+        "\u0648\u0633\u0644\u0645 \u0641\u064a \u0627\u0644\u062d\u062f\u064a\u062b "
+        "\u0627\u0644\u062b\u0627\u0646\u064a"
+    )
+    content_list = tmp_path / "source_content_list.json"
+    content_list.write_text(
+        json.dumps(
+            [
+                {
+                    "type": "header",
+                    "recovered_text": "Book 5, Hadith 20",
+                    "bbox": [91, 80, 220, 96],
+                    "page_idx": 50,
+                },
+                {
+                    "type": "text",
+                    "text": arabic_20,
+                    "bbox": [91, 110, 906, 170],
+                    "page_idx": 50,
+                },
+                {
+                    "type": "text",
+                    "text": english_20,
+                    "bbox": [91, 180, 906, 230],
+                    "page_idx": 50,
+                },
+                {
+                    "type": "header",
+                    "recovered_text": "Book 5, Hadith 21",
+                    "bbox": [91, 240, 220, 256],
+                    "page_idx": 50,
+                },
+                {
+                    "type": "text",
+                    "text": arabic_21,
+                    "bbox": [91, 270, 906, 330],
+                    "page_idx": 50,
+                },
+            ],
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    chunk = AdapterChunk(
+        text="fallback markdown should not be used",
+        source_location={"artifact": "source/auto/source.md"},
+        metadata={
+            "parser_metadata": {
+                "backend": "mineru",
+                "artifact_extract_dir": str(tmp_path),
+                "content_list_ref": "source_content_list.json",
+            }
+        },
+    )
+
+    split = ChunkSplitter(max_words=1500).split(
+        [chunk],
+        domain_metadata=bukhari_hadith_metadata(),
+        parser_mode="mineru_strict",
+    )
+
+    by_ref = {piece.preview_ref: piece for piece in split if piece.preview_ref}
+    assert arabic_20 in by_ref["book:5:hadith:20"].text
+    assert arabic_21 not in by_ref["book:5:hadith:20"].text
+    assert arabic_21 in by_ref["book:5:hadith:21"].text
 
 
 def test_chunk_splitter_preserves_unassigned_canonical_blocks_as_provenance(

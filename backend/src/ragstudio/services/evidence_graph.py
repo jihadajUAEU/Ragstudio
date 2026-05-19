@@ -1,8 +1,18 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Callable
+from dataclasses import dataclass
 
 from ragstudio.services.canonical_assembly import EvidenceBlockView
+
+
+@dataclass(frozen=True)
+class ReferenceWindow:
+    anchor: EvidenceBlockView
+    body_blocks: tuple[EvidenceBlockView, ...]
+    next_anchor: EvidenceBlockView | None = None
+    previous_anchor: EvidenceBlockView | None = None
 
 
 class EvidenceGraph:
@@ -46,3 +56,58 @@ class EvidenceGraph:
 
     def blocks_with_script(self, script: str) -> list[EvidenceBlockView]:
         return [block for block in self.blocks if script in block.scripts]
+
+    def visual_window_after_anchor(
+        self,
+        anchor: EvidenceBlockView,
+        *,
+        is_anchor: Callable[[EvidenceBlockView], bool],
+        accepts_body: Callable[[EvidenceBlockView], bool],
+        max_page_gap: int | None,
+    ) -> ReferenceWindow:
+        anchor_index = self.index_of(anchor)
+        if anchor_index is None:
+            return ReferenceWindow(anchor=anchor, body_blocks=())
+
+        body_blocks: list[EvidenceBlockView] = []
+        next_anchor: EvidenceBlockView | None = None
+        for candidate in self.blocks[anchor_index + 1 :]:
+            if not candidate.has_text:
+                continue
+            if is_anchor(candidate):
+                next_anchor = candidate
+                break
+            if not self._within_page_gap(anchor, candidate, max_page_gap=max_page_gap):
+                break
+            if accepts_body(candidate):
+                body_blocks.append(candidate)
+
+        previous_anchor = next(
+            (
+                candidate
+                for candidate in reversed(self.blocks[:anchor_index])
+                if candidate.has_text and is_anchor(candidate)
+            ),
+            None,
+        )
+        return ReferenceWindow(
+            anchor=anchor,
+            body_blocks=tuple(body_blocks),
+            next_anchor=next_anchor,
+            previous_anchor=previous_anchor,
+        )
+
+    def _within_page_gap(
+        self,
+        anchor: EvidenceBlockView,
+        candidate: EvidenceBlockView,
+        *,
+        max_page_gap: int | None,
+    ) -> bool:
+        if max_page_gap is None:
+            return True
+        anchor_page = anchor.page_start
+        candidate_page = candidate.page_end if candidate.page_end is not None else candidate.page_start
+        if anchor_page is None or candidate_page is None:
+            return True
+        return candidate_page - anchor_page <= max_page_gap
