@@ -25,6 +25,17 @@ class JobPage(StudioModel):
     total: int
 
 
+class JobStageEventOut(StudioModel):
+    sequence: int
+    occurred_at: str
+    stage: str
+    label: str
+    detail: str
+    progress: int
+    chunk_count: int | None = None
+    warning: str | None = None
+
+
 class ParserQualityWarningOut(StudioModel):
     chunk_id: str
     chunk_preview: str

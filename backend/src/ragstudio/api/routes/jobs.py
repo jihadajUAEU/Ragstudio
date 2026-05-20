@@ -1,11 +1,18 @@
+import asyncio
+import json
+from collections.abc import AsyncIterator
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ragstudio.api.deps import get_session
+from ragstudio.db.models import Job
 from ragstudio.schemas.jobs import (
     JobPage,
     JobQualityWarningRepairOut,
     JobQualityWarningsOut,
+    JobStageEventOut,
 )
 from ragstudio.services.job_quality_warning_service import (
     JobQualityWarningRepairDocumentNotFound,
@@ -21,6 +28,42 @@ router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 async def list_jobs(session: AsyncSession = Depends(get_session)) -> JobPage:
     items = await JobWorker(session).list()
     return JobPage(items=items, total=len(items))
+
+
+@router.get("/{job_id}/events")
+async def job_events(
+    job_id: str,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+) -> StreamingResponse:
+    job = await session.get(Job, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    async def stream() -> AsyncIterator[str]:
+        sent = 0
+        while True:
+            current = await session.get(Job, job_id, populate_existing=True)
+            if current is None:
+                yield _sse_event("error", {"detail": "Job not found"})
+                return
+
+            events = _job_stage_events(current)
+            for event in events[sent:]:
+                yield _sse_event("job_stage", event.model_dump(mode="json"))
+            sent = len(events)
+
+            if current.status in {"succeeded", "failed"}:
+                return
+            if await request.is_disconnected():
+                return
+            await asyncio.sleep(0.5)
+
+    return StreamingResponse(
+        stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache"},
+    )
 
 
 @router.get("/{job_id}/quality-warnings", response_model=JobQualityWarningsOut)
@@ -64,3 +107,23 @@ async def fix_job_quality_warnings(
     if result is None:
         raise HTTPException(status_code=404, detail="Job not found")
     return result
+
+
+def _job_stage_events(job: Job) -> list[JobStageEventOut]:
+    result = job.result or {}
+    raw_events = result.get("indexing_stage_events")
+    if not isinstance(raw_events, list):
+        raw_events = []
+    events: list[JobStageEventOut] = []
+    for event in raw_events:
+        if not isinstance(event, dict):
+            continue
+        try:
+            events.append(JobStageEventOut.model_validate(event))
+        except ValueError:
+            continue
+    return events
+
+
+def _sse_event(event: str, data: dict[str, object]) -> str:
+    return f"event: {event}\ndata: {json.dumps(data, separators=(',', ':'))}\n\n"

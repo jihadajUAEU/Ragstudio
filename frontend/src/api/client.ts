@@ -58,6 +58,30 @@ export interface ReindexDocumentOut {
   status: string;
 }
 
+export type ApiQueryOptions = Record<string, string | number | boolean | null | undefined>;
+
+export function jobEventsUrl(jobId: string): string {
+  return `${API_BASE_URL}/api/jobs/${encodeURIComponent(jobId)}/events`;
+}
+
+export function createJobEventSource(jobId: string): EventSource {
+  return new EventSource(jobEventsUrl(jobId));
+}
+
+function withQuery(path: string, options?: ApiQueryOptions): string {
+  if (!options) {
+    return path;
+  }
+  const params = new URLSearchParams();
+  Object.entries(options).forEach(([key, value]) => {
+    if (value !== null && value !== undefined) {
+      params.set(key, String(value));
+    }
+  });
+  const query = params.toString();
+  return query ? `${path}?${query}` : path;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers);
   if (!headers.has("Accept")) {
@@ -133,6 +157,8 @@ export const apiClient = {
       body: JSON.stringify(payload),
     }),
   jobs: () => request<Page<JobOut>>("/api/jobs"),
+  jobEventsUrl,
+  createJobEventSource,
   jobQualityWarnings: (jobId: string) =>
     request<JobQualityWarningsOut>(
       `/api/jobs/${encodeURIComponent(jobId)}/quality-warnings?limit=5000`,
@@ -218,8 +244,8 @@ export const apiClient = {
       body: formData,
     });
   },
-  searchChunks: (payload: ChunkSearchIn) =>
-    request<ChunkSearchOut>("/api/chunks/search", {
+  searchChunks: (payload: ChunkSearchIn, options?: ApiQueryOptions) =>
+    request<ChunkSearchOut>(withQuery("/api/chunks/search", options), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
@@ -259,5 +285,5 @@ export const apiClient = {
     }),
   runs: () => request<Page<RunOut>>("/api/runs"),
   diagnostics: () => request<DiagnosticsOut>("/api/diagnostics"),
-  graph: () => request<GraphOut>("/api/graph"),
+  graph: (options?: ApiQueryOptions) => request<GraphOut>(withQuery("/api/graph", options)),
 };

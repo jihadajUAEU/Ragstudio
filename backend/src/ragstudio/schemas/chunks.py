@@ -34,6 +34,7 @@ class ChunkSearchIn(StudioModel):
     document_ids: list[str] = []
     variant_id: str | None = None
     limit: int = 10
+    offset: int = 0
     explain: bool = True
     include_neighbors: bool = True
 
@@ -41,3 +42,4 @@ class ChunkSearchIn(StudioModel):
 class ChunkSearchOut(StudioModel):
     items: list[ChunkOut]
     total: int
+    has_more: bool = False

@@ -128,8 +128,9 @@ class ChunkService:
 
     async def search(self, search_in: ChunkSearchIn) -> ChunkSearchOut:
         limit = max(search_in.limit, 0)
+        offset = max(search_in.offset, 0)
         repository = ChunkLexicalSearchRepository(self.session)
-        prefilter_limit = max(search_in.limit, 20)
+        prefilter_limit = max(offset + limit, 20)
         reference_prefiltered = await repository.reference_prefilter(
             query=search_in.query,
             document_ids=search_in.document_ids,
@@ -175,6 +176,8 @@ class ChunkService:
         if search_in.query.strip():
             ranked = [item for item in ranked if item[0].score > 0]
 
+        total = len(ranked)
+        page = ranked[offset : offset + limit] if limit else []
         items = [
             self._chunk_out_with_score(
                 chunk,
@@ -182,9 +185,13 @@ class ChunkService:
                 explain=search_in.explain,
                 include_neighbors=search_in.include_neighbors,
             )
-            for score, _, chunk in ranked[:limit]
+            for score, _, chunk in page
         ]
-        return ChunkSearchOut(items=items, total=len(items))
+        return ChunkSearchOut(
+            items=items,
+            total=total,
+            has_more=offset + len(items) < total,
+        )
 
     async def chunks_by_id(self, chunk_ids: list[str]) -> list[ChunkOut]:
         unique_ids = list(dict.fromkeys(chunk_id for chunk_id in chunk_ids if chunk_id))

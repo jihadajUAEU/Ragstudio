@@ -42,6 +42,30 @@ const DEFAULT_MINERU_PARSE_OPTIONS: MinerUParseOptionsIn = {
   table: true,
   max_concurrent_files: 1,
 };
+type LiveJobEventsById = Record<string, LiveJobEventSnapshot>;
+
+interface LiveJobEventSnapshot {
+  progress: number | null;
+  stage: LiveJobStage | null;
+  mineru: LiveMinerUStatus | null;
+  logs: string[];
+  warnings: string[];
+  status: string | null;
+  updatedAt: number;
+}
+
+interface LiveJobStage {
+  label: string | null;
+  detail: string | null;
+  progress: number | null;
+  chunkCount: number | null;
+}
+
+interface LiveMinerUStatus {
+  status: string | null;
+  progress: number | null;
+  detail: string | null;
+}
 
 export function DocumentsPage() {
   const queryClient = useQueryClient();
@@ -57,6 +81,7 @@ export function DocumentsPage() {
   const [documentSearch, setDocumentSearch] = useState("");
   const [jobSearch, setJobSearch] = useState("");
   const [jobStatusFilter, setJobStatusFilter] = useState("");
+  const [liveJobEventsById, setLiveJobEventsById] = useState<LiveJobEventsById>({});
   const [indexOptions, setIndexOptions] = useState<IndexDocumentIn>({
     parser_mode: DEFAULT_PARSER_MODE,
     domain_metadata: { domain: "generic", document_type: "document", tags: [] },
@@ -75,6 +100,8 @@ export function DocumentsPage() {
   });
   const jobs = useMemo(() => jobsQuery.data?.items ?? [], [jobsQuery.data?.items]);
   const activeJobs = hasActiveJobs(jobs);
+  const activeJobIds = useMemo(() => jobs.filter(isActiveJob).map((job) => job.id), [jobs]);
+  const activeJobIdsKey = activeJobIds.join("|");
   const documentsQuery = useQuery({
     queryKey: queryKeys.documents,
     queryFn: apiClient.documents,
@@ -218,8 +245,8 @@ export function DocumentsPage() {
     [jobs],
   );
   const filteredJobs = useMemo(
-    () => filterJobs(jobs, documentsById, jobSearch, jobStatusFilter),
-    [documentsById, jobSearch, jobStatusFilter, jobs],
+    () => filterJobs(jobs, documentsById, jobSearch, jobStatusFilter, liveJobEventsById),
+    [documentsById, jobSearch, jobStatusFilter, jobs, liveJobEventsById],
   );
   const selectedWarningJob = useMemo(
     () => jobs.find((job) => job.id === selectedWarningJobId) ?? null,
@@ -271,6 +298,41 @@ export function DocumentsPage() {
       void refetchDocuments();
     }
   }, [activeJobs, jobsQuery.dataUpdatedAt, refetchDocuments]);
+
+  useEffect(() => {
+    const jobIds = activeJobIdsKey ? activeJobIdsKey.split("|") : [];
+    if (!jobIds.length || typeof apiClient.createJobEventSource !== "function") {
+      return;
+    }
+
+    const sources = jobIds.map((jobId) => {
+      const source = apiClient.createJobEventSource(jobId);
+      const handleEvent = (event: Event) => {
+        const payload = parseJobEventPayload(event);
+        if (!payload) {
+          return;
+        }
+        setLiveJobEventsById((current) => ({
+          ...current,
+          [jobId]: mergeLiveJobEvent(current[jobId], payload),
+        }));
+        if (isTerminalJobEvent(payload, event.type)) {
+          void queryClient.invalidateQueries({ queryKey: queryKeys.documents });
+          void queryClient.invalidateQueries({ queryKey: queryKeys.jobs });
+        }
+      };
+
+      source.onmessage = handleEvent;
+      ["stage", "progress", "log", "status"].forEach((eventName) => {
+        source.addEventListener(eventName, handleEvent);
+      });
+      return source;
+    });
+
+    return () => {
+      sources.forEach((source) => source.close());
+    };
+  }, [activeJobIdsKey, queryClient]);
 
   const documentColumns = useMemo<ColumnDef<DocumentOut>[]>(
     () => [
@@ -384,8 +446,9 @@ export function DocumentsPage() {
         accessorKey: "progress",
         header: "Progress",
         cell: ({ row }) => {
-          const progress = getJobProgress(row.original);
-          const mineruStatus = getMinerUStatus(row.original.result);
+          const liveEvent = liveJobEventsById[row.original.id];
+          const progress = getJobProgress(row.original, liveEvent);
+          const mineruStatus = getMinerUStatus(row.original.result, liveEvent);
 
           return (
             <div className="min-w-32 space-y-1">
@@ -414,11 +477,13 @@ export function DocumentsPage() {
         accessorKey: "logs",
         header: "Latest log",
         cell: ({ row }) => {
-          const mineruStatus = formatMinerUResult(row.original);
-          const stageText = jobStageText(row.original);
-          const warnings = jobWarnings(row.original);
+          const liveEvent = liveJobEventsById[row.original.id];
+          const mineruStatus = formatMinerUResult(row.original, liveEvent);
+          const stageText = jobStageText(row.original, liveEvent);
+          const warnings = jobWarnings(row.original, liveEvent);
           const parserQualityGroups = jobParserQualityGroups(row.original);
           const canInspectWarnings = hasInspectableQualityWarnings(row.original);
+          const latestLog = liveEvent?.logs.at(-1) ?? row.original.logs.at(-1) ?? "No logs";
 
           return (
             <div className="min-w-0 space-y-1 text-xs text-[#62717a]">
@@ -434,7 +499,7 @@ export function DocumentsPage() {
               {parserQualityGroups.length ? (
                 <ParserQualityDetails groups={parserQualityGroups} />
               ) : null}
-              <p className="line-clamp-2">{row.original.logs.at(-1) ?? "No logs"}</p>
+              <p className="line-clamp-2">{latestLog}</p>
               {canInspectWarnings ? (
                 <Button
                   type="button"
@@ -456,7 +521,7 @@ export function DocumentsPage() {
         },
       },
     ],
-    [documentsById],
+    [documentsById, liveJobEventsById],
   );
 
   const isRefreshing = documentsQuery.isFetching || jobsQuery.isFetching;
@@ -759,6 +824,118 @@ function isActiveJob(job: JobOut): boolean {
 
 function hasActiveJobs(jobs: JobOut[]): boolean {
   return jobs.some(isActiveJob);
+}
+
+function parseJobEventPayload(event: Event): Record<string, unknown> | null {
+  const data = (event as MessageEvent).data;
+  if (typeof data !== "string" || !data.trim()) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(data);
+    return isRecord(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function mergeLiveJobEvent(
+  current: LiveJobEventSnapshot | undefined,
+  payload: Record<string, unknown>,
+): LiveJobEventSnapshot {
+  const stage = liveStageFromPayload(payload);
+  const mineru = liveMinerUFromPayload(payload);
+  const log = liveLogFromPayload(payload);
+  const warnings = liveWarningsFromPayload(payload);
+  return {
+    progress: numberFromPayload(payload.progress) ?? stage?.progress ?? current?.progress ?? null,
+    stage: stage ?? current?.stage ?? null,
+    mineru: mineru ?? current?.mineru ?? null,
+    logs: log ? [...(current?.logs ?? []), log].slice(-20) : (current?.logs ?? []),
+    warnings: warnings.length ? warnings : (current?.warnings ?? []),
+    status: stringValue(payload.status) ?? stringValue(payload.job_status) ?? current?.status ?? null,
+    updatedAt: Date.now(),
+  };
+}
+
+function liveStageFromPayload(payload: Record<string, unknown>): LiveJobStage | null {
+  const result = isRecord(payload.result) ? payload.result : {};
+  const directStage =
+    recordValue(payload.indexing_stage) ??
+    recordValue(payload.parser_stage) ??
+    recordValue(payload.canonical_stage) ??
+    recordValue(result.indexing_stage) ??
+    recordValue(result.parser_stage) ??
+    recordValue(result.canonical_stage) ??
+    recordValue(payload.stage);
+
+  if (directStage) {
+    return {
+      label:
+        stringValue(directStage.label) ??
+        stringValue(directStage.name) ??
+        stringValue(directStage.stage) ??
+        null,
+      detail:
+        stringValue(directStage.detail) ??
+        stringValue(directStage.message) ??
+        stringValue(payload.detail) ??
+        stringValue(payload.message) ??
+        null,
+      progress: numberFromPayload(directStage.progress) ?? numberFromPayload(payload.progress),
+      chunkCount:
+        numberFromPayload(directStage.chunk_count) ??
+        numberFromPayload(directStage.chunkCount) ??
+        null,
+    };
+  }
+
+  const stageName = stringValue(payload.stage) ?? stringValue(payload.stage_name);
+  if (!stageName) {
+    return null;
+  }
+  return {
+    label: titleCase(stageName.replaceAll("_", " ")),
+    detail: stringValue(payload.detail) ?? stringValue(payload.message),
+    progress: numberFromPayload(payload.progress),
+    chunkCount: numberFromPayload(payload.chunk_count) ?? numberFromPayload(payload.chunkCount),
+  };
+}
+
+function liveMinerUFromPayload(payload: Record<string, unknown>): LiveMinerUStatus | null {
+  const result = isRecord(payload.result) ? payload.result : {};
+  const mineru = recordValue(payload.mineru) ?? recordValue(result.mineru);
+  if (!mineru) {
+    return null;
+  }
+  return {
+    status: stringValue(mineru.status) ? titleCase(String(mineru.status)) : null,
+    progress: numberFromPayload(mineru.progress),
+    detail: stringValue(mineru.detail) ?? stringValue(mineru.message),
+  };
+}
+
+function liveLogFromPayload(payload: Record<string, unknown>): string | null {
+  return (
+    stringValue(payload.log) ??
+    stringValue(payload.message) ??
+    stringValue(payload.detail) ??
+    null
+  );
+}
+
+function liveWarningsFromPayload(payload: Record<string, unknown>): string[] {
+  const warnings = payload.warnings;
+  return Array.isArray(warnings)
+    ? warnings.filter((warning): warning is string => typeof warning === "string")
+    : [];
+}
+
+function isTerminalJobEvent(payload: Record<string, unknown>, eventType: string): boolean {
+  const status = stringValue(payload.status) ?? stringValue(payload.job_status) ?? eventType;
+  return ["succeeded", "failed", "cancelled", "canceled", "complete", "completed"].includes(
+    status.toLowerCase(),
+  );
 }
 
 function OperationsStatusStrip({
@@ -1121,6 +1298,7 @@ function filterJobs(
   documentsById: Map<string, DocumentOut>,
   query: string,
   status: string,
+  liveJobEventsById: LiveJobEventsById = {},
 ): JobOut[] {
   const normalizedQuery = normalizeSearch(query);
   return jobs.filter((job) => {
@@ -1132,6 +1310,7 @@ function filterJobs(
     }
     const document = job.target_id ? documentsById.get(job.target_id) : undefined;
     const parserGroups = jobParserQualityGroups(job);
+    const liveEvent = liveJobEventsById[job.id];
     return searchTextMatches(
       [
         job.id,
@@ -1141,9 +1320,10 @@ function filterJobs(
         formatJobName(job, document),
         formatJobType(job.type),
         document?.filename,
-        formatMinerUResult(job),
-        jobStageText(job),
-        ...jobWarnings(job),
+        formatMinerUResult(job, liveEvent),
+        jobStageText(job, liveEvent),
+        ...jobWarnings(job, liveEvent),
+        ...(liveEvent?.logs ?? []),
         ...job.logs,
         ...parserGroups.flatMap((group) => [
           group.code,
@@ -1228,12 +1408,12 @@ function formatJobType(type: string): string {
   return titleCase(type.replaceAll("_", " "));
 }
 
-function getJobProgress(job: JobOut): number {
-  const mineru = getMinerUStatus(job.result);
-  const stageProgress = getIndexingStageProgress(job.result);
+function getJobProgress(job: JobOut, liveEvent?: LiveJobEventSnapshot): number {
+  const mineru = getMinerUStatus(job.result, liveEvent);
+  const stageProgress = getIndexingStageProgress(job.result, liveEvent);
   const progress =
     job.status === "running"
-      ? (stageProgress ?? mineru?.progress ?? job.progress)
+      ? (liveEvent?.progress ?? stageProgress ?? mineru?.progress ?? job.progress)
       : (job.progress ?? stageProgress ?? mineru?.progress);
   const rounded = Math.max(0, Math.min(Math.round(progress), 100));
 
@@ -1243,7 +1423,13 @@ function getJobProgress(job: JobOut): number {
   return rounded;
 }
 
-function getIndexingStageProgress(result: Record<string, unknown>): number | null {
+function getIndexingStageProgress(
+  result: Record<string, unknown>,
+  liveEvent?: LiveJobEventSnapshot,
+): number | null {
+  if (liveEvent?.stage?.progress !== null && liveEvent?.stage?.progress !== undefined) {
+    return liveEvent.stage.progress;
+  }
   const stage = result.indexing_stage;
   if (!isRecord(stage) || typeof stage.progress !== "number") {
     return null;
@@ -1251,8 +1437,8 @@ function getIndexingStageProgress(result: Record<string, unknown>): number | nul
   return stage.progress;
 }
 
-function formatMinerUResult(job: JobOut): string | null {
-  const mineru = getMinerUStatus(job.result);
+function formatMinerUResult(job: JobOut, liveEvent?: LiveJobEventSnapshot): string | null {
+  const mineru = getMinerUStatus(job.result, liveEvent);
   if (!mineru) {
     return null;
   }
@@ -1269,7 +1455,14 @@ function formatMinerUResult(job: JobOut): string | null {
   return [mineru.status, progress, mineru.detail].filter(Boolean).join(" · ") || null;
 }
 
-function jobStageText(job: JobOut | undefined): string | null {
+function jobStageText(job: JobOut | undefined, liveEvent?: LiveJobEventSnapshot): string | null {
+  if (liveEvent?.stage) {
+    const parts = [liveEvent.stage.label, liveEvent.stage.detail].filter(Boolean);
+    if (liveEvent.stage.chunkCount !== null) {
+      parts.push(`${liveEvent.stage.chunkCount} chunks`);
+    }
+    return parts.length ? parts.join(" · ") : null;
+  }
   const stage = job?.result?.indexing_stage;
   if (!isRecord(stage)) {
     return null;
@@ -1285,7 +1478,10 @@ function jobStageText(job: JobOut | undefined): string | null {
   return parts.length ? parts.join(" · ") : null;
 }
 
-function jobWarnings(job: JobOut | undefined): string[] {
+function jobWarnings(job: JobOut | undefined, liveEvent?: LiveJobEventSnapshot): string[] {
+  if (liveEvent?.warnings.length) {
+    return liveEvent.warnings;
+  }
   const warnings = job?.result?.warnings;
   if (!Array.isArray(warnings)) {
     return [];
@@ -1902,11 +2098,14 @@ function parserQualityExamples(value: unknown): ParserQualityExample[] {
     .filter((example): example is ParserQualityExample => example !== null);
 }
 
-function getMinerUStatus(result: Record<string, unknown>): {
+function getMinerUStatus(result: Record<string, unknown>, liveEvent?: LiveJobEventSnapshot): {
   status: string | null;
   progress: number | null;
   detail: string | null;
 } | null {
+  if (liveEvent?.mineru) {
+    return liveEvent.mineru;
+  }
   const mineru = result.mineru;
   if (!isRecord(mineru)) {
     return null;
@@ -1925,6 +2124,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function numberValue(value: unknown): number {
   return typeof value === "number" ? value : 0;
+}
+
+function numberFromPayload(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function recordValue(value: unknown): Record<string, unknown> | null {
+  return isRecord(value) ? value : null;
 }
 
 function stringValue(value: unknown): string | null {

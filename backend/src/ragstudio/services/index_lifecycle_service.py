@@ -2,7 +2,7 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass
-from inspect import signature
+from inspect import isawaitable, signature
 from typing import Any
 
 from ragstudio.config import AppSettings
@@ -18,6 +18,7 @@ from ragstudio.services.graph_workspace import workspace_label
 from ragstudio.services.index_artifact_cleanup import cleanup_document_index_artifacts
 from ragstudio.services.index_progress import IndexStage
 from ragstudio.services.index_quality_gate import IndexQualityGate
+from ragstudio.services.layout_auto_repair import LayoutAutoRepairService
 from ragstudio.services.mineru_relationship_builder import MinerURelationshipBuilder
 from ragstudio.services.modal_preprocessor import ModalPreprocessor
 from ragstudio.services.parser_normalization import VisionRecoveryConfig
@@ -67,6 +68,7 @@ class IndexLifecycleService:
         document_parser: DocumentParserService | None = None,
         quality_gate: IndexQualityGate | None = None,
         modal_preprocessor: Any | None = None,
+        layout_auto_repair: LayoutAutoRepairService | None = None,
     ):
         self.session = session
         self.settings = settings
@@ -83,6 +85,7 @@ class IndexLifecycleService:
             commit_before_remote_parse=True,
         )
         self.modal_preprocessor = modal_preprocessor or ModalPreprocessor()
+        self.layout_auto_repair = layout_auto_repair or LayoutAutoRepairService()
 
     async def reindex_document(
         self,
@@ -145,17 +148,21 @@ class IndexLifecycleService:
                 normalized_chunks,
                 domain_metadata=options.domain_metadata,
             )
-        adapter_chunks = await ChunkSplitter(
-            vision_recovery_config=VisionRecoveryConfig.from_runtime_profile(
-                options.domain_metadata,
-                profile,
-            )
-        ).split(
+        adapter_chunks = await self._run_cpu_bound(
+            ChunkSplitter(
+                vision_recovery_config=VisionRecoveryConfig.from_runtime_profile(
+                    options.domain_metadata,
+                    profile,
+                )
+            ).split,
             normalized_chunks,
             domain_metadata=options.domain_metadata,
             parser_mode=options.parser_mode,
         )
-        adapter_chunks = MinerURelationshipBuilder().annotate(
+        layout_repair_result = self.layout_auto_repair.repair(adapter_chunks)
+        adapter_chunks = layout_repair_result.chunks
+        adapter_chunks = await self._run_cpu_bound(
+            MinerURelationshipBuilder().annotate,
             adapter_chunks,
             options.domain_metadata,
         )
@@ -206,6 +213,9 @@ class IndexLifecycleService:
                         "embedding_dimensions": profile.embedding_dimensions,
                         "parser_mode": options.parser_mode,
                         "index_quality_report": index_quality_report,
+                        "layout_auto_repair_report": (
+                            layout_repair_result.diagnostics_payload()
+                        ),
                         "quality_report_version": (
                             index_quality_report.get("quality_report_version")
                             if isinstance(index_quality_report, dict)
@@ -391,6 +401,17 @@ class IndexLifecycleService:
         if "document_id" in parameters:
             return await runtime.index_document(artifact_path, document_id=document_id)
         return await runtime.index_document(artifact_path)
+
+    async def _run_cpu_bound(
+        self,
+        func: Callable[..., Any],
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
+        result = await asyncio.to_thread(func, *args, **kwargs)
+        if isawaitable(result):
+            return await result
+        return result
 
     def _run_runtime_enrichment_in_thread(
         self,
