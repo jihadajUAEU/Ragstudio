@@ -371,3 +371,53 @@ async def test_search_scores_full_scope_after_english_prefilter(
     await engine.dispose()
 
     assert [item.id for item in result.items] == ["target-after-prefilter-window"]
+
+
+@pytest.mark.asyncio
+async def test_search_paginates_ranked_results_and_returns_total(
+    database_url,
+    tmp_path,
+):
+    engine = make_engine(database_url)
+    await init_db(engine)
+    factory = make_session_factory(engine)
+
+    async with factory() as session:
+        document = Document(
+            id="doc-search-pagination",
+            filename="pagination.txt",
+            content_type="text/plain",
+            sha256="pagination-sha",
+            artifact_path=str(tmp_path / "pagination.txt"),
+            status="succeeded",
+        )
+        session.add(document)
+        await session.flush()
+        session.add_all(
+            [
+                Chunk(
+                    id=f"chunk-page-{index}",
+                    document_id=document.id,
+                    text="needle shared term",
+                    metadata_json={"chunk_index": index},
+                    source_location={},
+                )
+                for index in range(3)
+            ]
+        )
+        await session.commit()
+
+        result = await ChunkService(session, tmp_path).search(
+            ChunkSearchIn(
+                query="needle shared",
+                document_ids=[document.id],
+                limit=1,
+                offset=1,
+            )
+        )
+
+    await engine.dispose()
+
+    assert result.total == 3
+    assert result.has_more is True
+    assert [item.id for item in result.items] == ["chunk-page-1"]

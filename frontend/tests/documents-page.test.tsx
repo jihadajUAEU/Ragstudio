@@ -17,6 +17,7 @@ vi.mock("../src/api/client", () => ({
     uploadDocument: vi.fn(),
     deleteDocument: vi.fn(),
     createDocumentReindexJob: vi.fn(),
+    createJobEventSource: vi.fn(),
     fixJobQualityWarnings: vi.fn(),
   },
 }));
@@ -48,9 +49,38 @@ const jobDefaults = {
   recovery_action: null,
 };
 
+class MockJobEventSource {
+  static instances: MockJobEventSource[] = [];
+
+  readonly listeners = new Map<string, Array<(event: MessageEvent) => void>>();
+  onmessage: ((event: MessageEvent) => void) | null = null;
+  closed = false;
+
+  constructor(readonly jobId: string) {
+    MockJobEventSource.instances.push(this);
+  }
+
+  addEventListener(eventName: string, listener: (event: MessageEvent) => void) {
+    this.listeners.set(eventName, [...(this.listeners.get(eventName) ?? []), listener]);
+  }
+
+  close() {
+    this.closed = true;
+  }
+
+  emit(eventName: string, payload: Record<string, unknown>) {
+    const event = new MessageEvent(eventName, { data: JSON.stringify(payload) });
+    if (eventName === "message") {
+      this.onmessage?.(event);
+    }
+    this.listeners.get(eventName)?.forEach((listener) => listener(event));
+  }
+}
+
 describe("DocumentsPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    MockJobEventSource.instances = [];
     vi.mocked(apiClient.documents).mockResolvedValue({ items: [], total: 0 });
     vi.mocked(apiClient.jobs).mockResolvedValue({ items: [], total: 0 });
     vi.mocked(apiClient.jobQualityWarnings).mockResolvedValue({
@@ -88,6 +118,9 @@ describe("DocumentsPage", () => {
       job_id: "job-1",
       status: "ready",
     });
+    vi.mocked(apiClient.createJobEventSource).mockImplementation(
+      (jobId) => new MockJobEventSource(jobId) as unknown as EventSource,
+    );
     vi.mocked(apiClient.fixJobQualityWarnings).mockResolvedValue({
       source_job_id: "job-1",
       document_id: "doc-1",
@@ -798,6 +831,64 @@ describe("DocumentsPage", () => {
     expect(screen.getByText("100%")).toBeVisible();
     expect(screen.queryByText("MinerU: Ready · 80% · MinerU artifacts ready")).not.toBeInTheDocument();
     expect(screen.getByText("MinerU: Ready · MinerU artifacts ready")).toBeVisible();
+  });
+
+  it("renders live parser and canonical stage updates from job event streams", async () => {
+    vi.mocked(apiClient.documents).mockResolvedValue({
+      items: [
+        {
+          id: "doc-1",
+          filename: "canonical.pdf",
+          content_type: "application/pdf",
+          status: "running",
+          sha256: "sha-1",
+        },
+      ],
+      total: 1,
+    });
+    vi.mocked(apiClient.jobs).mockResolvedValue({
+      items: [
+        {
+          ...jobDefaults,
+          id: "job-live",
+          type: "index_document",
+          status: "running",
+          target_id: "doc-1",
+          progress: 12,
+          logs: ["Index job started"],
+          result: {},
+        },
+      ],
+      total: 1,
+    });
+
+    renderDocumentsPage();
+    openJobsWarningsTab();
+
+    expect(await screen.findByText("Index canonical.pdf")).toBeVisible();
+    await waitFor(() => {
+      expect(apiClient.createJobEventSource).toHaveBeenCalledWith("job-live");
+    });
+
+    act(() => {
+      MockJobEventSource.instances[0].emit("stage", {
+        stage: {
+          label: "Canonicalizing chunks",
+          detail: "Normalizing references before materialization",
+          progress: 64,
+          chunk_count: 128,
+        },
+        log: "Canonical stage reached 64%",
+      });
+    });
+
+    expect(await screen.findByText("64%")).toBeVisible();
+    expect(
+      screen.getByText(
+        "Canonicalizing chunks · Normalizing references before materialization · 128 chunks",
+      ),
+    ).toBeVisible();
+    expect(screen.getByText("Canonical stage reached 64%")).toBeVisible();
   });
 
   it("opens persisted parser quality warning details from a compact job summary", async () => {

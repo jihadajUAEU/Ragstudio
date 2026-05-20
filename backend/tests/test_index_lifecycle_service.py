@@ -1,4 +1,5 @@
 import json
+import threading
 from pathlib import Path
 
 import pytest
@@ -296,6 +297,32 @@ def _quran_metadata() -> DomainMetadata:
             "chunking": {"unit": "verse", "preserve_parallel_text": True},
         },
     )
+
+
+@pytest.mark.asyncio
+async def test_run_cpu_bound_offloads_sync_work_to_thread() -> None:
+    service = IndexLifecycleService.__new__(IndexLifecycleService)
+    event_loop_thread_id = threading.get_ident()
+
+    def thread_id() -> int:
+        return threading.get_ident()
+
+    worker_thread_id = await service._run_cpu_bound(thread_id)
+
+    assert worker_thread_id != event_loop_thread_id
+
+
+@pytest.mark.asyncio
+async def test_run_cpu_bound_awaits_awaitable_return() -> None:
+    service = IndexLifecycleService.__new__(IndexLifecycleService)
+
+    async def async_value() -> str:
+        return "awaited"
+
+    def returns_awaitable():
+        return async_value()
+
+    assert await service._run_cpu_bound(returns_awaitable) == "awaited"
 
 
 @pytest.mark.asyncio
@@ -751,6 +778,69 @@ async def test_reindex_document_uses_injected_modal_preprocessor(session, app, t
     assert len(modal_preprocessor.calls) == 1
     assert runtime.preparsed_chunks[0].metadata["modal_router_processed"] is True
     assert runtime.preparsed_chunks[0].metadata["modality"] == "table"
+
+
+@pytest.mark.asyncio
+async def test_reindex_document_applies_layout_auto_repair_before_runtime_materialization(
+    session,
+    app,
+    tmp_path,
+):
+    artifact_path = tmp_path / "layout-repair.pdf"
+    artifact_path.write_bytes(b"%PDF-1.4\n")
+    document = Document(
+        id="doc-layout-repair",
+        filename="layout-repair.pdf",
+        content_type="application/pdf",
+        artifact_path=str(artifact_path),
+        sha256="layout-repair",
+        status=StageStatus.SUCCEEDED.value,
+    )
+    session.add_all(
+        [
+            SettingsProfile(
+                id="default",
+                provider="openai-compatible",
+                llm_model="gpt-4o",
+                embedding_model="text-embedding-3-large",
+                storage_backend="postgres_pgvector_neo4j",
+                runtime_mode="runtime",
+            ),
+            document,
+        ]
+    )
+    await session.commit()
+
+    parser_chunk = AdapterChunk(
+        text="Layout repair chunk",
+        source_location={"page_start": 3, "page_end": 2, "page": 3},
+        metadata={"parser_metadata": {"backend": "mineru"}},
+        runtime_source_id="runtime-layout-repair",
+    )
+    runtime = PreparsedRuntime()
+
+    result = await IndexLifecycleService(
+        session,
+        app.state.settings,
+        runtime_factory=FakeFactory(runtime),
+        health_service=FakeHealthService(),
+        document_parser=FakeDocumentParser([parser_chunk]),
+    ).reindex_document(
+        document.id,
+        options=IndexDocumentIn(parser_mode="mineru_strict"),
+    )
+
+    index_record = await session.scalar(
+        select(IndexRecord).where(IndexRecord.document_id == document.id)
+    )
+
+    assert result is not None
+    assert runtime.preparsed_chunks[0].source_location == {"page_start": 2, "page_end": 3}
+    assert runtime.preparsed_chunks[0].metadata["layout_auto_repair"]["diagnostics"][0][
+        "code"
+    ] == "page_range_reordered"
+    assert index_record is not None
+    assert index_record.index_shape["layout_auto_repair_report"]["repaired_count"] == 1
 
 
 @pytest.mark.asyncio

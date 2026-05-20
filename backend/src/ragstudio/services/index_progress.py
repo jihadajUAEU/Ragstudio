@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
@@ -46,6 +47,8 @@ _STAGE_LABELS = {
     IndexStage.FAILED: "Failed",
 }
 
+_MAX_STAGE_EVENTS = 100
+
 
 def stage_progress(stage: IndexStage) -> int:
     return _STAGE_PROGRESS[stage]
@@ -71,6 +74,26 @@ def stage_payload(
     return payload
 
 
+def stage_event_payload(
+    stage: IndexStage,
+    *,
+    detail: str,
+    sequence: int,
+    chunk_count: int | None = None,
+    warning: str | None = None,
+    occurred_at: datetime | None = None,
+) -> dict[str, Any]:
+    payload = stage_payload(
+        stage,
+        detail=detail,
+        chunk_count=chunk_count,
+        warning=warning,
+    )
+    payload["sequence"] = sequence
+    payload["occurred_at"] = (occurred_at or datetime.now(UTC)).isoformat()
+    return payload
+
+
 def update_job_stage(
     job: Any,
     stage: IndexStage,
@@ -88,6 +111,27 @@ def update_job_stage(
     job.progress = payload["progress"]
     result = dict(job.result or {})
     result["indexing_stage"] = payload
+    previous_events = [
+        event for event in result.get("indexing_stage_events", []) if isinstance(event, dict)
+    ]
+    last_sequence = max(
+        (
+            event.get("sequence", 0)
+            for event in previous_events
+            if isinstance(event.get("sequence"), int)
+        ),
+        default=0,
+    )
+    result["indexing_stage_events"] = [
+        *previous_events,
+        stage_event_payload(
+            stage,
+            detail=detail,
+            chunk_count=chunk_count,
+            warning=warning,
+            sequence=last_sequence + 1,
+        ),
+    ][-_MAX_STAGE_EVENTS:]
     if warning:
         warnings = list(result.get("warnings") or [])
         if warning not in warnings:

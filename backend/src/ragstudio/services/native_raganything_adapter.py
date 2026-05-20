@@ -1,38 +1,23 @@
 from __future__ import annotations
 
 import asyncio
-import os
-import threading
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from functools import partial
 from importlib import import_module
 from pathlib import Path
 from typing import Any
-from urllib.parse import unquote
 
 from ragstudio.config import AppSettings
 from ragstudio.schemas.runtime import RuntimeProfile
 from ragstudio.services.adapter import AdapterChunk
 from ragstudio.services.graph_workspace import workspace_label
+from ragstudio.services.native_storage_config import (
+    NATIVE_STORAGE_ENV_LOCK,
+    derive_native_storage_config,
+    scoped_native_storage_env,
+)
 from ragstudio.services.runtime_types import RuntimeChunk, RuntimeQueryResult
-from sqlalchemy.engine import make_url
-
-
-class _AsyncThreadLock:
-    def __init__(self) -> None:
-        self._lock = threading.Lock()
-
-    async def __aenter__(self) -> _AsyncThreadLock:
-        while not self._lock.acquire(blocking=False):
-            await asyncio.sleep(0)
-        return self
-
-    async def __aexit__(self, *exc_info: object) -> None:
-        self._lock.release()
-
-    def locked(self) -> bool:
-        return self._lock.locked()
 
 
 class ScopedVectorStorageProxy:
@@ -221,7 +206,7 @@ class NativeScopedStorageUnsupported(RuntimeError):
 class NativeRAGAnythingAdapter:
     """Runtime adapter for the real RAG-Anything and LightRAG stack."""
 
-    _env_lock = _AsyncThreadLock()
+    _env_lock = NATIVE_STORAGE_ENV_LOCK
 
     def __init__(self, profile: RuntimeProfile, settings: AppSettings | None = None):
         self.profile = profile
@@ -705,39 +690,9 @@ class NativeRAGAnythingAdapter:
 
     @asynccontextmanager
     async def _storage_env(self) -> AsyncIterator[None]:
-        updates = {
-            **self._postgres_env(),
-            "POSTGRES_WORKSPACE": self._workspace(),
-            "NEO4J_URI": self.profile.neo4j_uri or "",
-            "NEO4J_USERNAME": self.profile.neo4j_username or "",
-            "NEO4J_PASSWORD": self.profile.neo4j_password or "",
-            "NEO4J_WORKSPACE": self._workspace(),
-        }
-        async with self._env_lock:
-            previous = {key: os.environ.get(key) for key in updates}
-            try:
-                for key, value in updates.items():
-                    if value:
-                        os.environ[key] = value
-                    else:
-                        os.environ.pop(key, None)
-                yield
-            finally:
-                for key, value in previous.items():
-                    if value is None:
-                        os.environ.pop(key, None)
-                    else:
-                        os.environ[key] = value
-
-    def _postgres_env(self) -> dict[str, str]:
-        url = make_url(self.settings.resolved_database_url)
-        return {
-            "POSTGRES_HOST": url.host or "127.0.0.1",
-            "POSTGRES_PORT": str(url.port or 5432),
-            "POSTGRES_USER": unquote(url.username or "postgres"),
-            "POSTGRES_PASSWORD": unquote(url.password or ""),
-            "POSTGRES_DATABASE": url.database or "ragstudio",
-        }
+        config = derive_native_storage_config(self.profile, self.settings)
+        async with scoped_native_storage_env(config):
+            yield
 
     def _workspace(self) -> str:
         return workspace_label(self.profile)
