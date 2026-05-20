@@ -20,9 +20,9 @@ gateable before bad evidence reaches answers.
 Your job when using this skill is to trace behavior from user-visible symptom to
 source code, persisted state, raw artifact, public-safe proof evidence, and a
 focused fix or recommendation. Do not treat final answer quality as the only
-signal. In Ragstudio, parser warnings, canonical chunk assembly, quality action
-policy, graph projection state, reranker traces, and proof packet validity are
-first-class evidence.
+signal. In Ragstudio, parser warnings, canonical chunk assembly, layout repair
+diagnostics, quality action policy, graph projection state, retrieval route
+plans, reranker traces, and proof packet validity are first-class evidence.
 
 ## Use This Skill When
 
@@ -56,9 +56,15 @@ first-class evidence.
 - Do not assume standard RAG behavior. Ragstudio uses MinerU strict parsing,
   layout-aware chunking, metadata policies, pgvector, lexical search, optional
   native RAG-Anything, optional reranking, and Neo4j as a rebuildable projection.
+- Treat RAG-Anything as a runtime/retrieval lane, not the canonical source of
+  truth. Canonical Ragstudio evidence in Postgres must remain the bridge for
+  fusion, context assembly, graph projection, proof export, and public claims.
 - Keep fixes scoped. Pipeline behavior often spans schemas, services, routes,
   tests, and frontend traces; update the full contract only where the task needs
   it.
+- If a change touches an API schema, update backend schemas, route/client
+  behavior, generated frontend bindings, and focused tests together. Do not let
+  frontend query parameters drift from backend request-body contracts.
 
 ## First Pass Checklist
 
@@ -67,9 +73,10 @@ context:
 
 1. Symptom: document id, job id, chunk id, query/run id, claim id, screenshot, or
    exact UI behavior.
-2. Stage: upload, parse, normalize, canonical assembly, quality gate, persistence,
-   vector materialization, graph projection, query planning, retrieval, fusion,
-   rerank, answer assembly, proof export, or frontend display.
+2. Stage: upload, parse, layout normalization, domain resolution, canonical
+   evidence, repair/quality, materialization policy, persistence, vector
+   materialization, graph projection, query planning, retrieval, fusion, rerank,
+   context assembly, proof export, or frontend display.
 3. Evidence: relevant DB row fields, job logs/result payload, chunk metadata,
    run traces, graph projection record, proof packet file, or failing test.
 4. Boundary: live runtime issue, static fixture proof issue, UI display issue, or
@@ -81,18 +88,48 @@ context:
 Use these repository paths as the starting map. Verify current names with file
 search when in doubt.
 
+### Ten-Layer Evidence Pipeline Contract
+
+- Contract: `backend/src/ragstudio/services/pipeline_architecture.py`
+- Domain profiles: `backend/src/ragstudio/services/domain_profile_registry.py`
+- Evidence units: `backend/src/ragstudio/services/evidence_unit_contract.py`
+- Retrieval route planner:
+  `backend/src/ragstudio/services/retrieval_route_planner.py`
+- Tests: `backend/tests/test_pipeline_architecture.py`,
+  `backend/tests/test_domain_profile_registry.py`,
+  `backend/tests/test_evidence_unit_contract.py`,
+  `backend/tests/test_retrieval_route_planner.py`
+
+Audit focus:
+
+- Map every architecture change to one of the ten layers: parse, layout
+  normalization, domain resolver, canonical evidence, repair and quality,
+  materialization policy, retrieval planner, fusion and rerank, context
+  assembly, proof trace.
+- Distinguish shipped runtime behavior from architecture scaffolding. A contract
+  module with tests is useful, but do not claim live domain-aware retrieval until
+  the planner/profile/evidence contract is wired into the production query or
+  indexing path being discussed.
+- Preserve the bridge identity for every RAG-Anything lane handoff:
+  `document_id`, canonical `chunk_id` when available, `runtime_source_id`,
+  evidence unit type, canonical reference, page/block provenance, quality action
+  policy, and materialization policy.
+
 ### Ingestion And Jobs
 
 - Routes: `backend/src/ragstudio/api/routes/documents.py`,
-  `backend/src/ragstudio/api/routes/chunks.py`
+  `backend/src/ragstudio/api/routes/chunks.py`,
+  `backend/src/ragstudio/api/routes/jobs.py`
 - Job execution: `backend/src/ragstudio/workers/index_worker.py`,
   `backend/src/ragstudio/services/index_job_runner.py`,
   `backend/src/ragstudio/services/job_queue_service.py`
+- Job progress: `backend/src/ragstudio/services/index_progress.py`
 - Durable indexing: `docs/architecture/durable-rag-indexing.md`
 - Core tests: `backend/tests/test_documents.py`,
   `backend/tests/test_index_lifecycle_service.py`,
   `backend/tests/test_index_worker_recovery.py`,
-  `backend/tests/test_index_progress.py`
+  `backend/tests/test_index_progress.py`,
+  `backend/tests/test_jobs.py`
 
 Audit focus:
 
@@ -101,6 +138,10 @@ Audit focus:
   or resumed indexing.
 - Failed jobs should preserve actionable user-visible logs, not only backend
   exceptions.
+- Real-time progress uses the jobs SSE endpoint. The backend event contract is
+  `job_stage` for stage updates and `job_status` for terminal status; frontend
+  subscribers must listen for those names and keep polling as a fallback when
+  EventSource is unavailable.
 
 ### Parsing And Evidence
 
@@ -127,6 +168,7 @@ Audit focus:
 
 - Chunk splitter: `backend/src/ragstudio/services/chunk_splitter.py`
 - Canonical assembly: `backend/src/ragstudio/services/canonical_assembly.py`
+- Layout repair: `backend/src/ragstudio/services/layout_auto_repair.py`
 - Evidence graph helper: `backend/src/ragstudio/services/evidence_graph.py`
 - Persistence: `backend/src/ragstudio/services/chunk_persistence_service.py`
 - Search surfaces: `backend/src/ragstudio/services/chunk_service.py`,
@@ -136,7 +178,8 @@ Audit focus:
   `backend/tests/test_canonical_assembly.py`,
   `backend/tests/test_chunk_persistence_service.py`,
   `backend/tests/test_chunks.py`,
-  `backend/tests/test_chunk_service_arabic_search.py`
+  `backend/tests/test_chunk_service_arabic_search.py`,
+  `backend/tests/test_layout_auto_repair.py`
 
 Audit focus:
 
@@ -146,8 +189,14 @@ Audit focus:
   `canonical_reference_unit`, `parser_warnings`, and `provenance.blocks`.
 - Visual reading order and block coordinates matter. Do not rely only on raw
   text order when investigating fragmented or multilingual documents.
+- Layout auto-repair is deterministic and local. It may normalize page range
+  metadata and attach before/after diagnostics, but it must not invent missing
+  text or fabricate provenance.
 - If chunk boundaries changed, preserve metadata needed for exact reference
   retrieval and graph projection.
+- Chunk search pagination belongs in the `ChunkSearchIn` JSON body (`limit` and
+  `offset`), not as query parameters. `ChunkSearchOut.has_more` should reflect
+  the ranked candidate total.
 
 ### Quality Gates And Materialization
 
@@ -193,7 +242,9 @@ Audit focus:
   `backend/src/ragstudio/services/runtime_profile_service.py`,
   `backend/src/ragstudio/services/runtime_health_service.py`,
   `backend/src/ragstudio/services/runtime_policy.py`,
-  `backend/src/ragstudio/services/runtime_types.py`
+  `backend/src/ragstudio/services/runtime_types.py`,
+  `backend/src/ragstudio/services/native_raganything_adapter.py`,
+  `backend/src/ragstudio/services/native_storage_config.py`
 - Answering: `backend/src/ragstudio/services/runtime_answer_service.py`
 - Tests: `backend/tests/test_query_runs.py`,
   `backend/tests/test_retrieval_orchestrator.py`,
@@ -211,10 +262,17 @@ Audit focus:
   unavailable, reranker disabled, reranker failed, answer synthesis failed, or UI
   trace display missing.
 - Confirm selected document filters are carried through every retrieval stage.
+- Confirm retrieval lanes start from canonical Postgres evidence and only then
+  add lexical, vector, graph, and RAG-Anything runtime lanes according to domain,
+  layout, and materialization policy.
 - Inspect `Run.sources`, `Run.chunk_traces`, `Run.reranker_traces`,
   `Run.timings`, `Run.query_config`, `Run.error`, and `Run.error_type`.
 - Fusion changes must preserve trace explainability. If RRF or candidate ranking
   changes, tests should assert both final ranking and trace details.
+- Native RAG-Anything still requires environment variables for parts of the
+  third-party LightRAG stack, but Ragstudio must confine that mutation behind
+  `scoped_native_storage_env()` and derive values through
+  `derive_native_storage_config()`.
 
 ### Reranker And External Calls
 
@@ -247,6 +305,7 @@ Audit focus:
 - Tests: `backend/tests/test_graph_materialization_service.py`,
   `backend/tests/test_graph_expansion_service.py`,
   `backend/tests/test_graph_workspace.py`,
+  `backend/tests/test_graph_service.py`,
   `backend/tests/test_optimizer_graph_diagnostics.py`,
   `frontend/tests/graph-page.test.tsx`
 
@@ -259,6 +318,9 @@ Audit focus:
   user-facing diagnostics.
 - Graph UI truncation or empty-state behavior must explain whether data is absent,
   stale, filtered, or only partially displayed.
+- Fallback relationship-metadata graph reads should be scoped by `document_id`
+  when provided and paginated with `limit`/`offset`. Do not scan every chunk when
+  the user is inspecting one document.
 
 ### Frontend Trace And Operator UX
 
@@ -269,6 +331,7 @@ Audit focus:
 - Graph: `frontend/src/features/graph/graph-page.tsx`
 - Runtime trust: `frontend/src/components/runtime-trust.tsx`
 - API client: `frontend/src/api/client.ts`
+- Generated API types: `frontend/src/api/generated.ts`
 - Tests: `frontend/tests/documents-page.test.tsx`,
   `frontend/tests/chunk-inspector.test.tsx`,
   `frontend/tests/query-page.test.tsx`,
@@ -284,6 +347,9 @@ Audit focus:
   surface.
 - Every backend trace or warning field that matters to diagnosis should either be
   displayed, summarized, or intentionally excluded with a reason.
+- EventSource is an enhancement, not the only status path. If SSE construction
+  fails or is unavailable, existing TanStack Query polling must continue to show
+  job state.
 
 ### Proof Packet And Public Claims
 
@@ -321,7 +387,7 @@ Choose the most likely stage and state it explicitly:
 - Gate/materialization: blocked vector index, provenance-only chunk, graph blocked,
   warning hidden from UI.
 - Index/runtime: job stuck, lease expired, runtime health failing, adapter refused
-  scoped query, stale index record.
+  scoped query, stale index record, missing `job_stage`/`job_status` event.
 - Retrieval/fusion: candidate absent, low rank, wrong rank, trace mismatch, filter
   dropped.
 - Rerank/answer: reranker unavailable, reranker changed order unexpectedly, answer
@@ -367,6 +433,8 @@ Prefer fixes that improve traceability and correctness together:
 - Use static fixtures for public proof changes.
 - Update schemas, generated/types expectations, API client behavior, and tests
   together when a contract changes.
+- If backend adds JSON-body fields such as chunk `offset`, verify route tests and
+  generated frontend types before adding client helpers.
 
 ## Improvement Heuristics
 
