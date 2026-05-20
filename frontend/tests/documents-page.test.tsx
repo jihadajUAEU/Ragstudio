@@ -871,13 +871,12 @@ describe("DocumentsPage", () => {
     });
 
     act(() => {
-      MockJobEventSource.instances[0].emit("stage", {
-        stage: {
-          label: "Canonicalizing chunks",
-          detail: "Normalizing references before materialization",
-          progress: 64,
-          chunk_count: 128,
-        },
+      MockJobEventSource.instances[0].emit("job_stage", {
+        stage: "canonical_assembly",
+        label: "Canonicalizing chunks",
+        detail: "Normalizing references before materialization",
+        progress: 64,
+        chunk_count: 128,
         log: "Canonical stage reached 64%",
       });
     });
@@ -889,6 +888,47 @@ describe("DocumentsPage", () => {
       ),
     ).toBeVisible();
     expect(screen.getByText("Canonical stage reached 64%")).toBeVisible();
+  });
+
+  it("keeps polling when job event streams are unavailable", async () => {
+    vi.mocked(apiClient.documents).mockResolvedValue({
+      items: [
+        {
+          id: "doc-1",
+          filename: "polling.pdf",
+          content_type: "application/pdf",
+          status: "running",
+          sha256: "sha-1",
+          artifact_path: "/tmp/polling.pdf",
+          metadata: {},
+          created_at: "2026-01-01T00:00:00Z",
+        },
+      ],
+      total: 1,
+    });
+    vi.mocked(apiClient.jobs).mockResolvedValue({
+      items: [
+        {
+          ...jobDefaults,
+          id: "job-polling",
+          type: "index_document",
+          status: "running",
+          target_id: "doc-1",
+          progress: 25,
+          logs: ["Polling fallback remains active"],
+          result: {},
+        },
+      ],
+      total: 1,
+    });
+    vi.mocked(apiClient.createJobEventSource).mockReturnValue(null);
+
+    renderDocumentsPage();
+    openJobsWarningsTab();
+
+    expect(await screen.findByText("Index polling.pdf")).toBeVisible();
+    expect(screen.getByText("Polling fallback remains active")).toBeVisible();
+    expect(MockJobEventSource.instances).toHaveLength(0);
   });
 
   it("opens persisted parser quality warning details from a compact job summary", async () => {

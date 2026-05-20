@@ -58,9 +58,11 @@ async def test_job_events_streams_structured_indexing_stage_events(client):
     assert response.headers["content-type"].startswith("text/event-stream")
     body = response.text
     assert "event: job_stage" in body
+    assert "event: job_status" in body
     assert '"stage":"mineru_parsing"' in body
     assert '"stage":"chunks_persisted"' in body
     assert '"chunk_count":12' in body
+    assert '"status":"succeeded"' in body
 
 
 @pytest.mark.asyncio

@@ -421,3 +421,47 @@ async def test_search_paginates_ranked_results_and_returns_total(
     assert result.total == 3
     assert result.has_more is True
     assert [item.id for item in result.items] == ["chunk-page-1"]
+
+
+@pytest.mark.asyncio
+async def test_search_route_reads_pagination_from_request_body(client, tmp_path):
+    async with client._transport.app.state.session_factory() as session:
+        document = Document(
+            id="doc-search-route-pagination",
+            filename="route-pagination.txt",
+            content_type="text/plain",
+            sha256="route-pagination-sha",
+            artifact_path=str(tmp_path / "route-pagination.txt"),
+            status="succeeded",
+        )
+        session.add(document)
+        await session.flush()
+        session.add_all(
+            [
+                Chunk(
+                    id=f"chunk-route-page-{index}",
+                    document_id=document.id,
+                    text="needle route shared term",
+                    metadata_json={"chunk_index": index},
+                    source_location={},
+                )
+                for index in range(3)
+            ]
+        )
+        await session.commit()
+
+    response = await client.post(
+        "/api/chunks/search",
+        json={
+            "query": "needle route",
+            "document_ids": ["doc-search-route-pagination"],
+            "limit": 1,
+            "offset": 1,
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total"] == 3
+    assert body["has_more"] is True
+    assert [item["id"] for item in body["items"]] == ["chunk-route-page-1"]

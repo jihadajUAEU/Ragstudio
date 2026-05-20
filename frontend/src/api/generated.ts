@@ -390,6 +390,7 @@ export interface ChunkSearchIn {
   document_ids: string[];
   variant_id?: string | null;
   limit: number;
+  offset?: number;
   explain?: boolean;
   include_neighbors?: boolean;
 }
@@ -397,6 +398,7 @@ export interface ChunkSearchIn {
 export interface ChunkSearchOut {
   items: ChunkOut[];
   total: number;
+  has_more?: boolean;
 }
 
 export interface QueryIn {
@@ -541,4 +543,8 @@ export interface GraphOut {
   nodes: Record<string, unknown>[];
   edges: Record<string, unknown>[];
   detail?: string | null;
+  total?: number | null;
+  limit?: number | null;
+  offset?: number | null;
+  has_more?: boolean | null;
 }

@@ -54,6 +54,14 @@ async def job_events(
             sent = len(events)
 
             if current.status in {"succeeded", "failed"}:
+                yield _sse_event(
+                    "job_status",
+                    {
+                        "status": current.status,
+                        "progress": current.progress,
+                        "result": current.result or {},
+                    },
+                )
                 return
             if await request.is_disconnected():
                 return

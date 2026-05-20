@@ -305,8 +305,11 @@ export function DocumentsPage() {
       return;
     }
 
-    const sources = jobIds.map((jobId) => {
+    const sources = jobIds.flatMap((jobId) => {
       const source = apiClient.createJobEventSource(jobId);
+      if (!source) {
+        return [];
+      }
       const handleEvent = (event: Event) => {
         const payload = parseJobEventPayload(event);
         if (!payload) {
@@ -323,10 +326,10 @@ export function DocumentsPage() {
       };
 
       source.onmessage = handleEvent;
-      ["stage", "progress", "log", "status"].forEach((eventName) => {
+      ["job_stage", "job_status", "stage", "progress", "log", "status"].forEach((eventName) => {
         source.addEventListener(eventName, handleEvent);
       });
-      return source;
+      return [source];
     });
 
     return () => {
@@ -895,7 +898,7 @@ function liveStageFromPayload(payload: Record<string, unknown>): LiveJobStage | 
     return null;
   }
   return {
-    label: titleCase(stageName.replaceAll("_", " ")),
+    label: stringValue(payload.label) ?? titleCase(stageName.replaceAll("_", " ")),
     detail: stringValue(payload.detail) ?? stringValue(payload.message),
     progress: numberFromPayload(payload.progress),
     chunkCount: numberFromPayload(payload.chunk_count) ?? numberFromPayload(payload.chunkCount),

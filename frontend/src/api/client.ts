@@ -64,7 +64,10 @@ export function jobEventsUrl(jobId: string): string {
   return `${API_BASE_URL}/api/jobs/${encodeURIComponent(jobId)}/events`;
 }
 
-export function createJobEventSource(jobId: string): EventSource {
+export function createJobEventSource(jobId: string): EventSource | null {
+  if (typeof EventSource === "undefined") {
+    return null;
+  }
   return new EventSource(jobEventsUrl(jobId));
 }
 
@@ -244,8 +247,8 @@ export const apiClient = {
       body: formData,
     });
   },
-  searchChunks: (payload: ChunkSearchIn, options?: ApiQueryOptions) =>
-    request<ChunkSearchOut>(withQuery("/api/chunks/search", options), {
+  searchChunks: (payload: ChunkSearchIn) =>
+    request<ChunkSearchOut>("/api/chunks/search", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),

@@ -66,12 +66,20 @@ describe("apiClient document uploads", () => {
     expect(apiClient.jobEventsUrl("job-1")).toBe("/api/jobs/job-1/events");
   });
 
-  it("passes optional graph and chunk query params through request URLs", async () => {
+  it("returns null for job event streams when EventSource is unavailable", () => {
+    vi.stubGlobal("EventSource", undefined);
+
+    expect(createJobEventSource("job-1")).toBeNull();
+  });
+
+  it("keeps chunk pagination in the request body and graph pagination in query params", async () => {
     const urls: string[] = [];
+    const bodies: unknown[] = [];
     vi.stubGlobal(
       "fetch",
-      vi.fn(async (url) => {
+      vi.fn(async (url, init) => {
         urls.push(String(url));
+        bodies.push(init?.body ? JSON.parse(String(init.body)) : null);
         return new Response(JSON.stringify({ items: [], total: 0, nodes: [], edges: [] }), {
           headers: { "Content-Type": "application/json" },
         });
@@ -79,14 +87,14 @@ describe("apiClient document uploads", () => {
     );
 
     await apiClient.searchChunks(
-      { query: "reference", document_ids: [], limit: 5 },
-      { offset: 20, graph: true, empty: null },
+      { query: "reference", document_ids: [], limit: 5, offset: 20 },
     );
     await apiClient.graph({ document_id: "doc-1", limit: 50, offset: 10 });
 
     expect(urls).toEqual([
-      "/api/chunks/search?offset=20&graph=true",
+      "/api/chunks/search",
       "/api/graph?document_id=doc-1&limit=50&offset=10",
     ]);
+    expect(bodies[0]).toMatchObject({ query: "reference", limit: 5, offset: 20 });
   });
 });
