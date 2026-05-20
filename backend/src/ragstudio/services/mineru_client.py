@@ -4,7 +4,8 @@ import asyncio
 import json
 import shutil
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -13,6 +14,7 @@ from zipfile import ZipFile
 import httpx
 from ragstudio.schemas.parsing import ParserMode
 from ragstudio.services.adapter import AdapterChunk
+from ragstudio.services.http_retry import raise_for_transient_status, retry_async_http
 
 
 class MinerUArtifactError(RuntimeError):
@@ -90,16 +92,18 @@ class MinerUSidecarHealth:
 
 MinerUStatusCallback = Callable[[dict[str, Any]], Awaitable[None]]
 
-_TRANSIENT_STATUS_CODES = frozenset({429, 502, 503, 504})
-_MAX_RETRIES = 3
-_RETRY_BASE_DELAY = 2.0  # seconds, doubles each retry
-
-
 class MinerUClient:
-    def __init__(self, base_url: str, timeout_ms: int, poll_interval_ms: int):
+    def __init__(
+        self,
+        base_url: str,
+        timeout_ms: int,
+        poll_interval_ms: int,
+        http_client: httpx.AsyncClient | None = None,
+    ):
         self.base_url = base_url.rstrip("/")
         self.timeout_seconds = timeout_ms / 1000
         self.poll_interval_seconds = poll_interval_ms / 1000
+        self._http_client = http_client
 
     async def parse_document(
         self,
@@ -155,7 +159,7 @@ class MinerUClient:
         }
         if sha256:
             form_data["sha256"] = sha256
-        async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+        async with self._client() as client:
             with path.open("rb") as file_obj:
                 response = await client.post(
                     f"{self.base_url}/parse-async",
@@ -167,13 +171,18 @@ class MinerUClient:
         return str(payload["jobId"])
 
     async def poll_parse_job(self, parse_job_id: str) -> dict[str, Any]:
-        return await self._retry_transient(
-            "GET", f"{self.base_url}/parse-jobs/{parse_job_id}"
+        response = await self._retry_get(
+            f"{self.base_url}/parse-jobs/{parse_job_id}",
+            attempts=3,
         )
+        response.raise_for_status()
+        payload = response.json()
+        if not isinstance(payload, dict):
+            raise MinerUArtifactError("MinerU parse status returned non-object JSON.")
+        return payload
 
     async def health(self) -> MinerUSidecarHealth:
-        async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
-            response = await client.get(f"{self.base_url}/health")
+        response = await self._retry_get(f"{self.base_url}/health", attempts=3)
         response.raise_for_status()
         try:
             payload = response.json()
@@ -232,40 +241,42 @@ class MinerUClient:
     async def download_artifacts(self, parse_job_id: str, target_path: Path) -> Path:
         target_path.parent.mkdir(parents=True, exist_ok=True)
         url = f"{self.base_url}/parse-jobs/{parse_job_id}/artifacts"
-        async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
-            async with client.stream("GET", url) as response:
-                response.raise_for_status()
-                with target_path.open("wb") as fh:
-                    async for chunk in response.aiter_bytes(chunk_size=1024 * 256):
-                        fh.write(chunk)
-        return target_path
+        partial_path = target_path.with_name(f"{target_path.name}.part")
 
-    async def _retry_transient(
-        self,
-        method: str,
-        url: str,
-        *,
-        max_retries: int = _MAX_RETRIES,
-        **kwargs: Any,
-    ) -> dict[str, Any]:
-        """Execute an HTTP request with exponential backoff on transient errors."""
-        last_exc: Exception | None = None
-        for attempt in range(max_retries + 1):
-            try:
-                async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
-                    response = await client.request(method, url, **kwargs)
-                if response.status_code in _TRANSIENT_STATUS_CODES and attempt < max_retries:
-                    await asyncio.sleep(_RETRY_BASE_DELAY * (2 ** attempt))
-                    continue
-                response.raise_for_status()
-                return response.json()
-            except httpx.HTTPError as exc:
-                last_exc = exc
-                if attempt < max_retries:
-                    await asyncio.sleep(_RETRY_BASE_DELAY * (2 ** attempt))
-                    continue
-                raise
-        raise last_exc  # type: ignore[misc]  # unreachable, satisfies mypy
+        async def download() -> Path:
+            if partial_path.exists():
+                partial_path.unlink()
+            async with self._client() as client:
+                async with client.stream("GET", url) as response:
+                    raise_for_transient_status(response)
+                    response.raise_for_status()
+                    with partial_path.open("wb") as fh:
+                        async for chunk in response.aiter_bytes(chunk_size=1024 * 256):
+                            fh.write(chunk)
+            partial_path.replace(target_path)
+            return target_path
+
+        return await retry_async_http(download, attempts=3)
+
+    @asynccontextmanager
+    async def _client(self) -> AsyncIterator[httpx.AsyncClient]:
+        if self._http_client is not None:
+            yield self._http_client
+            return
+        async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+            yield client
+
+    async def _retry_get(self, url: str, *, attempts: int) -> httpx.Response:
+        async with self._client() as client:
+            return await retry_async_http(
+                lambda: self._get_for_retry(client, url),
+                attempts=attempts,
+            )
+
+    async def _get_for_retry(self, client: httpx.AsyncClient, url: str) -> httpx.Response:
+        response = await client.get(url)
+        raise_for_transient_status(response)
+        return response
 
     def normalize_artifact_zip(
         self,

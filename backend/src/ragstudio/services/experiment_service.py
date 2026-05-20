@@ -8,7 +8,6 @@ from ragstudio.schemas.evaluation import EvaluationCaseIn
 from ragstudio.schemas.experiments import (
     ExperimentIn,
     ExperimentOut,
-    ExperimentPage,
     ExperimentScoreOut,
     ExperimentSummaryOut,
 )
@@ -84,7 +83,15 @@ class ExperimentService:
 
         return await self._build_experiment_out(experiment)
 
-    async def list(self) -> ExperimentPage:
+    async def list(
+        self,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> tuple[list[ExperimentSummaryOut], int]:
+        limit = max(1, min(limit, 500))
+        offset = max(offset, 0)
+        total = await self.session.scalar(select(func.count()).select_from(Experiment)) or 0
         run_counts = (
             select(
                 Run.experiment_id.label("experiment_id"),
@@ -112,7 +119,9 @@ class ExperimentService:
             )
             .outerjoin(run_counts, run_counts.c.experiment_id == Experiment.id)
             .outerjoin(score_counts, score_counts.c.experiment_id == Experiment.id)
-            .order_by(Experiment.created_at.desc())
+            .order_by(Experiment.created_at.desc(), Experiment.id.desc())
+            .limit(limit)
+            .offset(offset)
         )
         items = [
             ExperimentSummaryOut(
@@ -127,7 +136,7 @@ class ExperimentService:
             )
             for experiment, run_count, score_count in result.all()
         ]
-        return ExperimentPage(items=items, total=len(items))
+        return items, total
 
     async def get_required(self, experiment_id: str) -> ExperimentOut:
         experiment = await self.session.get(Experiment, experiment_id)

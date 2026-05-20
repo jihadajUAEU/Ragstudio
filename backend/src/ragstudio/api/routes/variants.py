@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ragstudio.api.deps import get_session
@@ -17,8 +17,19 @@ async def create_variant(
 
 
 @router.get("", response_model=VariantPage)
-async def list_variants(session: AsyncSession = Depends(get_session)) -> VariantPage:
-    return await VariantService(session).list()
+async def list_variants(
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    session: AsyncSession = Depends(get_session),
+) -> VariantPage:
+    items, total = await VariantService(session).list(limit=limit, offset=offset)
+    return VariantPage(
+        items=items,
+        total=total,
+        limit=limit,
+        offset=offset,
+        has_more=offset + len(items) < total,
+    )
 
 
 @router.get("/{variant_id}", response_model=VariantOut)

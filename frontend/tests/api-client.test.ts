@@ -72,6 +72,34 @@ describe("apiClient document uploads", () => {
     expect(createJobEventSource("job-1")).toBeNull();
   });
 
+  it("passes pagination query params for list endpoints", async () => {
+    const urls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url) => {
+        urls.push(String(url));
+        return new Response(
+          JSON.stringify({ items: [], total: 0, limit: 25, offset: 50, has_more: false }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      }),
+    );
+
+    await apiClient.documents({ limit: 25, offset: 50 });
+    await apiClient.jobs({ limit: 25, offset: 50 });
+    await apiClient.runs({ limit: 25, offset: 50 });
+    await apiClient.variants({ limit: 25, offset: 50 });
+    await apiClient.experiments({ limit: 25, offset: 50 });
+
+    expect(urls).toEqual([
+      "/api/documents?limit=25&offset=50",
+      "/api/jobs?limit=25&offset=50",
+      "/api/runs?limit=25&offset=50",
+      "/api/variants?limit=25&offset=50",
+      "/api/experiments?limit=25&offset=50",
+    ]);
+  });
+
   it("keeps chunk pagination in the request body and graph pagination in query params", async () => {
     const urls: string[] = [];
     const bodies: unknown[] = [];

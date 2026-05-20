@@ -70,3 +70,31 @@ async def test_job_events_returns_404_for_missing_job(client):
     response = await client.get("/api/jobs/missing/events")
 
     assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_list_jobs_paginates_results(client):
+    async with client._transport.app.state.session_factory() as session:
+        for index in range(3):
+            session.add(
+                Job(
+                    id=f"job-page-{index}",
+                    type="index_document",
+                    status=StageStatus.SUCCEEDED.value,
+                    target_id=f"doc-page-{index}",
+                    progress=100,
+                    logs=[],
+                    result={},
+                )
+            )
+        await session.commit()
+
+    response = await client.get("/api/jobs?limit=1&offset=1")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total"] == 3
+    assert body["limit"] == 1
+    assert body["offset"] == 1
+    assert body["has_more"] is True
+    assert len(body["items"]) == 1

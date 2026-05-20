@@ -59,6 +59,7 @@ export interface ReindexDocumentOut {
 }
 
 export type ApiQueryOptions = Record<string, string | number | boolean | null | undefined>;
+export type PageQueryOptions = Pick<ApiQueryOptions, "limit" | "offset">;
 
 export function jobEventsUrl(jobId: string): string {
   return `${API_BASE_URL}/api/jobs/${encodeURIComponent(jobId)}/events`;
@@ -133,7 +134,8 @@ function formatApiDetail(detail: unknown): string {
 
 export const apiClient = {
   health: () => request<HealthOut>("/api/health"),
-  documents: () => request<Page<DocumentOut>>("/api/documents"),
+  documents: (options?: PageQueryOptions) =>
+    request<Page<DocumentOut>>(withQuery("/api/documents", options)),
   documentParseEvidence: (documentId: string) =>
     request<DocumentParseEvidence>(`/api/documents/${encodeURIComponent(documentId)}/parse-evidence`),
   uploadDocument: ({ file, options }: { file: File; options: IndexDocumentIn }) => {
@@ -159,7 +161,7 @@ export const apiClient = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     }),
-  jobs: () => request<Page<JobOut>>("/api/jobs"),
+  jobs: (options?: PageQueryOptions) => request<Page<JobOut>>(withQuery("/api/jobs", options)),
   jobEventsUrl,
   createJobEventSource,
   jobQualityWarnings: (jobId: string) =>
@@ -171,7 +173,8 @@ export const apiClient = {
       `/api/jobs/${encodeURIComponent(jobId)}/quality-warnings/fix`,
       { method: "POST" },
     ),
-  variants: () => request<Page<VariantOut>>("/api/variants"),
+  variants: (options?: PageQueryOptions) =>
+    request<Page<VariantOut>>(withQuery("/api/variants", options)),
   createVariant: (payload: VariantIn) =>
     request<VariantOut>("/api/variants", {
       method: "POST",
@@ -277,7 +280,8 @@ export const apiClient = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     }),
-  experiments: () => request<ExperimentPage>("/api/experiments"),
+  experiments: (options?: PageQueryOptions) =>
+    request<ExperimentPage>(withQuery("/api/experiments", options)),
   getExperiment: (experimentId: string) =>
     request<ExperimentOut>(`/api/experiments/${encodeURIComponent(experimentId)}`),
   optimize: (payload: OptimizerIn) =>
@@ -286,7 +290,7 @@ export const apiClient = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     }),
-  runs: () => request<Page<RunOut>>("/api/runs"),
+  runs: (options?: PageQueryOptions) => request<Page<RunOut>>(withQuery("/api/runs", options)),
   diagnostics: () => request<DiagnosticsOut>("/api/diagnostics"),
   graph: (options?: ApiQueryOptions) => request<GraphOut>(withQuery("/api/graph", options)),
 };

@@ -135,3 +135,53 @@ async def test_graph_route_preserves_default_shape_and_exposes_page_info(client)
     assert payload["limit"] == 1
     assert payload["offset"] == 0
     assert payload["has_more"] is False
+
+
+@pytest.mark.asyncio
+async def test_relationship_metadata_graph_caps_rendered_nodes(database_url, tmp_path):
+    engine = make_engine(database_url)
+    await init_db(engine)
+    factory = make_session_factory(engine)
+
+    async with factory() as session:
+        document = Document(
+            id="doc-graph-cap",
+            filename="graph-cap.pdf",
+            content_type="application/pdf",
+            sha256="graph-cap-sha",
+            artifact_path=str(tmp_path / "graph-cap.pdf"),
+            status="succeeded",
+        )
+        session.add(document)
+        await session.flush()
+        session.add_all(
+            [
+                Chunk(
+                    id=f"chunk-graph-cap-{index}",
+                    document_id=document.id,
+                    text=f"chunk {index}",
+                    metadata_json={
+                        "relationship_metadata": {
+                            "graph_relationships": [
+                                {
+                                    "source": f"s{index}",
+                                    "target": f"t{index}",
+                                    "type": "NEXT",
+                                }
+                            ]
+                        }
+                    },
+                    source_location={},
+                )
+                for index in range(150)
+            ]
+        )
+        await session.commit()
+
+        graph = await GraphService(session)._relationship_metadata_graph(limit=150)
+
+    await engine.dispose()
+
+    assert len(graph["nodes"]) <= 100
+    assert len(graph["edges"]) <= 100
+    assert graph["has_more"] is True

@@ -1,7 +1,7 @@
 import time
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ragstudio.api.deps import get_session, get_settings
@@ -127,33 +127,54 @@ def _mineru_optimization_summary(
 @router.post("/default/test-embedding", response_model=EmbeddingConnectionTestOut)
 async def test_embedding_settings(
     payload: SettingsProfileIn,
+    request: Request,
     session: AsyncSession = Depends(get_session),
 ) -> EmbeddingConnectionTestOut:
     resolved_payload = await SettingsService(session).resolve_embedding_test_payload(payload)
-    return await EmbeddingConnectionService().test(resolved_payload)
+    http_client = request.app.state.http_clients.client(
+        "embedding-connection",
+        timeout=resolved_payload.embedding_timeout_ms / 1000,
+    )
+    return await EmbeddingConnectionService(http_client=http_client).test(resolved_payload)
 
 
 @router.post("/default/test-llm", response_model=LlmConnectionTestOut)
 async def test_llm_settings(
     payload: SettingsProfileIn,
+    request: Request,
     session: AsyncSession = Depends(get_session),
 ) -> LlmConnectionTestOut:
     resolved_payload = await SettingsService(session).resolve_llm_test_payload(payload)
-    return await LlmConnectionService().test(resolved_payload)
+    http_client = request.app.state.http_clients.client(
+        "llm-connection",
+        timeout=resolved_payload.llm_timeout_ms / 1000,
+    )
+    return await LlmConnectionService(http_client=http_client).test(resolved_payload)
 
 
 @router.post("/default/test-reranker", response_model=RerankerConnectionTestOut)
 async def test_reranker_settings(
     payload: SettingsProfileIn,
+    request: Request,
     session: AsyncSession = Depends(get_session),
     settings: AppSettings = Depends(get_settings),
 ) -> RerankerConnectionTestOut:
     resolved_payload = await SettingsService(session).resolve_reranker_test_payload(payload)
-    return await RerankerConnectionService(settings.allowed_reranker_hosts).test(resolved_payload)
+    http_client = request.app.state.http_clients.client(
+        "reranker-connection",
+        timeout=resolved_payload.reranker_timeout_ms / 1000,
+    )
+    return await RerankerConnectionService(
+        settings.allowed_reranker_hosts,
+        http_client=http_client,
+    ).test(resolved_payload)
 
 
 @router.post("/default/test-mineru", response_model=MinerUConnectionTestOut)
-async def test_mineru_settings(payload: SettingsProfileIn) -> MinerUConnectionTestOut:
+async def test_mineru_settings(
+    payload: SettingsProfileIn,
+    request: Request,
+) -> MinerUConnectionTestOut:
     base_url = payload.mineru_base_url or ""
     empty_optimization = _mineru_optimization_summary(payload)
     if not base_url:
@@ -167,11 +188,24 @@ async def test_mineru_settings(payload: SettingsProfileIn) -> MinerUConnectionTe
 
     started = time.perf_counter()
     try:
-        health = await MinerUClient(
-            base_url=base_url,
-            timeout_ms=payload.mineru_timeout_ms,
-            poll_interval_ms=payload.mineru_poll_interval_ms,
-        ).health()
+        http_client = request.app.state.http_clients.client(
+            "mineru-connection",
+            timeout=payload.mineru_timeout_ms / 1000,
+        )
+        try:
+            mineru_client = MinerUClient(
+                base_url=base_url,
+                timeout_ms=payload.mineru_timeout_ms,
+                poll_interval_ms=payload.mineru_poll_interval_ms,
+                http_client=http_client,
+            )
+        except TypeError:
+            mineru_client = MinerUClient(
+                base_url=base_url,
+                timeout_ms=payload.mineru_timeout_ms,
+                poll_interval_ms=payload.mineru_poll_interval_ms,
+            )
+        health = await mineru_client.health()
         latency_ms = int((time.perf_counter() - started) * 1000)
         if not health.ready:
             return MinerUConnectionTestOut(

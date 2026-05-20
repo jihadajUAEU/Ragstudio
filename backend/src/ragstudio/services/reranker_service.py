@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import ipaddress
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any
 from urllib.parse import urlparse
 
 import httpx
 from ragstudio.schemas.chunks import ChunkOut
+from ragstudio.services.http_retry import raise_for_transient_status, retry_async_http
 from ragstudio.services.llm_reranker_service import LLMRerankerService
 
 
@@ -14,9 +17,11 @@ class RerankerService:
         self,
         allowed_hosts: list[str] | None = None,
         llm_reranker: LLMRerankerService | None = None,
+        http_client: httpx.AsyncClient | None = None,
     ):
         self.allowed_hosts = {host.lower() for host in (allowed_hosts or [])}
         self.llm_reranker = llm_reranker or LLMRerankerService()
+        self._http_client = http_client
 
     async def rerank(
         self,
@@ -41,14 +46,18 @@ class RerankerService:
         headers = self._headers(profile)
         timeout = (getattr(profile, "reranker_timeout_ms", None) or 10000) / 1000
         try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                response = await client.post(
-                    str(profile.reranker_base_url),
-                    headers=headers,
-                    json=payload,
+            async with self._client(timeout) as client:
+                response = await retry_async_http(
+                    lambda: self._post_for_retry(
+                        client,
+                        str(profile.reranker_base_url),
+                        headers=headers,
+                        json=payload,
+                    ),
+                    attempts=2,
                 )
-                response.raise_for_status()
-                body = response.json()
+            response.raise_for_status()
+            body = response.json()
         except Exception as exc:
             return await self._fallback_or_return(
                 query,
@@ -232,6 +241,26 @@ class RerankerService:
             return float(value)
         except (TypeError, ValueError):
             return None
+
+    @asynccontextmanager
+    async def _client(self, timeout: float) -> AsyncIterator[httpx.AsyncClient]:
+        if self._http_client is not None:
+            yield self._http_client
+            return
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            yield client
+
+    async def _post_for_retry(
+        self,
+        client: httpx.AsyncClient,
+        url: str,
+        *,
+        headers: dict[str, str],
+        json: dict[str, object],
+    ) -> httpx.Response:
+        response = await client.post(url, headers=headers, json=json)
+        raise_for_transient_status(response)
+        return response
 
 
 def _host_matches_allowed_pattern(host: str, allowed: str) -> bool:

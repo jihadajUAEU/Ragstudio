@@ -75,6 +75,15 @@ describe("ExperimentsPage", () => {
     );
   });
 
+  it("requests the first page of documents and experiments", async () => {
+    renderExperimentsPage();
+
+    await waitFor(() => {
+      expect(apiClient.documents).toHaveBeenCalledWith({ limit: 100, offset: 0 });
+      expect(apiClient.experiments).toHaveBeenCalledWith({ limit: 100, offset: 0 });
+    });
+  });
+
   it("renders API-backed experiment history and refetches it after create", async () => {
     renderExperimentsPage();
 

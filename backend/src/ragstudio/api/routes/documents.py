@@ -5,6 +5,7 @@ from fastapi import (
     Depends,
     Form,
     HTTPException,
+    Query,
     Request,
     Response,
     UploadFile,
@@ -229,14 +230,22 @@ def _validate_index_options(options: IndexDocumentIn) -> None:
 @router.get("")
 async def list_documents(
     request: Request,
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, object]:
-    items = await DocumentService(
+    items, total = await DocumentService(
         session,
         request.app.state.settings.data_dir,
         settings=request.app.state.settings,
-    ).list()
-    return {"items": items, "total": len(items)}
+    ).list(limit=limit, offset=offset)
+    return {
+        "items": items,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "has_more": offset + len(items) < total,
+    }
 
 
 @router.delete("/{document_id}", status_code=status.HTTP_204_NO_CONTENT)

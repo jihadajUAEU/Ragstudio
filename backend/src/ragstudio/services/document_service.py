@@ -114,8 +114,16 @@ class DocumentService:
         await self.session.refresh(document)
         return DocumentOut.model_validate(document)
 
-    async def list(self) -> list[DocumentOut]:
-        result = await self.session.execute(select(Document).order_by(Document.created_at.desc()))
+    async def list(self, *, limit: int = 100, offset: int = 0) -> tuple[list[DocumentOut], int]:
+        limit = max(1, min(limit, 500))
+        offset = max(offset, 0)
+        total = await self.session.scalar(select(func.count()).select_from(Document)) or 0
+        result = await self.session.execute(
+            select(Document)
+            .order_by(Document.created_at.desc(), Document.id.desc())
+            .limit(limit)
+            .offset(offset)
+        )
         documents = list(result.scalars().all())
         latest_options = await self._latest_index_options_by_document(
             [document.id for document in documents]
@@ -125,7 +133,7 @@ class DocumentService:
             output = DocumentOut.model_validate(document)
             output.latest_index_options = latest_options.get(document.id)
             outputs.append(output)
-        return outputs
+        return outputs, total
 
     async def document_exists(self, document_id: str) -> bool:
         return await self.session.get(Document, document_id) is not None

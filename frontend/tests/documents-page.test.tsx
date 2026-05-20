@@ -153,6 +153,15 @@ describe("DocumentsPage", () => {
     });
   });
 
+  it("requests the first page of documents and jobs", async () => {
+    renderDocumentsPage();
+
+    await waitFor(() => {
+      expect(apiClient.documents).toHaveBeenCalledWith({ limit: 100, offset: 0 });
+      expect(apiClient.jobs).toHaveBeenCalledWith({ limit: 100, offset: 0 });
+    });
+  });
+
   it("keeps the file upload control visible and enables upload after file selection", () => {
     renderDocumentsPage();
 

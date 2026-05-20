@@ -1624,3 +1624,30 @@ async def test_delete_document_preserves_job_and_index_record_when_graph_cleanup
     assert document_exists is not None
     assert job_id is not None
     assert index_record_id is not None
+
+
+@pytest.mark.asyncio
+async def test_list_documents_paginates_results(client):
+    async with client._transport.app.state.session_factory() as session:
+        for index in range(3):
+            session.add(
+                Document(
+                    id=f"doc-page-{index}",
+                    filename=f"page-{index}.pdf",
+                    content_type="application/pdf",
+                    sha256=f"doc-page-sha-{index}",
+                    artifact_path=f"/tmp/page-{index}.pdf",
+                    status="succeeded",
+                )
+            )
+        await session.commit()
+
+    response = await client.get("/api/documents?limit=1&offset=1")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total"] == 3
+    assert body["limit"] == 1
+    assert body["offset"] == 1
+    assert body["has_more"] is True
+    assert len(body["items"]) == 1

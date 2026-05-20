@@ -34,3 +34,6 @@ class ExperimentSummaryOut(ExperimentIn):
 class ExperimentPage(StudioModel):
     items: list[ExperimentSummaryOut]
     total: int
+    limit: int = 100
+    offset: int = 0
+    has_more: bool = False

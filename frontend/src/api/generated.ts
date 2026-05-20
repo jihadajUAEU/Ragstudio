@@ -9,6 +9,9 @@ export type StageStatus =
 export interface Page<T> {
   items: T[];
   total: number;
+  limit?: number;
+  offset?: number;
+  has_more?: boolean;
 }
 
 export interface HealthOut {
@@ -466,6 +469,9 @@ export interface ExperimentSummaryOut extends ExperimentIn {
 export interface ExperimentPage {
   items: ExperimentSummaryOut[];
   total: number;
+  limit?: number;
+  offset?: number;
+  has_more?: boolean;
 }
 
 export interface OptimizerIn {

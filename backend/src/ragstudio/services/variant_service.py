@@ -3,10 +3,9 @@ from ragstudio.schemas.variants import (
     VARIANT_PRESET_DEFAULTS,
     VariantIn,
     VariantOut,
-    VariantPage,
     VariantUpdate,
 )
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
@@ -25,10 +24,17 @@ class VariantService:
         await self.session.refresh(variant)
         return VariantOut.model_validate(variant)
 
-    async def list(self) -> VariantPage:
-        result = await self.session.execute(select(Variant).order_by(Variant.created_at.desc()))
-        variants = [VariantOut.model_validate(item) for item in result.scalars().all()]
-        return VariantPage(items=variants, total=len(variants))
+    async def list(self, *, limit: int = 100, offset: int = 0) -> tuple[list[VariantOut], int]:
+        limit = max(1, min(limit, 500))
+        offset = max(offset, 0)
+        total = await self.session.scalar(select(func.count()).select_from(Variant)) or 0
+        result = await self.session.execute(
+            select(Variant)
+            .order_by(Variant.created_at.desc(), Variant.id.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+        return [VariantOut.model_validate(item) for item in result.scalars().all()], total
 
     async def get_required(self, variant_id: str) -> VariantOut:
         variant = await self.session.get(Variant, variant_id)

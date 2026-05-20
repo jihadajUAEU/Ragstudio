@@ -33,3 +33,6 @@ class VariantOut(VariantIn):
 class VariantPage(StudioModel):
     items: list[VariantOut]
     total: int
+    limit: int = 100
+    offset: int = 0
+    has_more: bool = False

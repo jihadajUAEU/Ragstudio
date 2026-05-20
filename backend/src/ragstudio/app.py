@@ -9,6 +9,7 @@ from ragstudio.api.routes import ROUTERS
 from ragstudio.config import AppSettings
 from ragstudio.db.engine import init_db, make_engine, make_session_factory
 from ragstudio.logging import configure_logging
+from ragstudio.services.http_client_provider import HttpClientProvider
 from ragstudio.static import mount_frontend
 
 
@@ -26,20 +27,26 @@ def create_app(data_dir: Path | None = None, database_url: str | None = None) ->
     settings.resolved_runtime_working_dir.mkdir(parents=True, exist_ok=True)
     engine = make_engine(settings.resolved_database_url)
     session_factory = make_session_factory(engine)
+    http_clients = HttpClientProvider()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.settings = settings
         app.state.engine = engine
         app.state.session_factory = session_factory
+        app.state.http_clients = http_clients
         await init_db(engine)
-        yield
-        await engine.dispose()
+        try:
+            yield
+        finally:
+            await http_clients.aclose()
+            await engine.dispose()
 
     app = FastAPI(title="RAG-Anything Studio", version="0.1.0", lifespan=lifespan)
     app.state.settings = settings
     app.state.engine = engine
     app.state.session_factory = session_factory
+    app.state.http_clients = http_clients
     for router in ROUTERS:
         app.include_router(router)
     mount_frontend(app)

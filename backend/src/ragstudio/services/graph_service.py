@@ -11,6 +11,10 @@ from ragstudio.services.runtime_profile_service import (
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+DEFAULT_GRAPH_FALLBACK_LIMIT = 2_000
+MAX_RENDERED_GRAPH_NODES = 100
+MAX_RENDERED_GRAPH_EDGES = 100
+
 
 class RuntimeGraphUnavailableError(RuntimeError):
     pass
@@ -33,7 +37,7 @@ class GraphService:
         self,
         *,
         document_id: str | None = None,
-        limit: int = 2_000,
+        limit: int = DEFAULT_GRAPH_FALLBACK_LIMIT,
         offset: int = 0,
         include_page_info: bool = False,
     ) -> GraphOut:
@@ -52,7 +56,7 @@ class GraphService:
         self,
         *,
         document_id: str | None = None,
-        limit: int = 2_000,
+        limit: int = DEFAULT_GRAPH_FALLBACK_LIMIT,
         offset: int = 0,
     ) -> dict:
         if self.session is None or self.settings is None:
@@ -135,7 +139,7 @@ class GraphService:
         self,
         *,
         document_id: str | None = None,
-        limit: int = 2_000,
+        limit: int = DEFAULT_GRAPH_FALLBACK_LIMIT,
         offset: int = 0,
     ) -> dict[str, Any]:
         limit = max(limit, 0)
@@ -242,14 +246,26 @@ class GraphService:
         else:
             detail = "Relationship metadata fallback graph."
         total = total or 0
+        node_values = list(nodes.values())
+        edge_values = list(edges.values())
+        rendered_nodes = node_values[:MAX_RENDERED_GRAPH_NODES]
+        rendered_node_ids = {node["id"] for node in rendered_nodes}
+        rendered_edges = [
+            edge
+            for edge in edge_values
+            if edge["source"] in rendered_node_ids and edge["target"] in rendered_node_ids
+        ][:MAX_RENDERED_GRAPH_EDGES]
+        render_truncated = len(node_values) > len(rendered_nodes) or len(edge_values) > len(
+            rendered_edges
+        )
         return {
-            "nodes": list(nodes.values()),
-            "edges": list(edges.values()),
+            "nodes": rendered_nodes,
+            "edges": rendered_edges,
             "detail": detail,
             "total": total,
             "limit": limit,
             "offset": offset,
-            "has_more": offset + limit < total,
+            "has_more": offset + limit < total or render_truncated,
         }
 
     async def _blocking_projection_detail(
@@ -287,7 +303,7 @@ class GraphService:
         projection_detail: str | None,
         *,
         document_id: str | None = None,
-        limit: int = 2_000,
+        limit: int = DEFAULT_GRAPH_FALLBACK_LIMIT,
         offset: int = 0,
     ) -> dict[str, Any]:
         fallback = await self._relationship_metadata_graph(

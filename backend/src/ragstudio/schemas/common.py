@@ -30,3 +30,11 @@ class StageStatus(StrEnum):
 
 class StudioModel(BaseModel):
     model_config = ConfigDict(from_attributes=True, extra="forbid")
+
+
+class PaginatedPage(StudioModel):
+    items: list[Any]
+    total: int
+    limit: int
+    offset: int
+    has_more: bool

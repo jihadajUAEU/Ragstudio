@@ -25,9 +25,19 @@ router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
 
 @router.get("", response_model=JobPage)
-async def list_jobs(session: AsyncSession = Depends(get_session)) -> JobPage:
-    items = await JobWorker(session).list()
-    return JobPage(items=items, total=len(items))
+async def list_jobs(
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    session: AsyncSession = Depends(get_session),
+) -> JobPage:
+    items, total = await JobWorker(session).list(limit=limit, offset=offset)
+    return JobPage(
+        items=items,
+        total=total,
+        limit=limit,
+        offset=offset,
+        has_more=offset + len(items) < total,
+    )
 
 
 @router.get("/{job_id}/events")

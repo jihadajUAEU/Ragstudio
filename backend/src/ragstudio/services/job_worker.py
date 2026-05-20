@@ -1,7 +1,7 @@
 from ragstudio.db.models import Job
 from ragstudio.schemas.common import StageStatus, new_id
 from ragstudio.schemas.jobs import JobOut
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
@@ -85,6 +85,11 @@ class JobWorker:
         job.result = {**job.result, "error": str(exc)}
         await self.session.commit()
 
-    async def list(self) -> list[JobOut]:
-        result = await self.session.execute(select(Job).order_by(Job.created_at.desc()))
-        return [JobOut.model_validate(item) for item in result.scalars().all()]
+    async def list(self, *, limit: int = 100, offset: int = 0) -> tuple[list[JobOut], int]:
+        limit = max(1, min(limit, 500))
+        offset = max(offset, 0)
+        total = await self.session.scalar(select(func.count()).select_from(Job)) or 0
+        result = await self.session.execute(
+            select(Job).order_by(Job.created_at.desc(), Job.id.desc()).limit(limit).offset(offset)
+        )
+        return [JobOut.model_validate(item) for item in result.scalars().all()], total

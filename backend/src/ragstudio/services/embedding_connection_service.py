@@ -1,11 +1,17 @@
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from time import perf_counter
 from typing import Any
 
 import httpx
 from ragstudio.schemas.settings import EmbeddingConnectionTestOut, SettingsProfileIn
+from ragstudio.services.http_retry import raise_for_transient_status, retry_async_http
 
 
 class EmbeddingConnectionService:
+    def __init__(self, http_client: httpx.AsyncClient | None = None):
+        self._http_client = http_client
+
     async def test(self, settings: SettingsProfileIn) -> EmbeddingConnectionTestOut:
         start = perf_counter()
         if settings.embedding_provider == "fallback":
@@ -40,15 +46,19 @@ class EmbeddingConnectionService:
             headers["authorization"] = f"Bearer {settings.embedding_api_key}"
 
         try:
-            async with httpx.AsyncClient(timeout=settings.embedding_timeout_ms / 1000) as client:
-                response = await client.post(
-                    f"{settings.embedding_base_url}/embeddings",
-                    headers=headers,
-                    json={
-                        "model": settings.embedding_model,
-                        "input": "Ragstudio embedding connection test",
-                        "dimensions": settings.embedding_dimensions,
-                    },
+            async with self._client(settings.embedding_timeout_ms / 1000) as client:
+                response = await retry_async_http(
+                    lambda: self._post_for_retry(
+                        client,
+                        f"{settings.embedding_base_url}/embeddings",
+                        headers=headers,
+                        json={
+                            "model": settings.embedding_model,
+                            "input": "Ragstudio embedding connection test",
+                            "dimensions": settings.embedding_dimensions,
+                        },
+                    ),
+                    attempts=2,
                 )
             if response.status_code == 401:
                 detail = "Embedding endpoint rejected the API key."
@@ -125,3 +135,23 @@ class EmbeddingConnectionService:
             latency_ms=round((perf_counter() - start) * 1000),
             detail=detail,
         )
+
+    @asynccontextmanager
+    async def _client(self, timeout: float) -> AsyncIterator[httpx.AsyncClient]:
+        if self._http_client is not None:
+            yield self._http_client
+            return
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            yield client
+
+    async def _post_for_retry(
+        self,
+        client: httpx.AsyncClient,
+        url: str,
+        *,
+        headers: dict[str, str],
+        json: dict[str, object],
+    ) -> httpx.Response:
+        response = await client.post(url, headers=headers, json=json)
+        raise_for_transient_status(response)
+        return response

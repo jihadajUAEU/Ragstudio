@@ -23,6 +23,9 @@ class JobOut(StudioModel):
 class JobPage(StudioModel):
     items: list[JobOut]
     total: int
+    limit: int = 100
+    offset: int = 0
+    has_more: bool = False
 
 
 class JobStageEventOut(StudioModel):

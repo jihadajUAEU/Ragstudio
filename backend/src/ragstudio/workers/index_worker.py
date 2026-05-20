@@ -7,7 +7,7 @@ import os
 import socket
 
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from ragstudio.config import AppSettings
 from ragstudio.db.engine import init_db, make_engine, make_session_factory
@@ -24,6 +24,7 @@ async def run_once(
     *,
     worker_id: str,
     lease_seconds: int = 300,
+    session_factory: async_sessionmaker[AsyncSession] | None = None,
 ) -> int:
     queue = JobQueueService(session)
     await queue.recover_expired_jobs()
@@ -45,6 +46,7 @@ async def run_once(
             settings,
             worker_id=worker_id,
             lease_seconds=lease_seconds,
+            session_factory=session_factory,
         ).run(job)
         await session.commit()
         return 1
@@ -100,6 +102,7 @@ async def run_forever(
                         settings,
                         worker_id=resolved_worker_id,
                         lease_seconds=lease_seconds,
+                        session_factory=session_factory,
                     )
                 except Exception:
                     await session.rollback()

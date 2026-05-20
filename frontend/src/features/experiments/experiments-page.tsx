@@ -29,9 +29,14 @@ const queryKeys = {
   runs: ["runs"],
 } as const;
 
+const FIRST_PAGE = { limit: 100, offset: 0 };
+
 export function ExperimentsPage() {
   const queryClient = useQueryClient();
-  const documentsQuery = useQuery({ queryKey: queryKeys.documents, queryFn: apiClient.documents });
+  const documentsQuery = useQuery({
+    queryKey: queryKeys.documents,
+    queryFn: () => apiClient.documents(FIRST_PAGE),
+  });
   const variantsQuery = useQuery({ queryKey: queryKeys.variants, queryFn: apiClient.variants });
   const evaluationSetsQuery = useQuery({
     queryKey: queryKeys.evaluationSets,
@@ -39,7 +44,7 @@ export function ExperimentsPage() {
   });
   const experimentsQuery = useQuery({
     queryKey: queryKeys.experiments,
-    queryFn: apiClient.experiments,
+    queryFn: () => apiClient.experiments(FIRST_PAGE),
   });
   const [selectedExperimentId, setSelectedExperimentId] = useState("");
   const selectedExperimentQuery = useQuery({

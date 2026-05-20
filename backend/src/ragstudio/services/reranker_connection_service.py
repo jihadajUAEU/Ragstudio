@@ -1,13 +1,19 @@
 from time import perf_counter
 
+import httpx
 from ragstudio.schemas.chunks import ChunkOut
 from ragstudio.schemas.settings import RerankerConnectionTestOut, SettingsProfileIn
 from ragstudio.services.reranker_service import RerankerService
 
 
 class RerankerConnectionService:
-    def __init__(self, allowed_hosts: list[str] | None = None):
+    def __init__(
+        self,
+        allowed_hosts: list[str] | None = None,
+        http_client: httpx.AsyncClient | None = None,
+    ):
         self.allowed_hosts = allowed_hosts
+        self._http_client = http_client
 
     async def test(self, settings: SettingsProfileIn) -> RerankerConnectionTestOut:
         started = perf_counter()
@@ -27,7 +33,10 @@ class RerankerConnectionService:
                 metadata={},
             ),
         ]
-        _, traces = await RerankerService(allowed_hosts=self.allowed_hosts).rerank(
+        _, traces = await RerankerService(
+            allowed_hosts=self.allowed_hosts,
+            http_client=self._http_client,
+        ).rerank(
             "Which passage is most relevant to Ragstudio reranking?",
             chunks,
             settings,

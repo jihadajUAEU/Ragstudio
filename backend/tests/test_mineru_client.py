@@ -265,6 +265,57 @@ async def test_mineru_client_health_reports_invalid_json(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_mineru_client_poll_parse_job_retries_transient_status(monkeypatch):
+    requests = []
+
+    class FakeResponse:
+        def __init__(self, status_code):
+            self.status_code = status_code
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                import httpx
+
+                response = httpx.Response(
+                    self.status_code,
+                    request=httpx.Request("GET", "http://mineru.test/parse-jobs/job-1"),
+                )
+                raise httpx.HTTPStatusError(
+                    "transient",
+                    request=response.request,
+                    response=response,
+                )
+
+        def json(self):
+            return {"jobId": "job-1", "status": "ready"}
+
+    class FakeAsyncClient:
+        def __init__(self, timeout):
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return None
+
+        async def get(self, url):
+            requests.append({"url": url, "timeout": self.timeout})
+            return FakeResponse(503 if len(requests) == 1 else 200)
+
+    monkeypatch.setattr("ragstudio.services.mineru_client.httpx.AsyncClient", FakeAsyncClient)
+    client = MinerUClient(base_url="http://mineru.test", timeout_ms=1000, poll_interval_ms=100)
+
+    payload = await client.poll_parse_job("job-1")
+
+    assert payload == {"jobId": "job-1", "status": "ready"}
+    assert [request["url"] for request in requests] == [
+        "http://mineru.test/parse-jobs/job-1",
+        "http://mineru.test/parse-jobs/job-1",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_mineru_client_preserves_files_manifest_page_ranges_and_artifacts(tmp_path):
     artifact_zip = tmp_path / "artifact.zip"
     with ZipFile(artifact_zip, "w") as archive:

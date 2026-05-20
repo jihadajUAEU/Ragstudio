@@ -23,7 +23,7 @@ from ragstudio.services.runtime_profile_service import (
     RuntimeProfileNotConfiguredError,
     RuntimeProfileService,
 )
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -151,9 +151,14 @@ class QueryService:
                 profile.index_shape,
             )
 
-    async def list_runs(self) -> list[RunOut]:
-        result = await self.session.execute(select(Run).order_by(Run.created_at.desc()))
-        return [self._run_out(item) for item in result.scalars().all()]
+    async def list_runs(self, *, limit: int = 100, offset: int = 0) -> tuple[list[RunOut], int]:
+        limit = max(1, min(limit, 500))
+        offset = max(offset, 0)
+        total = await self.session.scalar(select(func.count()).select_from(Run)) or 0
+        result = await self.session.execute(
+            select(Run).order_by(Run.created_at.desc(), Run.id.desc()).limit(limit).offset(offset)
+        )
+        return [self._run_out(item) for item in result.scalars().all()], total
 
     async def _run_runtime_query(self, payload: QueryIn, profile: Any) -> QueryOut:
         checks = await self.health_service.check(profile)

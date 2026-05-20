@@ -32,6 +32,7 @@ const queryKeys = {
   jobs: ["jobs"],
 } as const;
 
+const FIRST_PAGE = { limit: 100, offset: 0 };
 type DocumentsTab = "documents" | "jobs";
 const WARNING_VISIBLE_ROW_LIMIT = 200;
 const DEFAULT_MINERU_PARSE_OPTIONS: MinerUParseOptionsIn = {
@@ -95,7 +96,7 @@ export function DocumentsPage() {
   );
   const jobsQuery = useQuery({
     queryKey: queryKeys.jobs,
-    queryFn: apiClient.jobs,
+    queryFn: () => apiClient.jobs(FIRST_PAGE),
     refetchInterval: (query) => (hasActiveJobs(query.state.data?.items ?? []) ? 2000 : false),
   });
   const jobs = useMemo(() => jobsQuery.data?.items ?? [], [jobsQuery.data?.items]);
@@ -104,7 +105,7 @@ export function DocumentsPage() {
   const activeJobIdsKey = activeJobIds.join("|");
   const documentsQuery = useQuery({
     queryKey: queryKeys.documents,
-    queryFn: apiClient.documents,
+    queryFn: () => apiClient.documents(FIRST_PAGE),
     refetchInterval: activeJobs ? 2000 : false,
   });
   const documents = useMemo(

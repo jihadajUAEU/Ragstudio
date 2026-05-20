@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ragstudio.api.deps import get_session
@@ -39,13 +39,22 @@ async def create_experiment(
 @router.get("", response_model=ExperimentPage)
 async def list_experiments(
     request: Request,
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
     session: AsyncSession = Depends(get_session),
 ) -> ExperimentPage:
-    return await ExperimentService(
+    items, total = await ExperimentService(
         session,
         request.app.state.settings.data_dir,
         settings=request.app.state.settings,
-    ).list()
+    ).list(limit=limit, offset=offset)
+    return ExperimentPage(
+        items=items,
+        total=total,
+        limit=limit,
+        offset=offset,
+        has_more=offset + len(items) < total,
+    )
 
 
 @router.get("/{experiment_id}", response_model=ExperimentOut)

@@ -91,7 +91,15 @@ async def test_worker_cycle_claims_and_runs_one_job(client, tmp_path, monkeypatc
     ran = []
 
     class FakeIndexJobRunner:
-        def __init__(self, session, settings, *, worker_id, lease_seconds=300):
+        def __init__(
+            self,
+            session,
+            settings,
+            *,
+            worker_id,
+            lease_seconds=300,
+            session_factory=None,
+        ):
             self.session = session
             self.settings = settings
             self.worker_id = worker_id
@@ -160,7 +168,15 @@ async def test_worker_cycle_recovers_expired_graph_projection_job(
     ran = []
 
     class FakeIndexJobRunner:
-        def __init__(self, session, settings, *, worker_id, lease_seconds=300):
+        def __init__(
+            self,
+            session,
+            settings,
+            *,
+            worker_id,
+            lease_seconds=300,
+            session_factory=None,
+        ):
             self.session = session
             self.worker_id = worker_id
 

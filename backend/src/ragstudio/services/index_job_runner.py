@@ -17,7 +17,7 @@ from ragstudio.services.graph_projection_runner import GraphProjectionRunner
 from ragstudio.services.index_progress import IndexStage, update_job_stage
 from ragstudio.services.job_queue_service import JobLeaseLostError, JobQueueService
 from sqlalchemy import select, update
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 
 class IndexJobRunner:
@@ -29,11 +29,13 @@ class IndexJobRunner:
         worker_id: str,
         lease_seconds: int = 300,
         heartbeat_interval_seconds: float = 60.0,
+        session_factory: async_sessionmaker[AsyncSession] | None = None,
     ) -> None:
         self.session = session
         self.settings = settings
         self.worker_id = worker_id
         self.lease_seconds = lease_seconds
+        self._external_session_factory = session_factory
         self.heartbeat_interval_seconds = min(
             heartbeat_interval_seconds,
             max(lease_seconds / 3, 1.0),
@@ -208,8 +210,11 @@ class IndexJobRunner:
         await self.session.flush()
 
     async def _heartbeat_until_stopped(self, job_id: str, stop_heartbeat: asyncio.Event) -> None:
-        engine = make_engine(self.settings.resolved_database_url)
-        session_factory = make_session_factory(engine)
+        engine = None
+        session_factory = self._external_session_factory
+        if session_factory is None:
+            engine = make_engine(self.settings.resolved_database_url)
+            session_factory = make_session_factory(engine)
         try:
             while not stop_heartbeat.is_set():
                 with suppress(asyncio.TimeoutError):
@@ -224,7 +229,8 @@ class IndexJobRunner:
                 if not should_continue:
                     return
         finally:
-            await engine.dispose()
+            if engine is not None:
+                await engine.dispose()
 
     async def _heartbeat_external(self, session: AsyncSession, job_id: str) -> bool:
         job = await session.get(Job, job_id)
