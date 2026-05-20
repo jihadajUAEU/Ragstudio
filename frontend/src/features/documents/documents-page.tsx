@@ -11,7 +11,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
 import { AlertCircle, FileUp, Loader2, RefreshCcw, Search, Trash2, Upload, X } from "lucide-react";
 
-import { apiClient, DEFAULT_PARSER_MODE } from "../../api/client";
+import { apiClient, DEFAULT_PARSER_MODE, FIRST_LIST_PAGE } from "../../api/client";
 import type {
   DocumentOut,
   IndexDocumentIn,
@@ -32,7 +32,6 @@ const queryKeys = {
   jobs: ["jobs"],
 } as const;
 
-const FIRST_PAGE = { limit: 100, offset: 0 };
 type DocumentsTab = "documents" | "jobs";
 const WARNING_VISIBLE_ROW_LIMIT = 200;
 const DEFAULT_MINERU_PARSE_OPTIONS: MinerUParseOptionsIn = {
@@ -96,7 +95,7 @@ export function DocumentsPage() {
   );
   const jobsQuery = useQuery({
     queryKey: queryKeys.jobs,
-    queryFn: () => apiClient.jobs(FIRST_PAGE),
+    queryFn: () => apiClient.jobs(FIRST_LIST_PAGE),
     refetchInterval: (query) => (hasActiveJobs(query.state.data?.items ?? []) ? 2000 : false),
   });
   const jobs = useMemo(() => jobsQuery.data?.items ?? [], [jobsQuery.data?.items]);
@@ -105,7 +104,7 @@ export function DocumentsPage() {
   const activeJobIdsKey = activeJobIds.join("|");
   const documentsQuery = useQuery({
     queryKey: queryKeys.documents,
-    queryFn: () => apiClient.documents(FIRST_PAGE),
+    queryFn: () => apiClient.documents(FIRST_LIST_PAGE),
     refetchInterval: activeJobs ? 2000 : false,
   });
   const documents = useMemo(

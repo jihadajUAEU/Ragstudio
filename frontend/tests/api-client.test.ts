@@ -100,6 +100,34 @@ describe("apiClient document uploads", () => {
     ]);
   });
 
+  it("requests the maximum first page for legacy list callers", async () => {
+    const urls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url) => {
+        urls.push(String(url));
+        return new Response(
+          JSON.stringify({ items: [], total: 0, limit: 500, offset: 0, has_more: false }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      }),
+    );
+
+    await apiClient.documents();
+    await apiClient.jobs();
+    await apiClient.runs();
+    await apiClient.variants();
+    await apiClient.experiments();
+
+    expect(urls).toEqual([
+      "/api/documents?limit=500&offset=0",
+      "/api/jobs?limit=500&offset=0",
+      "/api/runs?limit=500&offset=0",
+      "/api/variants?limit=500&offset=0",
+      "/api/experiments?limit=500&offset=0",
+    ]);
+  });
+
   it("keeps chunk pagination in the request body and graph pagination in query params", async () => {
     const urls: string[] = [];
     const bodies: unknown[] = [];

@@ -3,7 +3,7 @@ from __future__ import annotations
 import ipaddress
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Any, Protocol
 from urllib.parse import urlparse
 
 import httpx
@@ -12,16 +12,22 @@ from ragstudio.services.http_retry import raise_for_transient_status, retry_asyn
 from ragstudio.services.llm_reranker_service import LLMRerankerService
 
 
+class HttpClientProvider(Protocol):
+    def client(self, name: str, *, timeout: float | httpx.Timeout = 30.0) -> httpx.AsyncClient: ...
+
+
 class RerankerService:
     def __init__(
         self,
         allowed_hosts: list[str] | None = None,
         llm_reranker: LLMRerankerService | None = None,
         http_client: httpx.AsyncClient | None = None,
+        http_client_provider: HttpClientProvider | None = None,
     ):
         self.allowed_hosts = {host.lower() for host in (allowed_hosts or [])}
         self.llm_reranker = llm_reranker or LLMRerankerService()
         self._http_client = http_client
+        self._http_client_provider = http_client_provider
 
     async def rerank(
         self,
@@ -246,6 +252,9 @@ class RerankerService:
     async def _client(self, timeout: float) -> AsyncIterator[httpx.AsyncClient]:
         if self._http_client is not None:
             yield self._http_client
+            return
+        if self._http_client_provider is not None:
+            yield self._http_client_provider.client("reranker", timeout=timeout)
             return
         async with httpx.AsyncClient(timeout=timeout) as client:
             yield client

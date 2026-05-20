@@ -9,6 +9,7 @@ import { ExperimentsPage } from "../src/features/experiments/experiments-page";
 
 vi.mock("../src/api/client", () => ({
   DEFAULT_PARSER_MODE: "mineru_strict",
+  FIRST_LIST_PAGE: { limit: 500, offset: 0 },
   apiClient: {
     documents: vi.fn(),
     variants: vi.fn(),
@@ -79,8 +80,8 @@ describe("ExperimentsPage", () => {
     renderExperimentsPage();
 
     await waitFor(() => {
-      expect(apiClient.documents).toHaveBeenCalledWith({ limit: 100, offset: 0 });
-      expect(apiClient.experiments).toHaveBeenCalledWith({ limit: 100, offset: 0 });
+      expect(apiClient.documents).toHaveBeenCalledWith({ limit: 500, offset: 0 });
+      expect(apiClient.experiments).toHaveBeenCalledWith({ limit: 500, offset: 0 });
     });
   });
 

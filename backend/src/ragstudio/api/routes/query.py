@@ -23,7 +23,7 @@ async def query(
             session_factory=request.app.state.session_factory,
             reranker_service=RerankerService(
                 allowed_hosts=request.app.state.settings.allowed_reranker_hosts,
-                http_client=request.app.state.http_clients.client("reranker"),
+                http_client_provider=request.app.state.http_clients,
             ),
         ).run_query(payload)
     except QueryResourceNotFoundError as exc:

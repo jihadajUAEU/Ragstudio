@@ -8,6 +8,7 @@ import { apiClient } from "../src/api/client";
 
 vi.mock("../src/api/client", () => ({
   DEFAULT_PARSER_MODE: "mineru_strict",
+  FIRST_LIST_PAGE: { limit: 500, offset: 0 },
   apiClient: {
     documents: vi.fn(),
     jobs: vi.fn(),
@@ -157,8 +158,8 @@ describe("DocumentsPage", () => {
     renderDocumentsPage();
 
     await waitFor(() => {
-      expect(apiClient.documents).toHaveBeenCalledWith({ limit: 100, offset: 0 });
-      expect(apiClient.jobs).toHaveBeenCalledWith({ limit: 100, offset: 0 });
+      expect(apiClient.documents).toHaveBeenCalledWith({ limit: 500, offset: 0 });
+      expect(apiClient.jobs).toHaveBeenCalledWith({ limit: 500, offset: 0 });
     });
   });
 

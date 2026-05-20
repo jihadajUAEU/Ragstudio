@@ -13,7 +13,7 @@ import {
   Trophy,
 } from "lucide-react";
 
-import { apiClient } from "../../api/client";
+import { apiClient, FIRST_LIST_PAGE } from "../../api/client";
 import type { ExperimentScoreOut, ExperimentSummaryOut, RunOut } from "../../api/generated";
 import { DataTable } from "../../components/data-table";
 import { EmptyState } from "../../components/empty-state";
@@ -29,13 +29,11 @@ const queryKeys = {
   runs: ["runs"],
 } as const;
 
-const FIRST_PAGE = { limit: 100, offset: 0 };
-
 export function ExperimentsPage() {
   const queryClient = useQueryClient();
   const documentsQuery = useQuery({
     queryKey: queryKeys.documents,
-    queryFn: () => apiClient.documents(FIRST_PAGE),
+    queryFn: () => apiClient.documents(FIRST_LIST_PAGE),
   });
   const variantsQuery = useQuery({ queryKey: queryKeys.variants, queryFn: apiClient.variants });
   const evaluationSetsQuery = useQuery({
@@ -44,7 +42,7 @@ export function ExperimentsPage() {
   });
   const experimentsQuery = useQuery({
     queryKey: queryKeys.experiments,
-    queryFn: () => apiClient.experiments(FIRST_PAGE),
+    queryFn: () => apiClient.experiments(FIRST_LIST_PAGE),
   });
   const [selectedExperimentId, setSelectedExperimentId] = useState("");
   const selectedExperimentQuery = useQuery({
