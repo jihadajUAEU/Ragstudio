@@ -26,6 +26,9 @@ from ragstudio.services.reference_metadata import ReferenceSemantics
 from ragstudio.services.runtime_factory import RAGAnythingRuntimeFactory
 from ragstudio.services.runtime_health_service import RuntimeHealthService
 from ragstudio.services.runtime_profile_service import RuntimeProfileService
+from ragstudio.services.targeted_vision_recovery_service import (
+    TargetedVisionRecoveryService,
+)
 from ragstudio.services.trace_normalizer import TraceNormalizer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -69,6 +72,7 @@ class IndexLifecycleService:
         quality_gate: IndexQualityGate | None = None,
         modal_preprocessor: Any | None = None,
         layout_auto_repair: LayoutAutoRepairService | None = None,
+        targeted_vision_recovery: TargetedVisionRecoveryService | None = None,
     ):
         self.session = session
         self.settings = settings
@@ -86,6 +90,9 @@ class IndexLifecycleService:
         )
         self.modal_preprocessor = modal_preprocessor or ModalPreprocessor()
         self.layout_auto_repair = layout_auto_repair or LayoutAutoRepairService()
+        self.targeted_vision_recovery = (
+            targeted_vision_recovery or TargetedVisionRecoveryService()
+        )
 
     async def reindex_document(
         self,
@@ -148,12 +155,13 @@ class IndexLifecycleService:
                 normalized_chunks,
                 domain_metadata=options.domain_metadata,
             )
+        vision_recovery_config = VisionRecoveryConfig.from_runtime_profile(
+            options.domain_metadata,
+            profile,
+        )
         adapter_chunks = await self._run_cpu_bound(
             ChunkSplitter(
-                vision_recovery_config=VisionRecoveryConfig.from_runtime_profile(
-                    options.domain_metadata,
-                    profile,
-                )
+                vision_recovery_config=vision_recovery_config,
             ).split,
             normalized_chunks,
             domain_metadata=options.domain_metadata,
@@ -177,6 +185,24 @@ class IndexLifecycleService:
         )
         index_quality_report = quality_report.get("index_quality_report")
         quality_repair_report = quality_report.get("quality_repair")
+        if self._has_targeted_vision_requests(quality_repair_report):
+            recovery_report = await self.targeted_vision_recovery.recover(
+                adapter_chunks,
+                config=vision_recovery_config,
+            )
+            if recovery_report.get("targeted_vision_recovery_succeeded"):
+                quality_report = await self._run_cpu_bound(
+                    self.quality_gate.validate_adapter_chunks,
+                    adapter_chunks,
+                    language=self._quality_language(options.domain_metadata),
+                    domain_metadata=options.domain_metadata,
+                )
+                index_quality_report = quality_report.get("index_quality_report")
+            quality_repair_report = self._quality_repair_report_from_chunks(
+                adapter_chunks,
+                fallback=quality_report.get("quality_repair"),
+                recovery_report=recovery_report,
+            )
         runtime_adapter_chunks = self._runtime_materializable_chunks(adapter_chunks)
         if on_stage is not None:
             await on_stage(
@@ -405,6 +431,36 @@ class IndexLifecycleService:
 
     def _uses_canonical_reference_units(self, domain_metadata: DomainMetadata) -> bool:
         return ReferenceSemantics.from_metadata(domain_metadata).canonical_units_enabled
+
+    def _has_targeted_vision_requests(self, report: Any) -> bool:
+        if not isinstance(report, dict):
+            return False
+        value = report.get("targeted_vision_recovery_requests")
+        return isinstance(value, int) and value > 0
+
+    def _quality_repair_report_from_chunks(
+        self,
+        chunks: list[AdapterChunk],
+        *,
+        fallback: Any,
+        recovery_report: dict[str, Any],
+    ) -> dict[str, Any]:
+        domain_gate = getattr(self.quality_gate, "domain_gate", None)
+        if hasattr(domain_gate, "quality_repair_report_from_chunks"):
+            report = domain_gate.quality_repair_report_from_chunks(chunks)
+        elif isinstance(fallback, dict):
+            report = dict(fallback)
+        else:
+            report = {"layer": "repair_and_quality"}
+        for key, value in recovery_report.items():
+            if key == "targeted_vision_recovery_samples":
+                continue
+            report[key] = value
+        if "targeted_vision_recovery_samples" in recovery_report:
+            report["targeted_vision_recovery_samples"] = recovery_report[
+                "targeted_vision_recovery_samples"
+            ]
+        return report
 
     async def _index_runtime_document(
         self,

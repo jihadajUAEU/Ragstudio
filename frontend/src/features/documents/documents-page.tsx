@@ -1413,10 +1413,13 @@ interface ParserQualityGroup {
   code: string;
   chunkCount: number;
   warningCount: number;
+  rawChunkCount: number;
+  rawWarningCount: number;
   message: string | null;
   blockTypes: Record<string, number>;
   expectedScripts: Record<string, number>;
   actions: Record<string, number>;
+  visionRecoveryStatuses: Record<string, number>;
   pages: Array<string | number>;
   references: string[];
   examples: ParserQualityExample[];
@@ -1429,28 +1432,41 @@ interface ParserQualityExample {
   blockType: string | null;
   expectedScript: string | null;
   action: string | null;
+  visionRecoveryStatus: string | null;
+  counted: boolean;
   message: string | null;
   textPreview: string;
 }
 
 function ParserQualityDetails({ groups }: { groups: ParserQualityGroup[] }) {
   const totalWarnings = groups.reduce((total, group) => total + group.warningCount, 0);
+  const totalRawWarnings = groups.reduce((total, group) => total + group.rawWarningCount, 0);
+  const rawSummary =
+    totalRawWarnings !== totalWarnings ? ` · ${totalRawWarnings} raw rows` : "";
 
   return (
     <details className="rounded-md border border-[#ead9a7] bg-[#fffaf0] p-2 text-[#5f4600]">
       <summary className="cursor-pointer font-medium">
-        Parser warning details · {groups.length} types · {totalWarnings} grouped warnings
+        Parser warning details · {groups.length} types · {totalWarnings} counted warnings
+        {rawSummary}
       </summary>
       <div className="mt-2 max-h-72 space-y-3 overflow-auto pr-1">
         {groups.map((group) => (
           <div key={group.code} className="space-y-1 border-t border-[#ead9a7] pt-2 first:border-t-0 first:pt-0">
             <p className="font-medium text-[#3a2f12]">
-              {group.code} · {group.chunkCount} grouped chunk rows · {group.warningCount} warnings
+              {group.code} · {group.chunkCount} counted chunks · {group.warningCount} counted warnings
+              {group.rawWarningCount !== group.warningCount
+                ? ` · ${group.rawWarningCount} raw rows`
+                : ""}
             </p>
             {group.message ? <p>{group.message}</p> : null}
             <ParserQualityBreakdown label="Block types" values={group.blockTypes} />
             <ParserQualityBreakdown label="Expected scripts" values={group.expectedScripts} />
             <ParserQualityBreakdown label="Actions" values={group.actions} />
+            <ParserQualityBreakdown
+              label="Vision recovery"
+              values={group.visionRecoveryStatuses}
+            />
             {group.pages.length ? <p>Pages: {group.pages.join(", ")}</p> : null}
             {group.references.length ? <p>References: {group.references.join(", ")}</p> : null}
             {group.examples.length ? (
@@ -1465,6 +1481,12 @@ function ParserQualityDetails({ groups }: { groups: ParserQualityGroup[] }) {
                         .filter(Boolean)
                         .join(" · ") || example.chunkId || "Sample"}
                     </p>
+                    {example.visionRecoveryStatus ? (
+                      <p className="text-xs text-[#62717a]">
+                        vision_recovery_status={example.visionRecoveryStatus}
+                        {example.counted ? "" : " · not counted"}
+                      </p>
+                    ) : null}
                     <p className="break-words">{example.textPreview || example.message}</p>
                   </div>
                 ))}
@@ -1693,10 +1715,10 @@ function QualityWarningsPanel({
               <span className="text-[#62717a]">No counted parser warnings.</span>
             )}
             <span className="rounded-md border border-[#d6dde1] bg-white px-2 py-1 text-[#3a4a53]">
-              counted_affected_chunks={details.affected_chunks}
+              counted_warning_chunks={details.affected_chunks}
             </span>
             <span className="rounded-md border border-[#d6dde1] bg-white px-2 py-1 text-[#3a4a53]">
-              display_rows={details.total}
+              warning_detail_rows={details.total}
             </span>
             {details.truncated ? (
               <span className="rounded-md border border-[#d6dde1] bg-white px-2 py-1 text-[#3a4a53]">
@@ -1792,7 +1814,12 @@ function WarningMetadataCell({ item }: { item: ParserQualityWarningOut }) {
     "artifact_ref",
     "block_type",
   ]);
-  const warningPreview = compactRecordPreview(item.warning, ["code", "action", "expected_script"]);
+  const warningPreview = compactRecordPreview(item.warning, [
+    "code",
+    "action",
+    "expected_script",
+    "vision_recovery_status",
+  ]);
 
   return (
     <div className="min-w-0 space-y-1 text-xs text-[#62717a]">
@@ -1938,14 +1965,19 @@ function jobParserQualityGroups(job: JobOut | undefined): ParserQualityGroup[] {
       if (!isRecord(group) || typeof group.code !== "string") {
         return null;
       }
+      const chunkCount = numberValue(group.chunk_count);
+      const warningCount = numberValue(group.warning_count);
       return {
         code: group.code,
-        chunkCount: numberValue(group.chunk_count),
-        warningCount: numberValue(group.warning_count),
+        chunkCount,
+        warningCount,
+        rawChunkCount: numberValue(group.raw_chunk_count) || chunkCount,
+        rawWarningCount: numberValue(group.raw_warning_count) || warningCount,
         message: stringValue(group.message),
         blockTypes: numericRecord(group.block_types),
         expectedScripts: numericRecord(group.expected_scripts),
         actions: numericRecord(group.actions),
+        visionRecoveryStatuses: numericRecord(group.vision_recovery_statuses),
         pages: stringOrNumberList(group.pages),
         references: stringList(group.references),
         examples: parserQualityExamples(group.examples),
@@ -1970,6 +2002,8 @@ function parserQualityExamples(value: unknown): ParserQualityExample[] {
         blockType: stringValue(example.block_type),
         expectedScript: stringValue(example.expected_script),
         action: stringValue(example.action),
+        visionRecoveryStatus: stringValue(example.vision_recovery_status),
+        counted: example.counted !== false,
         message: stringValue(example.message),
         textPreview: stringValue(example.text_preview) ?? "",
       };

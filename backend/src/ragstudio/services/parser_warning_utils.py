@@ -31,6 +31,53 @@ def merge_parser_warnings(
     metadata["parser_warnings"] = existing
 
 
+def is_counted_parser_warning(warning: dict[str, Any]) -> bool:
+    """Return whether a warning should contribute to user-facing warning counts."""
+    if bool(warning.get("suppressed_from_counts")):
+        return False
+    severity = warning.get("severity")
+    return not (isinstance(severity, str) and severity.lower() == "info")
+
+
+def dedupe_parser_warnings(warnings: list[Any]) -> list[dict[str, Any]]:
+    """Deduplicate parser warnings while keeping audit rows available.
+
+    Reference-unit quality can emit both a generic missing-script warning and a
+    reference-specific one for the same expected script. The reference-specific
+    row is the actionable row, so the generic one is omitted from grouped views.
+    """
+    warning_dicts = [warning for warning in warnings if isinstance(warning, dict)]
+    referenced_missing_script_keys = {
+        (warning.get("code"), warning.get("expected_script"))
+        for warning in warning_dicts
+        if warning.get("code") == "reference_unit_missing_expected_script"
+        and _string_value(warning.get("reference")) is not None
+    }
+    deduped: list[dict[str, Any]] = []
+    seen: set[tuple[Any, ...]] = set()
+    for warning in warning_dicts:
+        if (
+            warning.get("code") == "reference_unit_missing_expected_script"
+            and _string_value(warning.get("reference")) is None
+            and (warning.get("code"), warning.get("expected_script"))
+            in referenced_missing_script_keys
+        ):
+            continue
+        key = (
+            warning.get("code"),
+            warning.get("reference"),
+            warning.get("expected_script"),
+            warning.get("block_type"),
+            warning.get("page"),
+            warning.get("message"),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(warning)
+    return deduped
+
+
 def page_range(source_location: dict[str, Any] | None) -> dict[str, Any]:
     """Extract a normalised page-range dict from a source_location."""
     if not isinstance(source_location, dict):
@@ -66,3 +113,7 @@ def extract_content_text(item: dict[str, Any]) -> str:
             if joined:
                 return joined
     return ""
+
+
+def _string_value(value: Any) -> str | None:
+    return value if isinstance(value, str) and value else None

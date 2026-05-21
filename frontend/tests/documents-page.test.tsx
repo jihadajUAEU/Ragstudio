@@ -624,6 +624,8 @@ describe("DocumentsPage", () => {
                   code: "reference_unit_missing_expected_script",
                   chunk_count: 2847,
                   warning_count: 2847,
+                  raw_chunk_count: 2847,
+                  raw_warning_count: 2847,
                   message:
                     "Reference-bearing chunk is expected to contain Arabic script, but no Arabic letters were detected.",
                   block_types: {},
@@ -639,6 +641,7 @@ describe("DocumentsPage", () => {
                       block_type: null,
                       expected_script: "arabic",
                       action: "quarantine_exact_arabic",
+                      counted: true,
                       message:
                         "Reference-bearing chunk is expected to contain Arabic script, but no Arabic letters were detected.",
                       text_preview:
@@ -664,12 +667,12 @@ describe("DocumentsPage", () => {
     ).toBeVisible();
     expect(screen.getByText("Graph extraction skipped because Neo4j is unavailable")).toBeVisible();
     expect(screen.getByText("Some chunk metadata could not be normalized")).toBeVisible();
-    const parserDetails = screen.getByText("Parser warning details · 1 types · 2847 grouped warnings");
+    const parserDetails = screen.getByText("Parser warning details · 1 types · 2847 counted warnings");
     expect(parserDetails).toBeVisible();
     fireEvent.click(parserDetails);
     expect(
       screen.getByText(
-        "reference_unit_missing_expected_script · 2847 grouped chunk rows · 2847 warnings",
+        "reference_unit_missing_expected_script · 2847 counted chunks · 2847 counted warnings",
       ),
     ).toBeVisible();
     expect(screen.getByText("Expected scripts: arabic=2847")).toBeVisible();
@@ -897,8 +900,8 @@ describe("DocumentsPage", () => {
     });
     expect(await screen.findByText("Warning details")).toBeVisible();
     expect(screen.getByText("disallowed_block_type_quarantined=176")).toBeVisible();
-    expect(screen.getByText("counted_affected_chunks=176")).toBeVisible();
-    expect(screen.getByText("display_rows=176")).toBeVisible();
+    expect(screen.getByText("counted_warning_chunks=176")).toBeVisible();
+    expect(screen.getByText("warning_detail_rows=176")).toBeVisible();
     expect(
       screen.getByText("Index quality: Passed With Warnings · 2 missing expected script · 1 unresolved references"),
     ).toBeVisible();
@@ -1017,8 +1020,8 @@ describe("DocumentsPage", () => {
     expect(
       screen.getByText("This row is audit evidence, not a counted parser warning."),
     ).toBeVisible();
-    expect(screen.getByText("counted_affected_chunks=0")).toBeVisible();
-    expect(screen.getByText("display_rows=1")).toBeVisible();
+    expect(screen.getByText("counted_warning_chunks=0")).toBeVisible();
+    expect(screen.getByText("warning_detail_rows=1")).toBeVisible();
     expect(screen.getByText("Audit-only recovered parser text.")).toBeVisible();
   });
 

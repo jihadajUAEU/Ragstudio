@@ -222,6 +222,52 @@ class RecordingQualityGate:
         return self.report
 
 
+class SequenceQualityGate:
+    def __init__(self, reports: list[dict]) -> None:
+        self.reports = reports
+        self.calls: list[list[AdapterChunk]] = []
+
+    def validate_adapter_chunks(
+        self,
+        adapter_chunks: list[AdapterChunk],
+        *,
+        language: str,
+        domain_metadata: DomainMetadata,
+    ) -> dict:
+        del language, domain_metadata
+        self.calls.append(adapter_chunks)
+        index = min(len(self.calls) - 1, len(self.reports) - 1)
+        return self.reports[index]
+
+
+class RecordingTargetedVisionRecovery:
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    async def recover(self, chunks: list[AdapterChunk], *, config):
+        self.calls.append({"chunks": chunks, "config": config})
+        object.__setattr__(
+            chunks[0],
+            "text",
+            f"{chunks[0].text}\n\nوحنانا من لدنا وزكاة وكان تقيا",
+        )
+        warning = chunks[0].metadata["extraction_quality"]["parser_warnings"][0]
+        warning["severity"] = "info"
+        warning["suppressed_from_counts"] = True
+        warning["vision_recovery_status"] = "succeeded"
+        warning["quality_gate_action"] = "accepted_recovery"
+        request = chunks[0].metadata["quality_repair"]["targeted_vision_recovery_requests"][0]
+        request["vision_recovery_status"] = "succeeded"
+        return {
+            "targeted_vision_recovery_requests": 1,
+            "targeted_vision_recovery_attempted": 1,
+            "targeted_vision_recovery_succeeded": 1,
+            "targeted_vision_recovery_failed": 0,
+            "targeted_vision_recovery_not_configured": 0,
+            "targeted_vision_recovery_samples": [request],
+        }
+
+
 
 class FakeGraphMaterializationService:
     def __init__(
@@ -765,6 +811,114 @@ async def test_lifecycle_uses_preparsed_mineru_chunks_for_strict_runtime_reindex
     ]
     assert chunks is not None
     assert [chunk.text for chunk in chunks] == ["Remote MinerU chunk"]
+
+
+@pytest.mark.asyncio
+async def test_reindex_document_runs_targeted_recovery_before_persisting_chunks(
+    session,
+    app,
+    tmp_path,
+):
+    artifact_path = tmp_path / "targeted-recovery.pdf"
+    artifact_path.write_bytes(b"%PDF-1.4\n")
+    document = Document(
+        id="doc-targeted-recovery",
+        filename="targeted-recovery.pdf",
+        content_type="application/pdf",
+        artifact_path=str(artifact_path),
+        sha256="targeted-recovery",
+        status=StageStatus.SUCCEEDED.value,
+    )
+    session.add_all(
+        [
+            SettingsProfile(
+                id="default",
+                provider="openai-compatible",
+                llm_model="gpt-4o",
+                llm_base_url="http://llm.test",
+                embedding_model="text-embedding-3-large",
+                storage_backend="postgres_pgvector_neo4j",
+                runtime_mode="runtime",
+                mineru_enabled=True,
+                mineru_base_url="http://mineru.test",
+                vision_model="vision-ocr",
+                vision_base_url="http://vision.test/v1",
+            ),
+            document,
+        ]
+    )
+    await session.commit()
+
+    parser_chunk = AdapterChunk(
+        text="[19:13] And affection from Us and purity.",
+        source_location={"page_start": 1, "page_end": 1},
+        metadata={
+            "extraction_quality": {
+                "parser_warnings": [
+                    {
+                        "code": "reference_unit_missing_expected_script",
+                        "reference": "19:13",
+                        "expected_script": "arabic",
+                    }
+                ]
+            },
+            "quality_repair": {
+                "targeted_vision_recovery_requests": [
+                    {
+                        "reference": "19:13",
+                        "missing_scripts": ["arabic"],
+                        "page_start": 1,
+                        "page_end": 1,
+                    }
+                ]
+            },
+        },
+    )
+    quality_gate = SequenceQualityGate(
+        [
+            {
+                "index_quality_report": {"status": "ready_with_warnings"},
+                "quality_repair": {"targeted_vision_recovery_requests": 1},
+            },
+            {
+                "index_quality_report": {"status": "passed"},
+                "quality_repair": {"targeted_vision_recovery_requests": 1},
+            },
+        ]
+    )
+    targeted_recovery = RecordingTargetedVisionRecovery()
+
+    result = await IndexLifecycleService(
+        session,
+        app.state.settings,
+        runtime_factory=FakeFactory(PreparsedRuntime()),
+        health_service=FakeHealthService(),
+        document_parser=FakeDocumentParser([parser_chunk]),
+        quality_gate=quality_gate,
+        targeted_vision_recovery=targeted_recovery,
+    ).reindex_document(
+        document.id,
+        options=IndexDocumentIn(
+            domain_metadata=DomainMetadata(
+                custom_json={"vision_recovery_policy": {"enabled": True}}
+            )
+        ),
+    )
+
+    assert result is not None
+    assert len(quality_gate.calls) == 2
+    assert targeted_recovery.calls
+    assert targeted_recovery.calls[0]["config"].model == "vision-ocr"
+    stored_chunks = (
+        await session.execute(select(Chunk).where(Chunk.document_id == document.id))
+    ).scalars().all()
+    assert len(stored_chunks) == 1
+    assert "وحنانا من لدنا" in stored_chunks[0].text
+    index_record = (
+        await session.execute(select(IndexRecord).where(IndexRecord.document_id == document.id))
+    ).scalar_one()
+    quality_report = index_record.index_shape["quality_repair_report"]
+    assert quality_report["targeted_vision_recovery_succeeded"] == 1
 
 
 @pytest.mark.asyncio
