@@ -11,6 +11,8 @@ from ragstudio.services.arabic_text import arabic_tokens
 from ragstudio.services.parser_normalization import ExpectedContentProfile
 from ragstudio.services.parser_quality_intelligent_gate import ParserQualityIntelligentGate
 from ragstudio.services.parser_warning_utils import (
+    dedupe_parser_warnings,
+    is_counted_parser_warning,
     merge_parser_warnings as _shared_merge_parser_warnings,
 )
 from ragstudio.services.quality_repair_service import QualityRepairPass
@@ -380,6 +382,7 @@ class DomainMetadataQualityGate:
         local_script_repairs = 0
         layout_noise_downgrades = 0
         targeted_requests: list[dict[str, Any]] = []
+        targeted_status_counts: dict[str, int] = {}
         for chunk in chunks:
             metadata = self._chunk_metadata(chunk)
             repair = metadata.get("quality_repair")
@@ -395,14 +398,23 @@ class DomainMetadataQualityGate:
                     layout_noise_downgrades += downgraded_count
             requests = repair.get("targeted_vision_recovery_requests")
             if isinstance(requests, list):
-                targeted_requests.extend(
-                    request for request in requests if isinstance(request, dict)
-                )
+                for request in requests:
+                    if not isinstance(request, dict):
+                        continue
+                    targeted_requests.append(request)
+                    status = request.get("vision_recovery_status")
+                    if isinstance(status, str) and status:
+                        targeted_status_counts[status] = (
+                            targeted_status_counts.get(status, 0) + 1
+                        )
         return {
             "layer": "repair_and_quality",
             "local_script_repairs": local_script_repairs,
             "layout_noise_downgrades": layout_noise_downgrades,
             "targeted_vision_recovery_requests": len(targeted_requests),
+            "targeted_vision_recovery_status_counts": dict(
+                sorted(targeted_status_counts.items())
+            ),
             "targeted_vision_recovery_samples": targeted_requests[:25],
         }
 
@@ -525,11 +537,7 @@ class DomainMetadataQualityGate:
                     str(warning.get("code"))
                     for warning in self.parser_warnings_for_chunk(chunk)
                     if isinstance(warning.get("code"), str)
-                    and not bool(warning.get("suppressed_from_counts"))
-                    and not (
-                        isinstance(warning.get("severity"), str)
-                        and warning.get("severity").lower() == "info"
-                    )
+                    and is_counted_parser_warning(warning)
                 }
             )
             if not codes:
@@ -551,7 +559,8 @@ class DomainMetadataQualityGate:
     ) -> dict[str, Any]:
         groups: dict[str, dict[str, Any]] = {}
         for chunk in chunks:
-            warnings = self.parser_warnings_for_chunk(chunk)
+            raw_warnings = self.parser_warnings_for_chunk(chunk)
+            warnings = dedupe_parser_warnings(raw_warnings)
             if not warnings:
                 continue
 
@@ -559,6 +568,7 @@ class DomainMetadataQualityGate:
             source_location = self._chunk_source_location(chunk)
             text_preview = self._chunk_text_preview(chunk)
             seen_codes_for_chunk: set[str] = set()
+            seen_raw_codes_for_chunk: set[str] = set()
             for warning in warnings:
                 code = warning.get("code")
                 if not isinstance(code, str) or not code:
@@ -570,19 +580,30 @@ class DomainMetadataQualityGate:
                         "code": code,
                         "chunk_count": 0,
                         "warning_count": 0,
+                        "raw_chunk_count": 0,
+                        "raw_warning_count": 0,
+                        "audit_row_count": 0,
                         "message": "",
                         "block_types": {},
                         "expected_scripts": {},
                         "actions": {},
+                        "vision_recovery_statuses": {},
                         "pages": [],
                         "references": [],
                         "examples": [],
                     },
                 )
-                group["warning_count"] += 1
-                if code not in seen_codes_for_chunk:
-                    group["chunk_count"] += 1
-                    seen_codes_for_chunk.add(code)
+                group["raw_warning_count"] += 1
+                group["audit_row_count"] += 1
+                if code not in seen_raw_codes_for_chunk:
+                    group["raw_chunk_count"] += 1
+                    seen_raw_codes_for_chunk.add(code)
+                counted = is_counted_parser_warning(warning)
+                if counted:
+                    group["warning_count"] += 1
+                    if code not in seen_codes_for_chunk:
+                        group["chunk_count"] += 1
+                        seen_codes_for_chunk.add(code)
 
                 message = warning.get("message")
                 if isinstance(message, str) and message and not group["message"]:
@@ -594,6 +615,10 @@ class DomainMetadataQualityGate:
                     warning.get("expected_script"),
                 )
                 self._count_warning_value(group["actions"], warning.get("action"))
+                self._count_warning_value(
+                    group["vision_recovery_statuses"],
+                    warning.get("vision_recovery_status"),
+                )
                 self._append_limited_value(
                     group["pages"],
                     self._warning_page(warning, source_location),
@@ -615,6 +640,10 @@ class DomainMetadataQualityGate:
                             "block_type": warning.get("block_type"),
                             "expected_script": warning.get("expected_script"),
                             "action": warning.get("action"),
+                            "vision_recovery_status": warning.get(
+                                "vision_recovery_status"
+                            ),
+                            "counted": counted,
                             "message": message if isinstance(message, str) else None,
                             "text_preview": text_preview,
                         }
@@ -625,7 +654,11 @@ class DomainMetadataQualityGate:
             "sample_limit": sample_limit,
             "groups": sorted(
                 groups.values(),
-                key=lambda group: (-int(group["chunk_count"]), str(group["code"])),
+                key=lambda group: (
+                    -int(group["chunk_count"]),
+                    -int(group["raw_chunk_count"]),
+                    str(group["code"]),
+                ),
             ),
         }
 
@@ -648,7 +681,7 @@ class DomainMetadataQualityGate:
             for code in (
                 warning.get("code")
                 for warning in self.parser_warnings_for_chunk(chunk)
-                if not bool(warning.get("suppressed_from_counts"))
+                if is_counted_parser_warning(warning)
             )
             if isinstance(code, str) and code
         ]
@@ -661,10 +694,8 @@ class DomainMetadataQualityGate:
         if not isinstance(warnings, list):
             return []
         codes: list[str] = []
-        for warning in warnings:
-            if not isinstance(warning, dict):
-                continue
-            if bool(warning.get("suppressed_from_counts")):
+        for warning in dedupe_parser_warnings(warnings):
+            if not is_counted_parser_warning(warning):
                 continue
             code = warning.get("code")
             if isinstance(code, str) and code:

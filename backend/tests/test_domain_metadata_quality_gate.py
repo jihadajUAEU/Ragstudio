@@ -97,6 +97,44 @@ def _optional_only_quality_policy_metadata() -> DomainMetadata:
     )
 
 
+def test_parser_quality_details_separates_counted_warnings_from_audit_rows():
+    chunk = AdapterChunk(
+        text="[19:13] And affection from Us and purity.",
+        source_location={"page": 412},
+        metadata={
+            "extraction_quality": {
+                "parser_warnings": [
+                    {
+                        "code": "reference_unit_missing_expected_script",
+                        "message": "Missing Arabic script.",
+                        "expected_script": "arabic",
+                    },
+                    {
+                        "code": "reference_unit_missing_expected_script",
+                        "message": "Missing Arabic script.",
+                        "reference": "19:13",
+                        "expected_script": "arabic",
+                        "severity": "info",
+                        "suppressed_from_counts": True,
+                        "vision_recovery_status": "succeeded",
+                    },
+                ]
+            }
+        },
+    )
+
+    details = DomainMetadataQualityGate().parser_quality_details([chunk])
+
+    assert len(details["groups"]) == 1
+    group = details["groups"][0]
+    assert group["code"] == "reference_unit_missing_expected_script"
+    assert group["warning_count"] == 0
+    assert group["chunk_count"] == 0
+    assert group["raw_warning_count"] == 1
+    assert group["raw_chunk_count"] == 1
+    assert group["vision_recovery_statuses"] == {"succeeded": 1}
+
+
 def _role_scoped_quality_policy_metadata() -> DomainMetadata:
     return DomainMetadata(
         domain="quran_tafseer",

@@ -18,6 +18,10 @@ from ragstudio.schemas.jobs import (
 from ragstudio.schemas.parsing import DomainMetadata, IndexDocumentIn
 from ragstudio.services.document_service import ActiveIndexJobError, DocumentService
 from ragstudio.services.domain_metadata_quality_gate import DomainMetadataQualityGate
+from ragstudio.services.parser_warning_utils import (
+    dedupe_parser_warnings,
+    is_counted_parser_warning,
+)
 from ragstudio.services.runtime_profile_service import (
     RuntimeProfileNotConfiguredError,
     RuntimeProfileService,
@@ -1061,7 +1065,7 @@ class JobQualityWarningService:
         parser_warnings = extraction_quality.get("parser_warnings")
         if not isinstance(parser_warnings, list):
             return []
-        parser_warnings = self._dedupe_parser_warnings(parser_warnings)
+        parser_warnings = dedupe_parser_warnings(parser_warnings)
 
         source_location = chunk.source_location if isinstance(chunk.source_location, dict) else {}
         parser_metadata = metadata.get("parser_metadata")
@@ -1090,36 +1094,7 @@ class JobQualityWarningService:
         ]
 
     def _dedupe_parser_warnings(self, warnings: list[Any]) -> list[dict[str, Any]]:
-        warning_dicts = [warning for warning in warnings if isinstance(warning, dict)]
-        referenced_missing_script_keys = {
-            (warning.get("code"), warning.get("expected_script"))
-            for warning in warning_dicts
-            if warning.get("code") == "reference_unit_missing_expected_script"
-            and self._string_value(warning.get("reference")) is not None
-        }
-        deduped: list[dict[str, Any]] = []
-        seen: set[tuple[Any, ...]] = set()
-        for warning in warning_dicts:
-            if (
-                warning.get("code") == "reference_unit_missing_expected_script"
-                and self._string_value(warning.get("reference")) is None
-                and (warning.get("code"), warning.get("expected_script"))
-                in referenced_missing_script_keys
-            ):
-                continue
-            key = (
-                warning.get("code"),
-                warning.get("reference"),
-                warning.get("expected_script"),
-                warning.get("block_type"),
-                warning.get("page"),
-                warning.get("message"),
-            )
-            if key in seen:
-                continue
-            seen.add(key)
-            deduped.append(warning)
-        return deduped
+        return dedupe_parser_warnings(warnings)
 
     def _document_id(self, job: Job, result: dict[str, Any]) -> str | None:
         if isinstance(job.target_id, str) and job.target_id:
@@ -1174,10 +1149,7 @@ class JobQualityWarningService:
         return 0
 
     def _is_counted_warning(self, warning: dict[str, Any]) -> bool:
-        if bool(warning.get("suppressed_from_counts")):
-            return False
-        severity = warning.get("severity")
-        return not (isinstance(severity, str) and severity.lower() == "info")
+        return is_counted_parser_warning(warning)
 
     def _dict_value(self, value: Any) -> dict[str, Any]:
         return dict(value) if isinstance(value, dict) else {}
