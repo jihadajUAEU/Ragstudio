@@ -35,7 +35,10 @@ from ragstudio.services.retrieval_evidence import (
 )
 from ragstudio.services.retrieval_fusion import RetrievalFusion
 from ragstudio.services.retrieval_observability import RetrievalObservability
+from ragstudio.services.retrieval_route_input import build_retrieval_route_request
+from ragstudio.services.retrieval_route_planner import RetrievalRoutePlanner
 from ragstudio.services.runtime_answer_service import RuntimeAnswerService
+from ragstudio.services.vector_retrieval_service import vector_lane_diagnostics
 
 
 class NativeRuntimeQueryFailed(RuntimeError):
@@ -95,6 +98,7 @@ class RetrievalOrchestrator:
         graph_expansion_service: GraphExpansionService | None = None,
         context_assembly_service: ContextAssemblyService | None = None,
         retrieval_fusion: RetrievalFusion | None = None,
+        retrieval_route_planner: RetrievalRoutePlanner | None = None,
         metadata_retrieval_service: MetadataRetrievalService | None = None,
         grounding_validator: GroundingValidator | None = None,
         evidence_first_answer_service: EvidenceFirstAnswerService | None = None,
@@ -108,6 +112,7 @@ class RetrievalOrchestrator:
         self.graph_expansion_service = graph_expansion_service or GraphExpansionService()
         self.context_assembly_service = context_assembly_service or ContextAssemblyService()
         self.retrieval_fusion = retrieval_fusion or RetrievalFusion()
+        self.retrieval_route_planner = retrieval_route_planner or RetrievalRoutePlanner()
         self.metadata_retrieval_service = (
             metadata_retrieval_service or MetadataRetrievalService(chunk_service)
         )
@@ -164,6 +169,20 @@ class RetrievalOrchestrator:
             limit=limit,
             domain_expansion=domain_expansion,
         )
+        route_request = build_retrieval_route_request(
+            query=query,
+            document_ids=document_ids,
+            runtime_profile_id=_str_or_none(getattr(profile, "id", None)),
+            variant_id=variant_id,
+            query_intent=plan.intent,
+            retrieval_strategy=plan.retrieval_strategy,
+            query_understanding=plan.understanding,
+            domain_metadata=domain_metadata,
+            query_config=query_config,
+            runtime_readiness=_runtime_readiness(query_config),
+            reranker_readiness=_reranker_readiness(profile, query_config),
+        )
+        route_plan = self.retrieval_route_planner.plan(route_request)
         observability = RetrievalObservability()
         cache_decision = observability.cache_decision(
             query=query,
@@ -188,6 +207,18 @@ class RetrievalOrchestrator:
                 "cache": cache_decision,
             }
         ]
+        traces.append(
+            {
+                "stage": "retrieval_route_plan",
+                **route_plan.as_dict(),
+                "document_ids": list(document_ids),
+                "intent": plan.intent,
+                "direct_evidence_required": bool(
+                    plan.understanding and plan.understanding.direct_evidence_required
+                ),
+                "graph_context_required": plan.graph_context_required,
+            }
+        )
         traces.append(query_hypothesis.to_trace())
         if domain_expansion.expansions or domain_expansion.retrieval_passes:
             traces.append(dict(domain_expansion.trace))
@@ -202,6 +233,7 @@ class RetrievalOrchestrator:
                     variant_id,
                     query_config,
                     plan,
+                    route_plan,
                     timings,
                     deadline_at,
                 )
@@ -212,6 +244,10 @@ class RetrievalOrchestrator:
             return self._failed_orchestrated_answer(exc, started, timings)
 
         traces.append(retrieval_trace)
+        lane_results = retrieval_trace.get("lane_results")
+        if isinstance(lane_results, list):
+            traces.extend(trace for trace in lane_results if isinstance(trace, dict))
+        traces.append(_vector_lane_trace(route_plan, query_config))
         observability.record_stage(
             "primary_retrieval",
             candidate_count=len(native_candidates) + len(metadata_candidates),
@@ -255,13 +291,21 @@ class RetrievalOrchestrator:
                 }
             )
 
+            graph_lane_enabled = _lane_is_executable(route_plan, "graph")
+            graph_seed_candidates = _graph_seed_candidates(
+                seed_candidates,
+                document_ids=document_ids,
+                max_seeds=5,
+            )
             graph_candidates, graph_traces = await self._safe_graph_expansion(
                 query,
-                seeds=seed_candidates[:limit],
+                seeds=graph_seed_candidates,
                 profile=profile,
                 document_ids=document_ids,
                 limit=limit,
-                enabled=bool(query_config.get("graph_expansion_enabled", True)),
+                enabled=graph_lane_enabled,
+                skip_reason=_lane_plan_reason(route_plan, "graph"),
+                timeout_ms=_lane_timeout_ms(route_plan, "graph", 1_200),
                 timings=timings,
                 deadline_at=deadline_at,
             )
@@ -274,13 +318,17 @@ class RetrievalOrchestrator:
             traces.extend(graph_hydration_traces)
 
             refusion_started = perf_counter()
-            legacy_fused = fuse_candidates(
-                plan,
-                [*native_candidates, *metadata_candidates, *graph_candidates],
+            native_ranked = fuse_candidates(plan, native_candidates) if native_candidates else []
+            metadata_ranked = (
+                fuse_candidates(plan, metadata_candidates) if metadata_candidates else []
             )
+            graph_ranked = fuse_candidates(plan, graph_candidates) if graph_candidates else []
             fused = apply_query_aware_ordering(
                 plan,
-                self.retrieval_fusion.fuse([legacy_fused], limit=plan.candidate_limit),
+                self.retrieval_fusion.fuse(
+                    [native_ranked, metadata_ranked, graph_ranked],
+                    limit=plan.candidate_limit,
+                ),
             )
             timings["final_fusion_ms"] = _elapsed_ms(refusion_started)
             final_fusion_detail = {
@@ -289,20 +337,7 @@ class RetrievalOrchestrator:
                 "graph_candidates": len(graph_candidates),
                 "fused_candidates": len(fused),
             }
-            traces.extend(
-                [
-                    {
-                        "stage": "final_fusion",
-                        "compat_stage": "retrieval_fusion",
-                        **final_fusion_detail,
-                    },
-                    {
-                        "stage": "retrieval_fusion",
-                        "canonical_stage": "final_fusion",
-                        **final_fusion_detail,
-                    },
-                ]
-            )
+            traces.append({"stage": "final_fusion", **final_fusion_detail})
             quality_diagnostics_trace = await self._quality_diagnostics_trace(
                 query,
                 document_ids,
@@ -319,12 +354,29 @@ class RetrievalOrchestrator:
             reranker_traces: list[dict[str, Any]] = []
             reranked = fused
             timings["rerank_ms"] = 0.0
-            if getattr(profile, "enable_rerank", False) and bool(
-                query_config.get("enable_rerank", True)
-            ):
+            if _lane_is_executable(route_plan, "reranker"):
                 rerank_started = perf_counter()
                 reranked, reranker_traces = await self._rerank(query, fused, profile)
                 timings["rerank_ms"] = _elapsed_ms(rerank_started)
+                traces.append(
+                    _lane_result_trace(
+                        lane="reranker",
+                        status="ran",
+                        reason="reranker_completed",
+                        candidates=reranked,
+                        latency_ms=timings["rerank_ms"],
+                    )
+                )
+            else:
+                traces.append(
+                    _lane_result_trace(
+                        lane="reranker",
+                        status="skipped",
+                        reason=_lane_plan_reason(route_plan, "reranker"),
+                        candidates=[],
+                        latency_ms=0.0,
+                    )
+                )
             reranked, parser_quality_trace = _annotate_parser_quality_warnings(reranked)
             if parser_quality_trace is not None:
                 traces.append(parser_quality_trace)
@@ -595,18 +647,63 @@ class RetrievalOrchestrator:
         variant_id: str,
         query_config: dict[str, Any],
         plan: Any,
+        route_plan: Any,
         timings: dict[str, Any],
         deadline_at: float | None,
     ) -> tuple[list[EvidenceCandidate], list[EvidenceCandidate], dict[str, Any]]:
         parallel_started = perf_counter()
+        native_allowed = _lane_is_executable(route_plan, "raganything_runtime")
+        metadata_allowed = _lane_is_executable(
+            route_plan,
+            "metadata",
+            "lexical_reference",
+            "postgres_canonical",
+        )
+        native_timeout_ms = _native_timeout_ms(route_plan, query_config)
+        metadata_timeout_ms = _lane_timeout_ms(route_plan, "metadata", 8_000)
+        lane_traces: list[dict[str, Any]] = []
+        if not native_allowed:
+            lane_traces.append(
+                _lane_result_trace(
+                    lane="raganything_runtime",
+                    status="skipped",
+                    reason=_lane_plan_reason(route_plan, "raganything_runtime"),
+                    candidates=[],
+                    latency_ms=0.0,
+                )
+            )
+        if not metadata_allowed:
+            lane_traces.append(
+                _lane_result_trace(
+                    lane="metadata",
+                    status="skipped",
+                    reason="metadata_lane_not_planned",
+                    candidates=[],
+                    latency_ms=0.0,
+                )
+            )
+        if not native_allowed and not metadata_allowed:
+            timings["parallel_retrieval_ms"] = _elapsed_ms(parallel_started)
+            return (
+                [],
+                [],
+                {
+                    "stage": "retrieval",
+                    "native_status": "skipped",
+                    "native_candidates": 0,
+                    "metadata_candidates": 0,
+                    "lane_results": lane_traces,
+                },
+            )
         if document_ids:
-            if _metadata_only(query_config):
+            if _metadata_only(query_config) or not native_allowed:
                 metadata_result = await self._timed_metadata_candidates_with_deadline(
                     query,
                     document_ids,
                     variant_id,
                     plan.candidate_limit,
                     plan,
+                    timeout_ms=metadata_timeout_ms,
                     deadline_at=deadline_at,
                 )
                 metadata_candidates, metadata_ms, metadata_trace = metadata_result
@@ -621,6 +718,16 @@ class RetrievalOrchestrator:
                         "native_candidates": 0,
                         "metadata_candidates": len(metadata_candidates),
                         "metadata_trace": metadata_trace,
+                        "lane_results": [
+                            *lane_traces,
+                            _lane_result_trace(
+                                lane="metadata",
+                                status="ran",
+                                reason="metadata_lane_completed",
+                                candidates=metadata_candidates,
+                                latency_ms=metadata_ms,
+                            ),
+                        ],
                     },
                 )
             if _fast_mode(query_config):
@@ -631,11 +738,19 @@ class RetrievalOrchestrator:
                     variant_id,
                     query_config,
                     plan,
+                    route_plan,
                     timings,
                     parallel_started,
                     deadline_at,
+                    lane_traces,
                 )
-            native_task = self._timed_native_candidates(query, runtime, document_ids, query_config)
+            native_task = self._timed_native_candidates(
+                query,
+                runtime,
+                document_ids,
+                query_config,
+                timeout_ms=native_timeout_ms,
+            )
             try:
                 native_result = await native_task
             except Exception as exc:
@@ -645,19 +760,37 @@ class RetrievalOrchestrator:
                 document_ids,
                 variant_id,
                 plan,
+                route_plan,
                 timings,
                 parallel_started,
                 native_result,
                 deadline_at,
+                lane_traces,
             )
 
-        native_task = self._timed_native_candidates(query, runtime, document_ids, query_config)
-        metadata_task = self._timed_metadata_candidates(
-            query,
-            document_ids,
-            variant_id,
-            plan.candidate_limit,
-            plan,
+        native_task = (
+            self._timed_native_candidates(
+                query,
+                runtime,
+                document_ids,
+                query_config,
+                timeout_ms=native_timeout_ms,
+            )
+            if native_allowed
+            else _skipped_native_result()
+        )
+        metadata_task = (
+            self._timed_metadata_candidates_with_deadline(
+                query,
+                document_ids,
+                variant_id,
+                plan.candidate_limit,
+                plan,
+                timeout_ms=metadata_timeout_ms,
+                deadline_at=deadline_at,
+            )
+            if metadata_allowed
+            else _skipped_metadata_result()
         )
         native_result, metadata_result = await asyncio.gather(
             native_task,
@@ -668,9 +801,11 @@ class RetrievalOrchestrator:
             native_result=native_result,
             metadata_result=metadata_result,
             plan=plan,
+            route_plan=route_plan,
             timings=timings,
             parallel_started=parallel_started,
-            )
+            lane_traces=lane_traces,
+        )
 
     async def _metadata_after_native_result(
         self,
@@ -678,11 +813,14 @@ class RetrievalOrchestrator:
         document_ids: list[str],
         variant_id: str,
         plan: Any,
+        route_plan: Any,
         timings: dict[str, Any],
         parallel_started: float,
         native_result: Any,
         deadline_at: float | None = None,
+        lane_traces: list[dict[str, Any]] | None = None,
     ) -> tuple[list[EvidenceCandidate], list[EvidenceCandidate], dict[str, Any]]:
+        metadata_timeout_ms = _lane_timeout_ms(route_plan, "metadata", 8_000)
         try:
             metadata_result = await self._timed_metadata_candidates_with_deadline(
                 query,
@@ -690,6 +828,7 @@ class RetrievalOrchestrator:
                 variant_id,
                 plan.candidate_limit,
                 plan,
+                timeout_ms=metadata_timeout_ms,
                 deadline_at=deadline_at,
             )
         except Exception as exc:
@@ -698,8 +837,10 @@ class RetrievalOrchestrator:
             native_result=native_result,
             metadata_result=metadata_result,
             plan=plan,
+            route_plan=route_plan,
             timings=timings,
             parallel_started=parallel_started,
+            lane_traces=lane_traces,
         )
 
     async def _fast_parallel_retrieval(
@@ -710,12 +851,22 @@ class RetrievalOrchestrator:
         variant_id: str,
         query_config: dict[str, Any],
         plan: Any,
+        route_plan: Any,
         timings: dict[str, Any],
         parallel_started: float,
         deadline_at: float | None,
+        lane_traces: list[dict[str, Any]] | None = None,
     ) -> tuple[list[EvidenceCandidate], list[EvidenceCandidate], dict[str, Any]]:
+        native_timeout_ms = _native_timeout_ms(route_plan, query_config, fallback_ms=2_500)
+        metadata_timeout_ms = _lane_timeout_ms(route_plan, "metadata", 8_000)
         native_task = asyncio.create_task(
-            self._timed_native_candidates(query, runtime, document_ids, query_config)
+            self._timed_native_candidates(
+                query,
+                runtime,
+                document_ids,
+                query_config,
+                timeout_ms=native_timeout_ms,
+            )
         )
         try:
             metadata_result = await self._timed_metadata_candidates_with_deadline(
@@ -724,6 +875,7 @@ class RetrievalOrchestrator:
                 variant_id,
                 plan.candidate_limit,
                 plan,
+                timeout_ms=metadata_timeout_ms,
                 deadline_at=deadline_at,
             )
         except Exception as exc:
@@ -731,7 +883,7 @@ class RetrievalOrchestrator:
         timeout_ms = int(
             _remaining_timeout_seconds(
                 deadline_at,
-                fallback_ms=int(query_config.get("native_query_timeout_ms") or 2500),
+                fallback_ms=native_timeout_ms,
             )
             * 1000
         )
@@ -754,8 +906,10 @@ class RetrievalOrchestrator:
             native_result=native_result,
             metadata_result=metadata_result,
             plan=plan,
+            route_plan=route_plan,
             timings=timings,
             parallel_started=parallel_started,
+            lane_traces=lane_traces,
         )
 
     async def _timed_metadata_candidates_with_deadline(
@@ -766,15 +920,19 @@ class RetrievalOrchestrator:
         limit: int,
         plan: Any,
         *,
+        timeout_ms: int,
         deadline_at: float | None,
     ) -> tuple[list[EvidenceCandidate], float, dict[str, Any]]:
         if deadline_at is None:
-            return await self._timed_metadata_candidates(
-                query,
-                document_ids,
-                variant_id,
-                limit,
-                plan,
+            return await asyncio.wait_for(
+                self._timed_metadata_candidates(
+                    query,
+                    document_ids,
+                    variant_id,
+                    limit,
+                    plan,
+                ),
+                timeout=max(timeout_ms, 1) / 1000,
             )
         return await asyncio.wait_for(
             self._timed_metadata_candidates(
@@ -784,7 +942,7 @@ class RetrievalOrchestrator:
                 limit,
                 plan,
             ),
-            timeout=_remaining_timeout_seconds(deadline_at, fallback_ms=8000),
+            timeout=_remaining_timeout_seconds(deadline_at, fallback_ms=timeout_ms),
         )
 
     def _resolve_retrieval_results(
@@ -793,8 +951,10 @@ class RetrievalOrchestrator:
         native_result: Any,
         metadata_result: Any,
         plan: Any,
+        route_plan: Any,
         timings: dict[str, Any],
         parallel_started: float,
+        lane_traces: list[dict[str, Any]] | None = None,
     ) -> tuple[list[EvidenceCandidate], list[EvidenceCandidate], dict[str, Any]]:
 
         if not isinstance(native_result, Exception):
@@ -818,6 +978,7 @@ class RetrievalOrchestrator:
 
         native_candidates: list[EvidenceCandidate] = []
         native_status = "ok"
+        native_ms = float(timings.get("native_stage_ms", 0.0) or 0.0)
         if isinstance(native_result, Exception):
             native_status = "degraded"
             if isinstance(native_result, NativeRuntimeQueryFailed):
@@ -832,6 +993,43 @@ class RetrievalOrchestrator:
         else:
             native_candidates, _native_timings = native_result
 
+        lane_results = list(lane_traces or [])
+        if _lane_is_executable(route_plan, "raganything_runtime"):
+            lane_results.append(
+                _lane_result_trace(
+                    lane="raganything_runtime",
+                    status="degraded" if native_status == "degraded" else "ran",
+                    reason=(
+                        str(timings.get("native_error_type") or "native_runtime_degraded")
+                        if native_status == "degraded"
+                        else "native_runtime_completed"
+                    ),
+                    candidates=native_candidates,
+                    latency_ms=native_ms,
+                    error_type=(
+                        str(timings.get("native_error_type"))
+                        if native_status == "degraded"
+                        and timings.get("native_error_type") is not None
+                        else None
+                    ),
+                )
+            )
+        if _lane_is_executable(
+            route_plan,
+            "metadata",
+            "lexical_reference",
+            "postgres_canonical",
+        ):
+            lane_results.append(
+                _lane_result_trace(
+                    lane="metadata",
+                    status="ran",
+                    reason="metadata_lane_completed",
+                    candidates=metadata_candidates,
+                    latency_ms=metadata_ms,
+                )
+            )
+
         return (
             native_candidates,
             metadata_candidates,
@@ -841,6 +1039,7 @@ class RetrievalOrchestrator:
                 "native_candidates": len(native_candidates),
                 "metadata_candidates": len(metadata_candidates),
                 "metadata_trace": metadata_trace,
+                "lane_results": lane_results,
             },
         )
 
@@ -853,6 +1052,8 @@ class RetrievalOrchestrator:
         document_ids: list[str],
         limit: int,
         enabled: bool,
+        skip_reason: str,
+        timeout_ms: int,
         timings: dict[str, Any],
         deadline_at: float | None,
     ) -> tuple[list[EvidenceCandidate], list[dict[str, Any]]]:
@@ -860,13 +1061,36 @@ class RetrievalOrchestrator:
         if not enabled:
             timings["graph_ms"] = _elapsed_ms(graph_started)
             timings["graph_degraded"] = True
-            timings["graph_error_type"] = "graph_projection_not_ready"
+            timings["graph_error_type"] = skip_reason
             return [], [
                 {
                     "stage": "graph_expansion",
                     "status": "skipped",
-                    "reason": "graph_projection_not_ready",
-                }
+                    "reason": skip_reason,
+                },
+                _lane_result_trace(
+                    lane="graph",
+                    status="skipped",
+                    reason=skip_reason,
+                    candidates=[],
+                    latency_ms=timings["graph_ms"],
+                )
+            ]
+        if not seeds:
+            timings["graph_ms"] = _elapsed_ms(graph_started)
+            return [], [
+                {
+                    "stage": "graph_expansion",
+                    "status": "skipped",
+                    "reason": "graph_no_eligible_seeds",
+                },
+                _lane_result_trace(
+                    lane="graph",
+                    status="skipped",
+                    reason="graph_no_eligible_seeds",
+                    candidates=[],
+                    latency_ms=timings["graph_ms"],
+                )
             ]
         try:
             graph_candidates, graph_traces = await asyncio.wait_for(
@@ -877,12 +1101,22 @@ class RetrievalOrchestrator:
                     document_ids=document_ids,
                     limit=limit,
                 ),
-                timeout=_remaining_timeout_seconds(deadline_at, fallback_ms=1200),
+                timeout=_remaining_timeout_seconds(deadline_at, fallback_ms=timeout_ms),
             )
             timings["graph_ms"] = _elapsed_ms(graph_started)
             if _graph_degraded(graph_traces):
                 timings["graph_degraded"] = True
                 timings["graph_error_type"] = _graph_degradation_reason(graph_traces)
+            graph_traces = [
+                *graph_traces,
+                _lane_result_trace(
+                    lane="graph",
+                    status="ran",
+                    reason="graph_expansion_completed",
+                    candidates=graph_candidates,
+                    latency_ms=timings["graph_ms"],
+                ),
+            ]
             return graph_candidates, graph_traces
         except Exception as exc:
             timings["graph_ms"] = _elapsed_ms(graph_started)
@@ -894,7 +1128,15 @@ class RetrievalOrchestrator:
                     "status": "failed",
                     "reason": exc.__class__.__name__,
                     "detail": str(exc),
-                }
+                },
+                _lane_result_trace(
+                    lane="graph",
+                    status="failed",
+                    reason=exc.__class__.__name__,
+                    candidates=[],
+                    latency_ms=timings["graph_ms"],
+                    error_type=exc.__class__.__name__,
+                ),
             ]
 
     def _parallel_retrieval_failed(
@@ -952,9 +1194,10 @@ class RetrievalOrchestrator:
         runtime: Any,
         document_ids: list[str],
         query_config: dict[str, Any],
+        timeout_ms: int | None = None,
     ) -> tuple[list[EvidenceCandidate], dict[str, Any]]:
         started = perf_counter()
-        timeout_ms = int(query_config.get("native_query_timeout_ms") or 15_000)
+        timeout_ms = timeout_ms or int(query_config.get("native_query_timeout_ms") or 15_000)
         native_timings = {"native_stage_ms": _elapsed_ms(started)}
 
         async def run_native_query() -> Any:
@@ -1145,14 +1388,37 @@ class RetrievalOrchestrator:
             for candidate in candidates
         ]
         reranked_chunks, traces = await self.reranker_service.rerank(query, chunks, profile)
-        by_id = {chunk.id: index for index, chunk in enumerate(reranked_chunks)}
+        post_rank_by_id = {chunk.id: index for index, chunk in enumerate(reranked_chunks, start=1)}
+        score_by_id = {
+            chunk.id: relevance_score
+            for chunk in reranked_chunks
+            if (relevance_score := _chunk_relevance_score(chunk)) is not None
+        }
+        reranker_model = _reranker_model(profile)
+        annotated: list[EvidenceCandidate] = []
+        for pre_rank, candidate in enumerate(candidates, start=1):
+            identity = candidate.chunk_id or candidate.candidate_id
+            post_rank = post_rank_by_id.get(identity, 10_000)
+            annotated.append(
+                replace(
+                    candidate,
+                    pre_rerank_rank=pre_rank,
+                    post_rerank_rank=post_rank if post_rank < 10_000 else None,
+                    pre_rerank_score=candidate.final_score,
+                    reranker_relevance_score=score_by_id.get(identity),
+                    reranker_model=reranker_model,
+                    reranker_status="ranked" if post_rank < 10_000 else "missing",
+                    reranker_reason=(
+                        "reranker_completed"
+                        if post_rank < 10_000
+                        else "reranker_returned_no_matching_chunk"
+                    ),
+                )
+            )
         return (
             sorted(
-                candidates,
-                key=lambda candidate: by_id.get(
-                    candidate.chunk_id or candidate.candidate_id,
-                    10_000,
-                ),
+                annotated,
+                key=lambda candidate: candidate.post_rerank_rank or 10_000,
             ),
             traces,
         )
@@ -1160,6 +1426,206 @@ class RetrievalOrchestrator:
 
 def _dict_or_empty(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
+
+
+def _runtime_readiness(query_config: dict[str, Any]) -> dict[str, object]:
+    configured = query_config.get("runtime_readiness")
+    if isinstance(configured, dict):
+        return configured
+    if _metadata_only(query_config):
+        return {"state": "disabled", "reason": "metadata_only_route"}
+    return {"state": "ready"}
+
+
+def _reranker_readiness(profile: Any, query_config: dict[str, Any]) -> dict[str, object]:
+    configured = query_config.get("reranker_readiness")
+    if isinstance(configured, dict):
+        return configured
+    if query_config.get("enable_rerank") is False:
+        return {"state": "disabled", "reason": "query_config_disabled"}
+    if not bool(getattr(profile, "enable_rerank", False)):
+        return {"state": "disabled", "reason": "profile_disabled"}
+    return {"state": "ready"}
+
+
+def _lane_is_executable(route_plan: Any, *lanes: str) -> bool:
+    for lane in lanes:
+        try:
+            lane_plan = route_plan.lane_for(lane)
+        except (AttributeError, KeyError):
+            continue
+        if getattr(lane_plan, "status", None) in {"planned", "required", "degraded"}:
+            return True
+    return False
+
+
+def _lane_plan_reason(route_plan: Any, lane: str) -> str:
+    try:
+        lane_plan = route_plan.lane_for(lane)
+    except (AttributeError, KeyError):
+        return f"{lane}_lane_not_planned"
+    reason = getattr(lane_plan, "reason", None)
+    return str(reason or f"{lane}_lane_not_planned")
+
+
+def _lane_timeout_ms(route_plan: Any, lane: str, fallback_ms: int) -> int:
+    try:
+        lane_plan = route_plan.lane_for(lane)
+    except (AttributeError, KeyError):
+        return fallback_ms
+    timeout_ms = getattr(lane_plan, "timeout_ms", None)
+    if isinstance(timeout_ms, int) and timeout_ms > 0:
+        return timeout_ms
+    return fallback_ms
+
+
+def _native_timeout_ms(
+    route_plan: Any,
+    query_config: dict[str, Any],
+    *,
+    fallback_ms: int = 15_000,
+) -> int:
+    route_timeout = _lane_timeout_ms(route_plan, "raganything_runtime", fallback_ms)
+    configured = query_config.get("native_query_timeout_ms")
+    try:
+        configured_timeout = int(configured) if configured is not None else None
+    except (TypeError, ValueError):
+        configured_timeout = None
+    if configured_timeout is None or configured_timeout <= 0:
+        return route_timeout
+    return min(route_timeout, configured_timeout)
+
+
+def _vector_lane_trace(route_plan: Any, query_config: dict[str, Any]) -> dict[str, Any]:
+    if not _lane_is_executable(route_plan, "vector"):
+        return _lane_result_trace(
+            lane="vector",
+            status="skipped",
+            reason=_lane_plan_reason(route_plan, "vector"),
+            candidates=[],
+            latency_ms=0.0,
+        )
+    diagnostics = vector_lane_diagnostics(
+        {},
+        baseline_gate=_vector_baseline_gate(query_config),
+    )
+    if diagnostics.status != "ran":
+        trace = _lane_result_trace(
+            lane="vector",
+            status="skipped",
+            reason=diagnostics.reason,
+            candidates=[],
+            latency_ms=0.0,
+        )
+        trace["diagnostics"] = diagnostics.as_dict()
+        return trace
+    trace = _lane_result_trace(
+        lane="vector",
+        status="skipped",
+        reason="vector_lane_executor_unavailable",
+        candidates=[],
+        latency_ms=0.0,
+    )
+    trace["diagnostics"] = diagnostics.as_dict()
+    return trace
+
+
+def _vector_baseline_gate(query_config: dict[str, Any]) -> object:
+    if "vector_baseline_gate" in query_config:
+        return query_config.get("vector_baseline_gate")
+    if "retrieval_quality_gate" in query_config:
+        return query_config.get("retrieval_quality_gate")
+    return None
+
+
+def _lane_result_trace(
+    *,
+    lane: str,
+    status: str,
+    reason: str,
+    candidates: list[EvidenceCandidate],
+    latency_ms: float,
+    error_type: str | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "stage": "retrieval_lane_result",
+        "lane": lane,
+        "status": status,
+        "reason": reason,
+        "candidate_count": len(candidates),
+        "candidate_ids": [candidate.candidate_id for candidate in candidates],
+        "canonical_chunk_ids": [
+            candidate.chunk_id for candidate in candidates if candidate.chunk_id
+        ],
+        "document_ids": [
+            document_id
+            for document_id in dict.fromkeys(candidate.document_id for candidate in candidates)
+            if document_id
+        ],
+        "latency_ms": latency_ms,
+        "timed_out": status == "timed_out",
+        "partial": status in {"degraded", "timed_out"} and bool(candidates),
+    }
+    if error_type:
+        payload["error_type"] = error_type
+    return payload
+
+
+def _graph_seed_candidates(
+    candidates: list[EvidenceCandidate],
+    *,
+    document_ids: list[str],
+    max_seeds: int,
+) -> list[EvidenceCandidate]:
+    allowed_documents = {document_id for document_id in document_ids if document_id}
+    seeds: list[EvidenceCandidate] = []
+    for candidate in candidates:
+        if candidate.tool not in {"metadata", "lexical", "reference_exact", "arabic_lexical"}:
+            continue
+        if not candidate.chunk_id:
+            continue
+        if allowed_documents and candidate.document_id not in allowed_documents:
+            continue
+        quality_policy = candidate.metadata.get("quality_action_policy")
+        if isinstance(quality_policy, dict) and quality_policy.get("project_graph") is False:
+            continue
+        if candidate.metadata.get("provenance_only") is True:
+            continue
+        seeds.append(candidate)
+        if len(seeds) >= max_seeds:
+            break
+    return seeds
+
+
+async def _skipped_native_result() -> tuple[list[EvidenceCandidate], dict[str, Any]]:
+    return [], {"native_stage_ms": 0.0}
+
+
+async def _skipped_metadata_result() -> tuple[list[EvidenceCandidate], float, dict[str, Any]]:
+    return [], 0.0, {
+        "stage": "metadata_retrieval",
+        "status": "skipped",
+        "reason": "metadata_lane_not_planned",
+    }
+
+
+def _chunk_relevance_score(chunk: ChunkOut) -> float | None:
+    for value in (
+        getattr(chunk, "relevance_score", None),
+        chunk.metadata.get("relevance_score"),
+        chunk.metadata.get("reranker_score"),
+    ):
+        if isinstance(value, int | float):
+            return float(value)
+    return None
+
+
+def _reranker_model(profile: Any) -> str:
+    return str(
+        getattr(profile, "reranker_model", None)
+        or getattr(profile, "reranker_provider", None)
+        or "unknown"
+    )
 
 
 def _metadata_only(query_config: dict[str, Any]) -> bool:
@@ -1255,6 +1721,67 @@ def _domain_metadata_family(domain_metadata: list[dict[str, Any]]) -> str:
     }:
         return "arabic_religious"
     return "generic"
+
+
+def _route_domain_id(domain_metadata: list[dict[str, Any]]) -> str | None:
+    family = _domain_metadata_family(domain_metadata)
+    if family == "arabic_religious":
+        return "reference_heavy"
+    for metadata in domain_metadata:
+        if not isinstance(metadata, dict):
+            continue
+        values = _metadata_signal_values(metadata)
+        if values & {"reference", "policy", "legal", "contract", "statute"}:
+            return "reference_heavy"
+        if values & {"table", "figure", "equation", "multimodal_layout"}:
+            return "multimodal_layout"
+    return None
+
+
+def _route_layout_hint(domain_metadata: list[dict[str, Any]]) -> str | None:
+    for metadata in domain_metadata:
+        if not isinstance(metadata, dict):
+            continue
+        values = _metadata_signal_values(metadata)
+        for layout_hint in ("table", "figure", "equation", "reference"):
+            if layout_hint in values:
+                return layout_hint
+        layout = metadata.get("layout")
+        if isinstance(layout, dict):
+            role = layout.get("role")
+            if isinstance(role, str) and role.casefold() in {
+                "table",
+                "figure",
+                "equation",
+                "reference",
+            }:
+                return role.casefold()
+    return None
+
+
+def _route_materialization_hint(query_config: dict[str, Any]) -> str | None:
+    retrieval_mode = str(query_config.get("retrieval_mode") or "").casefold()
+    if retrieval_mode == "metadata":
+        return "canonical_only"
+    if query_config.get("graph_expansion_enabled") is False:
+        return "vector"
+    return None
+
+
+def _metadata_signal_values(metadata: dict[str, Any]) -> set[str]:
+    signals: set[str] = set()
+    raw_tags = metadata.get("tags")
+    tags = raw_tags if isinstance(raw_tags, list | tuple | set) else []
+    for value in [
+        metadata.get("domain"),
+        metadata.get("document_type"),
+        metadata.get("content_role"),
+        metadata.get("collection"),
+        *tags,
+    ]:
+        if isinstance(value, str) and value.strip():
+            signals.add(value.strip().casefold())
+    return signals
 
 
 def _expected_references(

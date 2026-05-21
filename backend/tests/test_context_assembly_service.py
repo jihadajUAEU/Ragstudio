@@ -1,4 +1,7 @@
-from ragstudio.services.context_assembly_service import ContextAssemblyService
+from ragstudio.services.context_assembly_service import (
+    ContextAssemblyService,
+    _should_offload_tokenization,
+)
 from ragstudio.services.retrieval_evidence import EvidenceCandidate
 
 
@@ -66,3 +69,140 @@ def test_context_assembly_drops_low_value_semantic_when_budget_is_small():
     assert [item.chunk_id for item in context.evidence] == ["quran-24-35"]
     assert context.dropped[0].candidate_id == "pgvector:long-semantic"
     assert context.dropped[0].drop_reason == "token_budget"
+
+
+def test_context_assembly_uses_conservative_arabic_token_estimate():
+    arabic = _candidate(
+        "arabic_lexical",
+        "quran-19-13",
+        "وحنانا من لدنا وزكاة وكان تقيا",
+        1,
+        features={"arabic_exact": True},
+        refs=["19:13"],
+    )
+
+    context = ContextAssemblyService(max_context_tokens=100).assemble([arabic])
+
+    assert context.total_estimated_tokens >= 12
+
+
+def test_context_assembly_records_direct_evidence_budget_conflict():
+    direct = _candidate(
+        "reference_exact",
+        "quran-24-35",
+        " ".join(["direct"] * 80),
+        1,
+        features={"reference_exact": True},
+        refs=["24:35"],
+    )
+
+    context = ContextAssemblyService(max_context_tokens=10).assemble([direct])
+
+    assert context.evidence[0].chunk_id == "quran-24-35"
+    assert context.dropped[0].candidate_id == "reference_exact:quran-24-35"
+    assert context.dropped[0].drop_reason == "direct_evidence_preserved_over_budget"
+    assert context.dropped[0].detail == "required_direct_evidence_was_kept"
+
+
+def test_context_assembly_drops_policy_blocked_candidates():
+    blocked = _candidate("pgvector", "blocked-1", "Blocked evidence", 1)
+    blocked = blocked.__class__(
+        **{
+            **blocked.__dict__,
+            "metadata": {
+                **blocked.metadata,
+                "quality_action_policy": {"action": "block"},
+            },
+        }
+    )
+
+    context = ContextAssemblyService(max_context_tokens=100).assemble([blocked])
+
+    assert context.evidence == []
+    assert context.dropped[0].drop_reason == "quality_policy_block"
+
+
+def test_context_assembly_does_not_mark_dropped_direct_evidence_grounded():
+    blocked = _candidate(
+        "reference_exact",
+        "blocked-direct",
+        "Blocked direct evidence",
+        1,
+        features={"reference_exact": True},
+        refs=["24:35"],
+    )
+    blocked = blocked.__class__(
+        **{
+            **blocked.__dict__,
+            "metadata": {
+                **blocked.metadata,
+                "quality_action_policy": {"action": "block"},
+            },
+        }
+    )
+
+    context = ContextAssemblyService(max_context_tokens=100).assemble([blocked])
+
+    assert context.evidence == []
+    assert context.dropped[0].drop_reason == "quality_policy_block"
+    assert context.grounding_status == "insufficient_evidence"
+
+
+def test_context_assembly_drops_runtime_and_graph_risk_flags():
+    runtime = _candidate("runtime", "runtime-1", "Runtime evidence", 1)
+    runtime = runtime.__class__(
+        **{**runtime.__dict__, "risk_flags": ["runtime_bridge_missing"]}
+    )
+    graph = _candidate("graph", "graph-1", "Graph evidence", 2)
+    graph = graph.__class__(
+        **{**graph.__dict__, "risk_flags": ["graph_projection_stale"]}
+    )
+
+    context = ContextAssemblyService(max_context_tokens=100).assemble([runtime, graph])
+
+    assert context.evidence == []
+    assert [item.drop_reason for item in context.dropped] == [
+        "runtime_bridge_missing",
+        "graph_projection_stale",
+    ]
+
+
+def test_context_assembly_drops_reranker_degraded_candidates():
+    degraded = _candidate("reranker", "degraded-1", "Degraded evidence", 1)
+    degraded = degraded.__class__(
+        **{
+            **degraded.__dict__,
+            "metadata": {**degraded.metadata, "reranker_status": "degraded"},
+        }
+    )
+
+    context = ContextAssemblyService(max_context_tokens=100).assemble([degraded])
+
+    assert context.evidence == []
+    assert context.dropped[0].drop_reason == "reranker_degraded"
+
+
+def test_context_assembly_truncates_direct_evidence_at_hard_model_limit():
+    direct = _candidate(
+        "reference_exact",
+        "long-direct",
+        "Paragraph one.\n\n" + " ".join(["direct"] * 200),
+        1,
+        features={"reference_exact": True},
+        refs=["24:35"],
+    )
+
+    context = ContextAssemblyService(
+        max_context_tokens=500,
+        hard_context_tokens=20,
+    ).assemble([direct])
+
+    assert context.evidence[0].chunk_id == "long-direct"
+    assert context.evidence[0].original_text == "Paragraph one."
+    assert context.dropped[0].drop_reason == "context_truncated"
+    assert context.dropped[0].detail == "required_evidence_truncated_to_hard_context_limit"
+
+
+def test_context_assembly_tokenizer_offload_helper_flags_large_payloads():
+    assert _should_offload_tokenization("word " * 10_001) is True
+    assert _should_offload_tokenization("word " * 10_000) is False

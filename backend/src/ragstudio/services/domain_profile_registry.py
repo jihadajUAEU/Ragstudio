@@ -77,7 +77,7 @@ DEFAULT_DOMAIN_PROFILES: tuple[DomainProfile, ...] = (
         id="general",
         label="General Evidence",
         chunking_strategy="semantic_window",
-        retrieval_priority=("postgres_canonical", "vector", "raganything_runtime"),
+        retrieval_priority=("postgres_canonical", "vector", "graph", "raganything_runtime"),
         supported_layouts=("plain_text", "table", "figure", "equation", "reference", "mixed"),
         materialization_hints=("canonical_only", "vector", "graph", "runtime", "full"),
     ),

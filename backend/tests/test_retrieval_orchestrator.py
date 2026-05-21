@@ -822,6 +822,26 @@ class QuranDomainMetadataChunkSearchService:
         )()
 
 
+class PolicyBlockedDomainChunkSearchService(FakeChunkSearchService):
+    async def domain_metadata_for_documents(self, document_ids):
+        return [
+            {
+                "domain": "finance",
+                "layout_types": ["table"],
+                "quality_action_policy": {
+                    "index_vector": False,
+                    "project_graph": False,
+                    "reasons": ["quality_policy_blocks_secondary_lanes"],
+                },
+                "materialization_policy": {
+                    "action": "persist_only",
+                    "allow_raganything_runtime_lane": False,
+                    "reasons": ["runtime_bridge_missing"],
+                },
+            }
+        ]
+
+
 class HadithReferenceChunkSearchService:
     def __init__(self):
         self.search_queries = []
@@ -1304,7 +1324,6 @@ async def test_orchestrator_fuses_native_metadata_and_graph_before_answering():
     assert result.timings["graph_hydration_ms"] >= 0
     assert any(trace.get("stage") == "planner" for trace in result.chunk_traces)
     assert any(trace.get("stage") == "final_fusion" for trace in result.chunk_traces)
-    assert any(trace.get("stage") == "retrieval_fusion" for trace in result.chunk_traces)
     context_trace = next(
         trace for trace in result.chunk_traces if trace.get("stage") == "context_assembly"
     )
@@ -1413,19 +1432,81 @@ async def test_orchestrator_emits_primary_seed_expansion_and_final_fusion_stages
     assert "seed_fusion" in stages
     assert "graph_expansion" in stages
     assert "final_fusion" in stages
-    assert "retrieval_fusion" in stages
-    assert any(
-        trace.get("stage") == "final_fusion"
-        and trace.get("compat_stage") == "retrieval_fusion"
-        for trace in result.chunk_traces
-    )
-    assert any(
-        trace.get("stage") == "retrieval_fusion"
-        and trace.get("canonical_stage") == "final_fusion"
-        for trace in result.chunk_traces
-    )
+    assert "retrieval_fusion" not in stages
     assert result.error is None
     assert answer_service.called is True
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_emits_retrieval_route_plan_trace():
+    answer_service = FakeAnswerService()
+    orchestrator = RetrievalOrchestrator(
+        chunk_service=QuranDomainMetadataChunkSearchService(),
+        answer_service=answer_service,
+        reranker_service=FakeRerankerService(),
+        graph_expansion_service=FakeGraphExpansionService(),
+    )
+
+    result = await orchestrator.query(
+        "hanan",
+        runtime=FakeRuntimeTool(),
+        profile=type("Profile", (), {"enable_rerank": False, "reranker_provider": "disabled"})(),
+        document_ids=["doc-quran"],
+        variant_id="variant-1",
+        query_config={"limit": 5},
+    )
+
+    route_trace = next(
+        trace for trace in result.chunk_traces if trace.get("stage") == "retrieval_route_plan"
+    )
+    assert route_trace["source_of_truth"] == "postgres_canonical_evidence"
+    assert route_trace["lanes"][0]["lane"] == "postgres_canonical"
+    assert route_trace["planned_lanes"][0] == "postgres_canonical"
+    assert route_trace["domain_profile_id"] == "reference_heavy"
+    assert route_trace["document_ids"] == ["doc-quran"]
+    assert route_trace["intent"] == "reference"
+    assert route_trace["direct_evidence_required"] is True
+    assert result.error is None
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_route_plan_applies_document_quality_and_materialization_policy():
+    class GraphShouldNotRun:
+        async def expand(self, query, *, seeds, profile, document_ids, limit):
+            raise AssertionError("graph lane should not run")
+
+    orchestrator = RetrievalOrchestrator(
+        chunk_service=PolicyBlockedDomainChunkSearchService(),
+        answer_service=FakeAnswerService(),
+        reranker_service=FakeRerankerService(),
+        graph_expansion_service=GraphShouldNotRun(),
+    )
+
+    result = await orchestrator.query(
+        "how many hadith in bukhari",
+        runtime=NativeSearchShouldNotRun(),
+        profile=type("Profile", (), {"enable_rerank": False, "reranker_provider": "disabled"})(),
+        document_ids=["doc-1"],
+        variant_id="variant-1",
+        query_config={"limit": 8},
+    )
+
+    route_trace = next(
+        trace for trace in result.chunk_traces if trace.get("stage") == "retrieval_route_plan"
+    )
+    lane_by_name = {lane["lane"]: lane for lane in route_trace["lanes"]}
+
+    assert lane_by_name["raganything_runtime"]["status"] == "skipped"
+    assert lane_by_name["graph"]["status"] == "skipped"
+    assert lane_by_name["vector"]["status"] == "skipped"
+    assert result.error is None
+    assert result.timings.get("native_stage_ms") is None
+    assert any(
+        trace.get("stage") == "retrieval_lane_result"
+        and trace.get("lane") == "vector"
+        and trace.get("status") == "skipped"
+        for trace in result.chunk_traces
+    )
 
 
 @pytest.mark.asyncio
@@ -2065,6 +2146,32 @@ async def test_fast_mode_applies_response_budget_to_metadata_and_native_retrieva
     assert result.error_type == "parallel_retrieval_failed"
     assert result.timings["native_error_type"] == "native_query_timeout"
     assert result.timings["metadata_error_type"] == "TimeoutError"
+    assert result.timings["total_ms"] < 250
+
+
+@pytest.mark.asyncio
+async def test_unscoped_metadata_retrieval_uses_route_lane_timeout():
+    orchestrator = RetrievalOrchestrator(
+        chunk_service=SlowChunkSearchService(),
+        answer_service=FakeAnswerService(),
+        reranker_service=FakeRerankerService(),
+        graph_expansion_service=FakeGraphExpansionService(),
+    )
+
+    result = await orchestrator.query(
+        "how many hadith in bukhari",
+        runtime=EmptyRuntimeTool(),
+        profile=type("Profile", (), {"enable_rerank": False, "reranker_provider": "disabled"})(),
+        document_ids=[],
+        variant_id="variant-1",
+        query_config={
+            "limit": 8,
+            "response_mode": "fast",
+            "response_budget_ms": 1,
+        },
+    )
+
+    assert result.error_type == "metadata_retrieval_error"
     assert result.timings["total_ms"] < 100
 
 

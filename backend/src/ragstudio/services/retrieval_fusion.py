@@ -4,7 +4,14 @@ import hashlib
 from dataclasses import replace
 from typing import Any
 
-from ragstudio.services.retrieval_evidence import EvidenceCandidate
+from ragstudio.services.retrieval_evidence import (
+    EvidenceCandidate,
+    _hydrate_parser_warning_metadata,
+    _merge_duplicate_candidate,
+)
+
+
+RRF_K = 60
 
 
 class RetrievalFusion:
@@ -14,20 +21,26 @@ class RetrievalFusion:
         *,
         limit: int,
     ) -> list[EvidenceCandidate]:
+        ranked_lists = _hydrate_ranked_lists(ranked_lists)
         by_key: dict[str, EvidenceCandidate] = {}
         scores: dict[str, float] = {}
         tools: dict[str, list[str]] = {}
+        lane_ranks: dict[str, dict[str, int]] = {}
 
         for ranked in ranked_lists:
             for rank, candidate in enumerate(ranked, start=1):
                 key = _candidate_key(candidate)
                 existing = by_key.get(key)
-                if existing is None or _direct_priority(candidate) > _direct_priority(existing):
+                if existing is None:
                     by_key[key] = candidate
-                scores[key] = scores.get(key, 0.0) + 1.0 / (60 + rank)
+                else:
+                    winner, loser = _duplicate_winner(existing, candidate)
+                    by_key[key] = _merge_duplicate_candidate(winner, loser)
+                scores[key] = scores.get(key, 0.0) + 1.0 / (RRF_K + rank)
                 tool_list = tools.setdefault(key, [])
                 if candidate.tool not in tool_list:
                     tool_list.append(candidate.tool)
+                lane_ranks.setdefault(key, {}).setdefault(candidate.tool, rank)
 
         fused: list[EvidenceCandidate] = []
         for key, candidate in by_key.items():
@@ -41,9 +54,20 @@ class RetrievalFusion:
             fused.append(
                 replace(
                     candidate,
-                    metadata={**candidate.metadata, "retrieval_passes": tools[key]},
+                    metadata={
+                        **candidate.metadata,
+                        "retrieval_passes": tools[key],
+                        "lane_ranks": lane_ranks.get(key, {}),
+                        "fusion_score_basis": {
+                            "formula": "rrf",
+                            "rrf_k": RRF_K,
+                            "rrf_score": scores[key],
+                            "candidate_score_basis": score_basis,
+                            "direct_boost": direct_boost,
+                        },
+                    },
                     boost_score=candidate.boost_score + direct_boost,
-                    final_score=scores[key] + direct_boost + score_basis,
+                    final_score=scores[key] + direct_boost,
                     reasons=reasons,
                 )
             )
@@ -53,6 +77,7 @@ class RetrievalFusion:
             key=lambda candidate: (
                 _direct_priority(candidate),
                 candidate.final_score,
+                _lane_priority(candidate),
                 -candidate.tool_rank,
             ),
             reverse=True,
@@ -67,6 +92,18 @@ def _candidate_key(candidate: EvidenceCandidate) -> str:
         return f"runtime:{runtime_source_id}"
     fingerprint = hashlib.sha1(candidate.text.strip().casefold().encode("utf-8")).hexdigest()
     return f"text:{candidate.document_id or 'unknown'}:{fingerprint}"
+
+
+def _hydrate_ranked_lists(
+    ranked_lists: list[list[EvidenceCandidate]],
+) -> list[list[EvidenceCandidate]]:
+    flattened = [candidate for ranked in ranked_lists for candidate in ranked]
+    hydrated = _hydrate_parser_warning_metadata(flattened)
+    by_candidate_id = {candidate.candidate_id: candidate for candidate in hydrated}
+    return [
+        [by_candidate_id.get(candidate.candidate_id, candidate) for candidate in ranked]
+        for ranked in ranked_lists
+    ]
 
 
 def _direct_priority(candidate: EvidenceCandidate) -> int:
@@ -86,6 +123,41 @@ def _direct_priority(candidate: EvidenceCandidate) -> int:
     if candidate.tool == "pgvector":
         return 20
     return 10
+
+
+def _lane_priority(candidate: EvidenceCandidate) -> int:
+    if candidate.tool in {"metadata", "reference_exact"}:
+        return 40
+    if candidate.tool in {"arabic_lexical", "lexical"}:
+        return 35
+    if candidate.tool == "graph":
+        return 30
+    if candidate.tool == "pgvector":
+        return 20
+    if candidate.tool == "native":
+        return 10
+    return 0
+
+
+def _duplicate_winner(
+    first: EvidenceCandidate,
+    second: EvidenceCandidate,
+) -> tuple[EvidenceCandidate, EvidenceCandidate]:
+    first_key = (
+        _direct_priority(first),
+        first.final_score or first.base_score,
+        _lane_priority(first),
+        -first.tool_rank,
+    )
+    second_key = (
+        _direct_priority(second),
+        second.final_score or second.base_score,
+        _lane_priority(second),
+        -second.tool_rank,
+    )
+    if second_key > first_key:
+        return second, first
+    return first, second
 
 
 def _direct_boost(candidate: EvidenceCandidate) -> tuple[float, str | None]:

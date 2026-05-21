@@ -48,6 +48,13 @@ class EvidenceCandidate:
     scope_status: str | None = None
     source_quality: dict[str, Any] = field(default_factory=dict)
     risk_flags: list[str] = field(default_factory=list)
+    pre_rerank_rank: int | None = None
+    post_rerank_rank: int | None = None
+    pre_rerank_score: float | None = None
+    reranker_relevance_score: float | None = None
+    reranker_model: str | None = None
+    reranker_status: str | None = None
+    reranker_reason: str | None = None
 
     def normalized_metadata(self) -> dict[str, Any]:
         metadata = dict(self.metadata)
@@ -67,6 +74,16 @@ class EvidenceCandidate:
             metadata["source_quality"] = self.source_quality
         if self.risk_flags:
             metadata["risk_flags"] = self.risk_flags
+        if self.reranker_status:
+            metadata["reranker"] = {
+                "status": self.reranker_status,
+                "reason": self.reranker_reason,
+                "model": self.reranker_model,
+                "pre_rank": self.pre_rerank_rank,
+                "post_rank": self.post_rerank_rank,
+                "pre_score": self.pre_rerank_score,
+                "relevance_score": self.reranker_relevance_score,
+            }
         return metadata
 
     def to_source(self) -> dict[str, Any]:
@@ -110,6 +127,16 @@ class EvidenceCandidate:
             trace["scope_status"] = self.scope_status
         if self.risk_flags:
             trace["risk_flags"] = self.risk_flags
+        if self.reranker_status:
+            trace["reranker"] = {
+                "status": self.reranker_status,
+                "reason": self.reranker_reason,
+                "model": self.reranker_model,
+                "pre_rank": self.pre_rerank_rank,
+                "post_rank": self.post_rerank_rank,
+                "pre_score": self.pre_rerank_score,
+                "relevance_score": self.reranker_relevance_score,
+            }
         return trace
 
 
@@ -303,6 +330,13 @@ def _score_candidate(
         scope_status=candidate.scope_status,
         source_quality=candidate.source_quality,
         risk_flags=candidate.risk_flags,
+        pre_rerank_rank=candidate.pre_rerank_rank,
+        post_rerank_rank=candidate.post_rerank_rank,
+        pre_rerank_score=candidate.pre_rerank_score,
+        reranker_relevance_score=candidate.reranker_relevance_score,
+        reranker_model=candidate.reranker_model,
+        reranker_status=candidate.reranker_status,
+        reranker_reason=candidate.reranker_reason,
     )
 
 
