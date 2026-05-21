@@ -200,6 +200,8 @@ Audit focus:
 
 ### Quality Gates And Materialization
 
+- Metadata contract compiler:
+  `backend/src/ragstudio/services/domain_metadata_contract_compiler.py`
 - Domain gate: `backend/src/ragstudio/services/domain_metadata_quality_gate.py`
 - Chunk gate: `backend/src/ragstudio/services/chunk_quality_gate.py`
 - Index gate: `backend/src/ragstudio/services/index_quality_gate.py`
@@ -209,15 +211,32 @@ Audit focus:
   `backend/tests/test_chunk_quality_gate.py`,
   `backend/tests/test_index_quality_gate.py`,
   `backend/tests/test_vector_index_policy.py`,
+  `backend/tests/test_domain_metadata_contract_compiler.py`,
   `backend/tests/test_job_quality_warnings.py`,
   `backend/tests/test_ingestion_retrieval_quality_gate.py`
 
 Audit focus:
 
+- Treat vision/LLM metadata as descriptive until it has been compiled into an
+  executable reference contract. Reference-aware chunking must have normalized
+  `reference_schema.type`, `domain_structure.primary_anchor.regex` with required
+  named groups, and `reference_resolution.build_canonical_units=true` before
+  upload or reindex can proceed.
+- The compiler belongs before durable job creation; the quality gate belongs in
+  upload/reindex validation. Do not let raw vision metadata such as
+  `surah:verse` without a regex reach the worker as an indexing contract.
 - A missing retrieval candidate may be correct if `quality_action_policy` blocks
   `index_vector`, exact search, graph projection, or materialization.
 - Inspect `index_quality_report`, parser warning severity, expected script checks,
-  reference completeness, and document-specific policy.
+  reference completeness, `quality_repair_report`, and document-specific policy.
+- Quality is an architecture layer, not a late cleanup step. The repair pass must
+  run after canonical evidence assembly and before final materialization policy:
+  first attempt local recovery from same-unit provenance, then mark unrepaired
+  reference units for targeted vision recovery.
+- Do not count pure layout noise as a content failure. Textless headers, footers,
+  page numbers, and similar parser artifacts should be downgraded to
+  provenance-only/info, while text-bearing disallowed blocks remain recoverable
+  or warn/block according to policy.
 - Preserve the distinction between answerable chunks, provenance-only chunks, and
   blocked unsafe chunks.
 - A fix that hides a warning without repairing the evidence path is not a real

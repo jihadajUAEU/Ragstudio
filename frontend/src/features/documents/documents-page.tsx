@@ -9,7 +9,17 @@ import {
 } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
-import { AlertCircle, FileUp, Loader2, RefreshCcw, Search, Trash2, Upload, X } from "lucide-react";
+import {
+  AlertCircle,
+  FileUp,
+  Loader2,
+  RefreshCcw,
+  Search,
+  Sparkles,
+  Trash2,
+  Upload,
+  X,
+} from "lucide-react";
 
 import { apiClient, DEFAULT_PARSER_MODE, FIRST_LIST_PAGE } from "../../api/client";
 import type {
@@ -17,14 +27,12 @@ import type {
   IndexDocumentIn,
   JobOut,
   JobQualityWarningsOut,
-  MinerUParseOptionsIn,
   ParserQualityWarningOut,
 } from "../../api/generated";
 import { DataTable } from "../../components/data-table";
 import { EmptyState } from "../../components/empty-state";
 import { StatusBadge } from "../../components/status-badge";
 import { Button } from "../../components/ui/button";
-import { DomainMetadataPanel } from "../domain-metadata/domain-metadata-panel";
 import { titleCase } from "../../lib/utils";
 
 const queryKeys = {
@@ -34,15 +42,8 @@ const queryKeys = {
 
 type DocumentsTab = "documents" | "jobs";
 const WARNING_VISIBLE_ROW_LIMIT = 200;
-const DEFAULT_MINERU_PARSE_OPTIONS: MinerUParseOptionsIn = {
-  parse_method: "auto",
-  backend: "pipeline",
-  device: "cuda:0",
-  formula: true,
-  table: true,
-  max_concurrent_files: 1,
-};
 type LiveJobEventsById = Record<string, LiveJobEventSnapshot>;
+type DomainMetadataSuggestion = Awaited<ReturnType<typeof apiClient.suggestDomainMetadata>>;
 
 interface LiveJobEventSnapshot {
   progress: number | null;
@@ -82,17 +83,7 @@ export function DocumentsPage() {
   const [jobSearch, setJobSearch] = useState("");
   const [jobStatusFilter, setJobStatusFilter] = useState("");
   const [liveJobEventsById, setLiveJobEventsById] = useState<LiveJobEventsById>({});
-  const [indexOptions, setIndexOptions] = useState<IndexDocumentIn>({
-    parser_mode: DEFAULT_PARSER_MODE,
-    domain_metadata: { domain: "generic", document_type: "document", tags: [] },
-  });
-  const [metadataValid, setMetadataValid] = useState(true);
-  const setMineruParseOptions = useCallback(
-    (mineru_parse_options: MinerUParseOptionsIn | null) => {
-      setIndexOptions((current) => ({ ...current, mineru_parse_options }));
-    },
-    [],
-  );
+  const [visionSuggestion, setVisionSuggestion] = useState<DomainMetadataSuggestion | null>(null);
   const jobsQuery = useQuery({
     queryKey: queryKeys.jobs,
     queryFn: () => apiClient.jobs(FIRST_LIST_PAGE),
@@ -111,21 +102,24 @@ export function DocumentsPage() {
     () => documentsQuery.data?.items ?? [],
     [documentsQuery.data?.items],
   );
-  const profilesQuery = useQuery({
-    queryKey: ["domain-profiles"],
-    queryFn: apiClient.domainProfiles,
-  });
-
   const uploadDocument = useMutation({
     mutationFn: apiClient.uploadDocument,
     onSuccess: () => {
       setFile(null);
+      setVisionSuggestion(null);
+      analyzeWithVision.reset();
       if (fileInputRef.current) {
         fileInputRef.current.value = "";
       }
       void queryClient.invalidateQueries({ queryKey: queryKeys.documents });
       void queryClient.invalidateQueries({ queryKey: queryKeys.jobs });
       setActiveTab("jobs");
+    },
+  });
+  const analyzeWithVision = useMutation({
+    mutationFn: apiClient.suggestDomainMetadata,
+    onSuccess: (suggestion) => {
+      setVisionSuggestion(suggestion);
     },
   });
   const deleteDocument = useMutation({
@@ -177,16 +171,16 @@ export function DocumentsPage() {
   );
   const reindexExistingDocument = useCallback(
     (document: DocumentOut) => {
+      if (!document.latest_index_options) {
+        return;
+      }
       setReindexedFilename(document.filename);
-      const baseOptions = document.latest_index_options ?? indexOptions;
       reindexDocument.mutate({
         documentId: document.id,
-        options: indexOptions.mineru_parse_options
-          ? { ...baseOptions, mineru_parse_options: indexOptions.mineru_parse_options }
-          : baseOptions,
+        options: document.latest_index_options,
       });
     },
-    [indexOptions, reindexDocument],
+    [reindexDocument],
   );
   const openDocumentEvidence = useCallback((document: DocumentOut) => {
     const target = `/document-evidence?documentId=${encodeURIComponent(document.id)}`;
@@ -362,8 +356,7 @@ export function DocumentsPage() {
           const isDeleting = deleteDocument.isPending && deleteDocument.variables === document.id;
           const isReindexing =
             reindexDocument.isPending && reindexDocument.variables?.documentId === document.id;
-          const canUseStoredIndexOptions = document.latest_index_options != null;
-          const canReindex = canUseStoredIndexOptions || metadataValid;
+          const canReindex = document.latest_index_options != null;
 
           return (
             <div className="flex flex-wrap justify-end gap-2">
@@ -415,7 +408,6 @@ export function DocumentsPage() {
       confirmAndDeleteDocument,
       deleteDocument.isPending,
       deleteDocument.variables,
-      metadataValid,
       openDocumentEvidence,
       reindexDocument.isPending,
       reindexDocument.variables,
@@ -553,8 +545,14 @@ export function DocumentsPage() {
           className="grid gap-4"
           onSubmit={(event) => {
             event.preventDefault();
-            if (file) {
-              uploadDocument.mutate({ file, options: indexOptions });
+            if (file && visionSuggestion) {
+              uploadDocument.mutate({
+                file,
+                options: {
+                  parser_mode: DEFAULT_PARSER_MODE,
+                  domain_metadata: visionSuggestion.domain_metadata,
+                },
+              });
             }
           }}
         >
@@ -565,50 +563,79 @@ export function DocumentsPage() {
                 ref={fileInputRef}
                 type="file"
                 className="block h-10 w-full min-w-0 rounded-md border border-[#cfd8dd] bg-white text-sm text-[#1f2933] file:mr-3 file:h-full file:border-0 file:bg-[#edf3f5] file:px-3 file:text-sm file:font-medium file:text-[#24313a]"
-                onChange={(event) => setFile(event.target.files?.[0] ?? null)}
-                disabled={uploadDocument.isPending}
+                onChange={(event) => {
+                  setFile(event.target.files?.[0] ?? null);
+                  setVisionSuggestion(null);
+                  analyzeWithVision.reset();
+                  uploadDocument.reset();
+                }}
+                disabled={uploadDocument.isPending || analyzeWithVision.isPending}
               />
             </label>
           </div>
-          <details className="min-w-0 rounded-md border border-[#d6dde1] bg-[#fbfcfd] p-3">
-            <summary className="cursor-pointer text-sm font-medium text-[#3a4a53]">
-              Index options
-              <span className="ml-2 text-xs font-normal text-[#62717a]">
-                Default parser selected
-              </span>
-            </summary>
-            <div className="mt-3 min-w-0">
-              <DomainMetadataPanel
-                profiles={profilesQuery.data?.items ?? []}
-                value={indexOptions}
-                onChange={setIndexOptions}
-                disabled={uploadDocument.isPending}
-                onValidityChange={setMetadataValid}
-                suggestContext={
-                  file
-                    ? {
-                        filename: file.name,
-                        content_type: file.type || "application/octet-stream",
-                        file,
-                      }
-                    : undefined
+          <div className="flex flex-wrap items-center gap-3">
+            <Button
+              type="button"
+              variant="secondary"
+              disabled={!file || analyzeWithVision.isPending || uploadDocument.isPending}
+              onClick={() => {
+                if (file) {
+                  analyzeWithVision.mutate({ file });
                 }
-              />
-              <MinerUParseOptionsControls
-                value={indexOptions.mineru_parse_options ?? null}
-                disabled={uploadDocument.isPending}
-                onChange={setMineruParseOptions}
-              />
+              }}
+            >
+              {analyzeWithVision.isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+              ) : (
+                <Sparkles className="h-4 w-4" aria-hidden="true" />
+              )}
+              Analyze with vision
+            </Button>
+            {visionSuggestion ? (
+              <span className="text-sm font-medium text-[#1f6f43]">
+                Vision metadata generated
+              </span>
+            ) : (
+              <span className="text-sm text-[#62717a]">
+                Vision analysis required before upload.
+              </span>
+            )}
+          </div>
+          {visionSuggestion ? (
+            <div className="rounded-md border border-[#cfe3d5] bg-[#f6fbf7] p-3 text-sm text-[#24313a]">
+              <div className="font-medium">{visionSuggestion.domain_metadata.domain}</div>
+              <div className="mt-1 text-[#62717a]">
+                {visionSuggestion.domain_metadata.document_type ?? "document"} · Confidence{" "}
+                {Math.round((visionSuggestion.confidence ?? 0) * 100)}%
+              </div>
+              {visionSuggestion.evidence_pages.length > 0 ? (
+                <div className="mt-1 text-[#62717a]">
+                  Evidence pages: {visionSuggestion.evidence_pages.join(", ")}
+                </div>
+              ) : null}
             </div>
-          </details>
+          ) : null}
+          {analyzeWithVision.error ? (
+            <p className="text-sm text-[#a63d2a]" role="alert">
+              {analyzeWithVision.error.message}
+            </p>
+          ) : null}
           <div className="flex justify-end">
-            <Button type="submit" disabled={!file || !metadataValid || uploadDocument.isPending}>
+            <Button
+              type="submit"
+              disabled={
+                !file ||
+                !visionSuggestion ||
+                analyzeWithVision.isPending ||
+                uploadDocument.isPending
+              }
+            >
               {uploadDocument.isPending ? (
                 <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
               ) : (
                 <Upload className="h-4 w-4" aria-hidden="true" />
               )}
-              Upload
+              Upload and index
             </Button>
           </div>
         </form>
@@ -977,157 +1004,6 @@ function OperationsStatusStrip({
       </div>
     </section>
   );
-}
-
-function MinerUParseOptionsControls({
-  value,
-  disabled,
-  onChange,
-}: {
-  value: MinerUParseOptionsIn | null;
-  disabled: boolean;
-  onChange: (value: MinerUParseOptionsIn | null) => void;
-}) {
-  const enabled = value !== null;
-  const options = value ?? DEFAULT_MINERU_PARSE_OPTIONS;
-  const updateOption = <K extends keyof MinerUParseOptionsIn>(
-    key: K,
-    nextValue: MinerUParseOptionsIn[K],
-  ) => {
-    onChange(compactMinerUParseOptions({ ...options, [key]: nextValue }));
-  };
-
-  return (
-    <section className="mt-3 grid gap-3 border-t border-[#d6dde1] pt-3">
-      <label className="flex h-10 items-center gap-2 text-sm font-medium text-[#3a4a53]">
-        <input
-          type="checkbox"
-          checked={enabled}
-          disabled={disabled}
-          onChange={(event) =>
-            onChange(event.target.checked ? DEFAULT_MINERU_PARSE_OPTIONS : null)
-          }
-        />
-        Override MinerU parser options
-      </label>
-      {enabled ? (
-        <div className="grid gap-3 sm:grid-cols-2">
-          <label className="text-sm font-medium text-[#3a4a53]">
-            <span className="mb-1.5 block">MinerU parse method</span>
-            <select
-              aria-label="MinerU parse method"
-              value={options.parse_method ?? "auto"}
-              disabled={disabled}
-              onChange={(event) => updateOption("parse_method", event.target.value)}
-              className="h-10 w-full rounded-md border border-[#cfd8dd] bg-white px-3 text-sm"
-            >
-              <option value="auto">auto</option>
-              <option value="ocr">ocr</option>
-              <option value="txt">txt</option>
-            </select>
-          </label>
-          <MinerUTextOption
-            label="MinerU backend"
-            value={options.backend ?? ""}
-            disabled={disabled}
-            onChange={(backend) => updateOption("backend", backend)}
-          />
-          <MinerUTextOption
-            label="MinerU device"
-            value={options.device ?? ""}
-            disabled={disabled}
-            onChange={(device) => updateOption("device", device)}
-          />
-          <MinerUTextOption
-            label="MinerU language"
-            value={options.lang ?? ""}
-            disabled={disabled}
-            onChange={(lang) => updateOption("lang", lang)}
-          />
-          <label className="flex h-10 items-center gap-2 self-end text-sm font-medium text-[#3a4a53]">
-            <input
-              type="checkbox"
-              checked={options.formula ?? true}
-              disabled={disabled}
-              onChange={(event) => updateOption("formula", event.target.checked)}
-            />
-            Parse formulas for this document
-          </label>
-          <label className="flex h-10 items-center gap-2 self-end text-sm font-medium text-[#3a4a53]">
-            <input
-              type="checkbox"
-              checked={options.table ?? true}
-              disabled={disabled}
-              onChange={(event) => updateOption("table", event.target.checked)}
-            />
-            Parse tables for this document
-          </label>
-          <MinerUTextOption
-            label="MinerU source"
-            value={options.source ?? ""}
-            disabled={disabled}
-            onChange={(source) => updateOption("source", source)}
-          />
-          <label className="text-sm font-medium text-[#3a4a53]">
-            <span className="mb-1.5 block">MinerU max concurrent files</span>
-            <input
-              aria-label="MinerU max concurrent files"
-              type="number"
-              min={1}
-              max={8}
-              value={options.max_concurrent_files ?? 1}
-              disabled={disabled}
-              onChange={(event) =>
-                updateOption(
-                  "max_concurrent_files",
-                  Math.max(1, Math.min(Number(event.target.value || 1), 8)),
-                )
-              }
-              className="h-10 w-full rounded-md border border-[#cfd8dd] bg-white px-3 text-sm"
-            />
-          </label>
-        </div>
-      ) : null}
-    </section>
-  );
-}
-
-function MinerUTextOption({
-  label,
-  value,
-  disabled,
-  onChange,
-}: {
-  label: string;
-  value: string;
-  disabled: boolean;
-  onChange: (value: string | null) => void;
-}) {
-  return (
-    <label className="text-sm font-medium text-[#3a4a53]">
-      <span className="mb-1.5 block">{label}</span>
-      <input
-        aria-label={label}
-        value={value}
-        disabled={disabled}
-        onChange={(event) => onChange(event.target.value.trim() || null)}
-        className="h-10 w-full rounded-md border border-[#cfd8dd] bg-white px-3 text-sm"
-      />
-    </label>
-  );
-}
-
-function compactMinerUParseOptions(options: MinerUParseOptionsIn): MinerUParseOptionsIn {
-  return {
-    parse_method: options.parse_method || undefined,
-    backend: options.backend || undefined,
-    device: options.device || undefined,
-    lang: options.lang || undefined,
-    formula: options.formula,
-    table: options.table,
-    source: options.source || undefined,
-    max_concurrent_files: options.max_concurrent_files ?? undefined,
-  };
 }
 
 function StatusSummaryItem({

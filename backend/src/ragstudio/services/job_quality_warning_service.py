@@ -410,11 +410,13 @@ class JobQualityWarningService:
                 "Reference metadata says these units should include the expected script, "
                 "but the persisted chunk text does not contain those letters."
             ),
-            "action": "preserve_parallel_reference_units",
+            "action": "local_repair_then_targeted_vision_recovery",
             "metadata_patch": {
                 "repair": {
                     "reference_unit_missing_expected_script": {
-                        "action": "preserve_parallel_reference_units",
+                        "action": "local_repair_then_targeted_vision_recovery",
+                        "local_repair_source": "same_chunk_provenance_blocks",
+                        "targeted_vision_recovery": True,
                         "preserve_parallel_text": True,
                         "expected_scripts": sorted(expected_scripts),
                         "carry_reference_headers_into_body": True,
@@ -426,8 +428,9 @@ class JobQualityWarningService:
                 },
             },
             "expected_effect": (
-                "Arabic/English pairs stay in one reference unit so exact Arabic search and "
-                "graph materialization are not blocked only because the reference chunk was split."
+                "The quality layer first repairs missing script from same-unit provenance; "
+                "unrepaired reference units are marked for targeted vision recovery instead of "
+                "broad document reparse."
             ),
             "samples": self._warning_samples(matching),
         }
@@ -539,26 +542,30 @@ class JobQualityWarningService:
             "code": "disallowed_block_type_quarantined",
             "count": count,
             "reason": (
-                "MinerU emitted text-bearing blocks with types that the current content profile "
-                "does not trust as prose."
+                "MinerU emitted blocks with types that the current content profile does not "
+                "trust as prose. Textless layout artifacts should stay as provenance-only info; "
+                "text-bearing blocks should be recovered as prose."
             ),
-            "action": "recover_text_bearing_blocks_as_prose",
+            "action": "downgrade_layout_noise_or_recover_text_bearing_blocks",
             "metadata_patch": {
                 "repair": {
                     "disallowed_block_type_quarantined": {
-                        "action": "recover_text_bearing_blocks_as_prose",
+                        "action": "downgrade_layout_noise_or_recover_text_bearing_blocks",
                         "block_types": block_types,
                         "only_when_text_bearing": True,
+                        "downgrade_pure_layout_noise": True,
                     }
                 },
                 "parser_normalization": {
                     "recover_text_bearing_blocks_as_prose": True,
+                    "downgrade_pure_layout_noise": True,
                     "preserve_original_block_type": True,
                 },
             },
             "expected_effect": (
                 "Real Arabic/Hadith text misclassified as another block type can be indexed as "
-                "prose, while non-text parser artifacts remain quarantined."
+                "prose, while textless headers, footers, and page markers are retained only as "
+                "low-noise provenance."
             ),
             "samples": self._warning_samples(matching),
         }
@@ -1054,6 +1061,7 @@ class JobQualityWarningService:
         parser_warnings = extraction_quality.get("parser_warnings")
         if not isinstance(parser_warnings, list):
             return []
+        parser_warnings = self._dedupe_parser_warnings(parser_warnings)
 
         source_location = chunk.source_location if isinstance(chunk.source_location, dict) else {}
         parser_metadata = metadata.get("parser_metadata")
@@ -1080,6 +1088,38 @@ class JobQualityWarningService:
             for warning in parser_warnings
             if isinstance(warning, dict)
         ]
+
+    def _dedupe_parser_warnings(self, warnings: list[Any]) -> list[dict[str, Any]]:
+        warning_dicts = [warning for warning in warnings if isinstance(warning, dict)]
+        referenced_missing_script_keys = {
+            (warning.get("code"), warning.get("expected_script"))
+            for warning in warning_dicts
+            if warning.get("code") == "reference_unit_missing_expected_script"
+            and self._string_value(warning.get("reference")) is not None
+        }
+        deduped: list[dict[str, Any]] = []
+        seen: set[tuple[Any, ...]] = set()
+        for warning in warning_dicts:
+            if (
+                warning.get("code") == "reference_unit_missing_expected_script"
+                and self._string_value(warning.get("reference")) is None
+                and (warning.get("code"), warning.get("expected_script"))
+                in referenced_missing_script_keys
+            ):
+                continue
+            key = (
+                warning.get("code"),
+                warning.get("reference"),
+                warning.get("expected_script"),
+                warning.get("block_type"),
+                warning.get("page"),
+                warning.get("message"),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(warning)
+        return deduped
 
     def _document_id(self, job: Job, result: dict[str, Any]) -> str | None:
         if isinstance(job.target_id, str) and job.target_id:

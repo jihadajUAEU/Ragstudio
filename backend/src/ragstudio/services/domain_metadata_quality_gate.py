@@ -13,6 +13,7 @@ from ragstudio.services.parser_quality_intelligent_gate import ParserQualityInte
 from ragstudio.services.parser_warning_utils import (
     merge_parser_warnings as _shared_merge_parser_warnings,
 )
+from ragstudio.services.quality_repair_service import QualityRepairPass
 from ragstudio.services.reference_metadata import ReferenceSemantics
 from ragstudio.services.reference_unit_assembler import provenance_only_quality_policy
 from ragstudio.services.script_detection import SCRIPT_PATTERNS
@@ -203,8 +204,16 @@ class DomainMetadataQualityGate:
                 "Raw PDF syntax reached chunk persistence.",
             )
 
-        tokens = arabic_tokens(text)
         profile = self.profile_for(domain_metadata, expected_profile=expected_profile)
+
+        self._apply_intelligent_parser_gate(chunks, domain_metadata=domain_metadata)
+        repair_pass = QualityRepairPass()
+        pre_quality_repair = repair_pass.apply_pre_quality_repairs(
+            chunks,
+            profile=profile,
+        )
+        text = "\n".join(chunk.text for chunk in chunks)
+        tokens = arabic_tokens(text)
         if self._requires_document_arabic(language, profile) and not tokens:
             raise DomainMetadataQualityGateError(
                 "arabic_tokens_missing",
@@ -225,12 +234,19 @@ class DomainMetadataQualityGate:
                     expected_profile=expected_profile,
                 )
             index_quality_report = self.index_quality_report_from_chunks(chunks)
+        post_quality_repair = repair_pass.apply_post_quality_repairs(chunks)
+        if post_quality_repair["targeted_vision_recovery_requests"]:
+            index_quality_report = self.index_quality_report_from_chunks(chunks)
         # Modal-aware validation: verify structure integrity per modality.
         modal_warnings = self._validate_modal_chunks(chunks)
-        self._apply_intelligent_parser_gate(chunks, domain_metadata=domain_metadata)
         self._apply_parser_quality_action_policy(chunks)
         quality_summary = self.parser_quality_summary(chunks)
         status = "passed_with_warnings" if quality_summary["warning_counts"] else "passed"
+        quality_repair = {
+            "layer": "repair_and_quality",
+            **pre_quality_repair,
+            **post_quality_repair,
+        }
 
         return {
             "status": status,
@@ -248,6 +264,7 @@ class DomainMetadataQualityGate:
             "parser_quality": quality_summary,
             "index_quality_report": index_quality_report,
             "modal_validation": modal_warnings,
+            "quality_repair": quality_repair,
         }
 
     def annotate_chunk(
@@ -358,6 +375,36 @@ class DomainMetadataQualityGate:
         if runtime_profile_id:
             report["runtime_profile_id"] = runtime_profile_id
         return report
+
+    def quality_repair_report_from_chunks(self, chunks: list[Any]) -> dict[str, Any]:
+        local_script_repairs = 0
+        layout_noise_downgrades = 0
+        targeted_requests: list[dict[str, Any]] = []
+        for chunk in chunks:
+            metadata = self._chunk_metadata(chunk)
+            repair = metadata.get("quality_repair")
+            if not isinstance(repair, dict):
+                continue
+            local_repair = repair.get("local_script_repair")
+            if isinstance(local_repair, dict) and local_repair.get("status") == "applied":
+                local_script_repairs += 1
+            layout_repair = repair.get("layout_noise_downgrade")
+            if isinstance(layout_repair, dict):
+                downgraded_count = layout_repair.get("downgraded_warning_count")
+                if isinstance(downgraded_count, int):
+                    layout_noise_downgrades += downgraded_count
+            requests = repair.get("targeted_vision_recovery_requests")
+            if isinstance(requests, list):
+                targeted_requests.extend(
+                    request for request in requests if isinstance(request, dict)
+                )
+        return {
+            "layer": "repair_and_quality",
+            "local_script_repairs": local_script_repairs,
+            "layout_noise_downgrades": layout_noise_downgrades,
+            "targeted_vision_recovery_requests": len(targeted_requests),
+            "targeted_vision_recovery_samples": targeted_requests[:25],
+        }
 
     def unknown_quality_report(
         self,
@@ -479,6 +526,10 @@ class DomainMetadataQualityGate:
                     for warning in self.parser_warnings_for_chunk(chunk)
                     if isinstance(warning.get("code"), str)
                     and not bool(warning.get("suppressed_from_counts"))
+                    and not (
+                        isinstance(warning.get("severity"), str)
+                        and warning.get("severity").lower() == "info"
+                    )
                 }
             )
             if not codes:
@@ -1128,6 +1179,7 @@ class DomainMetadataQualityGate:
                             "expected_script": script,
                             "source_location": record.get("source_location"),
                             "action": record.get("action"),
+                            "repair": record.get("repair"),
                         }
                     )
             elif status == "unresolved":
@@ -1259,6 +1311,7 @@ class DomainMetadataQualityGate:
                 "materialization",
                 "unresolved_reason",
                 "chunk_index",
+                "repair",
             }
         }
 

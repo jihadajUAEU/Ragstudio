@@ -29,7 +29,7 @@ BOOK_HADITH_PATTERN = re.compile(
     flags=re.IGNORECASE,
 )
 TAFSEER_PRIMARY_ANCHOR_PATTERN = (
-    r"\bVerse\s+(?P<chapter>\d{1,4})\s*:\s*(?P<verse>\d{1,4})\b"
+    r"(\bVerse\s+|\[)(?P<chapter>\d{1,4})\s*:\s*(?P<verse>\d{1,4})\]?"
 )
 CHAPTER_VERSE_INLINE_REFERENCE_PATTERN = (
     r"(?P<chapter>\d{1,4})\s*:\s*(?P<verse>\d{1,4})"

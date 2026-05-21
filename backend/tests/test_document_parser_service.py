@@ -217,11 +217,14 @@ async def test_commit_before_remote_parse_releases_session_before_parse(tmp_path
         sha256="sha",
     )
 
+    from ragstudio.services.mineru_extraction_validator import MinerUExtractionValidator
+
     chunks = await DocumentParserService(
         session,
         tmp_path,
         mineru_client_factory=mineru_client_factory,
         commit_before_remote_parse=True,
+        extraction_validator=MinerUExtractionValidator(min_text_chars=8),
     ).mineru_parse(
         document,
         IndexDocumentIn(parser_mode="mineru_strict"),

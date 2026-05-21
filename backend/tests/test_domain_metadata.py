@@ -10,6 +10,7 @@ from ragstudio.services.domain_metadata_ai_suggester import (
     BASELINE_PROMPT_MAX_STRING,
     DomainMetadataAiSuggester,
 )
+from ragstudio.services.domain_metadata_contract_compiler import compile_domain_metadata
 from ragstudio.services.domain_metadata_service import DomainMetadataService
 from ragstudio.services.metadata_json_schema import validate_custom_json
 from ragstudio.services.page_sampler import SampledPage
@@ -127,7 +128,10 @@ def test_builtin_quran_profile_has_chapter_verse_reference_semantics(tmp_path):
     assert profile.metadata.custom_json["domain_structure"] == {
         "primary_anchor": {
             "type": "chapter_verse",
-            "regex": r"\bVerse\s+(?P<chapter>\d{1,4})\s*:\s*(?P<verse>\d{1,4})\b",
+            "regex": (
+                r"(\bVerse\s+|\[)(?P<chapter>\d{1,4})\s*:"
+                r"\s*(?P<verse>\d{1,4})\]?"
+            ),
             "unit": "verse_section",
         },
         "inline_references": {
@@ -971,12 +975,17 @@ async def test_ai_domain_metadata_suggester_prunes_invalid_custom_json_shapes(mo
         sampler_warnings=[],
     )
 
-    assert result.domain_metadata.custom_json == {
-        "reference_schema": {"type": "chapter_verse"},
-        "relationships": {"next": ["same_chapter"]},
-        "chunking": {"unit": "verse", "preserve_parallel_text": True},
-        "retrieval": {"exact_reference_top1": True},
+    custom_json = result.domain_metadata.custom_json
+    assert custom_json["reference_schema"]["type"] == "chapter_verse"
+    assert custom_json["reference_schema"]["fields"] == {
+        "chapter": "chapter",
+        "verse": "verse",
     }
+    assert custom_json["relationships"] == {"next": ["same_chapter"]}
+    assert custom_json["chunking"]["unit"] == "verse"
+    assert custom_json["chunking"]["include_neighbors"] == 1
+    assert custom_json["chunking"]["preserve_parallel_text"] is True
+    assert custom_json["retrieval"] == {"exact_reference_top1": True}
 
 
 @pytest.mark.asyncio
@@ -1044,7 +1053,12 @@ async def test_ai_domain_metadata_suggester_prunes_invalid_custom_json_value(
         sampler_warnings=[],
     )
 
-    assert result.domain_metadata.custom_json == {}
+    custom_json = result.domain_metadata.custom_json
+    assert custom_json["reference_schema"]["type"] == "chapter_verse"
+    assert custom_json["chunking"]["unit"] == "verse"
+    assert custom_json["domain_structure"]["primary_anchor"]["type"] == "chapter_verse"
+    assert custom_json["reference_resolution"]["build_canonical_units"] is True
+    assert custom_json["provenance"]["preserve_original_blocks"] is True
 
 
 @pytest.mark.asyncio
@@ -1469,7 +1483,6 @@ def test_ai_metadata_normalizes_document_specific_quality_policies():
 
 
 def test_ai_metadata_autosuggest_backfills_hadith_reference_defaults():
-    suggester = DomainMetadataAiSuggester()
     metadata = DomainMetadata(
         domain="hadith",
         document_type="collection",
@@ -1492,7 +1505,7 @@ def test_ai_metadata_autosuggest_backfills_hadith_reference_defaults():
         },
     )
 
-    normalized = suggester._apply_autosuggest_reference_defaults(metadata)
+    normalized = compile_domain_metadata(metadata).custom_json
 
     assert normalized["domain_structure"]["primary_anchor"] == {
         "type": "book_hadith",
@@ -1507,9 +1520,19 @@ def test_ai_metadata_autosuggest_backfills_hadith_reference_defaults():
         "policy": "cross_reference_only",
         "regex": r"(?P<chapter>\d{1,4})\s*:\s*(?P<verse>\d{1,4})",
     }
-    assert normalized["quality_policy"]["observed_scripts"] == ["arabic", "latin"]
-    assert normalized["quality_policy"]["required_scripts"] == ["latin"]
-    assert normalized["quality_policy"]["optional_scripts"] == ["arabic"]
+    assert normalized["quality_policy"]["observed_scripts"] == ["Arabic", "English"]
+    assert normalized["quality_policy"]["required_scripts"] == ["English"]
+    assert normalized["quality_policy"]["optional_scripts"] == ["Arabic"]
+    assert normalized["quality_policy"]["reference_contract_gate"] == {
+        "enabled": True,
+        "action": "block",
+        "required": [
+            "reference_schema.type",
+            "domain_structure.primary_anchor.regex",
+            "reference_resolution.build_canonical_units",
+        ],
+        "reference_family": "book_hadith",
+    }
     assert normalized["reference_resolution"] == {
         "enabled": True,
         "build_canonical_units": True,
@@ -1714,41 +1737,40 @@ async def test_ai_domain_metadata_suggester_merges_partial_graph_into_baseline(
         ),
     )
 
-    assert result.domain_metadata.custom_json == {
-        "domain_structure": {
-            "primary_anchor": {
-                "type": "book_hadith",
-                "regex": (
-                    r"\bBook\s+(?P<book>\d{1,4})\s*,?\s*Hadith\s+"
-                    r"(?P<hadith>\d{1,6})\b"
-                ),
-                "unit": "hadith",
-            },
-            "inline_references": {
-                "type": "chapter_verse",
-                "regex": r"(?P<chapter>\d{1,4})\s*:\s*(?P<verse>\d{1,4})",
-                "policy": "cross_reference_only",
-            },
+    custom_json = result.domain_metadata.custom_json
+    assert custom_json["domain_structure"] == {
+        "primary_anchor": {
+            "type": "book_hadith",
+            "regex": (
+                r"\bBook\s+(?P<book>\d{1,4})\s*,?\s*Hadith\s+"
+                r"(?P<hadith>\d{1,6})\b"
+            ),
+            "unit": "hadith",
         },
-        "graph": {
-            "edge_types": ["references", "same_chapter"],
-            "materialize_from": ["reference_metadata"],
-            "confidence_policy": "evidence_required",
+        "inline_references": {
+            "type": "chapter_verse",
+            "regex": r"(?P<chapter>\d{1,4})\s*:\s*(?P<verse>\d{1,4})",
+            "policy": "cross_reference_only",
         },
-        "reference_resolution": {
-            "enabled": True,
-            "build_canonical_units": True,
-            "carry_forward_body_blocks": True,
-            "header_only_policy": "provenance_only",
-            "continuation_policy": "until_next_reference",
-            "max_page_gap": 2,
-            "require_single_reference_per_answerable_chunk": True,
-        },
-        "provenance": {
-            "preserve_original_blocks": True,
-            "block_preview_chars": 160,
-            "store_text_hash": True,
-        },
+    }
+    assert custom_json["graph"] == {
+        "edge_types": ["references", "same_chapter"],
+        "materialize_from": ["reference_metadata"],
+        "confidence_policy": "evidence_required",
+    }
+    assert custom_json["reference_resolution"] == {
+        "enabled": True,
+        "build_canonical_units": True,
+        "carry_forward_body_blocks": True,
+        "header_only_policy": "provenance_only",
+        "continuation_policy": "until_next_reference",
+        "max_page_gap": 2,
+        "require_single_reference_per_answerable_chunk": True,
+    }
+    assert custom_json["provenance"] == {
+        "preserve_original_blocks": True,
+        "block_preview_chars": 160,
+        "store_text_hash": True,
     }
 
 
@@ -2046,6 +2068,19 @@ async def test_ai_domain_metadata_suggest_endpoint_uses_vision_model(client, mon
     body = response.json()
     assert body["domain_metadata"]["domain"] == "quran_tafseer"
     assert body["domain_metadata"]["metadata_sources"] == ["ai_vision"]
+    assert (
+        body["domain_metadata"]["custom_json"]["reference_schema"]["type"]
+        == "chapter_verse"
+    )
+    assert (
+        body["domain_metadata"]["custom_json"]["domain_structure"]["primary_anchor"]["regex"]
+    )
+    assert (
+        body["domain_metadata"]["custom_json"]["reference_resolution"][
+            "build_canonical_units"
+        ]
+        is True
+    )
     assert body["confidence"] == 0.92
     assert calls[0]["url"] == "http://vision.test/v1/chat/completions"
     assert calls[0]["headers"]["authorization"] == "Bearer vision-secret"

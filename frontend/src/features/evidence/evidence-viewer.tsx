@@ -98,11 +98,11 @@ export function EvidenceViewer({
             </EvidenceSection>
             <EvidenceSection title="Parser quality">
               <div className="space-y-2">
-                <KeyValue label="Quality" value={evidence.qualityStatus || "Quality policy not recorded"} />
+                <KeyValue label="Quality" value={evidence.qualityStatus || "Default quality policy"} />
                 {evidence.parserWarnings?.length ? (
                   <List values={evidence.parserWarnings} />
                 ) : (
-                  <MissingText>Parser warnings not recorded</MissingText>
+                  <MissingText>No parser warnings for this evidence</MissingText>
                 )}
               </div>
             </EvidenceSection>
@@ -180,13 +180,13 @@ function SummaryGrid({ evidence }: { evidence: NormalizedEvidence }) {
             : "Source location not recorded"
         }
       />
-      <KeyValue label="Quality" value={evidence.qualityStatus || "Quality policy not recorded"} />
+      <KeyValue label="Quality" value={evidence.qualityStatus || "Default quality policy"} />
       <KeyValue
         label="Parser warnings"
         value={
           evidence.parserWarnings?.length
             ? `${evidence.parserWarnings.length} recorded`
-            : "Parser warnings not recorded"
+            : "No parser warnings for this evidence"
         }
       />
       <KeyValue

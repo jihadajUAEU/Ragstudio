@@ -30,6 +30,12 @@ PACKET_ROOT = REPO_ROOT / "docs" / "benchmarks" / "ragstudio-oss-proof-v1"
 def packet_copy(tmp_path: Path) -> Path:
     target = tmp_path / "ragstudio-oss-proof-v1"
     shutil.copytree(PACKET_ROOT, target)
+    # Normalize line endings to LF to prevent CRLF hash mismatches on Windows
+    for path in target.rglob("*"):
+        if path.is_file() and path.suffix.lower() in {".json", ".md"}:
+            content = path.read_bytes()
+            if b"\r\n" in content:
+                path.write_bytes(content.replace(b"\r\n", b"\n"))
     return target
 
 

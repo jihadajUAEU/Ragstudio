@@ -85,6 +85,7 @@ class IndexJobRunner:
         parser_quality = quality_gate.parser_quality_summary(chunks)
         parser_quality_details = quality_gate.parser_quality_details(chunks)
         index_quality_report = quality_gate.index_quality_report_from_chunks(chunks)
+        quality_repair_report = quality_gate.quality_repair_report_from_chunks(chunks)
         await self._mark_index_records_succeeded(document.id, chunk_count)
 
         job.result = {
@@ -95,6 +96,7 @@ class IndexJobRunner:
             "parser_quality": parser_quality,
             "parser_quality_details": parser_quality_details,
             "index_quality_report": index_quality_report,
+            "quality_repair_report": quality_repair_report,
         }
         job.logs = [*(job.logs or []), f"Graph projection materialization {status}."][-20:]
         if graph_warning:

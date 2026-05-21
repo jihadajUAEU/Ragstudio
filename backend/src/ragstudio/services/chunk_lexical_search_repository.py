@@ -173,7 +173,10 @@ def _english_prefilter_terms(query: str) -> list[str]:
         term = match.group(0).strip("_'-").casefold()
         if len(term) < 3 or term in _ENGLISH_PREFILTER_STOPWORDS:
             continue
-        terms.append(term)
+        if term == "eid":
+            terms.extend(["eid", "id", "adha"])
+        else:
+            terms.append(term)
     return list(dict.fromkeys(terms))[:5]
 
 

@@ -60,12 +60,13 @@ def stage_payload(
     detail: str,
     chunk_count: int | None = None,
     warning: str | None = None,
+    progress: int | None = None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "stage": stage.value,
         "label": _STAGE_LABELS[stage],
         "detail": detail,
-        "progress": stage_progress(stage),
+        "progress": _normalized_progress(progress, stage_progress(stage)),
     }
     if chunk_count is not None:
         payload["chunk_count"] = chunk_count
@@ -82,12 +83,14 @@ def stage_event_payload(
     chunk_count: int | None = None,
     warning: str | None = None,
     occurred_at: datetime | None = None,
+    progress: int | None = None,
 ) -> dict[str, Any]:
     payload = stage_payload(
         stage,
         detail=detail,
         chunk_count=chunk_count,
         warning=warning,
+        progress=progress,
     )
     payload["sequence"] = sequence
     payload["occurred_at"] = (occurred_at or datetime.now(UTC)).isoformat()
@@ -101,12 +104,14 @@ def update_job_stage(
     detail: str,
     chunk_count: int | None = None,
     warning: str | None = None,
+    progress: int | None = None,
 ) -> None:
     payload = stage_payload(
         stage,
         detail=detail,
         chunk_count=chunk_count,
         warning=warning,
+        progress=progress,
     )
     job.progress = payload["progress"]
     result = dict(job.result or {})
@@ -130,6 +135,7 @@ def update_job_stage(
             chunk_count=chunk_count,
             warning=warning,
             sequence=last_sequence + 1,
+            progress=progress,
         ),
     ][-_MAX_STAGE_EVENTS:]
     if warning:
@@ -140,6 +146,12 @@ def update_job_stage(
     job.result = result
     log_line = f"{payload['label']}: {detail}"
     job.logs = [*(job.logs or []), log_line][-20:]
+
+
+def _normalized_progress(progress: int | None, default: int) -> int:
+    if progress is None:
+        return default
+    return max(0, min(int(progress), 100))
 
 
 def index_shape_compatible(

@@ -14,7 +14,12 @@ services:
     ports:
       - "127.0.0.1:8000:8000"
     volumes:
+      - ./.git:/app/.git:ro
       - ./backend/src:/app/backend/src
+      - ./backend/tests:/app/backend/tests
+      - ./docs:/app/docs
+      - ./examples:/app/examples
+      - ./scripts:/app/scripts
       - ragstudio-backend-data:/data
     depends_on:
       postgres:
@@ -42,7 +47,12 @@ services:
       RAGSTUDIO_DATA_DIR: /data
       RAGSTUDIO_ALLOWED_RERANKER_HOSTS: '["localhost","127.0.0.1","::1","api.jina.ai","api.cohere.ai","10.10.9.*"]'
     volumes:
+      - ./.git:/app/.git:ro
       - ./backend/src:/app/backend/src
+      - ./backend/tests:/app/backend/tests
+      - ./docs:/app/docs
+      - ./examples:/app/examples
+      - ./scripts:/app/scripts
       - ragstudio-backend-data:/data
     depends_on:
       backend:

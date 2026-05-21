@@ -36,7 +36,10 @@ def test_manifest_resolves_all_public_packet_paths_and_hashes():
 
     for artifact_path, recorded in manifest["artifact_hashes"].items():
         artifact = PACKET_ROOT / artifact_path
-        actual = hashlib.sha256(artifact.read_bytes()).hexdigest()
+        content = artifact.read_bytes()
+        if artifact.suffix.lower() in {".json", ".md"}:
+            content = content.replace(b"\r\n", b"\n")
+        actual = hashlib.sha256(content).hexdigest()
         assert recorded["algorithm"] == "sha256"
         assert recorded["redaction_status"] == "passed"
         assert actual == recorded["value"]

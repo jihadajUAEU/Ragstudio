@@ -199,6 +199,82 @@ async def test_job_quality_warnings_keeps_suppressed_recovery_visible_but_uncoun
 
 
 @pytest.mark.asyncio
+async def test_job_quality_warnings_dedupes_reference_less_missing_script_warning(client):
+    app = client._transport.app
+    parser_warnings = [
+        {
+            "code": "reference_unit_missing_expected_script",
+            "message": "Expected Arabic text in reference-bearing chunk.",
+            "expected_script": "arabic",
+        },
+        {
+            "code": "reference_unit_missing_expected_script",
+            "message": "Expected Arabic text in reference unit.",
+            "expected_script": "arabic",
+            "reference": "12:108",
+        },
+    ]
+
+    async with app.state.session_factory() as session:
+        document = Document(
+            id="doc-quality-dedupe",
+            filename="quality-dedupe.pdf",
+            content_type="application/pdf",
+            sha256="quality-dedupe-sha",
+            artifact_path=str(app.state.settings.data_dir / "quality-dedupe.pdf"),
+            status=StageStatus.SUCCEEDED.value,
+        )
+        session.add(document)
+        session.add(
+            Job(
+                id="job-quality-dedupe",
+                type="index_document",
+                target_id=document.id,
+                status=StageStatus.SUCCEEDED.value,
+                progress=100,
+                logs=[],
+                result={
+                    "document_id": document.id,
+                    "parser_quality": {
+                        "warning_counts": {
+                            "reference_unit_missing_expected_script": 1,
+                        },
+                        "affected_chunks": 1,
+                    },
+                    "index_quality_report": {
+                        "summary": {
+                            "reference_units_missing_expected_script": 1,
+                        },
+                    },
+                },
+            )
+        )
+        session.add(
+            Chunk(
+                id="chunk-quality-dedupe",
+                document_id=document.id,
+                text="[12:108] English-only verse text.",
+                source_location={"page": 123},
+                extraction_quality={"parser_warnings": parser_warnings},
+                metadata_json={
+                    "reference_metadata": {"references": ["12:108"]},
+                    "extraction_quality": {"parser_warnings": parser_warnings},
+                },
+            )
+        )
+        await session.commit()
+
+    response = await client.get("/api/jobs/job-quality-dedupe/quality-warnings")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["warning_counts"] == {"reference_unit_missing_expected_script": 1}
+    assert payload["affected_chunks"] == 1
+    assert payload["total"] == 1
+    assert payload["items"][0]["warning"]["reference"] == "12:108"
+
+
+@pytest.mark.asyncio
 async def test_job_quality_warnings_keeps_info_severity_visible_but_uncounted(client):
     app = client._transport.app
     audit_warning = {
@@ -562,7 +638,9 @@ async def test_fix_job_quality_warnings_queues_strict_reindex_from_stored_option
     assert repaired_custom_json["repair_plan_ref"]["summary"] == repair_plan["summary"]
     repair_metadata = repaired_custom_json["repair"]
     assert repair_metadata["reference_unit_missing_expected_script"] == {
-        "action": "preserve_parallel_reference_units",
+        "action": "local_repair_then_targeted_vision_recovery",
+        "local_repair_source": "same_chunk_provenance_blocks",
+        "targeted_vision_recovery": True,
         "preserve_parallel_text": True,
         "expected_scripts": ["arabic"],
         "carry_reference_headers_into_body": True,
@@ -607,7 +685,13 @@ async def test_fix_job_quality_warnings_queues_strict_reindex_from_stored_option
     )
     assert (
         repair_metadata["disallowed_block_type_quarantined"]["action"]
-        == "recover_text_bearing_blocks_as_prose"
+        == "downgrade_layout_noise_or_recover_text_bearing_blocks"
+    )
+    assert (
+        repair_metadata["disallowed_block_type_quarantined"][
+            "downgrade_pure_layout_noise"
+        ]
+        is True
     )
     assert "metadata-aware repair plan" in payload["message"]
 

@@ -4,6 +4,8 @@ from pathlib import Path
 
 import httpx
 import pytest
+from fastapi import HTTPException
+from ragstudio.api.routes.documents import _validate_index_options
 from ragstudio.db.models import (
     Chunk,
     Document,
@@ -13,7 +15,7 @@ from ragstudio.db.models import (
     SettingsProfile,
 )
 from ragstudio.schemas.common import StageStatus
-from ragstudio.schemas.parsing import IndexDocumentIn
+from ragstudio.schemas.parsing import DomainMetadata, IndexDocumentIn
 from ragstudio.schemas.runtime import RuntimeHealthCheck
 from ragstudio.services.document_service import DocumentService
 from ragstudio.services.graph_materialization_service import GraphMaterializationResult
@@ -133,6 +135,38 @@ def allow_product_readiness(monkeypatch) -> None:
         "ragstudio.services.chunk_service.ChunkService.validate_strict_mineru_sidecar",
         validate_sidecar,
     )
+
+
+def test_index_options_validation_rejects_non_executable_reference_contract():
+    options = IndexDocumentIn(
+        domain_metadata=DomainMetadata(
+            domain="quran",
+            custom_json={
+                "reference_schema": {
+                    "type": "chapter_verse",
+                    "canonical_ref_template": "{chapter}:{verse}",
+                },
+                "chunking": {"unit": "verse"},
+                "domain_structure": {
+                    "primary_anchor": {
+                        "type": "chapter_verse",
+                        "unit": "verse",
+                        "regex": r"\[(?P<chapter>\d{1,4})\]",
+                    }
+                },
+                "reference_resolution": {
+                    "enabled": True,
+                    "build_canonical_units": True,
+                },
+            },
+        )
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        _validate_index_options(options)
+
+    assert exc_info.value.status_code == 422
+    assert "verse" in str(exc_info.value.detail)
 
 
 @pytest.mark.asyncio

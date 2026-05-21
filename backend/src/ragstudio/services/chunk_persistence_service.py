@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
@@ -18,8 +20,10 @@ logger = logging.getLogger(__name__)
 
 _MIN_EXPECTED_CHUNKS = 2
 _MAX_EXPECTED_CHUNKS = 5000
+_PERSIST_BATCH_SIZE = 500
 
 _SCRUBBED_PATH = object()
+PersistProgressCallback = Callable[[int, int], Awaitable[None]]
 
 
 class ChunkPersistenceService:
@@ -35,6 +39,7 @@ class ChunkPersistenceService:
         commit: bool = True,
         runtime_profile_id: str | None = None,
         index_shape: dict[str, Any] | None = None,
+        on_progress: PersistProgressCallback | None = None,
     ) -> list[ChunkOut]:
         chunk_count = len(adapter_chunks)
         if chunk_count < _MIN_EXPECTED_CHUNKS:
@@ -51,24 +56,47 @@ class ChunkPersistenceService:
             )
 
         indexed_at = datetime.now(UTC)
-        chunks = [
-            self._chunk_row(
-                document,
-                adapter_chunk,
-                options=options,
-                indexed_at=indexed_at,
-                runtime_profile_id=runtime_profile_id,
-                index_shape=index_shape or {},
-            )
-            for adapter_chunk in adapter_chunks
-        ]
-
-        # Savepoint: if insert fails the old chunks survive the rollback.
-        async with self.session.begin_nested():
-            await self.session.execute(
-                delete(Chunk).where(Chunk.document_id == document.id)
-            )
-            self.session.add_all(chunks)
+        if on_progress is None:
+            chunks = [
+                self._chunk_row(
+                    document,
+                    adapter_chunk,
+                    options=options,
+                    indexed_at=indexed_at,
+                    runtime_profile_id=runtime_profile_id,
+                    index_shape=index_shape or {},
+                )
+                for adapter_chunk in adapter_chunks
+            ]
+            # Savepoint: if insert fails the old chunks survive the rollback.
+            async with self.session.begin_nested():
+                await self.session.execute(
+                    delete(Chunk).where(Chunk.document_id == document.id)
+                )
+                self.session.add_all(chunks)
+        else:
+            chunks = []
+            await self.session.execute(delete(Chunk).where(Chunk.document_id == document.id))
+            await self.session.flush()
+            for batch_end in range(0, chunk_count, _PERSIST_BATCH_SIZE):
+                batch_adapter_chunks = adapter_chunks[batch_end : batch_end + _PERSIST_BATCH_SIZE]
+                batch = [
+                    self._chunk_row(
+                        document,
+                        adapter_chunk,
+                        options=options,
+                        indexed_at=indexed_at,
+                        runtime_profile_id=runtime_profile_id,
+                        index_shape=index_shape or {},
+                    )
+                    for adapter_chunk in batch_adapter_chunks
+                ]
+                chunks.extend(batch)
+                self.session.add_all(batch)
+                await self.session.flush()
+                persisted_count = min(batch_end + len(batch), chunk_count)
+                await on_progress(persisted_count, chunk_count)
+                await asyncio.sleep(0)
 
         if commit:
             await self.session.commit()

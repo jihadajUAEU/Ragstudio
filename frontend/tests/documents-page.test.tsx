@@ -37,10 +37,6 @@ function openJobsWarningsTab() {
   fireEvent.click(screen.getByRole("tab", { name: /jobs & warnings/i }));
 }
 
-function openIndexOptions() {
-  fireEvent.click(screen.getByText("Index options"));
-}
-
 const jobDefaults = {
   worker_id: null,
   lease_expires_at: null,
@@ -100,10 +96,19 @@ describe("DocumentsPage", () => {
     });
     vi.mocked(apiClient.domainProfiles).mockResolvedValue({ items: [], total: 0 });
     vi.mocked(apiClient.suggestDomainMetadata).mockResolvedValue({
-      domain_metadata: { domain: "policy", document_type: "admin_document" },
-      confidence: 0.91,
-      evidence_pages: [1, 2, 10, 20],
-      rationale: "The sampled pages show policy headings.",
+      domain_metadata: {
+        domain: "quran_tafseer",
+        document_type: "translation",
+        metadata_sources: ["ai_vision"],
+        custom_json: {
+          quality_policy: {
+            required_scripts: ["arabic", "latin"],
+          },
+        },
+      },
+      confidence: 0.95,
+      evidence_pages: [1, 2, 3],
+      rationale: "The sampled pages show Quran and translation references.",
       warnings: [],
     });
     vi.mocked(apiClient.deleteDocument).mockResolvedValue(undefined);
@@ -163,13 +168,13 @@ describe("DocumentsPage", () => {
     });
   });
 
-  it("keeps the file upload control visible and enables upload after file selection", () => {
+  it("keeps the file upload control visible and requires vision before upload", () => {
     renderDocumentsPage();
 
     const uploadInput = screen.getByLabelText(/upload file/i);
     expect(uploadInput).toBeVisible();
 
-    const uploadButton = screen.getByRole("button", { name: /^upload$/i });
+    const uploadButton = screen.getByRole("button", { name: /upload and index/i });
     expect(uploadButton).toBeDisabled();
 
     fireEvent.change(uploadInput, {
@@ -178,17 +183,28 @@ describe("DocumentsPage", () => {
       },
     });
 
-    expect(uploadButton).toBeEnabled();
+    expect(uploadButton).toBeDisabled();
   });
 
-  it("uploads with strict MinerU as the default parser", async () => {
+  it("uploads only after vision metadata is generated for the selected file", async () => {
     renderDocumentsPage();
 
-    const file = new File(["pdf"], "sample.pdf", { type: "application/pdf" });
-    fireEvent.change(screen.getByLabelText(/upload file/i), {
-      target: { files: [file] },
+    const file = new File(["pdf"], "quran-arabic-english.pdf", { type: "application/pdf" });
+    fireEvent.change(screen.getByLabelText(/upload file/i), { target: { files: [file] } });
+
+    const uploadButton = screen.getByRole("button", { name: /upload and index/i });
+    expect(uploadButton).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("button", { name: /analyze with vision/i }));
+
+    await waitFor(() => {
+      expect(apiClient.suggestDomainMetadata).toHaveBeenCalled();
     });
-    fireEvent.click(screen.getByRole("button", { name: /^upload$/i }));
+    expect(vi.mocked(apiClient.suggestDomainMetadata).mock.calls[0][0]).toEqual({ file });
+    expect(await screen.findByText("quran_tafseer")).toBeVisible();
+    expect(uploadButton).toBeEnabled();
+
+    fireEvent.click(uploadButton);
 
     await waitFor(() => {
       expect(apiClient.uploadDocument).toHaveBeenCalled();
@@ -197,138 +213,71 @@ describe("DocumentsPage", () => {
       file,
       options: {
         parser_mode: "mineru_strict",
-        domain_metadata: { domain: "generic", document_type: "document", tags: [] },
+        domain_metadata: expect.objectContaining({
+          domain: "quran_tafseer",
+          document_type: "translation",
+        }),
       },
     });
-  });
-
-  it("uploads with document-specific MinerU parser options", async () => {
-    renderDocumentsPage();
-    openIndexOptions();
-
-    fireEvent.click(screen.getByLabelText("Override MinerU parser options"));
-    fireEvent.change(screen.getByLabelText("MinerU parse method"), {
-      target: { value: "ocr" },
-    });
-    fireEvent.change(screen.getByLabelText("MinerU backend"), {
-      target: { value: "pipeline" },
-    });
-    fireEvent.change(screen.getByLabelText("MinerU device"), {
-      target: { value: "cuda:0" },
-    });
-    fireEvent.change(screen.getByLabelText("MinerU language"), {
-      target: { value: "arabic" },
-    });
-    const formulaToggle = screen.getByLabelText("Parse formulas for this document");
-    if ((formulaToggle as HTMLInputElement).checked) {
-      fireEvent.click(formulaToggle);
-    }
-    const tableToggle = screen.getByLabelText("Parse tables for this document");
-    if ((tableToggle as HTMLInputElement).checked) {
-      fireEvent.click(tableToggle);
-    }
-    fireEvent.change(screen.getByLabelText("MinerU source"), {
-      target: { value: "huggingface" },
-    });
-    fireEvent.change(screen.getByLabelText("MinerU max concurrent files"), {
-      target: { value: "2" },
-    });
-
-    const file = new File(["pdf"], "tafseer.pdf", { type: "application/pdf" });
-    fireEvent.change(screen.getByLabelText(/upload file/i), {
-      target: { files: [file] },
-    });
-    fireEvent.click(screen.getByRole("button", { name: /^upload$/i }));
-
-    await waitFor(() => {
-      expect(apiClient.uploadDocument).toHaveBeenCalled();
-    });
-    expect(vi.mocked(apiClient.uploadDocument).mock.calls[0][0]).toEqual({
-      file,
-      options: expect.objectContaining({
-        parser_mode: "mineru_strict",
-        mineru_parse_options: {
-          parse_method: "ocr",
-          backend: "pipeline",
-          device: "cuda:0",
-          lang: "arabic",
-          formula: false,
-          table: false,
-          source: "huggingface",
-          max_concurrent_files: 2,
-        },
-      }),
-    });
-  });
-
-  it("uses MinerU strict as the only parser mode", async () => {
-    renderDocumentsPage();
-    openIndexOptions();
-
-    expect(screen.queryByText("Local fallback")).not.toBeInTheDocument();
-    expect(screen.queryByText("MinerU with fallback")).not.toBeInTheDocument();
-    expect(await screen.findByText("MinerU strict")).toBeVisible();
-  });
-
-  it("passes the selected upload file to metadata autosuggest", async () => {
-    vi.mocked(apiClient.domainProfiles).mockResolvedValue({
-      items: [
-        {
-          id: "profile-1",
-          name: "Policy",
-          description: "Policy metadata",
-          metadata: { domain: "policy", document_type: "admin_document" },
-        },
-      ],
-      total: 1,
-    });
-    renderDocumentsPage();
-
-    const file = new File(["pdf"], "policy.pdf", { type: "application/pdf" });
-    fireEvent.change(screen.getByLabelText(/upload file/i), {
-      target: { files: [file] },
-    });
-    await screen.findByRole("option", { name: "Policy" });
-    fireEvent.change(screen.getByLabelText("Domain profile"), {
-      target: { value: "profile-1" },
-    });
-
-    fireEvent.click(screen.getByRole("button", { name: /auto-suggest/i }));
-
-    await waitFor(() => {
-      expect(apiClient.suggestDomainMetadata).toHaveBeenCalledWith({
+    expect(apiClient.uploadDocument).toHaveBeenCalledWith(
+      {
         file,
-        profile_id: "profile-1",
-      });
-    });
-  });
-
-  it("places auto-suggest after the domain profile selector", async () => {
-    renderDocumentsPage();
-
-    fireEvent.change(screen.getByLabelText(/upload file/i), {
-      target: {
-        files: [new File(["pdf"], "sample.pdf", { type: "application/pdf" })],
+        options: {
+          parser_mode: "mineru_strict",
+          domain_metadata: expect.objectContaining({
+            domain: "quran_tafseer",
+            document_type: "translation",
+          }),
+        },
       },
-    });
-
-    const domainProfile = await screen.findByLabelText("Domain profile");
-    const autoSuggest = screen.getByRole("button", { name: /auto-suggest/i });
-
-    expect(
-      domainProfile.compareDocumentPosition(autoSuggest) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
+      expect.anything(),
+    );
   });
 
-  it("places the upload action after the custom JSON editor", () => {
+  it("does not show manual profile or metadata controls in the upload flow", () => {
     renderDocumentsPage();
 
-    const customJson = screen.getByLabelText("Custom JSON");
-    const uploadButton = screen.getByRole("button", { name: /^upload$/i });
+    expect(screen.queryByLabelText("Domain profile")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Parser")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Domain")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Document type")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Language")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Collection")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Tags")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Custom JSON")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Override MinerU parser options")).not.toBeInTheDocument();
+  });
 
-    expect(
-      customJson.compareDocumentPosition(uploadButton) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
+  it("clears generated vision metadata when the selected file changes", async () => {
+    renderDocumentsPage();
+
+    const firstFile = new File(["first"], "first.pdf", { type: "application/pdf" });
+    const secondFile = new File(["second"], "second.pdf", { type: "application/pdf" });
+    const fileInput = screen.getByLabelText(/upload file/i);
+
+    fireEvent.change(fileInput, { target: { files: [firstFile] } });
+    fireEvent.click(screen.getByRole("button", { name: /analyze with vision/i }));
+    expect(await screen.findByText("Vision metadata generated")).toBeVisible();
+
+    fireEvent.change(fileInput, { target: { files: [secondFile] } });
+
+    expect(screen.queryByText("Vision metadata generated")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /upload and index/i })).toBeDisabled();
+  });
+
+  it("blocks upload when vision metadata generation fails", async () => {
+    vi.mocked(apiClient.suggestDomainMetadata).mockRejectedValueOnce(
+      new Error("Vision service unavailable"),
+    );
+    renderDocumentsPage();
+
+    const file = new File(["pdf"], "sample.pdf", { type: "application/pdf" });
+    fireEvent.change(screen.getByLabelText(/upload file/i), { target: { files: [file] } });
+    fireEvent.click(screen.getByRole("button", { name: /analyze with vision/i }));
+
+    expect(await screen.findByText("Vision service unavailable")).toBeVisible();
+    expect(screen.getByRole("button", { name: /upload and index/i })).toBeDisabled();
+    expect(apiClient.uploadDocument).not.toHaveBeenCalled();
   });
 
   it("confirms and deletes an uploaded document", async () => {
@@ -488,115 +437,6 @@ describe("DocumentsPage", () => {
     expect(screen.getByText("No matching jobs")).toBeVisible();
   });
 
-  it("reindexes an uploaded document with the current parser and metadata", async () => {
-    vi.mocked(apiClient.documents).mockResolvedValue({
-      items: [
-        {
-          id: "doc-1",
-          filename: "tafseer.pdf",
-          content_type: "application/pdf",
-          status: "succeeded",
-          sha256: "sha-1",
-        },
-      ],
-      total: 1,
-    });
-
-    renderDocumentsPage();
-
-    expect(await screen.findByLabelText("Parser")).toHaveValue("mineru_strict");
-    fireEvent.change(screen.getByLabelText("Custom JSON"), {
-      target: {
-        value: JSON.stringify({
-          reference_schema: { type: "surah_ayah" },
-          retrieval: { exact_reference_top1: true },
-        }),
-      },
-    });
-    fireEvent.click(screen.getByRole("button", { name: /reindex tafseer\.pdf/i }));
-
-    await waitFor(() => {
-      expect(apiClient.createDocumentReindexJob).toHaveBeenCalledWith("doc-1", {
-        parser_mode: "mineru_strict",
-        domain_metadata: expect.objectContaining({
-          domain: "generic",
-          document_type: "document",
-          custom_json: {
-            reference_schema: { type: "surah_ayah" },
-            retrieval: { exact_reference_top1: true },
-          },
-        }),
-      });
-    });
-    expect(await screen.findByText("Reindex queued for tafseer.pdf")).toBeVisible();
-  });
-
-  it("reindexes with document-specific MinerU parser options", async () => {
-    vi.mocked(apiClient.documents).mockResolvedValue({
-      items: [
-        {
-          id: "doc-1",
-          filename: "tafseer.pdf",
-          content_type: "application/pdf",
-          status: "succeeded",
-          sha256: "sha-1",
-        },
-      ],
-      total: 1,
-    });
-    renderDocumentsPage();
-    openIndexOptions();
-
-    fireEvent.click(screen.getByLabelText("Override MinerU parser options"));
-    fireEvent.change(screen.getByLabelText("MinerU parse method"), {
-      target: { value: "ocr" },
-    });
-    fireEvent.change(screen.getByLabelText("MinerU backend"), {
-      target: { value: "pipeline" },
-    });
-    fireEvent.change(screen.getByLabelText("MinerU device"), {
-      target: { value: "cuda:0" },
-    });
-    fireEvent.change(screen.getByLabelText("MinerU language"), {
-      target: { value: "arabic" },
-    });
-    const formulaToggle = screen.getByLabelText("Parse formulas for this document");
-    if ((formulaToggle as HTMLInputElement).checked) {
-      fireEvent.click(formulaToggle);
-    }
-    const tableToggle = screen.getByLabelText("Parse tables for this document");
-    if ((tableToggle as HTMLInputElement).checked) {
-      fireEvent.click(tableToggle);
-    }
-    fireEvent.change(screen.getByLabelText("MinerU source"), {
-      target: { value: "huggingface" },
-    });
-    fireEvent.change(screen.getByLabelText("MinerU max concurrent files"), {
-      target: { value: "2" },
-    });
-
-    fireEvent.click(await screen.findByRole("button", { name: /reindex tafseer\.pdf/i }));
-
-    await waitFor(() => {
-      expect(apiClient.createDocumentReindexJob).toHaveBeenCalledWith(
-        "doc-1",
-        expect.objectContaining({
-          parser_mode: "mineru_strict",
-          mineru_parse_options: {
-            parse_method: "ocr",
-            backend: "pipeline",
-            device: "cuda:0",
-            lang: "arabic",
-            formula: false,
-            table: false,
-            source: "huggingface",
-            max_concurrent_files: 2,
-          },
-        }),
-      );
-    });
-  });
-
   it("reindexes with the document's current index options when available", async () => {
     vi.mocked(apiClient.documents).mockResolvedValue({
       items: [
@@ -616,6 +456,15 @@ describe("DocumentsPage", () => {
                 reference_schema: { type: "chapter_verse" },
                 retrieval: { exact_reference_top1: true },
               },
+            },
+            mineru_parse_options: {
+              parse_method: "ocr",
+              backend: "pipeline",
+              device: "cuda:0",
+              lang: "arabic",
+              formula: false,
+              table: true,
+              max_concurrent_files: 2,
             },
           },
         },
@@ -638,48 +487,39 @@ describe("DocumentsPage", () => {
             retrieval: { exact_reference_top1: true },
           },
         }),
+        mineru_parse_options: {
+          parse_method: "ocr",
+          backend: "pipeline",
+          device: "cuda:0",
+          lang: "arabic",
+          formula: false,
+          table: true,
+          max_concurrent_files: 2,
+        },
       });
     });
   });
 
-  it("allows stored-option reindex while the upload metadata form is invalid", async () => {
+  it("disables reindex when a document has no stored index options", async () => {
     vi.mocked(apiClient.documents).mockResolvedValue({
       items: [
         {
           id: "doc-1",
-          filename: "quran.pdf",
+          filename: "legacy.pdf",
           content_type: "application/pdf",
           status: "succeeded",
           sha256: "sha-1",
-          latest_index_options: {
-            parser_mode: "mineru_strict",
-            domain_metadata: {
-              domain: "quran_tafseer",
-              document_type: "commentary",
-              tags: ["quran"],
-            },
-          },
+          latest_index_options: null,
         },
       ],
       total: 1,
+      limit: 500,
+      offset: 0,
     });
 
     renderDocumentsPage();
 
-    fireEvent.change(await screen.findByLabelText("Custom JSON"), {
-      target: { value: "{not-json" },
-    });
-    const reindexButton = await screen.findByRole("button", { name: /reindex quran\.pdf/i });
-    expect(reindexButton).toBeEnabled();
-
-    fireEvent.click(reindexButton);
-
-    await waitFor(() => {
-      expect(apiClient.createDocumentReindexJob).toHaveBeenCalledWith("doc-1", {
-        parser_mode: "mineru_strict",
-        domain_metadata: expect.objectContaining({ domain: "quran_tafseer" }),
-      });
-    });
+    expect(await screen.findByRole("button", { name: /reindex legacy\.pdf/i })).toBeDisabled();
   });
 
   it("uses document filenames and MinerU progress in the jobs table", async () => {

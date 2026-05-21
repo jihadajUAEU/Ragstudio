@@ -604,8 +604,8 @@ describe("QueryPage", () => {
     fireEvent.click(inspect);
 
     expect(await screen.findByRole("dialog", { name: "Evidence details" })).toBeVisible();
-    expectVisibleText("Parser warnings not recorded");
-    expectVisibleText("Quality policy not recorded");
+    expectVisibleText("No parser warnings for this evidence");
+    expectVisibleText("Default quality policy");
     expectVisibleText("Source location not recorded");
     expectVisibleText("No graph relationship recorded for this evidence");
     fireEvent.click(screen.getByText("Route links", { selector: "summary" }));

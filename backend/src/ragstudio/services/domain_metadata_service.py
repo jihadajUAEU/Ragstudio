@@ -273,7 +273,10 @@ BUILTIN_PROFILES: list[DomainProfileOut] = [
                 domain_structure={
                     "primary_anchor": {
                         "type": "chapter_verse",
-                        "regex": r"\bVerse\s+(?P<chapter>\d{1,4})\s*:\s*(?P<verse>\d{1,4})\b",
+                        "regex": (
+                            r"(\bVerse\s+|\[)(?P<chapter>\d{1,4})\s*:"
+                            r"\s*(?P<verse>\d{1,4})\]?"
+                        ),
                         "unit": "verse_section",
                     },
                     "inline_references": {

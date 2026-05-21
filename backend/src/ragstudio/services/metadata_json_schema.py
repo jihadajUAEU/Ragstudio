@@ -43,11 +43,14 @@ REFERENCE_CUSTOM_JSON_EXAMPLE: dict[str, Any] = {
         "merge_reference_header_with_body": True,
     },
     "domain_structure": {
-        "primary_anchor": {
-            "type": "chapter_verse",
-            "regex": r"\bVerse\s+(?P<chapter>\d{1,4})\s*:\s*(?P<verse>\d{1,4})\b",
-            "unit": "verse_section",
-        },
+            "primary_anchor": {
+                "type": "chapter_verse",
+                "regex": (
+                    r"(\bVerse\s+|\[)(?P<chapter>\d{1,4})\s*:"
+                    r"\s*(?P<verse>\d{1,4})\]?"
+                ),
+                "unit": "verse_section",
+            },
         "inline_references": {
             "type": "chapter_verse",
             "regex": r"(?P<chapter>\d{1,4})\s*:\s*(?P<verse>\d{1,4})",

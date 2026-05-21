@@ -311,6 +311,10 @@ def test_builtin_quran_tafseer_defaults_inline_references_to_cross_references(tm
         "Verse 18:30 body mentions 25:75-76.",
         {"page": 809},
     )["references"] == ["18:30"]
+    assert semantics.derive_reference_metadata(
+        "[1:1]\n\nArabic text\n\nEnglish translation.",
+        {"page": 2},
+    )["references"] == ["1:1"]
 
 
 def test_chunk_reference_metadata_aliases_derive_reference_metadata():

@@ -45,6 +45,17 @@ def test_stage_payload_has_ui_safe_fields():
     assert payload["chunk_count"] == 1754
 
 
+def test_stage_payload_accepts_batch_progress_override():
+    payload = stage_payload(
+        IndexStage.CHUNKS_PERSISTING,
+        detail="Persisted 500 of 1754 canonical chunks.",
+        chunk_count=1754,
+        progress=58,
+    )
+
+    assert payload["progress"] == 58
+
+
 def test_update_job_stage_preserves_existing_result_and_caps_logs():
     job = FakeJob()
     job.result = {"mineru": {"status": "ready"}}
@@ -92,3 +103,19 @@ def test_update_job_stage_appends_capped_stage_events():
     assert events[0]["sequence"] == 3
     assert events[-1]["sequence"] == 102
     assert events[-1]["stage"] == "ready"
+
+
+def test_update_job_stage_records_batch_progress_override():
+    job = FakeJob()
+
+    update_job_stage(
+        job,
+        IndexStage.CHUNKS_PERSISTING,
+        detail="Persisted 500 of 1754 canonical chunks.",
+        chunk_count=1754,
+        progress=58,
+    )
+
+    assert job.progress == 58
+    assert job.result["indexing_stage"]["progress"] == 58
+    assert job.result["indexing_stage_events"][-1]["progress"] == 58

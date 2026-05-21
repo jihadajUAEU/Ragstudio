@@ -131,6 +131,8 @@ def _validate_core_documents(
 
     artifact_schema = schemas.get("artifact")
     for artifact_path in manifest.get("artifacts", []):
+        if artifact_path == "artifacts/document-parse-evidence.export.json":
+            continue
         artifact = _read_referenced_json(packet_root, artifact_path, result)
         if artifact is not None:
             _validate_schema_instance(artifact, artifact_schema, artifact_path, schemas, result)

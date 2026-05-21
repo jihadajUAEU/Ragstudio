@@ -570,6 +570,84 @@ def test_domain_quality_gate_annotates_extraction_chunks_for_retrieval_time():
     assert chunks[0].metadata["extraction_quality"]["parser_warnings"][0][
         "expected_script"
     ] == "arabic"
+    warning = chunks[0].metadata["extraction_quality"]["parser_warnings"][0]
+    assert warning["vision_recovery_required"] is True
+    assert warning["repair"]["vision_recovery"]["scope"] == "reference_unit"
+    assert chunks[0].metadata["quality_repair"][
+        "targeted_vision_recovery_requests"
+    ][0]["reference"] == "19:13"
+
+
+def test_domain_quality_gate_repairs_missing_script_from_same_chunk_provenance():
+    chunks = [
+        AdapterChunk(
+            text="[19:13] And affection from Us and purity.",
+            source_location={"page": 312},
+            metadata={
+                "reference_metadata": {"references": ["19:13"]},
+                "provenance": {
+                    "blocks": [
+                        {
+                            "role": "reference_body",
+                            "block_type": "text",
+                            "text_preview": (
+                                "\u0648\u062d\u0646\u0627\u0646\u0627 "
+                                "\u0645\u0646 \u0644\u062f\u0646\u0627"
+                            ),
+                        }
+                    ]
+                },
+            },
+        )
+    ]
+
+    report = DomainMetadataQualityGate().validate_adapter_chunks(
+        chunks,
+        domain_metadata=_quran_metadata(),
+    )
+
+    assert report["status"] == "passed"
+    assert report["quality_repair"]["local_script_repairs"] == 1
+    assert report["parser_quality"]["warning_counts"] == {}
+    assert "\u0648\u062d\u0646\u0627\u0646\u0627" in chunks[0].text
+    assert chunks[0].metadata["quality_repair"]["local_script_repair"]["status"] == "applied"
+
+
+def test_domain_quality_gate_downgrades_pure_layout_noise_to_info():
+    chunks = [
+        AdapterChunk(
+            text=(
+                "[1:1] \u0627\u0644\u062d\u0645\u062f "
+                "\u0644\u0644\u0647 All praise is due to Allah."
+            ),
+            source_location={"page": 1},
+            metadata={
+                "reference_metadata": {"references": ["1:1"]},
+                "extraction_quality": {
+                    "parser_warnings": [
+                        {
+                            "code": "disallowed_block_type_quarantined",
+                            "block_type": "header",
+                            "message": "Header was quarantined.",
+                        }
+                    ]
+                },
+            },
+        )
+    ]
+
+    report = DomainMetadataQualityGate().validate_adapter_chunks(
+        chunks,
+        domain_metadata=_quran_metadata(),
+    )
+
+    warning = chunks[0].metadata["extraction_quality"]["parser_warnings"][0]
+    assert report["status"] == "passed"
+    assert report["quality_repair"]["layout_noise_downgrades"] == 1
+    assert report["parser_quality"]["warning_counts"] == {}
+    assert warning["severity"] == "info"
+    assert warning["suppressed_from_counts"] is True
+    assert warning["quality_gate_action"] == "provenance_only_layout_noise"
 
 
 def test_domain_quality_gate_reports_canonical_reference_units_for_quran_19_13():

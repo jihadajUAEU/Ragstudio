@@ -480,11 +480,11 @@ function SourceEvidenceRow({
         </Button>
       </div>
       <div className="mt-3 flex flex-wrap gap-2">
-        <Badge>{evidence.qualityStatus || "Quality policy not recorded"}</Badge>
+        <Badge>{evidence.qualityStatus || "Default quality policy"}</Badge>
         <Badge>
           {evidence.parserWarnings?.length
             ? `${evidence.parserWarnings.length} parser warnings`
-            : "Parser warnings not recorded"}
+            : "No parser warnings"}
         </Badge>
       </div>
     </div>

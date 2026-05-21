@@ -12,6 +12,7 @@ import httpx
 from pydantic import BaseModel, Field, ValidationError
 from ragstudio.db.models import SettingsProfile
 from ragstudio.schemas.parsing import DomainMetadata, DomainMetadataSuggestOut
+from ragstudio.services.domain_metadata_contract_compiler import compile_domain_metadata
 from ragstudio.services.metadata_json_schema import validate_custom_json
 from ragstudio.services.page_sampler import SampledPage
 
@@ -87,7 +88,7 @@ class DomainMetadataAiSuggester:
         else:
             metadata.custom_json = self._normalize_custom_json(metadata.custom_json)
             should_merge_baseline = False
-        metadata.custom_json = self._apply_autosuggest_reference_defaults(metadata)
+        metadata = compile_domain_metadata(metadata)
         validate_custom_json(metadata.custom_json)
         ai_source = "ai_vision" if target.supports_images else "ai_llm"
         if should_merge_baseline:
@@ -479,113 +480,6 @@ Content type: {content_type}
             ai_metadata.custom_json,
         )
         return merged
-
-    def _apply_autosuggest_reference_defaults(
-        self,
-        metadata: DomainMetadata,
-    ) -> dict[str, object]:
-        custom_json = self._normalize_custom_json(
-            metadata.custom_json if isinstance(metadata.custom_json, dict) else {},
-            require_graph_policy=False,
-        )
-        if not self._looks_like_hadith_metadata(metadata, custom_json):
-            return custom_json
-
-        domain_structure = self._dict_value(custom_json.get("domain_structure"))
-        primary_anchor = self._dict_value(domain_structure.get("primary_anchor"))
-        primary_type = str(primary_anchor.get("type") or "").casefold()
-        if primary_type in {"", "book_hadith", "hadith"} and not primary_anchor.get("regex"):
-            primary_anchor = {
-                **primary_anchor,
-                "type": "book_hadith",
-                "regex": (
-                    r"\bBook\s+(?P<book>\d{1,4})\s*,?\s*Hadith\s+"
-                    r"(?P<hadith>\d{1,6})\b"
-                ),
-                "unit": primary_anchor.get("unit") or "hadith",
-            }
-            domain_structure["primary_anchor"] = primary_anchor
-
-        inline_references = self._dict_value(domain_structure.get("inline_references"))
-        inline_type = str(inline_references.get("type") or "").casefold()
-        inline_policy = inline_references.get("policy")
-        if (
-            inline_type in {"", "quran_verse", "chapter_verse", "cross_reference"}
-            or inline_policy == "cross_reference_only"
-        ) and not inline_references.get("regex"):
-            inline_references = {
-                **inline_references,
-                "type": "chapter_verse",
-                "regex": r"(?P<chapter>\d{1,4})\s*:\s*(?P<verse>\d{1,4})",
-                "policy": "cross_reference_only",
-            }
-            domain_structure["inline_references"] = inline_references
-
-        if domain_structure:
-            custom_json["domain_structure"] = domain_structure
-        reference_resolution = self._dict_value(custom_json.get("reference_resolution"))
-        reference_resolution = {
-            "enabled": reference_resolution.get("enabled", True),
-            "build_canonical_units": reference_resolution.get(
-                "build_canonical_units",
-                True,
-            ),
-            "carry_forward_body_blocks": reference_resolution.get(
-                "carry_forward_body_blocks",
-                True,
-            ),
-            "header_only_policy": reference_resolution.get(
-                "header_only_policy",
-                "provenance_only",
-            ),
-            "continuation_policy": reference_resolution.get(
-                "continuation_policy",
-                "until_next_reference",
-            ),
-            "max_page_gap": reference_resolution.get("max_page_gap", 2),
-            "require_single_reference_per_answerable_chunk": reference_resolution.get(
-                "require_single_reference_per_answerable_chunk",
-                True,
-            ),
-        }
-        custom_json["reference_resolution"] = reference_resolution
-
-        provenance = self._dict_value(custom_json.get("provenance"))
-        provenance = {
-            "preserve_original_blocks": provenance.get("preserve_original_blocks", True),
-            "block_preview_chars": provenance.get("block_preview_chars", 160),
-            "store_text_hash": provenance.get("store_text_hash", True),
-        }
-        custom_json["provenance"] = provenance
-        return custom_json
-
-    def _looks_like_hadith_metadata(
-        self,
-        metadata: DomainMetadata,
-        custom_json: dict[str, object],
-    ) -> bool:
-        reference_schema = custom_json.get("reference_schema")
-        reference_type = (
-            reference_schema.get("type")
-            if isinstance(reference_schema, dict)
-            else None
-        )
-        tokens = {
-            str(item).casefold()
-            for item in (
-                metadata.domain,
-                metadata.document_type,
-                metadata.citation_style,
-                metadata.reference_pattern,
-                metadata.content_role,
-                reference_type,
-                *metadata.tags,
-            )
-            if item
-        }
-        return "hadith" in tokens or "book_hadith" in tokens or any(
-            "hadith" in token for token in tokens
-        )
 
     def _baseline_prompt_metadata(self, baseline: DomainMetadata) -> dict[str, object]:
         prompt_metadata: dict[str, object] = {

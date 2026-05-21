@@ -8,6 +8,7 @@ from ragstudio.schemas.parsing import DomainMetadata, IndexDocumentIn
 from ragstudio.services.adapter import AdapterChunk
 from ragstudio.services.chunk_persistence_service import ChunkPersistenceService
 from ragstudio.services.chunk_service import ChunkService
+from sqlalchemy import func, select
 
 
 @pytest.mark.asyncio
@@ -331,6 +332,59 @@ def test_order_chunks_by_ids_restores_bulk_refresh_order():
     )
 
     assert [chunk.text for chunk in ordered] == ["first", "second", "third"]
+
+
+@pytest.mark.asyncio
+async def test_persist_chunks_reports_batch_progress_and_allows_committed_heartbeats(
+    tmp_path,
+    database_url,
+):
+    engine = make_engine(database_url)
+    await init_db(engine)
+    factory = make_session_factory(engine)
+    progress_counts: list[tuple[int, int]] = []
+
+    async with factory() as session:
+        document = Document(
+            id="doc-batch-progress",
+            filename="batch.pdf",
+            content_type="application/pdf",
+            artifact_path=str(tmp_path / "batch.pdf"),
+            sha256="batch-progress",
+            status="running",
+        )
+        session.add(document)
+        await session.commit()
+
+        adapter_chunks = [
+            AdapterChunk(
+                text=f"chunk {index}",
+                source_location={"page": index},
+                metadata={"parser_metadata": {"chunk_index": index}},
+            )
+            for index in range(1001)
+        ]
+
+        async def on_progress(persisted_count: int, total_count: int) -> None:
+            progress_counts.append((persisted_count, total_count))
+            await session.commit()
+
+        chunks = await ChunkPersistenceService(session).persist(
+            document,
+            adapter_chunks,
+            IndexDocumentIn(domain_metadata=DomainMetadata()),
+            commit=False,
+            on_progress=on_progress,
+        )
+        row_count = await session.scalar(
+            select(func.count()).select_from(Chunk).where(Chunk.document_id == "doc-batch-progress")
+        )
+
+    await engine.dispose()
+
+    assert len(chunks) == 1001
+    assert row_count == 1001
+    assert progress_counts == [(500, 1001), (1000, 1001), (1001, 1001)]
 
 
 @pytest.mark.asyncio

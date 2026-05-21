@@ -418,8 +418,15 @@ class DocumentService:
                 *,
                 detail: str,
                 chunk_count: int | None = None,
+                progress: int | None = None,
             ) -> None:
-                update_job_stage(job, stage, detail=detail, chunk_count=chunk_count)
+                update_job_stage(
+                    job,
+                    stage,
+                    detail=detail,
+                    chunk_count=chunk_count,
+                    progress=progress,
+                )
                 await ensure_current_lease()
                 await self.session.commit()
 
@@ -447,6 +454,7 @@ class DocumentService:
         parser_quality = self._parser_quality_summary(chunks or [])
         parser_quality_details = self._parser_quality_details(chunks or [])
         index_quality_report = self._index_quality_report(chunks or [])
+        quality_repair_report = self._quality_repair_report(chunks or [])
         parser_warning = self._parser_quality_warning(parser_quality)
         job.result = {
             **job.result,
@@ -456,6 +464,7 @@ class DocumentService:
             "parser_quality": parser_quality,
             "parser_quality_details": parser_quality_details,
             "index_quality_report": index_quality_report,
+            "quality_repair_report": quality_repair_report,
         }
         job.logs = [*job.logs, f"Indexed {chunk_count} chunks."]
         if parser_warning:
@@ -528,6 +537,9 @@ class DocumentService:
 
     def _index_quality_report(self, chunks: list[Any]) -> dict[str, Any]:
         return DomainMetadataQualityGate().index_quality_report_from_chunks(chunks)
+
+    def _quality_repair_report(self, chunks: list[Any]) -> dict[str, Any]:
+        return DomainMetadataQualityGate().quality_repair_report_from_chunks(chunks)
 
     def _parser_warning_codes(self, chunk: Any) -> list[str]:
         return DomainMetadataQualityGate().parser_warning_codes_for_chunk(chunk)

@@ -26,6 +26,11 @@ from ragstudio.services.document_parse_evidence_service import (
     DocumentParseEvidenceService,
 )
 from ragstudio.services.document_service import ActiveIndexJobError, DocumentService
+from ragstudio.services.domain_metadata_contract_compiler import (
+    DomainMetadataContractError,
+    compile_index_options,
+    validate_executable_reference_contract,
+)
 from ragstudio.services.graph_projection_runner import (
     GraphProjectionCleanupError,
     GraphProjectionRunner,
@@ -63,7 +68,8 @@ async def upload_document(
         or mineru_parse_options is not None
         else None
     )
-    index_options = options or IndexDocumentIn()
+    compiled_options = compile_index_options(options) if options is not None else None
+    index_options = compiled_options or IndexDocumentIn()
     _validate_index_options(index_options)
     settings = request.app.state.settings
     await _ensure_runtime_ready(session, settings)
@@ -83,7 +89,7 @@ async def upload_document(
             filename=file.filename or "upload.bin",
             content_type=file.content_type or "application/octet-stream",
             content=content,
-            options=options,
+            options=compiled_options,
             index_immediately=False,
         )
         return document
@@ -107,6 +113,7 @@ async def reindex_document(
         )
         if not await service.document_exists(document_id):
             raise HTTPException(status_code=404, detail="Document not found")
+        options = compile_index_options(options)
         _validate_index_options(options)
         if await service.active_index_job(document_id) is not None:
             raise HTTPException(
@@ -224,6 +231,10 @@ def _validate_index_options(options: IndexDocumentIn) -> None:
     try:
         validate_custom_json(options.domain_metadata.custom_json)
     except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    try:
+        validate_executable_reference_contract(options.domain_metadata)
+    except DomainMetadataContractError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 

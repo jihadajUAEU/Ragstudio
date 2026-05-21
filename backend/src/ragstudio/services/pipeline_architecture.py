@@ -54,7 +54,10 @@ PIPELINE_LAYERS: tuple[PipelineLayer, ...] = (
         id=PipelineLayerId.REPAIR_AND_QUALITY,
         position=5,
         label="Repair And Quality",
-        contract="Apply repairs, parser warnings, and quality action policy.",
+        contract=(
+            "Run local quality repair, targeted vision recovery triggers, parser warning "
+            "classification, and quality action policy."
+        ),
     ),
     PipelineLayer(
         id=PipelineLayerId.MATERIALIZATION_POLICY,
