@@ -19,14 +19,11 @@ _ENGLISH_PREFILTER_STOPWORDS = {
     "at",
     "be",
     "book",
-    "bukhari",
     "by",
     "collection",
     "document",
     "for",
     "from",
-    "hadith",
-    "hadith_bukhari",
     "in",
     "is",
     "it",
@@ -34,7 +31,6 @@ _ENGLISH_PREFILTER_STOPWORDS = {
     "on",
     "or",
     "pdf",
-    "sahih",
     "saying",
     "says",
     "say",
@@ -177,10 +173,7 @@ def _english_prefilter_terms(query: str) -> list[str]:
         term = match.group(0).strip("_'-").casefold()
         if len(term) < 3 or term in _ENGLISH_PREFILTER_STOPWORDS:
             continue
-        if term == "eid":
-            terms.extend(["id", "adha"])
-        else:
-            terms.append(term)
+        terms.append(term)
     return list(dict.fromkeys(terms))[:5]
 
 
@@ -197,28 +190,14 @@ def _supports_reference_prefilter(chunk: Chunk) -> bool:
     if not isinstance(domain_metadata, dict):
         return False
 
-    raw_tags = domain_metadata.get("tags")
-    tags = (
-        {str(tag).casefold() for tag in raw_tags if isinstance(tag, str)}
-        if isinstance(raw_tags, list)
-        else set()
-    )
-    tokens = {
-        str(domain_metadata.get("domain") or "").casefold(),
-        str(domain_metadata.get("document_type") or "").casefold(),
-        str(domain_metadata.get("citation_style") or "").casefold(),
-        *tags,
-    }
-    return bool(
-        tokens
-        & {
-            "quran_tafseer",
-            "tafseer",
-            "quran",
-            "hadith",
-            "legal",
-            "law",
-            "statute",
-            "policy",
-        }
+    custom_json = domain_metadata.get("custom_json")
+    if isinstance(custom_json, dict) and any(
+        key in custom_json
+        for key in ("reference_schema", "reference_resolution", "domain_structure")
+    ):
+        return True
+
+    return any(
+        isinstance(domain_metadata.get(key), str) and bool(domain_metadata.get(key))
+        for key in ("citation_style", "reference_unit")
     )

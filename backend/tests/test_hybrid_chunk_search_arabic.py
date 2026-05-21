@@ -62,21 +62,32 @@ def test_arabic_query_does_not_match_quarantined_exact_policy():
     assert score.breakdown["quality_blocked_arabic"] == 1.0
 
 
-def test_hadith_topic_query_prioritizes_answer_terms_over_question_scaffolding():
-    query = "Which is the hadith saying about offering sacrifice for eid from hadith_bukhari"
+def test_count_intent_uses_domain_metadata_without_domain_specific_terms():
+    query = "How many severe medication incidents were reported?"
     domain_metadata = {
-        "domain": "hadith",
-        "document_type": "collection",
-        "collection": "sahih_bukhari",
-        "tags": ["hadith", "islamic_text"],
+        "domain": "medical_safety",
+        "document_type": "safety_report",
+        "custom_json": {
+            "search_intents": [
+                {
+                    "query_terms": ["how", "many", "count", "number", "total"],
+                    "requires_numeric_evidence": True,
+                    "vocabulary": ["events"],
+                    "boost": 30.0,
+                }
+            ],
+            "domain_vocabulary": {
+                "events": ["incident", "near_miss", "medication"],
+                "term_aliases": {"incident": ["event", "case"]},
+            },
+        },
     }
     correct = Chunk(
         id="correct",
         document_id="doc-1",
         text=(
-            "Book 13, Hadith 25\n\n"
-            "The Prophet went on the day of Id-ul-Adha and said our first act "
-            "is offering the prayer, then we return and slaughter the sacrifice."
+            "Medication safety summary: 12 severe medication incidents were reported "
+            "during the quarter."
         ),
         source_location={"page": 374},
         metadata_json={"domain_metadata": domain_metadata},
@@ -85,8 +96,7 @@ def test_hadith_topic_query_prioritizes_answer_terms_over_question_scaffolding()
         id="distractor",
         document_id="doc-1",
         text=(
-            "Book 63, Hadith 91\n\n"
-            "Which report is the saying about a different matter for people from Medina."
+            "The safety committee discussed training improvements and reporting forms."
         ),
         source_location={"page": 2000},
         metadata_json={"domain_metadata": domain_metadata},
@@ -97,9 +107,115 @@ def test_hadith_topic_query_prioritizes_answer_terms_over_question_scaffolding()
     distractor_score = search.score(query, distractor)
 
     assert correct_score.score > distractor_score.score
-    assert correct_score.breakdown["term_coverage"] > distractor_score.breakdown[
-        "term_coverage"
-    ]
+    assert correct_score.breakdown["domain_intent"] == 30.0
+    assert distractor_score.breakdown["domain_intent"] == 0.0
+
+
+def test_domain_intent_phrase_requires_full_query_phrase():
+    domain_metadata = {
+        "domain": "clinical",
+        "custom_json": {
+            "search_intents": [
+                {
+                    "query_terms": ["how many", "count"],
+                    "requires_numeric_evidence": True,
+                    "vocabulary": ["incident"],
+                    "boost": 30.0,
+                }
+            ],
+            "domain_vocabulary": {"events": ["incident"]},
+        },
+    }
+    chunk = Chunk(
+        id="chunk-1",
+        document_id="doc-1",
+        text="Medication incident classification lists 12 severe events.",
+        source_location={"page": 1},
+        metadata_json={"domain_metadata": domain_metadata},
+    )
+
+    false_match = HybridChunkSearch().score("How are medication incidents classified?", chunk)
+    true_match = HybridChunkSearch().score("How many medication incidents were severe?", chunk)
+
+    assert false_match.breakdown["domain_intent"] == 0.0
+    assert true_match.breakdown["domain_intent"] == 30.0
+
+
+def test_retrieval_explain_uses_weighted_score_breakdown():
+    chunk = Chunk(
+        id="chunk-1",
+        document_id="doc-1",
+        text="alpha beta gamma",
+        source_location={"page": 1},
+        metadata_json={},
+    )
+
+    score = HybridChunkSearch().score("alpha beta gamma", chunk, search_weights={"exact_phrase": 0})
+
+    signals = score.breakdown["retrieval_explain"]["signals"]
+    signal_names = {signal["name"] for signal in signals}
+
+    assert score.breakdown["exact_phrase"] == 8.0
+    assert score.breakdown["weighted_score_breakdown"]["exact_phrase"] == 0.0
+    assert "exact_phrase" not in signal_names
+
+
+def test_terms_do_not_expand_eid_without_domain_vocabulary():
+    search = HybridChunkSearch()
+
+    terms = search._terms("eid", None)
+
+    assert terms == {"eid"}
+
+
+def test_terms_use_domain_vocabulary_aliases_when_metadata_provides_them():
+    domain_metadata = {
+        "domain": "holiday_report",
+        "custom_json": {
+            "domain_vocabulary": {
+                "holidays": ["eid"],
+                "term_aliases": {"eid": ["id", "adha"]},
+            }
+        },
+    }
+    chunk = Chunk(
+        id="chunk-1",
+        document_id="doc-1",
+        text="The office was closed for Id al-Adha.",
+        source_location={"page": 1},
+        metadata_json={"domain_metadata": domain_metadata},
+    )
+
+    score = HybridChunkSearch().score("eid closure", chunk)
+
+    assert "weighted_score_breakdown" in score.breakdown
+    assert score.breakdown["term_coverage"] > 0.0
+    assert score.breakdown["semantic_density"] == 0.0
+    assert score.breakdown["metadata_boost"] == 0.0
+    assert score.breakdown["domain_intent"] == 0.0
+
+
+def test_semantic_density_weight_controls_real_breakdown_component():
+    chunk = Chunk(
+        id="chunk-1",
+        document_id="doc-1",
+        text="alpha beta gamma delta",
+        source_location={"page": 1},
+        metadata_json={},
+    )
+
+    unweighted = HybridChunkSearch().score("alpha beta", chunk)
+    weighted = HybridChunkSearch().score(
+        "alpha beta",
+        chunk,
+        search_weights={"semantic_density": 2.0},
+    )
+
+    assert unweighted.breakdown["semantic_density"] > 0.0
+    assert "term_density" not in unweighted.breakdown
+    assert weighted.breakdown["weighted_score_breakdown"]["semantic_density"] == (
+        unweighted.breakdown["semantic_density"] * 2.0
+    )
 
 
 def test_cross_reference_only_inline_reference_does_not_get_reference_exact_boost():

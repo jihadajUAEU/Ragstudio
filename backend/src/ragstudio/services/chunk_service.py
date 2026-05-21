@@ -155,6 +155,17 @@ class ChunkService:
             }
             if prefiltered_ids:
                 chunks = [*english_prefiltered, *arabic_prefiltered]
+                if self._metadata_fallback_requested(search_in):
+                    statement = select(Chunk)
+                    if search_in.document_ids:
+                        statement = statement.where(
+                            Chunk.document_id.in_(search_in.document_ids)
+                        )
+                    result = await self.session.execute(
+                        statement.order_by(Chunk.created_at.asc(), Chunk.id.asc())
+                        .limit(_FALLBACK_SEARCH_CANDIDATE_LIMIT)
+                    )
+                    chunks = self._dedupe_chunks([*chunks, *result.scalars().all()])
             else:
                 statement = select(Chunk)
                 if search_in.document_ids:
@@ -167,7 +178,19 @@ class ChunkService:
 
         ranked = sorted(
             (
-                (self.chunk_search.score(search_in.query, chunk), source_order, chunk)
+                (
+                    self.chunk_search.score(
+                        search_in.query,
+                        chunk,
+                        search_weights=(
+                            search_in.search_weights.model_dump(exclude_none=True)
+                            if search_in.search_weights is not None
+                            else None
+                        ),
+                    ),
+                    source_order,
+                    chunk,
+                )
                 for source_order, chunk in enumerate(chunks)
             ),
             key=lambda item: (
@@ -502,3 +525,25 @@ class ChunkService:
         if isinstance(chunk_index, int):
             return (0, chunk_index, chunk.created_at, chunk.id)
         return (1, fallback_order, chunk.created_at, chunk.id)
+
+    def _metadata_fallback_requested(self, search_in: ChunkSearchIn) -> bool:
+        if search_in.search_weights is None:
+            return False
+        weights = search_in.search_weights.model_dump(exclude_none=True)
+        for key in (
+            "metadata_boost",
+            "domain_intent",
+            "reference_exact",
+            "same_chapter",
+            "neighbor_match",
+        ):
+            value = weights.get(key)
+            if isinstance(value, int | float) and value > 0:
+                return True
+        return False
+
+    def _dedupe_chunks(self, chunks: list[Chunk]) -> list[Chunk]:
+        by_id: dict[str, Chunk] = {}
+        for chunk in chunks:
+            by_id.setdefault(chunk.id, chunk)
+        return list(by_id.values())

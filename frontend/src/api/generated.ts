@@ -388,6 +388,19 @@ export interface ChunkOut {
   relationship_refs: Record<string, string>;
 }
 
+export interface HybridSearchWeights {
+  reference_exact?: number | null;
+  neighbor_match?: number | null;
+  same_chapter?: number | null;
+  exact_phrase?: number | null;
+  term_coverage?: number | null;
+  semantic_density?: number | null;
+  arabic_exact?: number | null;
+  arabic_token?: number | null;
+  metadata_boost?: number | null;
+  domain_intent?: number | null;
+}
+
 export interface ChunkSearchIn {
   query: string;
   document_ids: string[];
@@ -396,6 +409,7 @@ export interface ChunkSearchIn {
   offset?: number;
   explain?: boolean;
   include_neighbors?: boolean;
+  search_weights?: HybridSearchWeights | null;
 }
 
 export interface ChunkSearchOut {
@@ -412,10 +426,24 @@ export interface QueryIn {
   response_mode?: "fast" | "full";
   answer_budget_ms?: number | null;
   response_budget_ms?: number | null;
+  search_weights?: HybridSearchWeights | null;
 }
 
 export interface QueryOut {
   runs: RunOut[];
+}
+
+export interface SimulateRetrievalIn {
+  query: string;
+  document_ids: string[];
+  variant_ids?: string[];
+  limit?: number;
+  search_weights?: HybridSearchWeights | null;
+}
+
+export interface SimulateRetrievalOut {
+  items: ChunkOut[];
+  total: number;
 }
 
 export interface EvaluationCaseIn {

@@ -28,6 +28,8 @@ import type {
   QueryIn,
   QueryOut,
   RunOut,
+  SimulateRetrievalIn,
+  SimulateRetrievalOut,
   SettingsProfileIn,
   SettingsProfileOut,
   VariantIn,
@@ -260,6 +262,12 @@ export const apiClient = {
     }),
   query: (payload: QueryIn) =>
     request<QueryOut>("/api/query", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }),
+  simulateRetrieval: (payload: SimulateRetrievalIn) =>
+    request<SimulateRetrievalOut>("/api/query/simulate-retrieval", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),

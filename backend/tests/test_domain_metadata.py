@@ -309,6 +309,41 @@ def test_validate_custom_json_rejects_invalid_retrieval_booleans():
         validate_custom_json({"retrieval": {"boost_same_chapter": 1}})
 
 
+def test_validate_custom_json_accepts_domain_search_policy():
+    payload = {
+        "search_intents": [
+            {
+                "query_terms": ["how many", "count", "total"],
+                "requires_numeric_evidence": True,
+                "vocabulary": ["incident", "medication"],
+                "boost": 30.0,
+            }
+        ],
+        "domain_vocabulary": {
+            "clinical_terms": ["incident", "near_miss", "medication"],
+            "term_aliases": {
+                "incident": ["event", "case"],
+                "medication": ["drug"],
+            },
+        },
+        "hybrid_search_weights": {
+            "term_coverage": 1.5,
+            "semantic_density": 2.0,
+            "domain_intent": 1.25,
+        },
+    }
+
+    assert validate_custom_json(payload) == payload
+
+
+def test_validate_custom_json_rejects_invalid_domain_search_boost():
+    with pytest.raises(ValueError, match=r"search_intents\[0\]\.boost"):
+        validate_custom_json({"search_intents": [{"query_terms": ["count"], "boost": -1}]})
+
+    with pytest.raises(ValueError, match=r"search_intents\[0\]\.boost"):
+        validate_custom_json({"search_intents": [{"query_terms": ["count"], "boost": "high"}]})
+
+
 def test_validate_custom_json_rejects_invalid_reference_resolution():
     with pytest.raises(ValueError, match=r"reference_resolution\.build_canonical_units"):
         validate_custom_json({"reference_resolution": {"build_canonical_units": "true"}})
@@ -396,6 +431,17 @@ def test_validate_custom_json_accepts_domain_structure_quality_and_layout_policy
                 "text_bearing_disallowed_block": {
                     "action": "recover_as_text",
                     "warning_level": "info",
+                }
+            },
+            "warning_policy": {
+                "recovered_text_from_misclassified_block": {
+                    "by_block_type": {
+                        "table": {
+                            "action": "block",
+                            "warning_level": "block",
+                            "treat_as": "review_required_table",
+                        }
+                    }
                 }
             },
         },
@@ -1688,7 +1734,21 @@ async def test_ai_domain_metadata_suggester_merges_partial_graph_into_baseline(
             "edge_types": ["references", "same_chapter"],
             "materialize_from": ["reference_metadata"],
             "confidence_policy": "evidence_required",
-        }
+        },
+        "reference_resolution": {
+            "enabled": True,
+            "build_canonical_units": True,
+            "carry_forward_body_blocks": True,
+            "header_only_policy": "provenance_only",
+            "continuation_policy": "until_next_reference",
+            "max_page_gap": 2,
+            "require_single_reference_per_answerable_chunk": True,
+        },
+        "provenance": {
+            "preserve_original_blocks": True,
+            "block_preview_chars": 160,
+            "store_text_hash": True,
+        },
     }
 
 

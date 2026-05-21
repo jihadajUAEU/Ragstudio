@@ -695,6 +695,7 @@ class RetrievalOrchestrator:
                     "lane_results": lane_traces,
                 },
             )
+        search_weights = _hybrid_search_weights(query_config)
         if document_ids:
             if _metadata_only(query_config) or not native_allowed:
                 metadata_result = await self._timed_metadata_candidates_with_deadline(
@@ -704,6 +705,7 @@ class RetrievalOrchestrator:
                     plan.candidate_limit,
                     plan,
                     timeout_ms=metadata_timeout_ms,
+                    search_weights=search_weights,
                     deadline_at=deadline_at,
                 )
                 metadata_candidates, metadata_ms, metadata_trace = metadata_result
@@ -743,6 +745,7 @@ class RetrievalOrchestrator:
                     parallel_started,
                     deadline_at,
                     lane_traces,
+                    search_weights=search_weights,
                 )
             native_task = self._timed_native_candidates(
                 query,
@@ -766,6 +769,7 @@ class RetrievalOrchestrator:
                 native_result,
                 deadline_at,
                 lane_traces,
+                search_weights=search_weights,
             )
 
         native_task = (
@@ -787,6 +791,7 @@ class RetrievalOrchestrator:
                 plan.candidate_limit,
                 plan,
                 timeout_ms=metadata_timeout_ms,
+                search_weights=search_weights,
                 deadline_at=deadline_at,
             )
             if metadata_allowed
@@ -819,6 +824,7 @@ class RetrievalOrchestrator:
         native_result: Any,
         deadline_at: float | None = None,
         lane_traces: list[dict[str, Any]] | None = None,
+        search_weights: dict[str, Any] | None = None,
     ) -> tuple[list[EvidenceCandidate], list[EvidenceCandidate], dict[str, Any]]:
         metadata_timeout_ms = _lane_timeout_ms(route_plan, "metadata", 8_000)
         try:
@@ -829,6 +835,7 @@ class RetrievalOrchestrator:
                 plan.candidate_limit,
                 plan,
                 timeout_ms=metadata_timeout_ms,
+                search_weights=search_weights,
                 deadline_at=deadline_at,
             )
         except Exception as exc:
@@ -856,6 +863,7 @@ class RetrievalOrchestrator:
         parallel_started: float,
         deadline_at: float | None,
         lane_traces: list[dict[str, Any]] | None = None,
+        search_weights: dict[str, Any] | None = None,
     ) -> tuple[list[EvidenceCandidate], list[EvidenceCandidate], dict[str, Any]]:
         native_timeout_ms = _native_timeout_ms(route_plan, query_config, fallback_ms=2_500)
         metadata_timeout_ms = _lane_timeout_ms(route_plan, "metadata", 8_000)
@@ -876,6 +884,7 @@ class RetrievalOrchestrator:
                 plan.candidate_limit,
                 plan,
                 timeout_ms=metadata_timeout_ms,
+                search_weights=search_weights,
                 deadline_at=deadline_at,
             )
         except Exception as exc:
@@ -921,6 +930,7 @@ class RetrievalOrchestrator:
         plan: Any,
         *,
         timeout_ms: int,
+        search_weights: dict[str, Any] | None = None,
         deadline_at: float | None,
     ) -> tuple[list[EvidenceCandidate], float, dict[str, Any]]:
         if deadline_at is None:
@@ -931,6 +941,7 @@ class RetrievalOrchestrator:
                     variant_id,
                     limit,
                     plan,
+                    search_weights=search_weights,
                 ),
                 timeout=max(timeout_ms, 1) / 1000,
             )
@@ -941,6 +952,7 @@ class RetrievalOrchestrator:
                 variant_id,
                 limit,
                 plan,
+                search_weights=search_weights,
             ),
             timeout=_remaining_timeout_seconds(deadline_at, fallback_ms=timeout_ms),
         )
@@ -1269,6 +1281,7 @@ class RetrievalOrchestrator:
         variant_id: str,
         limit: int,
         plan: Any | None = None,
+        search_weights: dict[str, Any] | None = None,
     ) -> tuple[list[EvidenceCandidate], float, dict[str, Any]]:
         started = perf_counter()
         understanding = getattr(plan, "understanding", None)
@@ -1284,6 +1297,7 @@ class RetrievalOrchestrator:
             document_ids=document_ids,
             variant_id=variant_id,
             limit=limit,
+            search_weights=search_weights,
         )
         return candidates, _elapsed_ms(started), trace
 
@@ -1632,6 +1646,11 @@ def _metadata_only(query_config: dict[str, Any]) -> bool:
     retrieval_mode = str(query_config.get("retrieval_mode") or "").casefold()
     reference_mode = str(query_config.get("reference_query_mode") or "").casefold()
     return retrieval_mode == "metadata" or reference_mode in {"exact", "lexical"}
+
+
+def _hybrid_search_weights(query_config: dict[str, Any]) -> dict[str, Any] | None:
+    weights = query_config.get("hybrid_search_weights")
+    return weights if isinstance(weights, dict) else None
 
 
 def _fast_mode(query_config: dict[str, Any]) -> bool:

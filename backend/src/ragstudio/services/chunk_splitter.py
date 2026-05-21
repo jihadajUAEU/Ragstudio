@@ -934,6 +934,7 @@ class ChunkSplitter:
     _SENTENCE_END_RE = re.compile(
         r"(?<=[.!?\u061f\u0964\u3002])\s+"
     )
+    _SEMANTIC_BOUNDARY_RE = re.compile(r"\n+|(?<=[.!?\u061f\u0964\u3002,;:])\s+")
 
     def _hard_split_text(self, text: str, hard_max_words: int) -> list[str]:
         source_words = text.split()
@@ -952,15 +953,13 @@ class ChunkSplitter:
                 continue
             sentence_word_count = len(sentence.split())
 
-            # If a single sentence exceeds the limit, fall back to word split.
+            # If a single sentence exceeds the limit, prefer a nearby semantic boundary.
             if sentence_word_count > hard_max_words:
                 if current:
                     chunks.append(" ".join(current))
                     current = []
                     current_words = 0
-                words = sentence.split()
-                for i in range(0, len(words), hard_max_words):
-                    chunks.append(" ".join(words[i : i + hard_max_words]))
+                chunks.extend(self._split_oversized_sentence(sentence, hard_max_words))
                 continue
 
             if current_words + sentence_word_count > hard_max_words and current:
@@ -975,6 +974,46 @@ class ChunkSplitter:
             chunks.append(" ".join(current))
 
         return [c for c in chunks if c.strip()]
+
+    def _split_oversized_sentence(self, text: str, hard_max_words: int) -> list[str]:
+        chunks: list[str] = []
+        remaining = text.strip()
+
+        while remaining:
+            remaining_words = remaining.split()
+            if len(remaining_words) <= hard_max_words:
+                chunks.append(remaining)
+                break
+
+            split_index = self._semantic_split_index(remaining, hard_max_words)
+            if split_index is None:
+                chunks.append(" ".join(remaining_words[:hard_max_words]))
+                remaining = " ".join(remaining_words[hard_max_words:]).strip()
+                continue
+
+            chunks.append(remaining[:split_index].strip())
+            remaining = remaining[split_index:].strip()
+
+        return chunks
+
+    def _semantic_split_index(self, text: str, hard_max_words: int) -> int | None:
+        word_matches = list(re.finditer(r"\S+", text))
+        if len(word_matches) <= hard_max_words:
+            return None
+
+        lower_word_index = max(1, int(hard_max_words * 0.55))
+        lower_bound = word_matches[lower_word_index - 1].end()
+        upper_bound = word_matches[hard_max_words - 1].end()
+        split_index: int | None = None
+
+        for match in self._SEMANTIC_BOUNDARY_RE.finditer(text):
+            if match.end() <= lower_bound:
+                continue
+            if match.end() > upper_bound:
+                break
+            split_index = match.end()
+
+        return split_index
 
     def _with_split_metadata(
         self,

@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any
 
-from pydantic import AliasChoices, Field, field_validator
+from pydantic import AliasChoices, Field, field_validator, model_validator
 
 from ragstudio.schemas.common import StudioModel
 
@@ -29,6 +29,26 @@ class ChunkOut(StudioModel):
         return "text" if value is None or value == "" else value
 
 
+class HybridSearchWeights(StudioModel):
+    reference_exact: float | None = None
+    neighbor_match: float | None = None
+    same_chapter: float | None = None
+    exact_phrase: float | None = None
+    term_coverage: float | None = None
+    semantic_density: float | None = None
+    arabic_exact: float | None = None
+    arabic_token: float | None = None
+    metadata_boost: float | None = None
+    domain_intent: float | None = None
+
+    @model_validator(mode="after")
+    def reject_negative_weights(self) -> "HybridSearchWeights":
+        for key, value in self.model_dump(exclude_none=True).items():
+            if value < 0:
+                raise ValueError(f"{key} must be greater than or equal to 0")
+        return self
+
+
 class ChunkSearchIn(StudioModel):
     query: str
     document_ids: list[str] = []
@@ -37,6 +57,7 @@ class ChunkSearchIn(StudioModel):
     offset: int = 0
     explain: bool = True
     include_neighbors: bool = True
+    search_weights: HybridSearchWeights | None = None
 
 
 class ChunkSearchOut(StudioModel):

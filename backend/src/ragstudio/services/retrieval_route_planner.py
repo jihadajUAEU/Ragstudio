@@ -329,7 +329,7 @@ def _build_lane_plan(
             or not graph_readiness.safe_to_run
         ):
             status = "skipped"
-            reason = "graph_unavailable"
+            reason = graph_readiness.reason or "graph_unavailable"
     elif lane == "raganything_runtime":
         if (
             runtime_readiness.state in {"disabled", "unavailable"}

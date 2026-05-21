@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from time import perf_counter
 from typing import Any
 
-from ragstudio.schemas.chunks import ChunkOut, ChunkSearchIn
+from ragstudio.schemas.chunks import ChunkOut, ChunkSearchIn, HybridSearchWeights
 from ragstudio.services.query_hypothesis_service import normalize_reference_hypothesis
 from ragstudio.services.query_understanding import QueryUnderstanding, RetrievalPass
 from ragstudio.services.retrieval_evidence import EvidenceCandidate
@@ -52,10 +52,16 @@ class MetadataRetrievalService:
         document_ids: list[str],
         variant_id: str,
         limit: int,
+        search_weights: dict[str, Any] | HybridSearchWeights | None = None,
     ) -> tuple[list[EvidenceCandidate], dict[str, Any]]:
         candidates: list[EvidenceCandidate] = []
         pass_traces: list[dict[str, Any]] = []
         seen_chunk_ids: set[str] = set()
+        effective_search_weights = (
+            HybridSearchWeights.model_validate(search_weights)
+            if search_weights is not None
+            else None
+        )
 
         metadata_passes = self._metadata_passes(understanding)
         if self.parallel_search is None or len(metadata_passes) <= 1:
@@ -67,6 +73,7 @@ class MetadataRetrievalService:
                     variant_id=variant_id,
                     limit=limit,
                     search=self.chunk_service.search,
+                    search_weights=effective_search_weights,
                 )
                 if self._append_pass_result(
                     pass_result,
@@ -83,6 +90,7 @@ class MetadataRetrievalService:
             document_ids=document_ids,
             variant_id=variant_id,
             limit=limit,
+            search_weights=effective_search_weights,
         )
         for pass_result in pass_results:
             if self._append_pass_result(
@@ -103,6 +111,7 @@ class MetadataRetrievalService:
         document_ids: list[str],
         variant_id: str,
         limit: int,
+        search_weights: HybridSearchWeights | None,
     ) -> list[MetadataPassResult]:
         semaphore = asyncio.Semaphore(self.max_parallel_passes)
 
@@ -115,6 +124,7 @@ class MetadataRetrievalService:
                     variant_id=variant_id,
                     limit=limit,
                     search=self.parallel_search,
+                    search_weights=search_weights,
                 )
 
         return list(await asyncio.gather(*(run_limited(item) for item in retrieval_passes)))
@@ -161,6 +171,7 @@ class MetadataRetrievalService:
         variant_id: str,
         limit: int,
         search: MetadataSearch,
+        search_weights: HybridSearchWeights | None = None,
     ) -> MetadataPassResult:
         pass_started = perf_counter()
         pass_query = retrieval_pass.query or query
@@ -172,6 +183,7 @@ class MetadataRetrievalService:
                 limit=max(limit * retrieval_pass.limit_multiplier, limit),
                 explain=True,
                 include_neighbors=True,
+                search_weights=search_weights,
             )
         )
         return MetadataPassResult(
