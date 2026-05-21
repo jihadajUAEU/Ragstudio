@@ -1,0 +1,4 @@
+interface:
+  display_name: "Chunk Query Retrieval Auditor"
+  short_description: "Audit Ragstudio search and retrieval ranking"
+  default_prompt: "Use $chunk-query-retrieval-auditor to audit a Ragstudio chunk search or query ranking issue."

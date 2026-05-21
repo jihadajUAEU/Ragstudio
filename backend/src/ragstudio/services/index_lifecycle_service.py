@@ -159,19 +159,24 @@ class IndexLifecycleService:
             domain_metadata=options.domain_metadata,
             parser_mode=options.parser_mode,
         )
-        layout_repair_result = self.layout_auto_repair.repair(adapter_chunks)
+        layout_repair_result = await self._run_cpu_bound(
+            self.layout_auto_repair.repair,
+            adapter_chunks,
+        )
         adapter_chunks = layout_repair_result.chunks
         adapter_chunks = await self._run_cpu_bound(
             MinerURelationshipBuilder().annotate,
             adapter_chunks,
             options.domain_metadata,
         )
-        quality_report = self.quality_gate.validate_adapter_chunks(
+        quality_report = await self._run_cpu_bound(
+            self.quality_gate.validate_adapter_chunks,
             adapter_chunks,
             language=self._quality_language(options.domain_metadata),
             domain_metadata=options.domain_metadata,
         )
         index_quality_report = quality_report.get("index_quality_report")
+        quality_repair_report = quality_report.get("quality_repair")
         runtime_adapter_chunks = self._runtime_materializable_chunks(adapter_chunks)
         if on_stage is not None:
             await on_stage(
@@ -194,6 +199,22 @@ class IndexLifecycleService:
                     detail=f"Persisting {len(adapter_chunks)} canonical chunks.",
                     chunk_count=len(adapter_chunks),
                 )
+
+            async def on_persist_progress(persisted_count: int, total_count: int) -> None:
+                if on_stage is None:
+                    return
+                progress = 55
+                if total_count > 0:
+                    progress = min(64, 55 + int((persisted_count / total_count) * 9))
+                await on_stage(
+                    IndexStage.CHUNKS_PERSISTING,
+                    detail=(
+                        f"Persisted {persisted_count} of {total_count} canonical chunks."
+                    ),
+                    chunk_count=total_count,
+                    progress=progress,
+                )
+
             chunks = await ChunkPersistenceService(self.session).persist(
                 document,
                 adapter_chunks,
@@ -201,6 +222,7 @@ class IndexLifecycleService:
                 commit=False,
                 runtime_profile_id=profile.id,
                 index_shape=profile.index_shape,
+                on_progress=on_persist_progress if on_stage is not None else None,
             )
             self.session.add(
                 IndexRecord(
@@ -213,6 +235,7 @@ class IndexLifecycleService:
                         "embedding_dimensions": profile.embedding_dimensions,
                         "parser_mode": options.parser_mode,
                         "index_quality_report": index_quality_report,
+                        "quality_repair_report": quality_repair_report,
                         "layout_auto_repair_report": (
                             layout_repair_result.diagnostics_payload()
                         ),

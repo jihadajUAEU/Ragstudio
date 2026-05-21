@@ -1,5 +1,6 @@
 import json
 import threading
+from inspect import isawaitable
 from pathlib import Path
 
 import pytest
@@ -15,6 +16,7 @@ from ragstudio.services.graph_projection_runner import (
     GraphProjectionRunner,
 )
 from ragstudio.services.index_lifecycle_service import IndexLifecycleService
+from ragstudio.services.layout_auto_repair import LayoutAutoRepairResult
 from ragstudio.services.runtime_types import RuntimeChunk
 from sqlalchemy import select
 
@@ -180,6 +182,46 @@ class RecordingModalPreprocessor:
         ]
 
 
+class RecordingLayoutAutoRepair:
+    def __init__(self) -> None:
+        self.calls: list[list[AdapterChunk]] = []
+
+    def repair(self, adapter_chunks: list[AdapterChunk]) -> LayoutAutoRepairResult:
+        self.calls.append(adapter_chunks)
+        return LayoutAutoRepairResult(chunks=adapter_chunks, diagnostics=[])
+
+
+class RecordingQualityGate:
+    def __init__(self, report: dict | None = None) -> None:
+        self.calls: list[dict] = []
+        self.report = report or {
+            "index_quality_report": {
+                "quality_report_version": 99,
+                "preserved": {"nested": True},
+            },
+            "quality_repair": {
+                "status": "preserved",
+                "attempted": False,
+            },
+        }
+
+    def validate_adapter_chunks(
+        self,
+        adapter_chunks: list[AdapterChunk],
+        *,
+        language: str,
+        domain_metadata: DomainMetadata,
+    ) -> dict:
+        self.calls.append(
+            {
+                "chunks": adapter_chunks,
+                "language": language,
+                "domain_metadata": domain_metadata,
+            }
+        )
+        return self.report
+
+
 
 class FakeGraphMaterializationService:
     def __init__(
@@ -323,6 +365,92 @@ async def test_run_cpu_bound_awaits_awaitable_return() -> None:
         return async_value()
 
     assert await service._run_cpu_bound(returns_awaitable) == "awaited"
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_routes_layout_repair_and_quality_gate_through_cpu_helper(client):
+    app = client._transport.app
+    artifact_path = app.state.settings.data_dir / "cpu-helper-routing.pdf"
+    artifact_path.write_text("runtime text", encoding="utf-8")
+    parser_chunk = AdapterChunk(
+        text="CPU helper routing chunk",
+        source_location={"page_start": 1, "page_end": 1},
+        metadata={"parser_metadata": {"backend": "mineru"}},
+        runtime_source_id="runtime-cpu-helper",
+    )
+    layout_auto_repair = RecordingLayoutAutoRepair()
+    quality_gate = RecordingQualityGate()
+    runtime = PreparsedRuntime()
+
+    async with app.state.session_factory() as session:
+        session.add(
+            SettingsProfile(
+                id="default",
+                provider="openai-compatible",
+                llm_model="gpt-4o",
+                llm_base_url="http://llm.test",
+                embedding_model="text-embedding-3-large",
+                embedding_base_url="http://embedding.test",
+                storage_backend="postgres_pgvector_neo4j",
+                runtime_mode="runtime",
+            )
+        )
+        document = Document(
+            filename="cpu-helper-routing.pdf",
+            content_type="application/pdf",
+            sha256="cpu-helper-routing",
+            artifact_path=str(artifact_path),
+            status=StageStatus.READY.value,
+        )
+        session.add(document)
+        await session.commit()
+
+        service = IndexLifecycleService(
+            session,
+            app.state.settings,
+            runtime_factory=FakeFactory(runtime),
+            health_service=FakeHealthService(),
+            document_parser=FakeDocumentParser([parser_chunk]),
+            layout_auto_repair=layout_auto_repair,
+            quality_gate=quality_gate,
+        )
+        cpu_helper_calls: list[dict] = []
+
+        async def recording_cpu_helper(func, *args, **kwargs):
+            cpu_helper_calls.append({"func": func, "args": args, "kwargs": kwargs})
+            result = func(*args, **kwargs)
+            if isawaitable(result):
+                return await result
+            return result
+
+        service._run_cpu_bound = recording_cpu_helper
+
+        result = await service.reindex_document(
+            document.id,
+            options=IndexDocumentIn(parser_mode="mineru_strict"),
+        )
+        index_record = await session.scalar(
+            select(IndexRecord).where(IndexRecord.document_id == document.id)
+        )
+
+    assert result is not None
+    assert layout_auto_repair.calls
+    assert quality_gate.calls
+    assert any(call["func"] == layout_auto_repair.repair for call in cpu_helper_calls)
+    assert any(call["func"] == quality_gate.validate_adapter_chunks for call in cpu_helper_calls)
+    quality_call = next(
+        call for call in cpu_helper_calls if call["func"] == quality_gate.validate_adapter_chunks
+    )
+    assert quality_call["kwargs"]["language"] == "unknown"
+    assert isinstance(quality_call["kwargs"]["domain_metadata"], DomainMetadata)
+    assert index_record is not None
+    assert index_record.index_shape["index_quality_report"] == quality_gate.report[
+        "index_quality_report"
+    ]
+    assert index_record.index_shape["quality_repair_report"] == quality_gate.report[
+        "quality_repair"
+    ]
+    assert index_record.index_shape["quality_report_version"] == 99
 
 
 @pytest.mark.asyncio

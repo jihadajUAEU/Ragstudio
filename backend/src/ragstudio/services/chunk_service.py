@@ -26,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 MinerUStatusCallback = Callable[[dict[str, Any]], Awaitable[None]]
 _SCRUBBED_DOMAIN_METADATA_VALUE = object()
 _UNSAFE_DOMAIN_METADATA_PATH_KEYS = {"artifact_path", "file_path", "path"}
+_FALLBACK_SEARCH_CANDIDATE_LIMIT = 100
 
 
 class ChunkService:
@@ -130,7 +131,7 @@ class ChunkService:
         limit = max(search_in.limit, 0)
         offset = max(search_in.offset, 0)
         repository = ChunkLexicalSearchRepository(self.session)
-        prefilter_limit = max(offset + limit, 20)
+        prefilter_limit = max(offset + limit, 100)
         reference_prefiltered = await repository.reference_prefilter(
             query=search_in.query,
             document_ids=search_in.document_ids,
@@ -160,6 +161,7 @@ class ChunkService:
                     statement = statement.where(Chunk.document_id.in_(search_in.document_ids))
                 result = await self.session.execute(
                     statement.order_by(Chunk.created_at.asc(), Chunk.id.asc())
+                    .limit(_FALLBACK_SEARCH_CANDIDATE_LIMIT)
                 )
                 chunks = list(result.scalars().all())
 
