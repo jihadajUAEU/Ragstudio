@@ -1,9 +1,67 @@
 from ragstudio.services.domain_query_expansion_service import DomainQueryExpansionService
+from ragstudio.services.domain_lexical_registry import DomainLexicalRegistry
 from ragstudio.services.lexical_language_adapters import (
     ArabicLexicalAdapter,
     GenericLatinAdapter,
+    LexicalExpansion,
 )
 from ragstudio.services.query_hypothesis_service import QueryHypothesis, QueryTargetTerm
+
+
+class LegalLexicalAdapter:
+    def supports_query(self, query: str) -> bool:
+        return "force majeure" in query.casefold()
+
+    def expand_query(self, query: str) -> LexicalExpansion:
+        return LexicalExpansion(
+            language="english",
+            script="latin",
+            match_type="domain_synonym",
+            confidence=0.91,
+            source="legal_test_adapter",
+            terms=["force majeure", "act of god", "impossibility"],
+        )
+
+
+def test_domain_query_expansion_uses_registered_non_arabic_adapter():
+    registry = DomainLexicalRegistry()
+    registry.register("legal_reference", LegalLexicalAdapter())
+    service = DomainQueryExpansionService(registry=registry)
+
+    expansion = service.expand(
+        "force majeure clause",
+        domain_metadata=[
+            {
+                "domain": "legal",
+                "document_type": "contract",
+                "tags": ["contract", "reference"],
+            }
+        ],
+    )
+
+    assert expansion.domain_family == "legal_reference"
+    assert [item.source for item in expansion.expansions] == ["legal_test_adapter"]
+    assert expansion.trace["adapter_sources"] == ["legal_test_adapter"]
+    assert "act of god" in expansion.trace["expanded_terms"]
+    assert any(item.query == "impossibility" for item in expansion.retrieval_passes)
+
+
+def test_domain_query_expansion_preserves_arabic_religious_family():
+    service = DomainQueryExpansionService()
+
+    expansion = service.expand(
+        "quran 1:5",
+        domain_metadata=[
+            {
+                "domain": "quran_tafseer",
+                "document_type": "commentary",
+                "tags": ["quran", "arabic"],
+            }
+        ],
+    )
+
+    assert expansion.domain_family == "arabic_religious"
+    assert expansion.trace["domain_family"] == "arabic_religious"
 
 
 def test_arabic_adapter_preserves_existing_arabic_variants():
