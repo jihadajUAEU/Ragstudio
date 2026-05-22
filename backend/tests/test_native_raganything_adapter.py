@@ -615,10 +615,27 @@ def test_preparsed_content_list_includes_context_prefix_and_bridge_metadata(tmp_
     rows = adapter._content_list_from_preparsed_chunks([chunk], document_id="doc-1")
 
     assert rows[0]["text"].startswith("[Context: Synthetic Tafseer > 1:5")
-    assert rows[0]["canonical_chunk_id"] == "runtime-1"
+    assert rows[0]["canonical_chunk_id"] == "doc-1|1:5"
+    assert rows[0]["chunk_identity"] == "doc-1|1:5"
     assert rows[0]["full_doc_id"] == "doc-1"
+    assert rows[0]["metadata"]["runtime_source_id"] == "runtime-1"
     assert rows[0]["metadata"]["quality_action_policy"]["index_vector"] is True
     assert rows[0]["metadata"]["evidence_context"]["reference"] == "1:5"
+
+
+def test_preparsed_content_list_keeps_native_type_text_for_studio_chunk_types(tmp_path):
+    adapter = NativeRAGAnythingAdapter(profile(runtime_working_dir=str(tmp_path)), AppSettings())
+    chunk = AdapterChunk(
+        text="Structured warning payload",
+        source_location={"page": 1},
+        metadata={"chunk_identity": "doc-1|warning"},
+        content_type="parser_quality_warning",
+    )
+
+    rows = adapter._content_list_from_preparsed_chunks([chunk], document_id="doc-1")
+
+    assert rows[0]["type"] == "text"
+    assert rows[0]["metadata"]["content_type"] == "parser_quality_warning"
 
 
 def test_preparsed_content_list_preserves_quality_policy_for_runtime_bridge(tmp_path):

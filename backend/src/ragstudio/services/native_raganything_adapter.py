@@ -760,6 +760,8 @@ class NativeRAGAnythingAdapter:
             metadata["chunk_identity"] = chunk_identity
             content_type = chunk.content_type or "text"
             metadata.setdefault("content_type", content_type)
+            if isinstance(chunk.runtime_source_id, str) and chunk.runtime_source_id.strip():
+                metadata.setdefault("runtime_source_id", chunk.runtime_source_id)
             evidence_context = evidence_context_from_metadata(
                 metadata,
                 source_location=chunk.source_location,
@@ -772,7 +774,7 @@ class NativeRAGAnythingAdapter:
                 "chunk_identity": chunk_identity,
                 "canonical_chunk_id": chunk_identity,
                 "full_doc_id": document_id,
-                "type": content_type,
+                "type": "text",
                 "text": prefixed_embedding_text(
                     chunk.text,
                     metadata,
@@ -787,6 +789,7 @@ class NativeRAGAnythingAdapter:
                         "quality_action_policy",
                         "evidence_context",
                         "content_type",
+                        "runtime_source_id",
                     )
                     if key in metadata
                 },
@@ -840,12 +843,12 @@ class NativeRAGAnythingAdapter:
         *,
         document_id: str,
     ) -> str:
-        if isinstance(chunk.runtime_source_id, str) and chunk.runtime_source_id.strip():
-            return chunk.runtime_source_id
-
         metadata_identity = chunk.metadata.get("chunk_identity")
         if isinstance(metadata_identity, str) and metadata_identity.strip():
             return metadata_identity
+
+        if isinstance(chunk.runtime_source_id, str) and chunk.runtime_source_id.strip():
+            return chunk.runtime_source_id
 
         parser_metadata = chunk.metadata.get("parser_metadata")
         parser_metadata = dict(parser_metadata) if isinstance(parser_metadata, dict) else {}
