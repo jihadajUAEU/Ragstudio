@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-05-14)
 Phase: 06 (app-evidence-viewer-and-runtime-trust-banner) — COMPLETE
 Plan: 3 of 3
 Status: Phase complete; Phase 05 still has Plan 05-03 pending
-Last activity: 2026-05-16
+Last activity: 2026-05-22 - Completed quick task 260522-qdf: Implement Jobs and Warnings tab redesign
 
 Progress: [█████████░] 94%
 
@@ -89,6 +89,9 @@ None yet.
 
 | Date | Quick ID | Task | Status |
 |------|----------|------|--------|
+| 2026-05-22 | 260522-qdf | Implement Jobs and Warnings tab redesign | Complete |
+| 2026-05-22 | 260522-ouk | Add shared DataTable pagination components for all tables | Complete |
+| 2026-05-22 | 260522-o6u | Redesign document page at /documents | Complete |
 | 2026-05-16 | 260516-n1c | Fix Task 5 lexical-expanded dedupe scoring blocker | Complete |
 | 2026-05-15 | 260515-kc3 | Align public-site changelog, roadmap, and GitHub links with Ragstudio | Complete |
 | 2026-05-15 | 260515-jz0 | Create alternate Evidence Console public-site design after user rejected first SaaS/logo option | Complete |

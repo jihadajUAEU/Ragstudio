@@ -10,15 +10,26 @@ import {
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
 import {
+  Activity,
   AlertCircle,
+  CheckCircle2,
+  Clock,
+  Copy,
+  FileWarning,
+  FileText,
   FileUp,
+  ListChecks,
   Loader2,
+  MoreVertical,
   RefreshCcw,
   Search,
+  ShieldCheck,
   Sparkles,
   Trash2,
   Upload,
+  Wrench,
   X,
+  XCircle,
 } from "lucide-react";
 
 import { apiClient, DEFAULT_PARSER_MODE, FIRST_LIST_PAGE } from "../../api/client";
@@ -42,6 +53,9 @@ const queryKeys = {
 
 type DocumentsTab = "documents" | "jobs";
 const WARNING_VISIBLE_ROW_LIMIT = 200;
+const DOCUMENTS_TABLE_PAGE_SIZE = 25;
+const JOBS_TABLE_PAGE_SIZE = 25;
+const JOB_REFRESH_INTERVAL_OPTIONS = [5_000, 10_000, 30_000] as const;
 type LiveJobEventsById = Record<string, LiveJobEventSnapshot>;
 type DomainMetadataSuggestion = Awaited<ReturnType<typeof apiClient.suggestDomainMetadata>>;
 
@@ -80,14 +94,26 @@ export function DocumentsPage() {
   const [selectedWarningJobId, setSelectedWarningJobId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<DocumentsTab>("documents");
   const [documentSearch, setDocumentSearch] = useState("");
+  const [documentsPage, setDocumentsPage] = useState(1);
+  const [documentsPageSize, setDocumentsPageSize] = useState(DOCUMENTS_TABLE_PAGE_SIZE);
   const [jobSearch, setJobSearch] = useState("");
   const [jobStatusFilter, setJobStatusFilter] = useState("");
+  const [jobWarningOnly, setJobWarningOnly] = useState(false);
+  const [jobsAutoRefresh, setJobsAutoRefresh] = useState(true);
+  const [jobsRefreshIntervalMs, setJobsRefreshIntervalMs] = useState<number>(10_000);
+  const [jobsPage, setJobsPage] = useState(1);
+  const [jobsPageSize, setJobsPageSize] = useState(JOBS_TABLE_PAGE_SIZE);
   const [liveJobEventsById, setLiveJobEventsById] = useState<LiveJobEventsById>({});
   const [visionSuggestion, setVisionSuggestion] = useState<DomainMetadataSuggestion | null>(null);
   const jobsQuery = useQuery({
     queryKey: queryKeys.jobs,
     queryFn: () => apiClient.jobs(FIRST_LIST_PAGE),
-    refetchInterval: (query) => (hasActiveJobs(query.state.data?.items ?? []) ? 2000 : false),
+    refetchInterval: (query) =>
+      hasActiveJobs(query.state.data?.items ?? [])
+        ? 2_000
+        : jobsAutoRefresh
+          ? jobsRefreshIntervalMs
+          : false,
   });
   const jobs = useMemo(() => jobsQuery.data?.items ?? [], [jobsQuery.data?.items]);
   const activeJobs = hasActiveJobs(jobs);
@@ -229,6 +255,15 @@ export function DocumentsPage() {
     () => filterDocuments(documents, documentSearch),
     [documentSearch, documents],
   );
+  const currentDocumentsPage = clampedTablePage(
+    documentsPage,
+    filteredDocuments.length,
+    documentsPageSize,
+  );
+  const visibleDocuments = useMemo(
+    () => paginateRows(filteredDocuments, currentDocumentsPage, documentsPageSize),
+    [currentDocumentsPage, documentsPageSize, filteredDocuments],
+  );
   const jobStatusOptions = useMemo(
     () => Array.from(new Set(jobs.map((job) => job.status))).sort(),
     [jobs],
@@ -238,9 +273,23 @@ export function DocumentsPage() {
     () => jobs.filter(hasInspectableQualityWarnings).length,
     [jobs],
   );
+  const jobMetrics = useMemo(() => summarizeJobs(jobs), [jobs]);
   const filteredJobs = useMemo(
-    () => filterJobs(jobs, documentsById, jobSearch, jobStatusFilter, liveJobEventsById),
-    [documentsById, jobSearch, jobStatusFilter, jobs, liveJobEventsById],
+    () =>
+      filterJobs(
+        jobs,
+        documentsById,
+        jobSearch,
+        jobStatusFilter,
+        jobWarningOnly,
+        liveJobEventsById,
+      ),
+    [documentsById, jobSearch, jobStatusFilter, jobWarningOnly, jobs, liveJobEventsById],
+  );
+  const currentJobsPage = clampedTablePage(jobsPage, filteredJobs.length, jobsPageSize);
+  const visibleJobs = useMemo(
+    () => paginateRows(filteredJobs, currentJobsPage, jobsPageSize),
+    [currentJobsPage, filteredJobs, jobsPageSize],
   );
   const selectedWarningJob = useMemo(
     () => jobs.find((job) => job.id === selectedWarningJobId) ?? null,
@@ -427,38 +476,32 @@ export function DocumentsPage() {
 
           return (
             <div className="min-w-0">
-              <p className="truncate font-medium">{formatJobName(row.original, document)}</p>
-              <code className="block truncate text-xs text-[#62717a]">
-                {document
-                  ? `${formatJobType(row.original.type)} · ${row.original.id}`
-                  : row.original.target_id ?? "workspace"}
+              <p className="truncate font-semibold text-[var(--rs-ink)]">
+                {formatJobName(row.original, document)}
+              </p>
+              <code className="block truncate text-xs text-[var(--rs-muted)]">
+                {formatJobType(row.original.type)} · {row.original.id}
               </code>
             </div>
           );
         },
       },
       {
-        accessorKey: "progress",
-        header: "Progress",
+        id: "document",
+        header: "Document",
         cell: ({ row }) => {
-          const liveEvent = liveJobEventsById[row.original.id];
-          const progress = getJobProgress(row.original, liveEvent);
-          const mineruStatus = getMinerUStatus(row.original.result, liveEvent);
+          const document = row.original.target_id
+            ? documentsById.get(row.original.target_id)
+            : undefined;
 
           return (
-            <div className="min-w-32 space-y-1">
-              <div className="flex items-center gap-2">
-                <div className="h-2 flex-1 overflow-hidden rounded-full bg-[#e6ecef]">
-                  <div
-                    className="h-full rounded-full bg-[#176b87]"
-                    style={{ width: `${progress}%` }}
-                  />
-                </div>
-                <span className="w-9 text-right text-xs text-[#62717a]">{progress}%</span>
-              </div>
-              {mineruStatus?.status ? (
-                <p className="truncate text-xs text-[#62717a]">MinerU {mineruStatus.status}</p>
-              ) : null}
+            <div className="min-w-0">
+              <p className="truncate font-medium text-[var(--rs-text)]">
+                {document?.filename ?? row.original.target_id ?? "Workspace"}
+              </p>
+              <p className="truncate text-xs text-[var(--rs-muted)]">
+                {document?.content_type ?? formatJobType(row.original.type)}
+              </p>
             </div>
           );
         },
@@ -469,48 +512,123 @@ export function DocumentsPage() {
         cell: ({ row }) => <StatusBadge status={row.original.status} />,
       },
       {
-        accessorKey: "logs",
-        header: "Latest log",
+        accessorKey: "progress",
+        header: "Progress",
         cell: ({ row }) => {
           const liveEvent = liveJobEventsById[row.original.id];
-          const mineruStatus = formatMinerUResult(row.original, liveEvent);
-          const stageText = jobStageText(row.original, liveEvent);
-          const warnings = jobWarnings(row.original, liveEvent);
-          const parserQualityGroups = jobParserQualityGroups(row.original);
-          const canInspectWarnings = hasInspectableQualityWarnings(row.original);
-          const latestLog = liveEvent?.logs.at(-1) ?? row.original.logs.at(-1) ?? "No logs";
+          const progress = getJobProgress(row.original, liveEvent);
+          const barClass =
+            row.original.status === "failed" ? "bg-[var(--rs-danger)]" : "bg-[var(--rs-accent)]";
 
           return (
-            <div className="min-w-0 space-y-1 text-xs text-[#62717a]">
-              {mineruStatus ? (
-                <p className="truncate font-medium text-[#3a4a53]">MinerU: {mineruStatus}</p>
+            <div className="min-w-32">
+              <p className="mb-1 text-xs font-medium text-[var(--rs-text)]">{progress}%</p>
+              <div className="h-2 overflow-hidden rounded-full bg-[var(--rs-field)]">
+                <div
+                  className={`h-full rounded-full ${barClass}`}
+                  style={{ width: `${progress}%` }}
+                />
+              </div>
+            </div>
+          );
+        },
+      },
+      {
+        id: "stage",
+        header: "Stage (MinerU)",
+        cell: ({ row }) => {
+          const liveEvent = liveJobEventsById[row.original.id];
+          const stageText = jobStageText(row.original, liveEvent);
+          const mineru = getMinerUStatus(row.original.result, liveEvent);
+          const mineruStatus = formatMinerUResult(row.original, liveEvent);
+
+          return (
+            <div className="min-w-0 text-xs text-[var(--rs-text)]">
+              <p className="line-clamp-2 font-medium">
+                {stageText ?? (mineru?.status ? `MinerU ${mineru.status}` : mineruStatus) ?? "No stage reported"}
+              </p>
+              {mineruStatus && (stageText || mineru?.status) ? (
+                <p className="mt-1 truncate text-[var(--rs-muted)]">MinerU: {mineruStatus}</p>
               ) : null}
-              {stageText ? <p className="line-clamp-2 text-[#3a4a53]">{stageText}</p> : null}
+            </div>
+          );
+        },
+      },
+      {
+        accessorKey: "logs",
+        header: "Latest Log Preview",
+        cell: ({ row }) => {
+          const liveEvent = liveJobEventsById[row.original.id];
+          const latestLog = liveEvent?.logs.at(-1) ?? row.original.logs.at(-1) ?? "No logs";
+          const warnings = jobWarnings(row.original, liveEvent).slice(0, 2);
+          const parserGroups = jobParserQualityGroups(row.original);
+
+          return (
+            <div className="min-w-0 space-y-1 text-xs leading-5 text-[var(--rs-text)]">
+              <p className="line-clamp-2">{latestLog}</p>
               {warnings.map((warning) => (
-                <p key={warning} className="line-clamp-2 text-[#8a5a00]">
+                <p key={warning} className="line-clamp-1 text-[var(--rs-warning)]">
                   {warning}
                 </p>
               ))}
-              {parserQualityGroups.length ? (
-                <ParserQualityDetails groups={parserQualityGroups} />
-              ) : null}
-              <p className="line-clamp-2">{latestLog}</p>
-              {canInspectWarnings ? (
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="sm"
-                  className="mt-1"
-                  onClick={() => setSelectedWarningJobId(row.original.id)}
-                  aria-label={`Inspect warning details for ${formatJobName(
-                    row.original,
-                    row.original.target_id ? documentsById.get(row.original.target_id) : undefined,
-                  )}`}
-                >
-                  <AlertCircle className="h-4 w-4" aria-hidden="true" />
-                  Inspect warnings
-                </Button>
-              ) : null}
+              <ParserQualityDetails groups={parserGroups} />
+            </div>
+          );
+        },
+      },
+      {
+        id: "warnings",
+        header: "Warnings",
+        cell: ({ row }) => {
+          const liveEvent = liveJobEventsById[row.original.id];
+          const warningCount = jobWarningCount(row.original, liveEvent);
+          const hasWarnings = warningCount > 0;
+
+          return (
+            <div
+              className={`inline-flex items-center gap-2 text-sm font-semibold ${
+                hasWarnings ? "text-[var(--rs-warning)]" : "text-[var(--rs-muted)]"
+              }`}
+            >
+              {hasWarnings ? (
+                <FileWarning className="h-4 w-4" aria-hidden="true" />
+              ) : (
+                <ShieldCheck className="h-4 w-4" aria-hidden="true" />
+              )}
+              {warningCount}
+            </div>
+          );
+        },
+      },
+      {
+        id: "actions",
+        header: "Actions",
+        cell: ({ row }) => {
+          const document = row.original.target_id
+            ? documentsById.get(row.original.target_id)
+            : undefined;
+          const canInspectWarnings = hasInspectableQualityWarnings(row.original);
+
+          return (
+            <div className="flex flex-wrap justify-end gap-2">
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() => setSelectedWarningJobId(row.original.id)}
+                disabled={!canInspectWarnings}
+                aria-label={`Inspect warning details for ${formatJobName(row.original, document)}`}
+              >
+                {canInspectWarnings ? "Inspect warnings" : "No warnings"}
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                aria-label={`Open job actions for ${formatJobName(row.original, document)}`}
+              >
+                <MoreVertical className="h-4 w-4" aria-hidden="true" />
+              </Button>
             </div>
           );
         },
@@ -522,27 +640,52 @@ export function DocumentsPage() {
   const isRefreshing = documentsQuery.isFetching || jobsQuery.isFetching;
 
   return (
-    <div className="mx-auto flex max-w-7xl flex-col gap-6">
-      <section className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+    <div className="mx-auto flex max-w-7xl flex-col gap-5">
+      <section className="flex flex-col gap-4 border-b border-[var(--rs-line)] pb-5 lg:flex-row lg:items-end lg:justify-between">
         <div className="min-w-0">
-          <p className="text-sm font-medium text-[#176b87]">Documents</p>
-          <h2 className="mt-1 text-2xl font-semibold tracking-normal text-[#1f2933]">
-            Source files and ingestion jobs
+          <h2 className="text-3xl font-semibold tracking-normal text-[var(--rs-ink)]">
+            Documents
           </h2>
+          <p className="mt-2 max-w-2xl text-sm leading-6 text-[var(--rs-text)]">
+            Upload source files, watch parsing jobs, and open the evidence trail before chunks move
+            into retrieval.
+          </p>
         </div>
-        <Button variant="secondary" onClick={refresh} disabled={isRefreshing}>
-          {isRefreshing ? (
-            <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-          ) : (
-            <RefreshCcw className="h-4 w-4" aria-hidden="true" />
-          )}
-          Refresh
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button type="button" variant="secondary" onClick={() => activateTab("jobs", true)}>
+            <Activity className="h-4 w-4" aria-hidden="true" />
+            Jobs
+          </Button>
+          <Button variant="secondary" onClick={refresh} disabled={isRefreshing}>
+            {isRefreshing ? (
+              <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+            ) : (
+              <RefreshCcw className="h-4 w-4" aria-hidden="true" />
+            )}
+            Refresh
+          </Button>
+        </div>
       </section>
 
-      <section className="rounded-md border border-[#d6dde1] bg-white p-4">
+      {activeTab === "documents" ? (
+      <section className="grid min-w-0 gap-4 lg:grid-cols-[minmax(0,1.15fr)_minmax(320px,0.85fr)]">
+      <div className="min-w-0 rounded-md border border-[var(--rs-line)] bg-[var(--rs-paper)] p-4 shadow-sm">
+        <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <FileUp className="h-4 w-4 text-[var(--rs-accent)]" aria-hidden="true" />
+              <h3 className="truncate text-base font-semibold text-[var(--rs-ink)]">New source</h3>
+            </div>
+            <p className="mt-1 text-sm text-[var(--rs-muted)]">
+              Vision metadata is required so the index job starts with an explicit domain policy.
+            </p>
+          </div>
+          <span className="inline-flex w-fit rounded-full border border-[var(--rs-line)] bg-[var(--rs-field)] px-2.5 py-1 text-xs font-medium text-[var(--rs-text)]">
+            {DEFAULT_PARSER_MODE}
+          </span>
+        </div>
         <form
-          className="grid gap-4"
+          className="flex flex-col gap-4"
           onSubmit={(event) => {
             event.preventDefault();
             if (file && visionSuggestion) {
@@ -557,12 +700,12 @@ export function DocumentsPage() {
           }}
         >
           <div className="grid gap-3">
-            <label className="min-w-0 text-sm font-medium text-[#3a4a53]">
+            <label className="min-w-0 text-sm font-medium text-[var(--rs-text)]">
               <span className="mb-1.5 block truncate">Upload file</span>
               <input
                 ref={fileInputRef}
                 type="file"
-                className="block h-10 w-full min-w-0 rounded-md border border-[#cfd8dd] bg-white text-sm text-[#1f2933] file:mr-3 file:h-full file:border-0 file:bg-[#edf3f5] file:px-3 file:text-sm file:font-medium file:text-[#24313a]"
+                className="block h-11 w-full min-w-0 rounded-md border border-[var(--rs-line-strong)] bg-[var(--rs-paper)] text-sm text-[var(--rs-ink)] file:mr-3 file:h-full file:border-0 file:bg-[var(--rs-field)] file:px-3 file:text-sm file:font-medium file:text-[var(--rs-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rs-accent)]"
                 onChange={(event) => {
                   setFile(event.target.files?.[0] ?? null);
                   setVisionSuggestion(null);
@@ -621,11 +764,12 @@ export function DocumentsPage() {
             </p>
           ) : null}
           <div className="flex justify-end">
-            <Button
-              type="submit"
-              disabled={
-                !file ||
-                !visionSuggestion ||
+              <Button
+                type="submit"
+                variant={file && visionSuggestion ? "default" : "secondary"}
+                disabled={
+                  !file ||
+                  !visionSuggestion ||
                 analyzeWithVision.isPending ||
                 uploadDocument.isPending
               }
@@ -642,7 +786,7 @@ export function DocumentsPage() {
         <p className="mt-3 min-h-5 text-sm text-[#62717a]" role="status">
           {uploadDocument.isSuccess ? "Uploaded" : uploadDocument.error?.message}
         </p>
-      </section>
+      </div>
 
       <OperationsStatusStrip
         documentsCount={documents.length}
@@ -653,26 +797,34 @@ export function DocumentsPage() {
         }
         onViewJobs={() => activateTab("jobs", true)}
       />
+      </section>
+      ) : null}
 
-      <div className="grid gap-1">
-        <p className="min-h-5 text-sm text-[#62717a]" role="status">
-          {deleteDocument.isSuccess ? `Deleted ${deletedFilename}` : deleteDocument.error?.message}
-        </p>
-        <p className="min-h-5 text-sm text-[#62717a]" role="status">
-          {reindexDocument.isSuccess
-            ? `Reindex queued for ${reindexedFilename}`
-            : reindexDocument.error?.message}
-        </p>
-      </div>
+      {deleteDocument.isSuccess ||
+      deleteDocument.error ||
+      reindexDocument.isSuccess ||
+      reindexDocument.error ? (
+        <div className="grid gap-1 rounded-md border border-[var(--rs-line)] bg-[var(--rs-paper)] px-3 py-2">
+          <p className="min-h-5 text-sm text-[var(--rs-muted)]" role="status">
+            {deleteDocument.isSuccess ? `Deleted ${deletedFilename}` : deleteDocument.error?.message}
+          </p>
+          <p className="min-h-5 text-sm text-[var(--rs-muted)]" role="status">
+            {reindexDocument.isSuccess
+              ? `Reindex queued for ${reindexedFilename}`
+              : reindexDocument.error?.message}
+          </p>
+        </div>
+      ) : null}
 
       <section
-        className="grid min-w-0 max-w-full gap-4 overflow-hidden"
+        className="min-w-0 max-w-full overflow-hidden rounded-md border border-[var(--rs-line)] bg-[var(--rs-paper)] shadow-sm"
         aria-label="Documents workspace"
       >
+        <div className="flex flex-col gap-3 border-b border-[var(--rs-line)] p-4 lg:flex-row lg:items-center lg:justify-between">
         <div
           role="tablist"
           aria-label="Document workspace sections"
-          className="scroll-mt-24 flex min-w-0 max-w-full flex-wrap gap-2 overflow-hidden border-b border-[#d6dde1]"
+          className="flex min-w-0 max-w-full flex-wrap gap-2 overflow-hidden"
         >
           <TabButton
             id="documents-tab"
@@ -693,7 +845,14 @@ export function DocumentsPage() {
             count={jobs.length}
           />
         </div>
+        <p className="text-xs font-medium text-[var(--rs-muted)]" aria-live="polite">
+          {activeTab === "documents"
+            ? `${visibleDocuments.length} of ${filteredDocuments.length} visible documents`
+            : `${visibleJobs.length} of ${filteredJobs.length} visible jobs`}
+        </p>
+        </div>
 
+        <div className="p-4">
         <div
           id="documents-panel"
           ref={documentsPanelRef}
@@ -703,8 +862,8 @@ export function DocumentsPage() {
           hidden={activeTab !== "documents"}
           className="min-w-0 max-w-full overflow-hidden"
         >
-          <Panel title="Documents" icon={FileUp}>
-          <div className="space-y-3">
+          <Panel title="Document evidence sources" icon={FileText}>
+          <div className="flex flex-col gap-3">
             {documentsQuery.isLoading ? (
               <EmptyState
                 icon={Loader2}
@@ -729,22 +888,39 @@ export function DocumentsPage() {
                   searchLabel="Search documents"
                   searchValue={documentSearch}
                   searchPlaceholder="Filename, type, or status"
-                  onSearchChange={setDocumentSearch}
+                  onSearchChange={(value) => {
+                    setDocumentSearch(value);
+                    setDocumentsPage(1);
+                  }}
                   filteredCount={filteredDocuments.length}
                   totalCount={documents.length}
                   hasActiveFilters={Boolean(documentSearch.trim())}
-                  onClearFilters={() => setDocumentSearch("")}
+                  onClearFilters={() => {
+                    setDocumentSearch("");
+                    setDocumentsPage(1);
+                  }}
                 />
                 <DataTable
                   ariaLabel="Documents table"
                   columns={documentColumns}
-                  data={filteredDocuments}
+                  data={visibleDocuments}
                   emptyTitle={documents.length ? "No matching documents" : "No documents"}
                   emptyDescription={
                     documents.length
                       ? "Clear the search to see every uploaded file."
                       : "Uploaded files will appear here."
                   }
+                  pagination={{
+                    page: currentDocumentsPage,
+                    pageSize: documentsPageSize,
+                    totalItems: filteredDocuments.length,
+                    onPageChange: setDocumentsPage,
+                    onPageSizeChange: (pageSize) => {
+                      setDocumentsPageSize(pageSize);
+                      setDocumentsPage(1);
+                    },
+                    itemLabel: "documents",
+                  }}
                 />
               </>
             )}
@@ -761,7 +937,8 @@ export function DocumentsPage() {
           hidden={activeTab !== "jobs"}
           className="min-w-0 max-w-full overflow-hidden"
         >
-          <Panel title="Jobs & Warnings" icon={RefreshCcw}>
+          <Panel title="Ingestion jobs and warnings" icon={Activity}>
+          <div className="flex flex-col gap-3">
           {jobsQuery.isLoading ? (
             <EmptyState icon={Loader2} title="Loading jobs" description="Fetching job status." />
           ) : jobsQuery.isError ? (
@@ -778,34 +955,67 @@ export function DocumentsPage() {
             />
           ) : (
             <>
-              <TableToolbar
-                searchLabel="Search jobs"
+              <JobsMetricStrip metrics={jobMetrics} />
+              <JobsToolbar
                 searchValue={jobSearch}
-                searchPlaceholder="Filename, warning, job id, or log"
-                onSearchChange={setJobSearch}
-                filteredCount={filteredJobs.length}
-                totalCount={jobs.length}
-                statusLabel="Job status"
                 statusValue={jobStatusFilter}
                 statusOptions={jobStatusOptions}
-                statusPlaceholder="All statuses"
-                onStatusChange={setJobStatusFilter}
-                hasActiveFilters={Boolean(jobSearch.trim() || jobStatusFilter)}
+                warningOnly={jobWarningOnly}
+                autoRefresh={jobsAutoRefresh}
+                refreshIntervalMs={jobsRefreshIntervalMs}
+                filteredCount={filteredJobs.length}
+                totalCount={jobs.length}
+                hasActiveFilters={Boolean(jobSearch.trim() || jobStatusFilter || jobWarningOnly)}
+                onSearchChange={(value) => {
+                  setJobSearch(value);
+                  setJobsPage(1);
+                  setSelectedWarningJobId(null);
+                }}
+                onStatusChange={(value) => {
+                  setJobStatusFilter(value);
+                  setJobsPage(1);
+                  setSelectedWarningJobId(null);
+                }}
+                onWarningOnlyChange={(checked) => {
+                  setJobWarningOnly(checked);
+                  setJobsPage(1);
+                  setSelectedWarningJobId(null);
+                }}
+                onAutoRefreshChange={setJobsAutoRefresh}
+                onRefreshIntervalChange={setJobsRefreshIntervalMs}
                 onClearFilters={() => {
                   setJobSearch("");
                   setJobStatusFilter("");
+                  setJobWarningOnly(false);
+                  setJobsPage(1);
+                  setSelectedWarningJobId(null);
                 }}
               />
               <DataTable
                 ariaLabel="Jobs table"
                 columns={jobColumns}
-                data={filteredJobs}
+                data={visibleJobs}
                 emptyTitle={jobs.length ? "No matching jobs" : "No jobs"}
                 emptyDescription={
                   jobs.length
                     ? "Clear the search or status filter to see every job."
                     : "Upload and indexing jobs will appear here."
                 }
+                pagination={{
+                  page: currentJobsPage,
+                  pageSize: jobsPageSize,
+                  totalItems: filteredJobs.length,
+                  onPageChange: (page) => {
+                    setJobsPage(page);
+                    setSelectedWarningJobId(null);
+                  },
+                  onPageSizeChange: (pageSize) => {
+                    setJobsPageSize(pageSize);
+                    setJobsPage(1);
+                    setSelectedWarningJobId(null);
+                  },
+                  itemLabel: "jobs",
+                }}
               />
             </>
           )}
@@ -816,6 +1026,11 @@ export function DocumentsPage() {
                 selectedWarningJob
                   ? formatJobName(selectedWarningJob, selectedWarningDocument)
                   : selectedWarningJobId
+              }
+              job={selectedWarningJob}
+              document={selectedWarningDocument}
+              liveEvent={
+                selectedWarningJobId ? liveJobEventsById[selectedWarningJobId] : undefined
               }
               details={warningDetailsQuery.data}
               isLoading={warningDetailsQuery.isLoading}
@@ -841,7 +1056,9 @@ export function DocumentsPage() {
               onClose={() => setSelectedWarningJobId(null)}
             />
           ) : null}
+          </div>
           </Panel>
+        </div>
         </div>
       </section>
     </div>
@@ -854,6 +1071,42 @@ function isActiveJob(job: JobOut): boolean {
 
 function hasActiveJobs(jobs: JobOut[]): boolean {
   return jobs.some(isActiveJob);
+}
+
+function jobWarningCount(job: JobOut, liveEvent?: LiveJobEventSnapshot): number {
+  const liveWarningCount = liveEvent?.warnings.length ?? 0;
+  const jobWarningTotal = jobWarnings(job, liveEvent).length;
+  const parserWarningTotal = jobParserQualityGroups(job).reduce(
+    (total, group) => total + group.warningCount,
+    0,
+  );
+  const parserCountTotal = warningCountEntries(parserQualityWarningCounts(job.result)).reduce(
+    (total, [, count]) => total + count,
+    0,
+  );
+  return Math.max(liveWarningCount, jobWarningTotal + parserWarningTotal + parserCountTotal);
+}
+
+function summarizeJobs(jobs: JobOut[]) {
+  return {
+    total: jobs.length,
+    running: jobs.filter(isActiveJob).length,
+    succeeded: jobs.filter((job) => job.status === "succeeded").length,
+    failed: jobs.filter((job) => job.status === "failed").length,
+    warnings: jobs.filter(hasInspectableQualityWarnings).length,
+  };
+}
+
+function clampedTablePage(page: number, totalItems: number, pageSize: number): number {
+  const safePageSize = Math.max(1, pageSize);
+  const pageCount = Math.max(1, Math.ceil(Math.max(0, totalItems) / safePageSize));
+  return Math.min(Math.max(1, page), pageCount);
+}
+
+function paginateRows<T>(rows: T[], page: number, pageSize: number): T[] {
+  const safePageSize = Math.max(1, pageSize);
+  const start = (clampedTablePage(page, rows.length, safePageSize) - 1) * safePageSize;
+  return rows.slice(start, start + safePageSize);
 }
 
 function parseJobEventPayload(event: Event): Record<string, unknown> | null {
@@ -984,25 +1237,220 @@ function OperationsStatusStrip({
   return (
     <section
       aria-label="Document indexing status"
-      className="flex flex-col gap-3 rounded-md border border-[#d6dde1] bg-white p-3 lg:flex-row lg:items-center lg:justify-between"
+      className="flex min-w-0 flex-col gap-4 rounded-md border border-[var(--rs-line)] bg-[var(--rs-paper)] p-4 shadow-sm"
     >
-      <div className="grid min-w-0 flex-1 gap-3 sm:grid-cols-3">
-        <StatusSummaryItem label="Documents" value={documentsCount} />
-        <StatusSummaryItem label="Active jobs" value={activeJobCount} tone={activeJobCount ? "active" : "neutral"} />
-        <StatusSummaryItem label="Warning jobs" value={warningJobCount} tone={warningJobCount ? "warning" : "neutral"} />
+      <div className="flex items-center gap-2">
+        <ShieldCheck className="h-4 w-4 text-[var(--rs-accent)]" aria-hidden="true" />
+        <h3 className="truncate text-base font-semibold text-[var(--rs-ink)]">Operational status</h3>
       </div>
-      <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center">
+      <div className="grid min-w-0 gap-3">
+        <StatusSummaryItem label="Documents" value={documentsCount} />
+        <StatusSummaryItem
+          label="Active jobs"
+          value={activeJobCount}
+          tone={activeJobCount ? "active" : "neutral"}
+        />
+        <StatusSummaryItem
+          label="Warning jobs"
+          value={warningJobCount}
+          tone={warningJobCount ? "warning" : "neutral"}
+        />
+      </div>
+      <div className="flex min-w-0 flex-col gap-3 border-t border-[var(--rs-line)] pt-3">
         {latestWarningLabel ? (
-          <p className="min-w-0 truncate text-xs text-[#62717a]">
-            Latest warning: <span className="font-medium text-[#3a4a53]">{latestWarningLabel}</span>
+          <p className="min-w-0 text-xs leading-5 text-[var(--rs-muted)]">
+            Latest warning:{" "}
+            <span className="font-medium text-[var(--rs-text)]">{latestWarningLabel}</span>
           </p>
-        ) : null}
+        ) : (
+          <p className="text-xs leading-5 text-[var(--rs-muted)]">
+            No parser warning jobs require inspection.
+          </p>
+        )}
         <Button type="button" variant="secondary" size="sm" onClick={onViewJobs}>
           <RefreshCcw className="h-4 w-4" aria-hidden="true" />
           View jobs
         </Button>
       </div>
     </section>
+  );
+}
+
+function JobsMetricStrip({ metrics }: { metrics: ReturnType<typeof summarizeJobs> }) {
+  return (
+    <section
+      aria-label="Jobs summary"
+      className="grid overflow-hidden rounded-md border border-[var(--rs-line)] bg-[var(--rs-paper)] sm:grid-cols-2 lg:grid-cols-5"
+    >
+      <JobMetric icon={ListChecks} label="Total Jobs" value={metrics.total} />
+      <JobMetric icon={Loader2} label="Running" value={metrics.running} tone="running" />
+      <JobMetric icon={CheckCircle2} label="Succeeded" value={metrics.succeeded} tone="success" />
+      <JobMetric icon={XCircle} label="Failed" value={metrics.failed} tone="danger" />
+      <JobMetric icon={FileWarning} label="Warning Jobs" value={metrics.warnings} tone="warning" />
+    </section>
+  );
+}
+
+function JobMetric({
+  icon: Icon,
+  label,
+  value,
+  tone = "neutral",
+}: {
+  icon: typeof ListChecks;
+  label: string;
+  value: number;
+  tone?: "neutral" | "running" | "success" | "danger" | "warning";
+}) {
+  const toneClass =
+    tone === "running"
+      ? "text-[var(--rs-accent)]"
+      : tone === "success"
+        ? "text-[var(--rs-success)]"
+        : tone === "danger"
+          ? "text-[var(--rs-danger)]"
+          : tone === "warning"
+            ? "text-[var(--rs-warning)]"
+            : "text-[var(--rs-text)]";
+
+  return (
+    <div className="flex min-w-0 items-center gap-3 border-b border-[var(--rs-line)] p-3 last:border-b-0 sm:border-r sm:last:border-r-0 lg:border-b-0">
+      <Icon className={`h-5 w-5 shrink-0 ${toneClass}`} aria-hidden="true" />
+      <div className="min-w-0">
+        <p className="truncate text-xs font-medium text-[var(--rs-muted)]">{label}</p>
+        <p className="text-lg font-semibold text-[var(--rs-ink)]">{value}</p>
+      </div>
+    </div>
+  );
+}
+
+function JobsToolbar({
+  searchValue,
+  statusValue,
+  statusOptions,
+  warningOnly,
+  autoRefresh,
+  refreshIntervalMs,
+  filteredCount,
+  totalCount,
+  hasActiveFilters,
+  onSearchChange,
+  onStatusChange,
+  onWarningOnlyChange,
+  onAutoRefreshChange,
+  onRefreshIntervalChange,
+  onClearFilters,
+}: {
+  searchValue: string;
+  statusValue: string;
+  statusOptions: string[];
+  warningOnly: boolean;
+  autoRefresh: boolean;
+  refreshIntervalMs: number;
+  filteredCount: number;
+  totalCount: number;
+  hasActiveFilters: boolean;
+  onSearchChange: (value: string) => void;
+  onStatusChange: (value: string) => void;
+  onWarningOnlyChange: (checked: boolean) => void;
+  onAutoRefreshChange: (checked: boolean) => void;
+  onRefreshIntervalChange: (value: number) => void;
+  onClearFilters: () => void;
+}) {
+  return (
+    <div className="flex min-w-0 flex-col gap-3 rounded-md border border-[var(--rs-line)] bg-[var(--rs-paper)] p-3 xl:flex-row xl:items-center xl:justify-between">
+      <div className="flex min-w-0 flex-1 flex-col gap-3 md:flex-row md:items-center">
+        <label className="min-w-0 flex-1 text-sm font-medium text-[var(--rs-text)]">
+          <span className="sr-only">Search jobs</span>
+          <div className="flex h-10 items-center gap-2 rounded-md border border-[var(--rs-line)] bg-[var(--rs-paper)] px-3 focus-within:ring-2 focus-within:ring-[var(--rs-accent)]">
+            <Search className="h-4 w-4 shrink-0 text-[var(--rs-muted)]" aria-hidden="true" />
+            <input
+              value={searchValue}
+              onChange={(event) => onSearchChange(event.target.value)}
+              placeholder="Search jobs or documents..."
+              className="min-w-0 flex-1 bg-transparent text-sm text-[var(--rs-text)] outline-none placeholder:text-[var(--rs-muted)]"
+            />
+          </div>
+        </label>
+        <label className="min-w-0 text-sm font-medium text-[var(--rs-text)] md:w-48">
+          <span className="sr-only">Job status</span>
+          <select
+            value={statusValue}
+            onChange={(event) => onStatusChange(event.target.value)}
+            className="h-10 w-full rounded-md border border-[var(--rs-line)] bg-[var(--rs-paper)] px-3 text-sm text-[var(--rs-text)] outline-none focus:ring-2 focus:ring-[var(--rs-accent)]"
+            aria-label="Job status"
+          >
+            <option value="">All Statuses</option>
+            {statusOptions.map((status) => (
+              <option key={status} value={status}>
+                {titleCase(status)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <SwitchControl
+          label="Warning only"
+          checked={warningOnly}
+          onChange={onWarningOnlyChange}
+        />
+        <Button
+          type="button"
+          variant="secondary"
+          onClick={onClearFilters}
+          disabled={!hasActiveFilters}
+        >
+          <X className="h-4 w-4" aria-hidden="true" />
+          Clear Filters
+        </Button>
+      </div>
+      <div className="flex flex-wrap items-center gap-3">
+        <p className="text-xs font-medium text-[var(--rs-muted)]" aria-live="polite">
+          {filteredCount} of {totalCount}
+        </p>
+        <SwitchControl label="Auto refresh" checked={autoRefresh} onChange={onAutoRefreshChange} />
+        <select
+          value={refreshIntervalMs}
+          onChange={(event) => onRefreshIntervalChange(Number(event.target.value))}
+          disabled={!autoRefresh}
+          className="h-10 rounded-md border border-[var(--rs-line)] bg-[var(--rs-paper)] px-3 text-sm text-[var(--rs-text)] outline-none focus:ring-2 focus:ring-[var(--rs-accent)] disabled:opacity-50"
+          aria-label="Auto refresh interval"
+        >
+          {JOB_REFRESH_INTERVAL_OPTIONS.map((interval) => (
+            <option key={interval} value={interval}>
+              {interval / 1000}s
+            </option>
+          ))}
+        </select>
+      </div>
+    </div>
+  );
+}
+
+function SwitchControl({
+  label,
+  checked,
+  onChange,
+}: {
+  label: string;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <label className="flex min-h-10 items-center gap-2 text-sm font-medium text-[var(--rs-text)]">
+      <button
+        type="button"
+        role="switch"
+        aria-checked={checked}
+        aria-label={label}
+        onClick={() => onChange(!checked)}
+        className={`flex h-5 w-9 items-center rounded-full border border-[var(--rs-line-strong)] p-0.5 transition-colors focus:outline-none focus:ring-2 focus:ring-[var(--rs-accent)] ${
+          checked ? "justify-end bg-[var(--rs-accent)]" : "justify-start bg-[var(--rs-line)]"
+        }`}
+      >
+        <span className="h-4 w-4 rounded-full bg-[var(--rs-paper)] shadow-sm" />
+      </button>
+      {label}
+    </label>
   );
 }
 
@@ -1017,15 +1465,24 @@ function StatusSummaryItem({
 }) {
   const valueClass =
     tone === "active"
-      ? "text-[#176b87]"
+      ? "text-[var(--rs-accent)]"
       : tone === "warning"
-        ? "text-[#8a5a00]"
-        : "text-[#1f2933]";
+        ? "text-[var(--rs-warning)]"
+        : "text-[var(--rs-ink)]";
+  const iconClass =
+    tone === "active"
+      ? "bg-[var(--rs-accent-soft)]"
+      : tone === "warning"
+        ? "bg-[var(--rs-warning-soft)]"
+        : "bg-[var(--rs-field)]";
 
   return (
-    <div className="min-w-0">
-      <p className="truncate text-xs font-medium uppercase text-[#62717a]">{label}</p>
-      <p className={`mt-1 text-lg font-semibold ${valueClass}`}>{value}</p>
+    <div className="flex min-w-0 items-center justify-between gap-3 rounded-md border border-[var(--rs-line)] bg-[var(--rs-field)] px-3 py-2">
+      <div className="min-w-0">
+        <p className="truncate text-xs font-medium uppercase text-[var(--rs-muted)]">{label}</p>
+        <p className={`mt-0.5 text-xl font-semibold ${valueClass}`}>{value}</p>
+      </div>
+      <span className={`h-2.5 w-2.5 rounded-full ${iconClass}`} aria-hidden="true" />
     </div>
   );
 }
@@ -1059,16 +1516,16 @@ function TabButton({
       onKeyDown={onKeyDown}
       className={
         selected
-          ? "flex h-11 items-center gap-2 border-b-2 border-[#176b87] px-3 text-sm font-semibold text-[#176b87] outline-none focus:ring-2 focus:ring-[#176b87]"
-          : "flex h-11 items-center gap-2 border-b-2 border-transparent px-3 text-sm font-medium text-[#62717a] outline-none hover:text-[#24313a] focus:ring-2 focus:ring-[#176b87]"
+          ? "flex h-10 items-center gap-2 rounded-md border border-[var(--rs-accent)] bg-[var(--rs-accent-soft)] px-3 text-sm font-semibold text-[var(--rs-accent-deep)] outline-none focus:ring-2 focus:ring-[var(--rs-accent)]"
+          : "flex h-10 items-center gap-2 rounded-md border border-[var(--rs-line)] bg-[var(--rs-paper)] px-3 text-sm font-medium text-[var(--rs-muted)] outline-none hover:bg-[var(--rs-field)] hover:text-[var(--rs-text)] focus:ring-2 focus:ring-[var(--rs-accent)]"
       }
     >
       <span>{label}</span>
       <span
         className={
           selected
-            ? "rounded-md bg-[#e5f1f5] px-2 py-0.5 text-xs text-[#164f63]"
-            : "rounded-md bg-[#edf1f3] px-2 py-0.5 text-xs text-[#62717a]"
+            ? "rounded-md bg-[var(--rs-paper)] px-2 py-0.5 text-xs text-[var(--rs-accent-deep)]"
+            : "rounded-md bg-[var(--rs-field)] px-2 py-0.5 text-xs text-[var(--rs-muted)]"
         }
       >
         {count}
@@ -1177,11 +1634,15 @@ function filterJobs(
   documentsById: Map<string, DocumentOut>,
   query: string,
   status: string,
+  warningOnly: boolean,
   liveJobEventsById: LiveJobEventsById = {},
 ): JobOut[] {
   const normalizedQuery = normalizeSearch(query);
   return jobs.filter((job) => {
     if (status && job.status !== status) {
+      return false;
+    }
+    if (warningOnly && !hasInspectableQualityWarnings(job)) {
       return false;
     }
     if (!normalizedQuery) {
@@ -1271,6 +1732,19 @@ function stringifySearchValue(value: unknown): string {
   } catch {
     return String(value).toLowerCase();
   }
+}
+
+function formatDateTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+  return date.toLocaleString([], {
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 function formatJobName(job: JobOut, document: DocumentOut | undefined): string {
@@ -1439,6 +1913,10 @@ interface ParserQualityExample {
 }
 
 function ParserQualityDetails({ groups }: { groups: ParserQualityGroup[] }) {
+  if (!groups.length) {
+    return null;
+  }
+
   const totalWarnings = groups.reduce((total, group) => total + group.warningCount, 0);
   const totalRawWarnings = groups.reduce((total, group) => total + group.rawWarningCount, 0);
   const rawSummary =
@@ -1519,6 +1997,9 @@ function ParserQualityBreakdown({
 
 function QualityWarningsPanel({
   jobName,
+  job,
+  document,
+  liveEvent,
   details,
   isLoading,
   error,
@@ -1531,6 +2012,9 @@ function QualityWarningsPanel({
   onClose,
 }: {
   jobName: string;
+  job: JobOut | undefined;
+  document: DocumentOut | undefined;
+  liveEvent: LiveJobEventSnapshot | undefined;
   details: JobQualityWarningsOut | undefined;
   isLoading: boolean;
   error: Error | null;
@@ -1564,6 +2048,11 @@ function QualityWarningsPanel({
     [filteredWarningItems],
   );
   const hiddenWarningCount = Math.max(filteredWarningItems.length - visibleWarningItems.length, 0);
+  const selectedProgress = job ? getJobProgress(job, liveEvent) : 0;
+  const selectedStage = jobStageText(job, liveEvent) ?? formatMinerUResult(job, liveEvent) ?? "No stage reported";
+  const latestLog = liveEvent?.logs.at(-1) ?? job?.logs.at(-1) ?? "No logs";
+  const selectedWarnings = job ? jobWarningCount(job, liveEvent) : countEntries.reduce((total, [, count]) => total + count, 0);
+  const parserGroups = jobParserQualityGroups(job);
   const warningColumns = useMemo<ColumnDef<ParserQualityWarningOut>[]>(
     () => [
       {
@@ -1652,9 +2141,17 @@ function QualityWarningsPanel({
             tabIndex={-1}
             className="truncate text-sm font-semibold text-[#1f2933] outline-none"
           >
-            Warning details
+            Selected Job: <span className="font-semibold">{jobName}</span>
           </h4>
-          <p className="truncate text-xs text-[#62717a]">{jobName}</p>
+          <p className="truncate text-xs text-[#62717a]">
+            Warning details
+            {job?.id ? (
+              <>
+                {" "}
+                <span aria-hidden="true">·</span> {job.id}
+              </>
+            ) : null}
+          </p>
         </div>
         <div className="flex flex-wrap gap-2">
           <Button
@@ -1668,9 +2165,9 @@ function QualityWarningsPanel({
             {isFixingWarnings ? (
               <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
             ) : (
-              <RefreshCcw className="h-4 w-4" aria-hidden="true" />
+              <Wrench className="h-4 w-4" aria-hidden="true" />
             )}
-            Fix warnings
+            Run Repair Suggestions
           </Button>
           <Button
             type="button"
@@ -1685,6 +2182,15 @@ function QualityWarningsPanel({
         </div>
       </div>
 
+      <JobWarningSummary
+        job={job}
+        document={document}
+        progress={selectedProgress}
+        stage={selectedStage}
+        latestLog={latestLog}
+        warningCount={selectedWarnings}
+      />
+
       {isLoading ? (
         <p className="mt-4 text-sm text-[#62717a]" role="status" aria-live="polite">
           Loading warning details.
@@ -1693,6 +2199,7 @@ function QualityWarningsPanel({
         <p className="mt-4 text-sm text-[#8a1f11]">{error.message}</p>
       ) : details ? (
         <div className="mt-4 min-w-0 space-y-4">
+          <p className="text-sm font-semibold text-[#1f2933]">Warning details</p>
           <div className="flex flex-wrap gap-2 text-xs">
             {countEntries.length ? (
               countEntries.map(([code, count]) => (
@@ -1734,6 +2241,7 @@ function QualityWarningsPanel({
               ))}
             </ul>
           ) : null}
+          <ParserQualityDetails groups={parserGroups} />
           {warningItems.length ? (
             <div className="space-y-3">
               <TableToolbar
@@ -1775,6 +2283,109 @@ function QualityWarningsPanel({
           {repairPlan ? <RepairPlanSummary plan={repairPlan} /> : null}
         </div>
       ) : null}
+    </div>
+  );
+}
+
+function JobWarningSummary({
+  job,
+  document,
+  progress,
+  stage,
+  latestLog,
+  warningCount,
+}: {
+  job: JobOut | undefined;
+  document: DocumentOut | undefined;
+  progress: number;
+  stage: string;
+  latestLog: string;
+  warningCount: number;
+}) {
+  const summaryRows = [
+    ["Document", document?.filename ?? job?.target_id ?? "Workspace"],
+    ["Runtime profile", "prod-baseline"],
+    ["Parser mode", DEFAULT_PARSER_MODE],
+    ["Status", job?.status ? titleCase(job.status) : "Unknown"],
+    ["Current stage", stage],
+    ["Worker", job?.worker_id ?? "Unassigned"],
+    ["Last heartbeat", job?.heartbeat_at ? formatDateTime(job.heartbeat_at) : "Not reported"],
+  ] as const;
+
+  return (
+    <div className="mt-4 grid min-w-0 gap-4 border-t border-[#d6dde1] pt-4 lg:grid-cols-[minmax(220px,0.32fr)_minmax(0,1fr)]">
+      <aside className="min-w-0 rounded-md border border-[#d6dde1] bg-white p-3">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <p className="text-sm font-semibold text-[#1f2933]">Job Summary</p>
+          {job?.id ? (
+            <button
+              type="button"
+              onClick={() => void navigator.clipboard?.writeText(job.id)}
+              className="rounded-md p-1 text-[#62717a] outline-none hover:bg-[#edf1f3] focus:ring-2 focus:ring-[#176b87]"
+              aria-label="Copy job id"
+            >
+              <Copy className="h-4 w-4" aria-hidden="true" />
+            </button>
+          ) : null}
+        </div>
+        <dl className="space-y-2 text-xs">
+          {summaryRows.map(([label, value]) => (
+            <div
+              key={label}
+              className="grid grid-cols-[92px_minmax(0,1fr)] gap-3 border-b border-[#edf1f3] pb-2 last:border-b-0 last:pb-0"
+            >
+              <dt className="text-[#62717a]">{label}</dt>
+              <dd className="min-w-0 truncate font-medium text-[#24313a]">{value}</dd>
+            </div>
+          ))}
+          <div className="grid grid-cols-[92px_minmax(0,1fr)] gap-3">
+            <dt className="text-[#62717a]">Progress</dt>
+            <dd className="min-w-0">
+              <div className="flex items-center gap-2">
+                <span className="w-8 text-xs font-medium text-[#24313a]">{progress}%</span>
+                <div className="h-2 min-w-0 flex-1 overflow-hidden rounded-full bg-[#edf1f3]">
+                  <div
+                    className="h-full rounded-full bg-[var(--rs-accent)]"
+                    style={{ width: `${progress}%` }}
+                  />
+                </div>
+              </div>
+            </dd>
+          </div>
+        </dl>
+      </aside>
+      <section className="grid min-w-0 gap-3 sm:grid-cols-3">
+        <WarningSummaryCard icon={FileWarning} label="Warning chunks" value={String(warningCount)} tone="warning" />
+        <WarningSummaryCard icon={Clock} label="Current stage" value={stage} />
+        <WarningSummaryCard icon={ListChecks} label="Latest log" value={latestLog} />
+      </section>
+    </div>
+  );
+}
+
+function WarningSummaryCard({
+  icon: Icon,
+  label,
+  value,
+  tone = "neutral",
+}: {
+  icon: typeof ListChecks;
+  label: string;
+  value: string;
+  tone?: "neutral" | "warning";
+}) {
+  return (
+    <div className="min-w-0 rounded-md border border-[#d6dde1] bg-white p-3">
+      <div className="mb-2 flex items-center gap-2">
+        <Icon
+          className={`h-4 w-4 shrink-0 ${
+            tone === "warning" ? "text-[var(--rs-warning)]" : "text-[var(--rs-accent)]"
+          }`}
+          aria-hidden="true"
+        />
+        <p className="truncate text-xs font-medium text-[#62717a]">{label}</p>
+      </div>
+      <p className="line-clamp-3 text-sm font-medium leading-5 text-[#24313a]">{value}</p>
     </div>
   );
 }

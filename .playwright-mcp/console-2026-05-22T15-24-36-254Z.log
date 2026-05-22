@@ -1,0 +1,2 @@
+[  916296ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=dc81f739:14336
+[ 3253119ms] [ERROR] Failed to load resource: net::ERR_NETWORK_CHANGED @ http://localhost:5173/api/documents?limit=500&offset=0:0
