@@ -27,6 +27,7 @@ import {
 } from "../evidence/evidence-viewer";
 import { QueryPathwayViewer } from "./query-pathway-viewer";
 import { SearchTuningPanel } from "./search-tuning-panel";
+import { buildThreePillarTrace, type ThreePillarTraceSummary } from "./three-pillar-trace";
 
 const queryKeys = {
   documents: ["documents"],
@@ -571,9 +572,10 @@ function RunResult({ run, variant }: { run: RunOut; variant?: VariantOut }) {
   const llmAnswerStatus = textValue(run.token_metadata.llm_answer_status);
   const [selectedEvidence, setSelectedEvidence] = useState<NormalizedEvidence | null>(null);
   const [pathwayOpen, setPathwayOpen] = useState(false);
+  const architecture = useMemo(() => buildThreePillarTrace(run), [run]);
   const readableSources = useMemo(
-    () => run.sources.map((source, index) => normalizeQuerySource(source, index, run)),
-    [run],
+    () => run.sources.map((source, index) => normalizeQuerySource(source, index, run, architecture)),
+    [architecture, run],
   );
 
   return (
@@ -599,6 +601,7 @@ function RunResult({ run, variant }: { run: RunOut; variant?: VariantOut }) {
         {run.error_type ? <Badge>{run.error_type}</Badge> : null}
       </div>
       <RerankerSummary traces={run.reranker_traces} />
+      <ArchitectureTraceSummary architecture={architecture} />
       {answerMode === "evidence_first" ? (
         <div className="mt-3 rounded-md border border-[#cfe3ea] bg-[#f5fafb] p-3 text-sm text-[#3a4a53]">
           <p className="font-semibold text-[#1f2933]">Evidence-first result</p>
@@ -696,6 +699,7 @@ function normalizeQuerySource(
   source: Record<string, unknown>,
   index: number,
   run: RunOut,
+  architecture: ThreePillarTraceSummary,
 ): NormalizedEvidence {
   const sourceId =
     textValue(source.id) ??
@@ -711,6 +715,7 @@ function normalizeQuerySource(
     textValue(source.location);
   const relationshipRefs = relationshipRefsFrom(source, metadata);
   const indexShape = recordValue(metadata?.index_shape);
+  const sourceArchitecture = architecture.sources.find((item) => item.sourceId === sourceId);
 
   return {
     id: sourceId,
@@ -752,6 +757,20 @@ function normalizeQuerySource(
     graphUnavailableDetail:
       textValue(source.graph_unavailable_detail) ?? textValue(source.graphUnavailableDetail) ?? null,
     rerankerSummary: rerankerSummaryForSource(sourceId, source, run.reranker_traces),
+    architecture: sourceArchitecture
+      ? {
+          domain: sourceArchitecture.domain,
+          layout: sourceArchitecture.layout,
+          context: sourceArchitecture.context,
+          assembly: {
+            groundingStatus: architecture.assembly.groundingStatus,
+            evidenceIds: architecture.assembly.evidenceIds,
+            droppedReasons: architecture.assembly.droppedReasons.map(
+              (item) => `${item.candidateId}: ${item.reason}`,
+            ),
+          },
+        }
+      : undefined,
     raw: source,
     routeLinks: {
       documents: Boolean(source.document_id || source.documentId || metadata?.document_id),
@@ -961,6 +980,26 @@ function Badge({ children }: { children: ReactNode }) {
     <span className="rounded-md bg-[#eef4f6] px-2 py-1 text-xs font-medium text-[#174657]">
       {children}
     </span>
+  );
+}
+
+function ArchitectureTraceSummary({ architecture }: { architecture: ThreePillarTraceSummary }) {
+  const layoutCount = architecture.layout.candidateCount ?? 0;
+  const contextCount = architecture.context.candidateCount ?? 0;
+  return (
+    <div className="mt-3 rounded-md border border-[#dce5e8] bg-[#f8fafb] p-3">
+      <div className="mb-2 flex flex-wrap items-center gap-2">
+        <h4 className="text-sm font-semibold text-[#1f2933]">Architecture trace</h4>
+        <Badge>{architecture.route.domainProfileId}</Badge>
+        <Badge>{architecture.route.materializationHint}</Badge>
+        <Badge>layout {layoutCount}</Badge>
+        <Badge>context {contextCount}</Badge>
+        <Badge>{architecture.assembly.groundingStatus}</Badge>
+      </div>
+      <p className="text-xs leading-5 text-[#62717a]">
+        {architecture.route.sourceOfTruth} / {architecture.layout.reason} / {architecture.context.reason}
+      </p>
+    </div>
   );
 }
 

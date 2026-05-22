@@ -393,8 +393,8 @@ describe("QueryPage", () => {
     expect(screen.queryByText("Planner", { selector: "summary" })).not.toBeInTheDocument();
     expect(screen.queryByText("Retrieval", { selector: "summary" })).not.toBeInTheDocument();
     expect(screen.queryByText("Answer", { selector: "summary" })).not.toBeInTheDocument();
-    expect(screen.getByText("reference_heavy")).toBeVisible();
-    expect(screen.getByText("postgres_canonical_evidence")).toBeVisible();
+    expect(screen.getAllByText("reference_heavy").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("postgres_canonical_evidence").length).toBeGreaterThan(0);
     expect(screen.getByText("metadata")).toBeVisible();
     expect(screen.getByText("metadata_lane_completed")).toBeVisible();
     fireEvent.click(screen.getByRole("tab", { name: "Layout-aware" }));
@@ -458,6 +458,71 @@ describe("QueryPage", () => {
     expect(screen.getByText("disabled")).toBeVisible();
   });
 
+  it("summarizes the three-pillar route on the query result card", async () => {
+    vi.mocked(apiClient.query).mockResolvedValue({
+      runs: [
+        {
+          id: "run-1",
+          variant_id: "variant-1",
+          experiment_id: null,
+          query: "alpha",
+          status: "succeeded",
+          answer: "answer",
+          sources: [],
+          chunk_traces: [
+            {
+              stage: "retrieval_route_plan",
+              domain_profile_id: "reference_heavy",
+              layout_hint: "reference",
+              materialization_hint: "graph",
+              source_of_truth: "postgres_canonical_evidence",
+            },
+            {
+              stage: "layout_neighbor_expansion",
+              status: "ran",
+              candidate_count: 2,
+              reading_order_neighbors: true,
+            },
+            {
+              stage: "retrieval_lane_result",
+              lane: "context_window",
+              status: "ran",
+              candidate_count: 4,
+            },
+            {
+              stage: "context_assembly",
+              included_candidates: 2,
+              dropped_candidates: 1,
+              assembled_context: { grounding_status: "grounded" },
+            },
+          ],
+          timings: {},
+          error: null,
+          runtime_profile_id: "profile-1",
+          document_ids: ["doc-1"],
+          query_config: {},
+          reranker_traces: [],
+          token_metadata: {},
+          error_type: null,
+        },
+      ],
+    });
+    renderQueryPage();
+
+    fireEvent.change(await screen.findByPlaceholderText("Ask a focused question against selected documents."), {
+      target: { value: "alpha" },
+    });
+    fireEvent.click((await screen.findAllByText("source.txt"))[0]);
+    fireEvent.click((await screen.findAllByText("Balanced"))[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+
+    expect(await screen.findByText("Architecture trace")).toBeVisible();
+    expect(screen.getByText("reference_heavy")).toBeVisible();
+    expect(screen.getByText("layout 2")).toBeVisible();
+    expect(screen.getByText("context 4")).toBeVisible();
+    expect(screen.getByText("grounded")).toBeVisible();
+  });
+
   it("renders readable source rows and opens the evidence viewer", async () => {
     vi.mocked(apiClient.query).mockResolvedValue({
       runs: [
@@ -476,7 +541,16 @@ describe("QueryPage", () => {
               document_name: "source.txt",
               text: "Book 1, Hadith 1",
               source_location: { page: 1, reference: "Book 1, Hadith 1" },
-              metadata: { domain: "hadith" },
+              metadata: {
+                domain_metadata: { domain: "hadith" },
+                materialization_hint: "graph",
+                layout_group_id: "table-srg-001",
+                layout_role: "table_cell",
+                reading_order: 12,
+                parent_chunk_id: "chunk-parent",
+                previous_chunk_id: "chunk-prev",
+                next_chunk_id: "chunk-next",
+              },
               parser_quality_warning_codes: ["reference_unit_missing_expected_script"],
               quality_action_policy: "materialize",
             },
@@ -517,6 +591,17 @@ describe("QueryPage", () => {
     expect(dialog).toHaveAttribute("aria-modal", "true");
     expect(dialog).toHaveClass("fixed", "inset-0", "overflow-hidden", "sm:right-0");
     expect(screen.getAllByText("source-1").length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByText("Domain and materialization", { selector: "summary" }));
+    expect(screen.getByText("hadith")).toBeVisible();
+    expect(screen.getByText("graph")).toBeVisible();
+    fireEvent.click(screen.getByText("Layout chain", { selector: "summary" }));
+    expect(screen.getByText("table-srg-001")).toBeVisible();
+    expect(screen.getByText("table_cell")).toBeVisible();
+    expect(screen.getByText("12")).toBeVisible();
+    fireEvent.click(screen.getByText("Context chain", { selector: "summary" }));
+    expect(screen.getByText("chunk-parent")).toBeVisible();
+    expect(screen.getByText("chunk-prev")).toBeVisible();
+    expect(screen.getByText("chunk-next")).toBeVisible();
     fireEvent.click(screen.getByText("Reranker", { selector: "summary" }));
     expect(screen.getByText("Run-level reranker summary; not source-specific")).toBeVisible();
   });

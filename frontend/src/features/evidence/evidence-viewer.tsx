@@ -38,6 +38,28 @@ export interface NormalizedEvidence {
   relationshipRefs?: string[];
   graphUnavailableDetail?: string | null;
   rerankerSummary?: EvidenceRerankerSummary | null;
+  architecture?: {
+    domain?: {
+      domain: string;
+      materializationHint: string;
+      qualityPolicy: string;
+    };
+    layout?: {
+      layoutGroupId: string;
+      layoutRole: string;
+      readingOrder: string;
+    };
+    context?: {
+      parentChunkId: string;
+      previousChunkId: string;
+      nextChunkId: string;
+    };
+    assembly?: {
+      groundingStatus: string;
+      evidenceIds: string[];
+      droppedReasons: string[];
+    };
+  };
   raw?: unknown;
   routeLinks?: EvidenceRouteLinks;
 }
@@ -106,6 +128,44 @@ export function EvidenceViewer({
                 )}
               </div>
             </EvidenceSection>
+            <EvidenceSection title="Domain and materialization">
+              <ArchitectureKeyValues
+                values={[
+                  ["Domain", evidence.architecture?.domain?.domain],
+                  ["Materialization", evidence.architecture?.domain?.materializationHint],
+                  ["Quality policy", evidence.architecture?.domain?.qualityPolicy],
+                ]}
+              />
+            </EvidenceSection>
+            <EvidenceSection title="Layout chain">
+              <ArchitectureKeyValues
+                values={[
+                  ["Layout group", evidence.architecture?.layout?.layoutGroupId],
+                  ["Layout role", evidence.architecture?.layout?.layoutRole],
+                  ["Reading order", evidence.architecture?.layout?.readingOrder],
+                ]}
+              />
+            </EvidenceSection>
+            <EvidenceSection title="Context chain">
+              <ArchitectureKeyValues
+                values={[
+                  ["Parent", evidence.architecture?.context?.parentChunkId],
+                  ["Previous", evidence.architecture?.context?.previousChunkId],
+                  ["Next", evidence.architecture?.context?.nextChunkId],
+                ]}
+              />
+            </EvidenceSection>
+            {evidence.architecture?.assembly ? (
+              <EvidenceSection title="Context assembly">
+                <ArchitectureKeyValues
+                  values={[
+                    ["Grounding", evidence.architecture.assembly.groundingStatus],
+                    ["Evidence ids", evidence.architecture.assembly.evidenceIds.join(", ")],
+                    ["Dropped", evidence.architecture.assembly.droppedReasons.join(", ")],
+                  ]}
+                />
+              </EvidenceSection>
+            ) : null}
             <EvidenceSection title="Retrieval reasons">
               {evidence.retrievalReasons?.length ? (
                 <List values={evidence.retrievalReasons} />
@@ -212,6 +272,17 @@ function SummaryGrid({ evidence }: { evidence: NormalizedEvidence }) {
             : evidence.graphUnavailableDetail || "No graph relationship recorded for this evidence"
         }
       />
+    </div>
+  );
+}
+
+function ArchitectureKeyValues({ values }: { values: Array<[string, string | undefined]> }) {
+  const visibleValues = values.map(([label, value]) => [label, value || "not recorded"] as const);
+  return (
+    <div className="grid gap-2 text-sm sm:grid-cols-2">
+      {visibleValues.map(([label, value]) => (
+        <KeyValue key={label} label={label} value={value} />
+      ))}
     </div>
   );
 }
