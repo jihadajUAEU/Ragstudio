@@ -40,7 +40,12 @@ class LayoutNeighborService:
             for seed in seed_rows
             if (reference := _reference(seed)) is not None
         }
-        if not pages and not references:
+        layout_groups = {
+            group
+            for seed in seed_rows
+            if (group := _layout_group(seed)) is not None
+        }
+        if not pages and not references and not layout_groups:
             return []
 
         # Map page -> list of vertical midpoints of seed chunks on that page
@@ -78,7 +83,8 @@ class LayoutNeighborService:
 
             same_page = _page(row.source_location) in pages
             same_reference = _reference(row) in references
-            if not same_page and not same_reference:
+            same_layout_group = _layout_group(row) in layout_groups
+            if not same_page and not same_reference and not same_layout_group:
                 continue
 
             # Check spatial proximity if they are on the same page
@@ -110,6 +116,10 @@ class LayoutNeighborService:
                 reasons.append("spatial_proximity")
                 boost_score += 1.0
                 final_score += 1.0
+            if same_layout_group:
+                reasons.append("layout_group")
+                boost_score += 2.0
+                final_score += 2.0
 
             candidates.append(
                 EvidenceCandidate(
@@ -155,6 +165,15 @@ def _reference(chunk: Chunk) -> str | None:
     references = reference_metadata.get("references")
     if isinstance(references, list) and references:
         return str(references[0])
+    return None
+
+
+def _layout_group(chunk: Chunk) -> str | None:
+    metadata = chunk.metadata_json if isinstance(chunk.metadata_json, dict) else {}
+    for key in ("layout_group_id", "table_id", "figure_id", "caption_group_id"):
+        value = metadata.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
     return None
 
 

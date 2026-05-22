@@ -138,3 +138,59 @@ async def test_layout_neighbor_service_uses_seed_documents_when_scope_is_empty(
     await engine.dispose()
 
     assert [candidate.chunk_id for candidate in neighbors] == ["same-doc-neighbor"]
+
+
+@pytest.mark.asyncio
+async def test_layout_neighbor_service_returns_same_layout_group_caption(
+    database_url, tmp_path
+):
+    engine = make_engine(database_url)
+    await init_db(engine)
+    factory = make_session_factory(engine)
+
+    async with factory() as session:
+        session.add(
+            Document(
+                id="doc-layout-group",
+                filename="layout-group.pdf",
+                content_type="application/pdf",
+                sha256="layout-group-sha",
+                artifact_path=str(tmp_path / "layout-group.pdf"),
+            )
+        )
+        session.add_all(
+            [
+                Chunk(
+                    id="seed-cell",
+                    document_id="doc-layout-group",
+                    text="Net revenue was 120.",
+                    source_location={"page": 3, "bbox": [100, 200, 220, 240]},
+                    metadata_json={
+                        "layout_group_id": "table-7",
+                        "layout_role": "table_cell",
+                    },
+                ),
+                Chunk(
+                    id="caption",
+                    document_id="doc-layout-group",
+                    text="Table 7. Consolidated revenue.",
+                    source_location={"page": 8, "bbox": [90, 160, 300, 185]},
+                    metadata_json={
+                        "layout_group_id": "table-7",
+                        "layout_role": "caption",
+                    },
+                ),
+            ]
+        )
+        await session.commit()
+
+        neighbors = await LayoutNeighborService(session).neighbors_for(
+            seed_chunk_ids=["seed-cell"],
+            document_ids=["doc-layout-group"],
+            limit=5,
+        )
+
+    await engine.dispose()
+
+    assert [candidate.chunk_id for candidate in neighbors] == ["caption"]
+    assert "layout_group" in neighbors[0].reasons
