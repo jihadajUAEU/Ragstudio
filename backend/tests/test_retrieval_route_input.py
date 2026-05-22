@@ -1,5 +1,4 @@
 import pytest
-
 from ragstudio.services.query_understanding import QueryUnderstanding
 from ragstudio.services.retrieval_route_input import (
     ScopeAccessViolationError,
@@ -141,13 +140,14 @@ def test_route_input_sets_multimodal_layout_domain_from_layout_metadata():
         query_intent="semantic",
         retrieval_strategy="semantic_hybrid",
         query_understanding=None,
-        domain_metadata=[{"domain": "finance", "layout_types": ["table", "figure"]}],
+        domain_metadata=[{"domain": "operations", "layout_types": ["table", "figure"]}],
         query_config={"limit": 12},
     )
 
     assert request.document_ids == ("doc-report",)
     assert request.domain_id == "multimodal_layout"
     assert request.layout_hint == "table"
+    assert request.materialization_hint == "full"
     assert request.top_k == 24
     assert request.graph_readiness["state"] == "ready"
     assert request.runtime_readiness["state"] == "ready"
@@ -167,3 +167,23 @@ def test_route_input_rejects_empty_document_scope_for_strict_profiles():
             domain_metadata=[],
             query_config={"scope_policy": "strict_document_scope"},
         )
+
+
+def test_route_input_uses_classifier_materialization_hint_when_not_overridden():
+    request = build_retrieval_route_request(
+        query="medical figure diagnosis",
+        document_ids=["doc-med"],
+        runtime_profile_id="profile-med",
+        variant_id="variant-med",
+        query_intent="semantic",
+        retrieval_strategy="semantic_hybrid",
+        query_understanding=None,
+        domain_metadata=[{"domain": "medical", "layout_types": ["figure"]}],
+        query_config={"limit": 8},
+        runtime_readiness={"state": "ready", "safe_to_run": True},
+        reranker_readiness={"state": "disabled", "safe_to_run": False},
+    )
+
+    assert request.domain_id == "medical_reference"
+    assert request.layout_hint == "figure"
+    assert request.materialization_hint == "full"

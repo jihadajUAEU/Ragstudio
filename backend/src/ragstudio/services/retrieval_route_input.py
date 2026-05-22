@@ -51,7 +51,9 @@ def build_retrieval_route_request(
         ),
         "domain_id": classification.domain_profile_id,
         "layout_hint": classification.layout_hint,
-        "materialization_hint": _materialization_hint(query_config),
+        "materialization_hint": (
+            _materialization_hint(query_config) or classification.materialization_hint
+        ),
         "quality_action_policy": quality_action_policy,
         "materialization_policy": _materialization_policy(domain_metadata, query_config),
         "runtime_readiness": runtime_readiness or {"state": "ready"},
@@ -245,7 +247,9 @@ def _baseline_allows_vector(baseline_gate: object) -> bool:
             "latency_budget_regressed",
         ]
         present_flags = [flag for flag in regression_flags if flag in baseline_gate]
-        return bool(present_flags) and not any(bool(baseline_gate.get(flag)) for flag in present_flags)
+        return bool(present_flags) and not any(
+            bool(baseline_gate.get(flag)) for flag in present_flags
+        )
     return False
 
 

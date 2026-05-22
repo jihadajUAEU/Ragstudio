@@ -69,7 +69,16 @@ class DomainProfileRegistry:
         ]
         if not candidates:
             return self.default_profile()
-        return sorted(candidates, key=lambda profile: (profile.id == "general", profile.id))[0]
+        return sorted(
+            candidates,
+            key=lambda profile: (
+                _layout_profile_rank(profile.id, layout_hint),
+                _hint_rank(layout_hint, profile.supported_layouts),
+                _hint_rank(materialization_hint, profile.materialization_hints),
+                profile.id == "general",
+                profile.id,
+            ),
+        )[0]
 
 
 DEFAULT_DOMAIN_PROFILES: tuple[DomainProfile, ...] = (
@@ -98,4 +107,68 @@ DEFAULT_DOMAIN_PROFILES: tuple[DomainProfile, ...] = (
         supported_layouts=("table", "figure", "equation", "mixed"),
         materialization_hints=("canonical_only", "runtime", "vector", "full"),
     ),
+    DomainProfile(
+        id="legal_reference",
+        label="Legal Reference",
+        chunking_strategy="reference_anchored",
+        retrieval_priority=(
+            "postgres_canonical",
+            "lexical_reference",
+            "metadata",
+            "graph",
+            "vector",
+        ),
+        supported_layouts=("plain_text", "reference", "table", "mixed"),
+        materialization_hints=("canonical_only", "vector", "graph", "full"),
+        reference_patterns=("section", "article", "clause", "regulation"),
+        default_top_k=10,
+    ),
+    DomainProfile(
+        id="medical_reference",
+        label="Medical Reference",
+        chunking_strategy="layout_block",
+        retrieval_priority=(
+            "postgres_canonical",
+            "metadata",
+            "vector",
+            "graph",
+            "raganything_runtime",
+        ),
+        supported_layouts=("plain_text", "table", "figure", "reference", "mixed"),
+        materialization_hints=("canonical_only", "vector", "runtime", "full"),
+        reference_patterns=("diagnosis", "treatment", "dose", "figure"),
+        default_top_k=10,
+    ),
+    DomainProfile(
+        id="financial_reference",
+        label="Financial Reference",
+        chunking_strategy="layout_block",
+        retrieval_priority=("postgres_canonical", "metadata", "vector", "graph"),
+        supported_layouts=("plain_text", "table", "reference", "mixed"),
+        materialization_hints=("canonical_only", "vector", "graph", "full"),
+        reference_patterns=("invoice", "account", "line_item", "tax"),
+        default_top_k=10,
+    ),
+    DomainProfile(
+        id="code_reference",
+        label="Code Reference",
+        chunking_strategy="semantic_window",
+        retrieval_priority=("postgres_canonical", "metadata", "vector", "graph"),
+        supported_layouts=("plain_text", "reference", "mixed"),
+        materialization_hints=("canonical_only", "vector", "graph", "full"),
+        reference_patterns=("symbol", "function", "class", "stacktrace"),
+        default_top_k=12,
+    ),
 )
+
+
+def _hint_rank(hint: str | None, supported: tuple[str, ...]) -> int:
+    if hint is None or hint in supported:
+        return 0
+    return 1
+
+
+def _layout_profile_rank(profile_id: str, layout_hint: str | None) -> int:
+    if layout_hint in {"table", "figure", "equation"} and profile_id == "multimodal_layout":
+        return 0
+    return 1

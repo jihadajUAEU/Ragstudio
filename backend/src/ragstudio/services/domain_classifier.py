@@ -9,6 +9,7 @@ class DomainClassification:
     domain_profile_id: str
     domain_family: str
     layout_hint: str | None
+    materialization_hint: str | None
     reference_heavy: bool
     signals: tuple[str, ...]
 
@@ -17,6 +18,7 @@ class DomainClassification:
             "domain_profile_id": self.domain_profile_id,
             "domain_family": self.domain_family,
             "layout_hint": self.layout_hint,
+            "materialization_hint": self.materialization_hint,
             "reference_heavy": self.reference_heavy,
             "signals": list(self.signals),
         }
@@ -36,36 +38,64 @@ class DomainClassifier:
         signals = _signals(domain_metadata)
         layout_hint = _layout_hint(signals)
 
-        if {"quran_tafseer", "tafseer", "quran"} & signals:
+        if {"quran_tafseer", "tafseer", "quran", "hadith"} & signals:
             return self._remember(
                 cache_key,
                 DomainClassification(
                     domain_profile_id="reference_heavy",
-                    domain_family="tafseer_reference",
+                    domain_family="arabic_religious",
                     layout_hint=layout_hint or "reference",
+                    materialization_hint="graph",
                     reference_heavy=True,
                     signals=tuple(sorted(signals)),
                 ),
             )
-        if "hadith" in signals:
+        if {"legal", "law", "statute", "policy", "contract"} & signals:
             return self._remember(
                 cache_key,
                 DomainClassification(
-                    domain_profile_id="reference_heavy",
-                    domain_family="hadith_reference",
-                    layout_hint=layout_hint or "reference",
-                    reference_heavy=True,
-                    signals=tuple(sorted(signals)),
-                ),
-            )
-        if {"legal", "law", "statute", "policy"} & signals:
-            return self._remember(
-                cache_key,
-                DomainClassification(
-                    domain_profile_id="reference_heavy",
+                    domain_profile_id="legal_reference",
                     domain_family="legal_reference",
                     layout_hint=layout_hint or "reference",
+                    materialization_hint="graph",
                     reference_heavy=True,
+                    signals=tuple(sorted(signals)),
+                ),
+            )
+        if {"medical", "clinical", "medicine", "diagnosis", "patient"} & signals:
+            return self._remember(
+                cache_key,
+                DomainClassification(
+                    domain_profile_id="medical_reference",
+                    domain_family="medical_reference",
+                    layout_hint=layout_hint,
+                    materialization_hint=_materialization_hint(layout_hint, "vector"),
+                    reference_heavy=False,
+                    signals=tuple(sorted(signals)),
+                ),
+            )
+        if {"finance", "financial", "invoice", "tax", "accounting"} & signals:
+            effective_layout_hint = layout_hint or "table"
+            return self._remember(
+                cache_key,
+                DomainClassification(
+                    domain_profile_id="financial_reference",
+                    domain_family="financial_reference",
+                    layout_hint=effective_layout_hint,
+                    materialization_hint=_materialization_hint(effective_layout_hint, "vector"),
+                    reference_heavy=False,
+                    signals=tuple(sorted(signals)),
+                ),
+            )
+        if {"code", "api", "source_code", "stacktrace", "software"} & signals:
+            return self._remember(
+                cache_key,
+                DomainClassification(
+                    domain_profile_id="code_reference",
+                    domain_family="code_reference",
+                    layout_hint=layout_hint,
+                    materialization_hint="vector",
+                    reference_heavy=False,
                     signals=tuple(sorted(signals)),
                 ),
             )
@@ -76,6 +106,7 @@ class DomainClassifier:
                     domain_profile_id="multimodal_layout",
                     domain_family="generic",
                     layout_hint=layout_hint,
+                    materialization_hint="full",
                     reference_heavy=False,
                     signals=tuple(sorted(signals)),
                 ),
@@ -87,6 +118,7 @@ class DomainClassifier:
                     domain_profile_id="general",
                     domain_family="research_semantic",
                     layout_hint=layout_hint,
+                    materialization_hint="vector",
                     reference_heavy=False,
                     signals=tuple(sorted(signals)),
                 ),
@@ -97,6 +129,7 @@ class DomainClassifier:
                 domain_profile_id="general",
                 domain_family="generic",
                 layout_hint=layout_hint,
+                materialization_hint="vector",
                 reference_heavy=False,
                 signals=tuple(sorted(signals)),
             ),
@@ -175,3 +208,9 @@ def _layout_hint(signals: set[str]) -> str | None:
         if layout in signals:
             return layout
     return None
+
+
+def _materialization_hint(layout_hint: str | None, fallback: str) -> str:
+    if layout_hint in {"table", "figure", "equation"}:
+        return "full"
+    return fallback

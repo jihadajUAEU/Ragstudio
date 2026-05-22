@@ -15,23 +15,35 @@ def test_domain_classifier_maps_quran_tafseer_reference_documents():
     )
 
     assert result.domain_profile_id == "reference_heavy"
-    assert result.domain_family == "tafseer_reference"
+    assert result.domain_family == "arabic_religious"
+    assert result.materialization_hint == "graph"
     assert result.reference_heavy is True
     assert result.layout_hint == "reference"
 
 
-def test_domain_classifier_maps_hadith_legal_and_policy_to_reference_heavy():
+def test_domain_classifier_maps_hadith_to_arabic_reference_family():
+    result = DomainClassifier().classify([{"domain": "hadith", "tags": ["hadith"]}])
+
+    assert result.domain_profile_id == "reference_heavy"
+    assert result.domain_family == "arabic_religious"
+    assert result.layout_hint == "reference"
+    assert result.materialization_hint == "graph"
+    assert result.reference_heavy is True
+
+
+def test_domain_classifier_maps_legal_and_policy_to_legal_reference():
     classifier = DomainClassifier()
 
     for metadata in (
-        {"domain": "hadith", "tags": ["hadith"]},
         {"domain": "legal", "document_type": "statute"},
         {"domain": "policy", "tags": ["policy"]},
     ):
         result = classifier.classify([metadata])
 
-        assert result.domain_profile_id == "reference_heavy"
+        assert result.domain_profile_id == "legal_reference"
+        assert result.domain_family == "legal_reference"
         assert result.layout_hint == "reference"
+        assert result.materialization_hint == "graph"
         assert result.reference_heavy is True
 
 
@@ -39,7 +51,7 @@ def test_domain_classifier_maps_layout_heavy_documents():
     result = DomainClassifier().classify(
         [
             {
-                "domain": "finance",
+                "domain": "operations",
                 "document_type": "report",
                 "layout_types": ["table", "figure"],
                 "tags": ["table", "annual_report"],
@@ -50,6 +62,7 @@ def test_domain_classifier_maps_layout_heavy_documents():
     assert result.domain_profile_id == "multimodal_layout"
     assert result.domain_family == "generic"
     assert result.layout_hint == "table"
+    assert result.materialization_hint == "full"
     assert result.reference_heavy is False
 
 
@@ -66,6 +79,7 @@ def test_domain_classifier_maps_equation_layout_documents():
 
     assert result.domain_profile_id == "multimodal_layout"
     assert result.layout_hint == "equation"
+    assert result.materialization_hint == "full"
 
 
 def test_domain_classifier_defaults_to_general_for_plain_documents():
@@ -74,6 +88,7 @@ def test_domain_classifier_defaults_to_general_for_plain_documents():
     assert result.domain_profile_id == "general"
     assert result.domain_family == "generic"
     assert result.layout_hint is None
+    assert result.materialization_hint == "vector"
     assert result.reference_heavy is False
 
 
@@ -109,3 +124,35 @@ def test_domain_classifier_cache_key_includes_metadata_fingerprint():
     assert first is not second
     assert classifier.cache_stats()["hits"] == 0
     assert classifier.cache_stats()["size"] == 2
+
+
+def test_domain_classifier_maps_specialized_non_arabic_profiles():
+    classifier = DomainClassifier()
+
+    legal = classifier.classify([{"domain": "legal", "document_type": "contract"}])
+    medical = classifier.classify([{"domain": "medical", "layout_types": ["figure"]}])
+    financial = classifier.classify([{"domain": "finance", "layout_types": ["table"]}])
+    code = classifier.classify([{"domain": "code", "tags": ["api"]}])
+
+    assert legal.domain_family == "legal_reference"
+    assert legal.domain_profile_id == "legal_reference"
+    assert legal.materialization_hint == "graph"
+    assert medical.domain_family == "medical_reference"
+    assert medical.domain_profile_id == "medical_reference"
+    assert medical.materialization_hint == "full"
+    assert financial.domain_family == "financial_reference"
+    assert financial.domain_profile_id == "financial_reference"
+    assert financial.materialization_hint == "full"
+    assert code.domain_family == "code_reference"
+    assert code.domain_profile_id == "code_reference"
+    assert code.materialization_hint == "vector"
+
+
+def test_domain_classifier_uses_adapter_family_for_arabic_reference_domains():
+    result = DomainClassifier().classify(
+        [{"domain": "quran_tafseer", "tags": ["quran", "tafseer"]}]
+    )
+
+    assert result.domain_family == "arabic_religious"
+    assert result.domain_profile_id == "reference_heavy"
+    assert result.materialization_hint == "graph"

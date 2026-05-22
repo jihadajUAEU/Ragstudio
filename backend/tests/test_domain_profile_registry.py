@@ -10,7 +10,11 @@ def test_registry_returns_deterministic_default_profile():
 
     assert registry.get(None).id == "general"
     assert [profile.id for profile in registry.list_profiles()] == [
+        "code_reference",
+        "financial_reference",
         "general",
+        "legal_reference",
+        "medical_reference",
         "multimodal_layout",
         "reference_heavy",
     ]
@@ -42,3 +46,20 @@ def test_registry_can_be_configured_without_external_dependencies():
     assert registry.get("legal").reference_patterns == ()
     with pytest.raises(KeyError, match="Unknown domain profile"):
         registry.get("general")
+
+
+def test_registry_exposes_specialized_domain_profiles():
+    registry = DomainProfileRegistry()
+
+    legal = registry.get("legal_reference")
+    medical = registry.get("medical_reference")
+    financial = registry.get("financial_reference")
+    code = registry.get("code_reference")
+
+    assert legal.chunking_strategy == "reference_anchored"
+    assert legal.supports_materialization("graph")
+    assert medical.supports_layout("figure")
+    assert medical.supports_materialization("runtime")
+    assert financial.supports_layout("table")
+    assert financial.supports_materialization("graph")
+    assert code.supports_materialization("vector")
