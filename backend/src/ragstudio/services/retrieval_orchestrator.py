@@ -1014,15 +1014,35 @@ class RetrievalOrchestrator:
             ]
 
         timings["layout_neighbor_ms"] = _elapsed_ms(started)
-        return candidates, [
-            {
-                "stage": "layout_neighbor_expansion",
-                "status": "ran",
-                "reason": "same_page_or_reference_neighbors",
-                "candidate_count": len(candidates),
-                "candidate_ids": [candidate.candidate_id for candidate in candidates],
-            }
-        ]
+        trace: dict[str, Any] = {
+            "stage": "layout_neighbor_expansion",
+            "status": "ran" if candidates else "skipped",
+            "reason": _layout_neighbor_trace_reason(candidates),
+            "candidate_count": len(candidates),
+            "candidate_ids": [candidate.candidate_id for candidate in candidates],
+            "canonical_chunk_ids": [
+                candidate.chunk_id for candidate in candidates if candidate.chunk_id
+            ],
+            "document_ids": [
+                document_id
+                for document_id in dict.fromkeys(
+                    candidate.document_id for candidate in candidates
+                )
+                if document_id
+            ],
+            "latency_ms": timings["layout_neighbor_ms"],
+            "timed_out": False,
+            "partial": False,
+        }
+        layout_group_ids = _candidate_layout_group_ids(candidates)
+        if layout_group_ids:
+            trace["layout_group_ids"] = layout_group_ids
+        if any("reading_order_neighbor" in candidate.reasons for candidate in candidates):
+            trace["reading_order_neighbors"] = True
+        layout_summaries = _candidate_layout_summaries(candidates)
+        if layout_summaries:
+            trace["layout_summaries"] = layout_summaries
+        return candidates, [trace]
 
     async def _safe_context_neighbors(
         self,
@@ -1063,19 +1083,17 @@ class RetrievalOrchestrator:
                 )
             ]
         timings["context_window_ms"] = _elapsed_ms(started)
-        return candidates, [
-            _lane_result_trace(
-                lane="context_window",
-                status="ran" if candidates else "skipped",
-                reason=(
-                    "adjacent_context_window"
-                    if candidates
-                    else "no_adjacent_context_window"
-                ),
-                candidates=candidates,
-                latency_ms=timings["context_window_ms"],
-            )
-        ]
+        trace = _lane_result_trace(
+            lane="context_window",
+            status="ran" if candidates else "skipped",
+            reason=_context_window_trace_reason(candidates),
+            candidates=candidates,
+            latency_ms=timings["context_window_ms"],
+        )
+        relationship_reasons = _candidate_context_relationship_reasons(candidates)
+        if relationship_reasons:
+            trace["relationship_reasons"] = relationship_reasons
+        return candidates, [trace]
 
     async def _metadata_after_native_result(
         self,
@@ -1848,6 +1866,73 @@ def _lane_result_trace(
     if error_type:
         payload["error_type"] = error_type
     return payload
+
+
+def _layout_neighbor_trace_reason(candidates: list[EvidenceCandidate]) -> str:
+    if not candidates:
+        return "no_layout_neighbors"
+    rich_reasons = {"layout_group", "reading_order_neighbor"}
+    if any(rich_reasons & set(candidate.reasons) for candidate in candidates):
+        return "same_page_reference_layout_group_or_reading_order_neighbors"
+    return "same_page_or_reference_neighbors"
+
+
+def _candidate_layout_group_ids(candidates: list[EvidenceCandidate]) -> list[str]:
+    values: list[str] = []
+    for candidate in candidates:
+        value = candidate.metadata.get("layout_group_id")
+        if isinstance(value, str) and value and value not in values:
+            values.append(value)
+    return values
+
+
+def _candidate_layout_summaries(candidates: list[EvidenceCandidate]) -> dict[str, str]:
+    summaries: dict[str, str] = {}
+    for candidate in candidates:
+        if not candidate.chunk_id:
+            continue
+        evidence_context = candidate.metadata.get("evidence_context")
+        if not isinstance(evidence_context, dict):
+            continue
+        layout_summary = evidence_context.get("layout_summary")
+        if isinstance(layout_summary, str) and layout_summary:
+            summaries[candidate.chunk_id] = layout_summary
+    return summaries
+
+
+def _context_window_trace_reason(candidates: list[EvidenceCandidate]) -> str:
+    if not candidates:
+        return "no_adjacent_context_window"
+    reasons = {reason for candidate in candidates for reason in candidate.reasons}
+    has_adjacent = "reading_order_adjacent" in reasons
+    has_linked = bool({"parent_context", "sibling_context", "linked_context"} & reasons)
+    if has_adjacent and has_linked:
+        return "adjacent_parent_sibling_context_window"
+    if has_linked:
+        return "parent_sibling_context_window"
+    if has_adjacent:
+        return "adjacent_context_window"
+    return "context_window"
+
+
+def _candidate_context_relationship_reasons(
+    candidates: list[EvidenceCandidate],
+) -> dict[str, str]:
+    relationship_reasons: dict[str, str] = {}
+    for candidate in candidates:
+        if not candidate.chunk_id:
+            continue
+        reasons = [
+            reason
+            for reason in candidate.reasons
+            if reason
+            not in {
+                "context_window",
+            }
+        ]
+        if reasons:
+            relationship_reasons[candidate.chunk_id] = "_and_".join(reasons)
+    return relationship_reasons
 
 
 def _graph_seed_candidates(

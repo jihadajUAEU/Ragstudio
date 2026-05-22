@@ -170,7 +170,7 @@ def _relationship_reasons(
 
 def _relationship_chunk_ids(metadata: dict[str, Any]) -> set[str]:
     values: set[str] = set()
-    for key in ("previous_chunk_id", "next_chunk_id", "parent_chunk_id"):
+    for key in ("previous_chunk_id", "next_chunk_id"):
         value = _string_value(metadata, key)
         if value:
             values.add(value)

@@ -110,14 +110,22 @@ async def test_orchestrator_expands_layout_neighbors_from_seed_candidates(
                     document_id="doc-layout-neighbor-orchestrator",
                     text="Figure caption.",
                     source_location={"page": 2, "reference": "fig:2"},
-                    metadata_json={"layout": {"role": "caption"}},
+                    metadata_json={
+                        "layout": {"role": "caption"},
+                        "layout_group_id": "figure-2",
+                        "reading_order": 0,
+                    },
                 ),
                 Chunk(
                     id="neighbor-layout-orchestrator",
                     document_id="doc-layout-neighbor-orchestrator",
                     text="Figure body details.",
                     source_location={"page": 2, "reference": "fig:2"},
-                    metadata_json={"layout": {"role": "body"}},
+                    metadata_json={
+                        "layout": {"role": "body"},
+                        "layout_group_id": "figure-2",
+                        "reading_order": 1,
+                    },
                 ),
             ]
         )
@@ -134,7 +142,10 @@ async def test_orchestrator_expands_layout_neighbors_from_seed_candidates(
                     document_id="doc-layout-neighbor-orchestrator",
                     chunk_id="seed-layout-orchestrator",
                     source_location={"page": 2, "reference": "fig:2"},
-                    metadata={},
+                    metadata={
+                        "layout_group_id": "figure-2",
+                        "reading_order": 0,
+                    },
                     tool="pgvector",
                     tool_rank=1,
                     base_score=10.0,
@@ -151,15 +162,18 @@ async def test_orchestrator_expands_layout_neighbors_from_seed_candidates(
     assert [candidate.chunk_id for candidate in candidates] == [
         "neighbor-layout-orchestrator"
     ]
-    assert traces == [
-        {
-            "stage": "layout_neighbor_expansion",
-            "status": "ran",
-            "reason": "same_page_or_reference_neighbors",
-            "candidate_count": 1,
-            "candidate_ids": ["layout-neighbor:neighbor-layout-orchestrator"],
-        }
-    ]
+    assert traces[0]["stage"] == "layout_neighbor_expansion"
+    assert traces[0]["status"] == "ran"
+    assert traces[0]["reason"] == (
+        "same_page_reference_layout_group_or_reading_order_neighbors"
+    )
+    assert traces[0]["candidate_count"] == 1
+    assert traces[0]["candidate_ids"] == ["layout-neighbor:neighbor-layout-orchestrator"]
+    assert traces[0]["canonical_chunk_ids"] == ["neighbor-layout-orchestrator"]
+    assert traces[0]["document_ids"] == ["doc-layout-neighbor-orchestrator"]
+    assert traces[0]["layout_group_ids"] == ["figure-2"]
+    assert traces[0]["reading_order_neighbors"] is True
+    assert traces[0]["layout_summaries"]["neighbor-layout-orchestrator"] == "text; page=2"
 
 
 @pytest.mark.asyncio
@@ -183,6 +197,13 @@ async def test_orchestrator_expands_context_window_from_seed_candidates(
         session.add_all(
             [
                 Chunk(
+                    id="parent-context-window-orchestrator",
+                    document_id="doc-context-window-orchestrator",
+                    text="Parent canonical section.",
+                    source_location={"page": 1},
+                    metadata_json={},
+                ),
+                Chunk(
                     id="prev-context-window-orchestrator",
                     document_id="doc-context-window-orchestrator",
                     text="Previous canonical chunk.",
@@ -194,14 +215,29 @@ async def test_orchestrator_expands_context_window_from_seed_candidates(
                     document_id="doc-context-window-orchestrator",
                     text="Seed canonical chunk.",
                     source_location={"page": 1},
-                    metadata_json={"reading_order": 2},
+                    metadata_json={
+                        "parent_chunk_id": "parent-context-window-orchestrator",
+                        "reading_order": 2,
+                    },
                 ),
                 Chunk(
                     id="next-context-window-orchestrator",
                     document_id="doc-context-window-orchestrator",
                     text="Next canonical chunk.",
                     source_location={"page": 1},
-                    metadata_json={"reading_order": 3},
+                    metadata_json={
+                        "previous_chunk_id": "seed-context-window-orchestrator",
+                        "reading_order": 3,
+                    },
+                ),
+                Chunk(
+                    id="sibling-context-window-orchestrator",
+                    document_id="doc-context-window-orchestrator",
+                    text="Sibling canonical chunk.",
+                    source_location={"page": 1},
+                    metadata_json={
+                        "parent_chunk_id": "parent-context-window-orchestrator",
+                    },
                 ),
             ]
         )
@@ -218,7 +254,12 @@ async def test_orchestrator_expands_context_window_from_seed_candidates(
                     document_id="doc-context-window-orchestrator",
                     chunk_id="seed-context-window-orchestrator",
                     source_location={"page": 1},
-                    metadata={"reading_order": 2},
+                    metadata={
+                        "parent_chunk_id": "parent-context-window-orchestrator",
+                        "previous_chunk_id": "prev-context-window-orchestrator",
+                        "next_chunk_id": "next-context-window-orchestrator",
+                        "reading_order": 2,
+                    },
                     tool="metadata",
                     tool_rank=1,
                     base_score=10.0,
@@ -231,15 +272,29 @@ async def test_orchestrator_expands_context_window_from_seed_candidates(
 
     await engine.dispose()
 
-    assert [candidate.chunk_id for candidate in candidates] == [
+    assert {candidate.chunk_id for candidate in candidates} == {
+        "parent-context-window-orchestrator",
         "prev-context-window-orchestrator",
         "next-context-window-orchestrator",
-    ]
+        "sibling-context-window-orchestrator",
+    }
     assert traces[0]["stage"] == "retrieval_lane_result"
     assert traces[0]["lane"] == "context_window"
     assert traces[0]["status"] == "ran"
-    assert traces[0]["reason"] == "adjacent_context_window"
-    assert traces[0]["candidate_count"] == 2
+    assert traces[0]["reason"] == "adjacent_parent_sibling_context_window"
+    assert traces[0]["candidate_count"] == 4
+    assert traces[0]["relationship_reasons"][
+        "parent-context-window-orchestrator"
+    ] == "parent_context"
+    assert "linked_context" in traces[0]["relationship_reasons"][
+        "prev-context-window-orchestrator"
+    ]
+    assert "linked_context" in traces[0]["relationship_reasons"][
+        "next-context-window-orchestrator"
+    ]
+    assert traces[0]["relationship_reasons"][
+        "sibling-context-window-orchestrator"
+    ] == "sibling_context"
 
 
 def test_plan_for_reference_query_marks_reference_intent():
