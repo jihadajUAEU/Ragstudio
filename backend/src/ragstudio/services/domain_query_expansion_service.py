@@ -47,7 +47,7 @@ class DomainQueryExpansionService:
         domain_metadata: list[dict[str, Any]],
         query_hypothesis: QueryHypothesis | None = None,
     ) -> DomainQueryExpansion:
-        domain_family = _domain_family(domain_metadata)
+        domain_family = self.registry.resolve_domain_family(domain_metadata)
         expansions: list[LexicalExpansion] = []
         retrieval_passes: list[RetrievalPass] = []
         expansion_source = "original_query"
@@ -145,81 +145,6 @@ class DomainQueryExpansionService:
             },
         )
 
-
-def _domain_family(domain_metadata: list[dict[str, Any]]) -> str:
-    signals: set[str] = set()
-    for metadata in domain_metadata:
-        if not isinstance(metadata, dict):
-            continue
-        raw_tags = metadata.get("tags")
-        tags = raw_tags if isinstance(raw_tags, list | tuple | set) else []
-        signals.update(
-            normalized_value
-            for value in [
-                metadata.get("domain"),
-                metadata.get("document_type"),
-                metadata.get("content_role"),
-                *tags,
-            ]
-            if isinstance(value, str)
-            if (normalized_value := value.strip().casefold())
-        )
-
-    if signals & {
-        "quran",
-        "tafseer",
-        "quran_tafseer",
-        "hadith",
-        "islamic_text",
-        "religious_text",
-        "fiqh",
-        "fatwa",
-        "islamic_law",
-    }:
-        return "arabic_religious"
-    if signals & {
-        "case_law",
-        "contract",
-        "law",
-        "legal",
-        "legal_reference",
-        "regulation",
-        "statute",
-    }:
-        return "legal_reference"
-    if signals & {
-        "clinical",
-        "diagnosis",
-        "healthcare",
-        "medical",
-        "medical_reference",
-        "medicine",
-        "patient",
-        "treatment",
-    }:
-        return "medical_reference"
-    if signals & {
-        "accounting",
-        "banking",
-        "finance",
-        "financial",
-        "financial_reference",
-        "investment",
-        "invoice",
-        "tax",
-    }:
-        return "financial_reference"
-    if signals & {
-        "api",
-        "code",
-        "code_reference",
-        "programming",
-        "software",
-        "source_code",
-        "stacktrace",
-    }:
-        return "code_reference"
-    return "generic"
 
 
 def _expand_with_adapters(

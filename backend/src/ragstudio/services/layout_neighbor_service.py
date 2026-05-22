@@ -43,6 +43,16 @@ class LayoutNeighborService:
         if not pages and not references:
             return []
 
+        # Map page -> list of vertical midpoints of seed chunks on that page
+        seed_midpoints: dict[int, list[float]] = {}
+        for seed in seed_rows:
+            page = _page(seed.source_location)
+            if page is not None:
+                bbox = _chunk_bbox(seed)
+                if bbox is not None:
+                    y_mid = (bbox[1] + bbox[3]) / 2
+                    seed_midpoints.setdefault(page, []).append(y_mid)
+
         seed_document_ids = [seed.document_id for seed in seed_rows if seed.document_id]
         scoped_document_ids = list(
             dict.fromkeys(document_ids if document_ids else seed_document_ids)
@@ -71,6 +81,18 @@ class LayoutNeighborService:
             if not same_page and not same_reference:
                 continue
 
+            # Check spatial proximity if they are on the same page
+            is_spatial_proximity = False
+            page = _page(row.source_location)
+            if same_page and page is not None and page in seed_midpoints:
+                row_bbox = _chunk_bbox(row)
+                if row_bbox is not None:
+                    row_y_mid = (row_bbox[1] + row_bbox[3]) / 2
+                    for seed_y_mid in seed_midpoints[page]:
+                        if abs(row_y_mid - seed_y_mid) <= 150.0:
+                            is_spatial_proximity = True
+                            break
+
             source_location = row.source_location if isinstance(row.source_location, dict) else {}
             candidate_metadata = dict(metadata)
             evidence_context = evidence_context_from_metadata(
@@ -80,6 +102,14 @@ class LayoutNeighborService:
             )
             if evidence_context:
                 candidate_metadata["evidence_context"] = evidence_context
+
+            reasons = ["layout_neighbor"]
+            boost_score = 1.5
+            final_score = 10.5
+            if is_spatial_proximity:
+                reasons.append("spatial_proximity")
+                boost_score += 1.0
+                final_score += 1.0
 
             candidates.append(
                 EvidenceCandidate(
@@ -92,9 +122,9 @@ class LayoutNeighborService:
                     tool="metadata",
                     tool_rank=len(candidates) + 1,
                     base_score=9.0,
-                    boost_score=1.5,
-                    final_score=10.5,
-                    reasons=["layout_neighbor"],
+                    boost_score=boost_score,
+                    final_score=final_score,
+                    reasons=reasons,
                     retrieval_pass="layout_neighbor",
                     scope_status="in_scope",
                 )
@@ -135,3 +165,25 @@ def _is_blocked(metadata: dict[str, Any]) -> bool:
     if policy.get("action") == "block":
         return True
     return policy.get("index_vector") is False and policy.get("project_graph") is False
+
+
+def _chunk_bbox(chunk: Chunk) -> tuple[float, float, float, float] | None:
+    sl = chunk.source_location
+    if isinstance(sl, dict):
+        for key in ("bbox", "coordinates"):
+            val = sl.get(key)
+            if isinstance(val, list | tuple) and len(val) == 4:
+                try:
+                    return (float(val[0]), float(val[1]), float(val[2]), float(val[3]))
+                except (ValueError, TypeError):
+                    pass
+    mj = chunk.metadata_json
+    if isinstance(mj, dict):
+        for key in ("bbox", "coordinates"):
+            val = mj.get(key)
+            if isinstance(val, list | tuple) and len(val) == 4:
+                try:
+                    return (float(val[0]), float(val[1]), float(val[2]), float(val[3]))
+                except (ValueError, TypeError):
+                    pass
+    return None

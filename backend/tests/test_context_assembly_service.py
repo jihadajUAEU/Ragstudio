@@ -225,3 +225,26 @@ def test_context_assembly_injects_breadcrumb_text_from_evidence_context():
 
     assert context.evidence[0].breadcrumb == "Synthetic Tafseer > 1:5"
     assert context.evidence[0].context_text.startswith("[Synthetic Tafseer > 1:5]")
+
+
+def test_context_assembly_dynamic_fallback_breadcrumb_resolution():
+    candidate = EvidenceCandidate(
+        candidate_id="metadata:chunk-2",
+        text="Seek help through patience and prayer.",
+        document_id="doc-2",
+        chunk_id="chunk-2",
+        source_location={"page": 2, "reference": "2:45"},
+        metadata={
+            "document_metadata": {"title": "Holy Book"},
+            "section_path": ["Surah Al-Baqarah"],
+        },
+        tool="metadata",
+        tool_rank=1,
+        base_score=10,
+    )
+
+    context = ContextAssemblyService(max_context_tokens=200).assemble([candidate])
+
+    assert context.evidence[0].breadcrumb == "Holy Book > Surah Al-Baqarah > 2:45"
+    assert context.evidence[0].layout_summary == "page=2"
+    assert context.evidence[0].context_text.startswith("[Holy Book > Surah Al-Baqarah > 2:45 | page=2]")

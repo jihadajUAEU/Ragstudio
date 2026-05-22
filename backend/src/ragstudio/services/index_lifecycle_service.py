@@ -132,78 +132,89 @@ class IndexLifecycleService:
             options,
             on_mineru_status=on_mineru_status,
         )
-        runtime_chunks: list[Any] | None = None
-        if preparsed_chunks is None:
-            await runtime.delete_document_index(document.id)
-            runtime_chunks = await self._index_runtime_document(
-                runtime,
-                artifact_path,
-                document.id,
-                preparsed_chunks=None,
-            )
-            normalized_chunks = self._normalize_runtime_chunks(
-                runtime_chunks,
-                document_id=document.id,
-                runtime_profile_id=profile.id,
-                index_shape=profile.index_shape,
-            )
-        else:
-            normalized_chunks = preparsed_chunks
+        async def cleanup_runtime_index_best_effort() -> None:
+            try:
+                await runtime.delete_document_index(document.id)
+            except Exception:
+                logger.exception("Failed to clean runtime index for %s.", document.id)
 
-        if not self._uses_canonical_reference_units(options.domain_metadata):
-            normalized_chunks = self.modal_preprocessor.preprocess(
-                normalized_chunks,
-                domain_metadata=options.domain_metadata,
-            )
-        vision_recovery_config = VisionRecoveryConfig.from_runtime_profile(
-            options.domain_metadata,
-            profile,
-        )
-        adapter_chunks = await self._run_cpu_bound(
-            ChunkSplitter(
-                vision_recovery_config=vision_recovery_config,
-            ).split,
-            normalized_chunks,
-            domain_metadata=options.domain_metadata,
-            parser_mode=options.parser_mode,
-        )
-        layout_repair_result = await self._run_cpu_bound(
-            self.layout_auto_repair.repair,
-            adapter_chunks,
-        )
-        adapter_chunks = layout_repair_result.chunks
-        adapter_chunks = await self._run_cpu_bound(
-            MinerURelationshipBuilder().annotate,
-            adapter_chunks,
-            options.domain_metadata,
-        )
-        quality_report = await self._run_cpu_bound(
-            self.quality_gate.validate_adapter_chunks,
-            adapter_chunks,
-            language=self._quality_language(options.domain_metadata),
-            domain_metadata=options.domain_metadata,
-        )
-        index_quality_report = quality_report.get("index_quality_report")
-        quality_repair_report = quality_report.get("quality_repair")
-        if self._has_targeted_vision_requests(quality_repair_report):
-            recovery_report = await self.targeted_vision_recovery.recover(
-                adapter_chunks,
-                config=vision_recovery_config,
-            )
-            if recovery_report.get("targeted_vision_recovery_succeeded"):
-                quality_report = await self._run_cpu_bound(
-                    self.quality_gate.validate_adapter_chunks,
-                    adapter_chunks,
-                    language=self._quality_language(options.domain_metadata),
+        runtime_chunks: list[Any] | None = None
+        runtime_adapter_chunks: list[Any] = []
+        try:
+            if preparsed_chunks is None:
+                await runtime.delete_document_index(document.id)
+                runtime_chunks = await self._index_runtime_document(
+                    runtime,
+                    artifact_path,
+                    document.id,
+                    preparsed_chunks=None,
+                )
+                normalized_chunks = self._normalize_runtime_chunks(
+                    runtime_chunks,
+                    document_id=document.id,
+                    runtime_profile_id=profile.id,
+                    index_shape=profile.index_shape,
+                )
+            else:
+                normalized_chunks = preparsed_chunks
+
+            if not self._uses_canonical_reference_units(options.domain_metadata):
+                normalized_chunks = self.modal_preprocessor.preprocess(
+                    normalized_chunks,
                     domain_metadata=options.domain_metadata,
                 )
-                index_quality_report = quality_report.get("index_quality_report")
-            quality_repair_report = self._quality_repair_report_from_chunks(
-                adapter_chunks,
-                fallback=quality_report.get("quality_repair"),
-                recovery_report=recovery_report,
+            vision_recovery_config = VisionRecoveryConfig.from_runtime_profile(
+                options.domain_metadata,
+                profile,
             )
-        runtime_adapter_chunks = self._runtime_materializable_chunks(adapter_chunks)
+            adapter_chunks = await self._run_cpu_bound(
+                ChunkSplitter(
+                    vision_recovery_config=vision_recovery_config,
+                ).split,
+                normalized_chunks,
+                domain_metadata=options.domain_metadata,
+                parser_mode=options.parser_mode,
+            )
+            layout_repair_result = await self._run_cpu_bound(
+                self.layout_auto_repair.repair,
+                adapter_chunks,
+            )
+            adapter_chunks = layout_repair_result.chunks
+            adapter_chunks = await self._run_cpu_bound(
+                MinerURelationshipBuilder().annotate,
+                adapter_chunks,
+                options.domain_metadata,
+            )
+            quality_report = await self._run_cpu_bound(
+                self.quality_gate.validate_adapter_chunks,
+                adapter_chunks,
+                language=self._quality_language(options.domain_metadata),
+                domain_metadata=options.domain_metadata,
+            )
+            index_quality_report = quality_report.get("index_quality_report")
+            quality_repair_report = quality_report.get("quality_repair")
+            if self._has_targeted_vision_requests(quality_repair_report):
+                recovery_report = await self.targeted_vision_recovery.recover(
+                    adapter_chunks,
+                    config=vision_recovery_config,
+                )
+                if recovery_report.get("targeted_vision_recovery_succeeded"):
+                    quality_report = await self._run_cpu_bound(
+                        self.quality_gate.validate_adapter_chunks,
+                        adapter_chunks,
+                        language=self._quality_language(options.domain_metadata),
+                        domain_metadata=options.domain_metadata,
+                    )
+                    index_quality_report = quality_report.get("index_quality_report")
+                quality_repair_report = self._quality_repair_report_from_chunks(
+                    adapter_chunks,
+                    fallback=quality_report.get("quality_repair"),
+                    recovery_report=recovery_report,
+                )
+            runtime_adapter_chunks = self._runtime_materializable_chunks(adapter_chunks)
+        except Exception:
+            await cleanup_runtime_index_best_effort()
+            raise
         if on_stage is not None:
             await on_stage(
                 IndexStage.MINERU_VALIDATED,
@@ -302,11 +313,6 @@ class IndexLifecycleService:
                 runtime_adapter_chunks,
             )
 
-        async def cleanup_runtime_index_best_effort() -> None:
-            try:
-                await runtime.delete_document_index(document.id)
-            except Exception:
-                logger.exception("Failed to clean runtime index for %s.", document.id)
 
         try:
             chunks = await persist_studio_chunks()

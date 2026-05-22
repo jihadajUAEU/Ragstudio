@@ -790,12 +790,19 @@ class NativeRAGAnythingAdapter:
                         "evidence_context",
                         "content_type",
                         "runtime_source_id",
+                        "bbox",
+                        "coordinates",
+                        "layout_types",
+                        "layout_hint",
+                        "modality",
+                        "provenance",
                     )
                     if key in metadata
                 },
             }
             if isinstance(page_idx, int):
                 item["page_idx"] = page_idx
+                item["metadata"]["page_idx"] = page_idx
             content_list.append(item)
         return content_list
 

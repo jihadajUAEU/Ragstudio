@@ -162,6 +162,16 @@ class DocumentService:
 
         artifact_path = Path(document.artifact_path)
         try:
+            # Delete from RAGAnything runtime vector index best-effort
+            profile = await self._active_runtime_profile()
+            if profile is not None and profile.runtime_mode == "runtime":
+                from ragstudio.services.runtime_factory import RAGAnythingRuntimeFactory
+                try:
+                    runtime = RAGAnythingRuntimeFactory(self.settings).build(profile)
+                    await runtime.delete_document_index(document.id)
+                except Exception:
+                    pass
+
             if self.settings is not None:
                 await GraphProjectionRunner(
                     self.session,

@@ -110,15 +110,25 @@ class ContextAssemblyService:
                 )
 
             evidence_context = candidate.metadata.get("evidence_context")
-            evidence_context = evidence_context if isinstance(evidence_context, dict) else {}
-            breadcrumb = evidence_context.get("breadcrumb")
-            breadcrumb = breadcrumb if isinstance(breadcrumb, str) and breadcrumb else None
-            layout_summary = evidence_context.get("layout_summary")
-            layout_summary = (
-                layout_summary
-                if isinstance(layout_summary, str) and layout_summary
-                else None
-            )
+            if isinstance(evidence_context, dict):
+                breadcrumb = evidence_context.get("breadcrumb")
+                breadcrumb = breadcrumb if isinstance(breadcrumb, str) and breadcrumb else None
+                layout_summary = evidence_context.get("layout_summary")
+                layout_summary = (
+                    layout_summary
+                    if isinstance(layout_summary, str) and layout_summary
+                    else None
+                )
+            else:
+                from ragstudio.services.evidence_context import evidence_context_from_metadata
+                resolved_context = evidence_context_from_metadata(
+                    candidate.metadata,
+                    source_location=candidate.source_location,
+                    content_type=candidate.metadata.get("content_type"),
+                )
+                breadcrumb = resolved_context.get("breadcrumb")
+                layout_summary = resolved_context.get("layout_summary")
+
             item = ContextEvidence(
                 candidate_id=candidate.candidate_id,
                 chunk_id=candidate.chunk_id,
