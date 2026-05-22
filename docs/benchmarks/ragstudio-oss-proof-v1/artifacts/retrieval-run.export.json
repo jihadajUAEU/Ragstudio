@@ -4,7 +4,7 @@
   "source": {
     "document_id": "synthetic-reference-guide",
     "capture_mode": "static-fixtures",
-    "source_commit": "f907ddd36870b7c489e87a74779778254f434fcb",
+    "source_commit": "a1539855bb0e448d3cd7a245f29a7fcff9d30a18",
     "fixture_path": "fixtures/retrieval-traces.synthetic.json"
   },
   "redaction_status": "passed",
@@ -114,7 +114,7 @@
         ],
         "reading_order_neighbors": true,
         "layout_summaries": {
-          "chunk-srg-002": "table; page=2; layout_group=table-srg-001"
+          "chunk-srg-002": "text; page=2"
         }
       },
       {
@@ -218,7 +218,7 @@
         "partial": false,
         "relationship_reasons": {
           "chunk-srg-parent": "parent_context",
-          "chunk-srg-prev": "linked_context",
+          "chunk-srg-prev": "reading_order_adjacent_and_linked_context",
           "chunk-srg-sibling": "sibling_context",
           "chunk-srg-next": "reading_order_adjacent_and_linked_context"
         }

@@ -128,7 +128,7 @@
       ],
       "reading_order_neighbors": true,
       "layout_summaries": {
-        "chunk-srg-002": "table; page=2; layout_group=table-srg-001"
+        "chunk-srg-002": "text; page=2"
       }
     },
     {
@@ -232,7 +232,7 @@
       "partial": false,
       "relationship_reasons": {
         "chunk-srg-parent": "parent_context",
-        "chunk-srg-prev": "linked_context",
+        "chunk-srg-prev": "reading_order_adjacent_and_linked_context",
         "chunk-srg-sibling": "sibling_context",
         "chunk-srg-next": "reading_order_adjacent_and_linked_context"
       }

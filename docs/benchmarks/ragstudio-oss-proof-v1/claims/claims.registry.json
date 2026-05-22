@@ -1,7 +1,7 @@
 {
   "packet_id": "ragstudio-oss-proof-v1",
   "registry_version": "0.1.0",
-  "source_commit": "f907ddd36870b7c489e87a74779778254f434fcb",
+  "source_commit": "a1539855bb0e448d3cd7a245f29a7fcff9d30a18",
   "claim_counts": {
     "proven": 3,
     "roadmap": 1,
@@ -118,7 +118,7 @@
       "status": "proven",
       "summary": "Ragstudio preserves canonical chunk identity, quality policy, layout provenance, lane decisions, and context breadcrumbs across retrieval lanes before answer assembly.",
       "source": {
-        "source_commit": "f907ddd36870b7c489e87a74779778254f434fcb",
+        "source_commit": "a1539855bb0e448d3cd7a245f29a7fcff9d30a18",
         "code_paths": [
           "backend/src/ragstudio/services/domain_classifier.py",
           "backend/src/ragstudio/services/domain_profile_registry.py",
