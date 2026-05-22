@@ -45,7 +45,13 @@ class LayoutNeighborService:
             for seed in seed_rows
             if (group := _layout_group(seed)) is not None
         }
-        if not pages and not references and not layout_groups:
+        reading_orders = {
+            (seed.document_id, order)
+            for seed in seed_rows
+            if seed.document_id
+            and (order := _reading_order(seed.metadata_json)) is not None
+        }
+        if not pages and not references and not layout_groups and not reading_orders:
             return []
 
         # Map page -> list of vertical midpoints of seed chunks on that page
@@ -84,7 +90,17 @@ class LayoutNeighborService:
             same_page = _page(row.source_location) in pages
             same_reference = _reference(row) in references
             same_layout_group = _layout_group(row) in layout_groups
-            if not same_page and not same_reference and not same_layout_group:
+            reading_order_neighbor = _is_adjacent_reading_order(
+                row.document_id,
+                _reading_order(metadata),
+                reading_orders,
+            )
+            if (
+                not same_page
+                and not same_reference
+                and not same_layout_group
+                and not reading_order_neighbor
+            ):
                 continue
 
             # Check spatial proximity if they are on the same page
@@ -120,6 +136,10 @@ class LayoutNeighborService:
                 reasons.append("layout_group")
                 boost_score += 2.0
                 final_score += 2.0
+            if reading_order_neighbor:
+                reasons.append("reading_order_neighbor")
+                boost_score += 1.0
+                final_score += 1.0
 
             candidates.append(
                 EvidenceCandidate(
@@ -184,6 +204,29 @@ def _is_blocked(metadata: dict[str, Any]) -> bool:
     if policy.get("action") == "block":
         return True
     return policy.get("index_vector") is False and policy.get("project_graph") is False
+
+
+def _reading_order(metadata: Any) -> int | None:
+    if not isinstance(metadata, dict):
+        return None
+    for key in ("reading_order", "block_index"):
+        value = metadata.get(key)
+        if isinstance(value, int) and not isinstance(value, bool):
+            return value
+    return None
+
+
+def _is_adjacent_reading_order(
+    document_id: str,
+    order: int | None,
+    seed_orders: set[tuple[str, int]],
+) -> bool:
+    if order is None:
+        return False
+    return any(
+        document_id == seed_document_id and abs(order - seed_order) == 1
+        for seed_document_id, seed_order in seed_orders
+    )
 
 
 def _chunk_bbox(chunk: Chunk) -> tuple[float, float, float, float] | None:

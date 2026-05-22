@@ -194,3 +194,70 @@ async def test_layout_neighbor_service_returns_same_layout_group_caption(
 
     assert [candidate.chunk_id for candidate in neighbors] == ["caption"]
     assert "layout_group" in neighbors[0].reasons
+
+
+@pytest.mark.asyncio
+async def test_layout_neighbor_service_returns_reading_order_neighbors(
+    database_url, tmp_path
+):
+    engine = make_engine(database_url)
+    await init_db(engine)
+    factory = make_session_factory(engine)
+
+    async with factory() as session:
+        session.add(
+            Document(
+                id="doc-reading-order",
+                filename="reading-order.pdf",
+                content_type="application/pdf",
+                sha256="reading-order-sha",
+                artifact_path=str(tmp_path / "reading-order.pdf"),
+            )
+        )
+        session.add_all(
+            [
+                Chunk(
+                    id="seed-reading-order",
+                    document_id="doc-reading-order",
+                    text="Seed table cell.",
+                    source_location={"page": 3},
+                    metadata_json={"reading_order": 5},
+                ),
+                Chunk(
+                    id="prev-reading-order",
+                    document_id="doc-reading-order",
+                    text="Previous visual block.",
+                    source_location={"page": 9},
+                    metadata_json={"reading_order": 4},
+                ),
+                Chunk(
+                    id="next-reading-order",
+                    document_id="doc-reading-order",
+                    text="Next visual block.",
+                    source_location={"page": 10},
+                    metadata_json={"reading_order": 6},
+                ),
+                Chunk(
+                    id="far-reading-order",
+                    document_id="doc-reading-order",
+                    text="Far visual block.",
+                    source_location={"page": 11},
+                    metadata_json={"reading_order": 8},
+                ),
+            ]
+        )
+        await session.commit()
+
+        neighbors = await LayoutNeighborService(session).neighbors_for(
+            seed_chunk_ids=["seed-reading-order"],
+            document_ids=["doc-reading-order"],
+            limit=5,
+        )
+
+    await engine.dispose()
+
+    assert {candidate.chunk_id for candidate in neighbors} == {
+        "prev-reading-order",
+        "next-reading-order",
+    }
+    assert all("reading_order_neighbor" in candidate.reasons for candidate in neighbors)
