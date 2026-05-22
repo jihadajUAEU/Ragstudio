@@ -4,9 +4,9 @@
   "source_commit": "ad1febe626fd96afff414bf5c425b4a672213a14",
   "claim_counts": {
     "proven": 2,
-    "roadmap": 1,
+    "roadmap": 2,
     "disabled": 1,
-    "total": 4
+    "total": 5
   },
   "claims": [
     {
@@ -109,6 +109,36 @@
       "planned_proof_path": [
         "Create a separate public scale proof packet after the v1 static packet is stable.",
         "Run validator and publish measured artifacts before changing this claim to proven."
+      ],
+      "screenshots": []
+    },
+    {
+      "claim_id": "RAGSTUDIO-RETRIEVAL-ARCHITECTURE",
+      "title": "Canonical retrieval architecture metadata remains visible across retrieval lanes",
+      "status": "roadmap",
+      "summary": "Ragstudio keeps canonical chunk identity, quality policy, layout provenance, and context breadcrumbs visible across retrieval lanes before answer assembly.",
+      "source": {
+        "source_commit": "ad1febe626fd96afff414bf5c425b4a672213a14",
+        "code_paths": [
+          "backend/src/ragstudio/services/evidence_context.py",
+          "backend/src/ragstudio/services/layout_neighbor_service.py",
+          "backend/src/ragstudio/services/retrieval_orchestrator.py",
+          "backend/src/ragstudio/services/context_assembly_service.py",
+          "backend/src/ragstudio/services/native_raganything_adapter.py",
+          "docs/benchmarks/ragstudio-oss-proof-v1/docs/LIMITATIONS.md"
+        ]
+      },
+      "evidence": [],
+      "limitations": [
+        "Retrieval Architecture Limitations apply until public static fixtures include exported traces for every retrieval lane."
+      ],
+      "missing_evidence": [
+        "A public retrieval-run artifact with canonical identity, quality policy, layout provenance, and breadcrumb fields visible across metadata, vector, graph, runtime, reranker, and context assembly traces.",
+        "A validation result proving those exported traces are public-safe and hash-covered in the proof packet."
+      ],
+      "planned_proof_path": [
+        "Extend the synthetic static fixtures to include the new retrieval architecture trace fields.",
+        "Run proof validation and update this claim to proven only after public artifacts carry the trace evidence."
       ],
       "screenshots": []
     },
