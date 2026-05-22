@@ -90,6 +90,14 @@ Validation gate for future work:
 
 Decision: defer `previous_chunk_id` and `next_chunk_id` columns until a concrete graph, query, or UI traversal requires stable persisted adjacency.
 
+2026-05-22 update: query-time context awareness now consumes logical adjacency
+from chunk metadata when available. `ContextWindowService` can use
+`parent_chunk_id`, `previous_chunk_id`, `next_chunk_id`, `reading_order`, and
+`block_index` carried in `metadata_json` to recover bounded neighbors during
+retrieval. This does not change the physical-column decision below: durable DB
+columns are still deferred until a consumer needs migration-backed adjacency
+state instead of metadata-derived or order-derived context.
+
 Future acceptance criteria:
 
 - schema migration and startup compatibility plan for existing chunks

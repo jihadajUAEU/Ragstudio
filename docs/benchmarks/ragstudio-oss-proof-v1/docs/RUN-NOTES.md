@@ -23,6 +23,11 @@ The packet includes redacted JSON artifacts for:
 The artifacts are intentionally small but complete for the synthetic run they
 represent.
 
+The retrieval run trace includes the three-pillar architecture evidence expected
+by `RAGSTUDIO-RETRIEVAL-ARCHITECTURE`: domain/profile routing, quality and
+materialization policy, layout-neighbor expansion, context-window expansion,
+reranker state, final fusion, and context assembly breadcrumbs/drop reasons.
+
 ## Evidence Not Included
 
 The packet does not include:

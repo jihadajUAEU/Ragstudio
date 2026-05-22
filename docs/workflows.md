@@ -1,7 +1,9 @@
 <!-- generated-by: gsd-doc-writer -->
-# RAG-Anything Studio Workflows
+# Ragstudio Workflows
 
-RAG-Anything Studio is a local workbench for uploading source files, indexing chunks, running scoped RAG queries, comparing variants, importing expected-output evaluations, and inspecting runtime diagnostics.
+Ragstudio is a local workbench for uploading source files, indexing canonical
+chunks, running scoped RAG queries, comparing variants, importing
+expected-output evaluations, and inspecting runtime diagnostics.
 
 ## Start the Studio
 
@@ -34,9 +36,12 @@ Ragstudio production indexing is MinerU-only. Upload and reindex jobs send docum
 
 Postgres is the source of truth for document metadata, chunks, lexical search material, and run records. PGVector stores semantic vectors in Postgres, and Neo4j stores graph state. SQLite is not part of the target architecture.
 
-## Runtime Foundation vs Fallback
+## Runtime Foundation And Retrieval Lanes
 
-Studio isolates upstream RAG-Anything calls behind a runtime adapter boundary. This branch provides the production store/profile/health/index/query seams, while the native upstream RAG-Anything adapter mapping is still intentionally blocked until it is implemented and verified.
+Studio isolates upstream RAG-Anything calls behind a runtime adapter boundary.
+Native RAG-Anything is one retrieval/materialization lane, not the source of
+truth. Canonical chunks in Postgres remain authoritative for scope filtering,
+fusion, graph projection, context assembly, and public proof exports.
 
 ```mermaid
 flowchart LR
@@ -50,11 +55,18 @@ flowchart LR
 With the production runtime active:
 
 - Document indexing uses MinerU strict extraction and fails closed on invalid artifacts.
-- Query generation uses Postgres lexical search, PGVector semantic search, graph evidence, and grounded answer orchestration.
+- Query generation uses route-planned canonical metadata, lexical/reference,
+  PGVector semantic search, optional native runtime, graph evidence,
+  layout-neighbor expansion, context-window expansion, reranking, and grounded
+  answer orchestration.
 - Graph responses come from Neo4j runtime graph state when graph indexing is ready.
 - Diagnostics reports missing or non-importable runtime dependencies and shows the relevant remediation.
 
-When `runtime_mode` is set to `runtime`, indexing and query routes use the saved runtime profile, runtime health checks, index readiness checks, and mirrored chunk/index records. Until the native RAG-Anything adapter is completed, Diagnostics reports `native_runtime_adapter` as a blocking check rather than silently running fallback behavior under a runtime label.
+When `runtime_mode` is set to `runtime`, indexing and query routes use the saved
+runtime profile, runtime health checks, index readiness checks, and mirrored
+chunk/index records. If native runtime, graph, or reranker dependencies are
+disabled or unavailable, the affected lane is skipped, degraded, or failed with
+an explicit trace reason rather than silently running under a misleading label.
 
 Use the Diagnostics page to verify the active mode. It shows runtime status, health checks, capabilities, dependency status, warnings, and raw diagnostics from `/api/diagnostics`.
 
@@ -139,6 +151,17 @@ Domain metadata is applied before parsing. Parser metadata is added after parsin
 Ragstudio sends RAG-Anything parser hints inside the existing `metadata` form field for `/parse-async`. The sidecar receives `ragAnything.parser`, `ragAnything.parseMethod`, `ragAnything.parserKwargs`, and `ragAnything.maxConcurrentFiles`. For A100 jobs, the expected parser kwargs are usually `backend=pipeline`, `device=cuda:0`, `formula=true`, and `table=true`.
 
 MinerU output is passed through Ragstudio's shared metadata-driven chunking layer before persistence. Large markdown artifacts are split by metadata profile, headings, pages, verse markers, paragraph boundaries, and a hard word cap so a successful MinerU parse cannot persist as a single oversized retrieval chunk.
+
+The ingestion path preserves the three-pillar retrieval contract:
+
+- Domain-aware metadata is compiled into domain/profile, reference, quality, and
+  materialization signals before durable indexing.
+- Layout-aware provenance such as page range, block index, content type,
+  layout group, reading order, source artifact, and parser warning metadata is
+  kept on canonical chunks.
+- Context-aware metadata such as breadcrumbs, parent/previous/next chunk ids,
+  reference units, and graph relationships is preserved for query-time
+  expansion and final answer assembly.
 
 ### Parser Quality Warnings
 
@@ -251,12 +274,14 @@ Open **Query** to run a question against selected documents and variants.
 
 ```mermaid
 flowchart LR
-  question["Question"] --> search["Search selected document chunks"]
-  docs["Document selections"] --> search
+  question["Question"] --> route["Build retrieval route"]
+  docs["Document selections"] --> route
   variants["Variant selections"] --> runs["One run per variant"]
-  search --> adapter["RAGAnythingAdapter.query"]
-  adapter --> answer["Answer"]
-  adapter --> traces["Sources, chunk traces, timings"]
+  route --> lanes["Canonical, lexical, vector, runtime, graph, layout, context lanes"]
+  lanes --> fusion["Fusion and optional reranker"]
+  fusion --> context["Context assembly"]
+  context --> answer["Answer"]
+  context --> traces["Sources, chunk traces, timings"]
 ```
 
 The query API is `POST /api/query` with:
@@ -276,7 +301,9 @@ The Query page displays each returned run in **Answers and traces**. For success
 
 - **Answer**: the generated or fallback answer text.
 - **Sources**: selected chunks used as source evidence when the adapter does not return explicit sources.
-- **Chunk traces**: adapter trace objects such as rank, source location, metadata, and inclusion status.
+- **Chunk traces**: route plan, lane result, layout-neighbor expansion,
+  context-window expansion, fusion, reranker, context assembly, source
+  location, metadata, and inclusion/drop status.
 - **Timings**: search, query, and total elapsed milliseconds.
 
 ## View RAGed Results and Evidence
@@ -435,17 +462,18 @@ Use Diagnostics when:
 - The graph is empty and you need to know whether graph support is available.
 - Query or indexing behavior looks like fallback behavior.
 - You need to confirm whether `raganything` is available in the current Python environment.
-- You need to confirm whether runtime mode is blocked by the unfinished native adapter mapping.
+- You need to confirm whether runtime, graph, reranker, or indexing lanes are
+  ready, disabled, unavailable, or degraded.
 
 ## Use the Pipeline View
 
 Open **Pipeline** for an operational map of the Studio flow. The canvas is read-only and shows:
 
 ```text
-Documents -> Chunking -> Retrieval -> Generation -> Answer
-                 |            ^
-                 v            |
-               Graph      Variants
+Documents -> Chunking -> Route Planning -> Retrieval Lanes -> Fusion/Rerank -> Context -> Answer
+                 |                   |              ^
+                 v                   v              |
+              Graph              Variants       Diagnostics
 ```
 
 The page reads live counts from documents, variants, runs, graph, and diagnostics. Use **Refresh** when another page has changed state.

@@ -1,18 +1,20 @@
 # Query Retrieval Architecture
 
-Date: 2026-05-21
+Date: 2026-05-22
 
-Status: architecture plan
+Status: implemented architecture with eval-gated hardening
 
-Scope: full end-to-end `RetrievalRoutePlanner` architecture for chunk search,
-query retrieval, fusion, rerank, context assembly, trace UI, and public proof.
+Scope: implemented end-to-end retrieval architecture for chunk search, query
+retrieval, fusion, rerank, layout-neighbor expansion, context-window expansion,
+context assembly, trace UI, and public proof.
 
 ## Goal
 
-Make `RetrievalRoutePlanner` the durable control plane for Ragstudio retrieval.
-The planner should decide which retrieval lanes are allowed, skipped, degraded,
-or required before any lane runs. The orchestrator should execute the plan, not
-reimplement routing decisions with scattered conditionals.
+Keep `RetrievalRoutePlanner` as the durable control plane for Ragstudio
+retrieval. The planner decides which retrieval lanes are allowed, skipped,
+degraded, or required before expensive lanes run. The orchestrator executes the
+plan, preserves lane traces, expands layout/context neighbors, and assembles
+final evidence from canonical chunks.
 
 The target is robust enough to keep long-term:
 
@@ -25,9 +27,10 @@ The target is robust enough to keep long-term:
 
 ## Benefit Scorecard
 
-These are acceptance targets, not already-proven claims. The first implementation
-must capture the baseline and then report current-versus-target metrics before
-we claim the architecture improved the product.
+These are product benefit targets, not public performance claims. The
+architecture is implemented and proof-validated for trace propagation, but
+performance and production-quality improvements still require baseline
+measurement before public percentage claims.
 
 | Metric | Current baseline | Target after route-planner authority | Why this matters |
 | --- | --- | --- | --- |
@@ -154,28 +157,39 @@ retrieval decisions instead of leaving it as passive metadata.
 
 ## Current State
 
-Already present:
+Implemented and verified:
 
-- `pipeline_architecture.py` defines the ten-layer evidence model, but it is
-  currently a conceptual/test contract rather than runtime enforcement.
-- `domain_profile_registry.py` defines general, reference-heavy, and multimodal
-  domain profiles.
-- `evidence_unit_contract.py` defines quality and materialization policies, but
-  runtime retrieval still mostly carries those policies as chunk metadata on
-  `EvidenceCandidate`.
-- `retrieval_route_planner.py` exists and can produce route decisions.
-- `RetrievalOrchestrator` now emits a `retrieval_route_plan` trace, but it does
-  not yet execute lane plans.
-- `MetadataRetrievalService` provides bounded metadata/chunk retrieval passes.
-- `RetrievalFusion` performs reciprocal-rank style fusion, but today it is fed a
-  collapsed already-fused list instead of independent lane result lists.
+- `DomainClassifier`, `DomainProfileRegistry`, and domain lexical adapters
+  resolve query/document semantics into executable retrieval inputs.
+- `retrieval_route_input.py` builds route requests from query understanding,
+  selected documents, domain metadata, quality policy, materialization policy,
+  runtime readiness, graph readiness, and reranker readiness.
+- `retrieval_route_planner.py` produces route decisions, lane status, readiness
+  diagnostics, skip/degrade reasons, budgets, and score policies.
+- `RetrievalOrchestrator` emits `retrieval_route_plan`, lane result,
+  `layout_neighbor_expansion`, `context_window`, `final_fusion`, reranker, and
+  `context_assembly` traces.
+- `LayoutNeighborService` expands same-page, same-reference, same-layout-group,
+  and reading-order neighbors from canonical chunk metadata.
+- `ContextWindowService` expands bounded parent, sibling, previous, next, and
+  reading-order context from canonical chunks.
+- `ContextAssemblyService` preserves direct evidence, injects breadcrumbs and
+  layout summaries, records policy drops, token-budget drops, direct-evidence
+  budget protection, reranker degradation drops, and hard-limit truncation.
+- `NativeRAGAnythingAdapter` carries canonical bridge metadata such as
+  `chunk_identity`, `source_location`, `quality_action_policy`,
+  `layout_group_id`, `layout_role`, `reading_order`, `block_index`,
+  `parent_chunk_id`, `previous_chunk_id`, and `next_chunk_id`.
+- The public proof packet marks `RAGSTUDIO-RETRIEVAL-ARCHITECTURE` as `proven`
+  for static fixture trace propagation.
 
-Main gap:
+Remaining hardening:
 
-`RetrievalRoutePlanner` is visible in traces, but it is not yet the single
-authority that gates lane execution. Existing orchestrator gates still live in
-ad hoc conditionals such as metadata-only mode, fast-mode deadline handling, and
-graph expansion flags.
+- Production retrieval quality over customer corpora is not claimed by the
+  public packet; it remains gated by retrieval-quality baselines.
+- DB-level vector/FTS/RRF ranking changes remain eval-gated.
+- Larger live-capture packets, scale packets, and real public corpus packets
+  require separate publishability and redaction review.
 
 ## Gap Findings Folded Into This Plan
 

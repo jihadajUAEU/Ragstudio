@@ -16,7 +16,8 @@ Fallback candidates:
 - `/` - product homepage and proof-first launch story.
 - `/docs` - documentation index and guides.
 - `/examples` - sample workflows, retrieval traces, and approved screenshots.
-- `/architecture` - system diagrams and component descriptions.
+- `/architecture` - system diagrams, three-pillar retrieval flow, and component
+  descriptions.
 - `/changelog` - release notes generated from tags/releases.
 - `/github` - redirect to the GitHub repository.
 
@@ -31,6 +32,9 @@ Use Docusaurus when the docs surface expands to versioned guides, API reference,
 - Screenshots: Playwright-approved captures only.
 - Changelog: Git tags/releases.
 - Proof claims: validated proof packet under `docs/benchmarks/`.
+- Architecture proof: static retrieval artifacts that show domain-aware,
+  layout-aware, and context-aware trace propagation without requiring live
+  providers.
 
 ## Release Gate
 

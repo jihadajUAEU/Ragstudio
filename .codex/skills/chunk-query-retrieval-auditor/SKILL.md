@@ -29,6 +29,22 @@ Ragstudio retrieval must follow this architecture unless the user explicitly ask
 
 7. **Public proof requires replayable evidence.** Retrieval claims need static fixtures, valid proof packet artifacts, claim registry entries, redaction status, source paths, limitations, and screenshot signoff when screenshots are used.
 
+Current implementation status:
+
+- Domain-aware routing is implemented through domain classification, executable
+  profiles, lexical adapters, route input, materialization hints, and lane
+  planner decisions.
+- Layout-aware retrieval is implemented through canonical source location,
+  layout group, layout role, reading order, block index, native bridge metadata,
+  and `LayoutNeighborService`.
+- Context-aware retrieval is implemented through parent/previous/next metadata,
+  reading-order windows, graph-seeded hydration, `ContextWindowService`, and
+  `ContextAssemblyService`.
+- Static proof for this architecture lives under
+  `docs/benchmarks/ragstudio-oss-proof-v1/` as
+  `RAGSTUDIO-RETRIEVAL-ARCHITECTURE`. Treat production corpus quality as a
+  separate eval question, not as proven by the static packet.
+
 ## Three-Pillar Retrieval Architecture
 
 Use these pillars as the preferred architecture for chunk search, query
@@ -188,6 +204,7 @@ Select the narrowest useful command:
 - Chunk search: `docker compose run --rm backend python -m pytest backend/tests/test_chunks.py backend/tests/test_chunk_lexical_search_repository.py backend/tests/test_chunk_service_arabic_search.py -q`
 - Query/retrieval: `docker compose run --rm backend python -m pytest backend/tests/test_retrieval_orchestrator.py backend/tests/test_runtime_query_service.py backend/tests/test_query_runs.py -q`
 - Route/fusion metrics: `docker compose run --rm backend python -m pytest backend/tests/test_retrieval_route_planner.py backend/tests/test_rag_retrieval_fusion.py backend/tests/test_retrieval_metrics.py -q`
+- Three-pillar architecture: `uv run pytest backend/tests/test_domain_classifier.py backend/tests/test_domain_query_expansion_service.py backend/tests/test_domain_profile_registry.py backend/tests/test_retrieval_route_input.py backend/tests/test_retrieval_route_planner.py backend/tests/test_layout_neighbor_service.py backend/tests/test_context_window_service.py backend/tests/test_context_assembly_service.py backend/tests/test_retrieval_orchestrator.py backend/tests/test_vector_retrieval_service.py backend/tests/test_vector_candidate_repository.py backend/tests/test_native_raganything_adapter.py -q`
 - Reranker: `docker compose run --rm backend python -m pytest backend/tests/test_reranker_service.py backend/tests/test_llm_reranker_service.py -q`
 - Graph expansion: `docker compose run --rm backend python -m pytest backend/tests/test_graph_expansion_service.py backend/tests/test_graph_materialization_service.py -q`
 - Query/chunk UI: run the focused Vitest file from `frontend/`, then build only if behavior changed.

@@ -43,6 +43,9 @@ shape, not rights-cleared coverage of a real corpus.
 - Retrieval architecture proof uses deterministic synthetic fixtures. It proves
   trace shape and public-safe propagation of architecture metadata, not production
   retrieval quality over a customer corpus.
+- The three-pillar architecture is implemented in the backend retrieval path and
+  validated by focused tests, but this packet still proves only the static
+  public fixture and not live provider behavior.
 - Domain-specific lexical expansion is registry-based, but only adapters present
   in the public fixture are proven by this packet.
 - Native RAG-Anything is a secondary runtime lane. Public proof claims are made

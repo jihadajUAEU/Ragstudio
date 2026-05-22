@@ -122,6 +122,26 @@ goal is not "more vectors"; the goal is to preserve domain, layout, and context
 semantics from ingestion through retrieval, reranking, context assembly, and
 proof export.
 
+Current implementation status:
+
+- Domain-aware ingestion and retrieval is implemented through
+  `DomainClassifier`, `DomainProfileRegistry`, `DomainLexicalRegistry`,
+  `retrieval_route_input.py`, `retrieval_route_planner.py`, quality action
+  policy, materialization policy, and route/lane traces.
+- Layout-aware ingestion and retrieval is implemented through canonical
+  `source_location`, layout metadata, native bridge metadata,
+  `LayoutNeighborService`, layout-neighbor traces, and context-visible layout
+  summaries.
+- Context-aware ingestion and retrieval is implemented through evidence
+  breadcrumbs, parent/previous/next metadata, `ContextWindowService`,
+  graph-seeded canonical hydration, `ContextAssemblyService`, direct-evidence
+  preservation, and dropped/truncated evidence reasons.
+- Public proof status is backed by
+  `RAGSTUDIO-RETRIEVAL-ARCHITECTURE` in
+  `docs/benchmarks/ragstudio-oss-proof-v1/`, validated with static synthetic
+  fixtures. It proves trace propagation, not production retrieval quality over
+  customer corpora.
+
 #### 1. Domain-Aware Ingestion And Retrieval
 
 Target contract:
@@ -593,6 +613,8 @@ Select validation based on changed surface:
   `docker compose run --rm backend python -m pytest backend/tests/test_index_lifecycle_service.py backend/tests/test_index_worker_recovery.py backend/tests/test_job_quality_warnings.py -q`
 - Retrieval/query changes:
   `docker compose run --rm backend python -m pytest backend/tests/test_retrieval_orchestrator.py backend/tests/test_runtime_query_service.py backend/tests/test_query_runs.py -q`
+- Three-pillar architecture changes:
+  `uv run pytest backend/tests/test_domain_classifier.py backend/tests/test_domain_query_expansion_service.py backend/tests/test_domain_profile_registry.py backend/tests/test_retrieval_route_input.py backend/tests/test_retrieval_route_planner.py backend/tests/test_layout_neighbor_service.py backend/tests/test_context_window_service.py backend/tests/test_context_assembly_service.py backend/tests/test_retrieval_orchestrator.py backend/tests/test_vector_retrieval_service.py backend/tests/test_vector_candidate_repository.py backend/tests/test_native_raganything_adapter.py -q`
 - Reranker/settings changes:
   `docker compose run --rm backend python -m pytest backend/tests/test_reranker_service.py backend/tests/test_llm_reranker_service.py backend/tests/test_settings.py -q`
 - Graph changes:

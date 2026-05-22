@@ -13,10 +13,12 @@ Most RAG failures start before the final answer: a parser misses a reference, a 
 - Upload and inspect documents through a local Studio UI.
 - Tune indexing and parsing pipelines before materialization.
 - Inspect chunks, parser warnings, reference metadata, and quality gates.
-- Run queries with retrieval traces, source chunks, and answer evidence.
+- Run domain-aware, layout-aware, and context-aware queries with retrieval
+  traces, source chunks, lane decisions, reranker state, and answer evidence.
 - Compare variants, imported evaluations, scoring runs, and optimizer recommendations.
 - Inspect graph projection and graph workspace state.
-- Export proof packets for public claims and static proof viewers.
+- Export proof packets for public claims, static proof viewers, and replayable
+  retrieval architecture evidence.
 
 ## Quick Start
 
@@ -54,6 +56,19 @@ See the [User Guide](docs/user-guide.md) for the full walkthrough.
 
 ## Architecture
 
+Ragstudio's RAG pipeline is built around three implemented pillars:
+
+- **Domain-aware ingestion and retrieval**: domain metadata resolves to
+  executable profiles, lexical adapters, quality policies, materialization
+  hints, and retrieval route decisions.
+- **Layout-aware ingestion and retrieval**: MinerU source locations, page/block
+  provenance, layout groups, reading order, content type, and native bridge
+  metadata stay attached to canonical chunks and query traces.
+- **Context-aware ingestion and retrieval**: parent/sibling/previous/next
+  context, graph-seeded canonical hydration, breadcrumbs, reranker state, and
+  dropped/truncated evidence reasons are preserved through final context
+  assembly.
+
 Ragstudio is split into:
 
 - `frontend/` - Vite React Studio UI.
@@ -66,6 +81,7 @@ Ragstudio is split into:
 More detail:
 
 - [Durable RAG indexing](docs/architecture/durable-rag-indexing.md)
+- [Query retrieval architecture](docs/architecture/query-retrieval-architecture.md)
 - [Workflows](docs/workflows.md)
 - [Evaluation and experiments guide](docs/evaluation-experiments-guide.md)
 

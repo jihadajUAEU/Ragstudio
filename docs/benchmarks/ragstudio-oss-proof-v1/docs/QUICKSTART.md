@@ -11,9 +11,11 @@ Open these files first:
 2. `claims/claims.registry.json`
 3. `claims/claims.matrix.md`
 4. `artifacts/parser-quality.export.json`
-5. `docs/CLAIMS.md`
-6. `docs/LIMITATIONS.md`
-7. `docs/REDACTION.md`
+5. `artifacts/retrieval-run.export.json`
+6. `fixtures/retrieval-traces.synthetic.json`
+7. `docs/CLAIMS.md`
+8. `docs/LIMITATIONS.md`
+9. `docs/REDACTION.md`
 
 ## What To Check
 
@@ -22,6 +24,9 @@ Open these files first:
   exclusions, and limitations.
 - Proven claims in `claims/claims.registry.json` cite public `artifacts/` paths.
 - Roadmap and disabled claims remain visible instead of being hidden.
+- The retrieval architecture claim shows domain-aware, layout-aware, and
+  context-aware trace propagation through route planning, lane results,
+  reranking, and context assembly.
 - The corpus is synthetic and safe to redistribute.
 - Screenshots are excluded unless `screenshots/signoff.json` marks them safe to
   publish.

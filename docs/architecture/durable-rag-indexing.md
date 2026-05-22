@@ -13,7 +13,7 @@ flowchart LR
   Upload["Upload or reindex request"] --> Job["Postgres jobs row"]
   Job --> Worker["ragstudio-worker"]
   Worker --> MinerU["MinerU strict parse"]
-  MinerU --> Chunker["ChunkSplitter and relationship metadata"]
+  MinerU --> Chunker["Domain/layout/context-aware ChunkSplitter"]
   Chunker --> Postgres["Postgres chunks and index_records"]
   Worker --> Runtime["RAG-Anything runtime indexing"]
   Runtime --> Pgvector["pgvector dense index"]
@@ -33,15 +33,37 @@ MinerU strict parsing remains the ingestion gate. `ChunkSplitter` creates canoni
 
 Ragstudio does not use a blind default chunk size. It uses profile settings from `SettingsProfile.chunk_token_size` and `SettingsProfile.chunk_overlap_token_size`, then records parser quality warnings on the job result.
 
+Chunking now preserves the three-pillar retrieval contract:
+
+- Domain-aware fields such as `domain_metadata`, `reference_metadata`,
+  `quality_action_policy`, and materialization hints decide which indexing and
+  retrieval lanes may use a chunk.
+- Layout-aware fields such as page range, block index, layout group, layout
+  role, reading order, content type, and provenance keep parser structure
+  available after persistence.
+- Context-aware fields such as evidence breadcrumbs, parent chunk id,
+  previous/next chunk ids, and graph relationships allow query-time neighbor
+  expansion without treating isolated text spans as complete evidence.
+
 ## Retrieval Pipeline
 
-1. Apply selected-document metadata filters.
-2. Retrieve lexical and token candidates from canonical chunks.
-3. Retrieve dense candidates from the runtime pgvector index.
-4. Fuse candidates in the retrieval orchestrator.
-5. Use reranker settings from the active runtime profile when enabled.
-6. Expand with Neo4j only when the latest graph projection is `succeeded`.
-7. Degrade explicitly to metadata fallback when runtime or graph projection is unavailable.
+1. Build a `RetrievalRouteRequest` from the query, selected documents, domain
+   metadata, materialization policy, runtime readiness, graph readiness, and
+   reranker readiness.
+2. Resolve the route with `RetrievalRoutePlanner`, including planned, skipped,
+   or degraded lanes and reasons.
+3. Retrieve canonical metadata, lexical/reference, vector, native runtime,
+   graph, layout-neighbor, and context-window candidates only when the route and
+   policy allow them.
+4. Hydrate non-canonical candidates back to canonical chunks where possible.
+5. Fuse candidates while preserving lane membership, source ids, quality flags,
+   and document scope.
+6. Rerank when the active route/profile allows it and record before/after rank
+   details.
+7. Assemble context with breadcrumbs, layout summaries, direct-evidence
+   preservation, and dropped/truncated evidence reasons.
+8. Degrade explicitly when runtime, graph, reranker, or context lanes are
+   unavailable, blocked, or out of budget.
 
 ## Evaluation Gates
 

@@ -167,7 +167,10 @@ evidence, source commit, raw artifact, and known limitation.
 - Strict product runtime policy: PostgreSQL/PGVector plus Neo4j, MinerU strict parsing, and native RAG-Anything runtime.
 - Long-running indexing is queued in the database and processed by a separate worker service.
 - Frontend is a single-page Studio shell with manual path routing and TanStack Query data fetching.
-- Retrieval is orchestrated through native runtime, metadata retrieval, graph expansion, fusion, reranking, context assembly, and answer generation.
+- Retrieval is orchestrated through domain-aware route planning, canonical
+  metadata/reference retrieval, vector retrieval, native runtime retrieval,
+  layout-neighbor expansion, context-window expansion, graph expansion, fusion,
+  reranking, context assembly, and answer generation.
 ## Layers
 - Purpose: Validate HTTP payloads, translate domain errors into HTTP responses, and call services.
 - Contains: `backend/src/ragstudio/api/routes/*.py`.
@@ -194,6 +197,23 @@ evidence, source commit, raw artifact, and known limitation.
 - Depends on: React, TanStack Query, generated API types, Vite proxy.
 - Used by: Browser users on the local dev/frontend endpoint.
 ## Data Flow
+- Upload/reindex creates a durable `index_document` job.
+- The worker runs MinerU strict parsing, normalizes parser output, applies
+  domain metadata, and creates canonical chunks with source location,
+  provenance, quality policy, materialization policy, layout metadata, and
+  context metadata.
+- Chunk persistence stores canonical evidence in Postgres. PGVector and native
+  runtime storage are materialization lanes; Neo4j is a rebuildable graph
+  projection, not the source of truth.
+- Query execution builds a `RetrievalRouteRequest` from document scope, query
+  understanding, domain metadata, quality/materialization policy, runtime
+  readiness, graph readiness, and reranker readiness.
+- `RetrievalRoutePlanner` decides which lanes run, skip, or degrade.
+- `RetrievalOrchestrator` gathers candidates across planned canonical,
+  lexical/reference, vector, native runtime, graph, layout-neighbor, and
+  context-window lanes, then fuses, reranks, assembles final context, and writes
+  traceable run evidence.
+
 ## Key Abstractions
 - Purpose: Central product runtime configuration for LLM, embeddings, MinerU, reranking, storage, parser, chunking, and query behavior.
 - Examples: `SettingsProfile` in `db/models.py`, runtime schemas in `schemas/runtime.py` and `schemas/settings.py`.
@@ -201,6 +221,21 @@ evidence, source commit, raw artifact, and known limitation.
 - Purpose: Decide whether parsed units are safe for vector indexing and graph projection.
 - Examples: `DomainMetadataQualityGate`, `quality_action_policy`, `IndexQualityGate`, `VectorIndexPolicy`.
 - Pattern: Metadata-derived policy attached to chunks and consumed by indexing/graph services.
+- Purpose: Resolve domain-aware retrieval behavior.
+- Examples: `DomainClassifier`, `DomainProfileRegistry`, `DomainLexicalRegistry`, `RetrievalRouteInput`.
+- Pattern: Domain metadata becomes executable retrieval profile, materialization
+  hint, lexical/query expansion, and route-planner input.
+- Purpose: Preserve layout-aware retrieval behavior.
+- Examples: `LayoutNeighborService`, native bridge metadata, `source_location`,
+  `layout_group_id`, `layout_role`, `reading_order`, `block_index`.
+- Pattern: Persisted canonical chunk metadata seeds layout-neighbor candidates
+  and proof traces.
+- Purpose: Preserve context-aware retrieval behavior.
+- Examples: `ContextWindowService`, `ContextAssemblyService`, `evidence_context`,
+  `parent_chunk_id`, `previous_chunk_id`, `next_chunk_id`.
+- Pattern: Retrieval expands bounded neighbors and final context records
+  breadcrumbs, layout summaries, direct evidence preservation, and dropped or
+  truncated evidence reasons.
 - Purpose: Isolate native RAG-Anything and LightRAG behavior behind an adapter protocol.
 - Examples: `RuntimeAdapter` protocol and `NativeRAGAnythingAdapter`.
 - Pattern: Factory plus protocol, with runtime import checks.
@@ -243,7 +278,13 @@ evidence, source commit, raw artifact, and known limitation.
 <!-- GSD:skills-start source:skills/ -->
 ## Project Skills
 
-No project skills found. Add skills to any of: `.claude/skills/`, `.agents/skills/`, `.cursor/skills/`, `.github/skills/`, or `.codex/skills/` with a `SKILL.md` index file.
+- `.codex/skills/rag-pipeline-auditor/SKILL.md` - use for parse-to-proof RAG
+  pipeline audits, public proof claims, quality gates, indexing, graph,
+  reranking, and trace UI changes.
+- `.codex/skills/chunk-query-retrieval-auditor/SKILL.md` - use for chunk
+  search, query planning, lane execution, retrieval traces, fusion, reranking,
+  graph expansion, layout-neighbor expansion, context-window expansion, and
+  context assembly changes.
 <!-- GSD:skills-end -->
 
 <!-- GSD:workflow-start source:GSD defaults -->

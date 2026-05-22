@@ -16,6 +16,11 @@ Use it when you want to answer one question:
 6. Open `Optimizer`. This recommends the strongest variant from the experiment scores.
 7. Open `Graph`. This shows how documents, chunks, references, and relationships connect.
 
+When reviewing runs, use the three-pillar architecture as the evidence checklist:
+did the domain profile and quality policy choose the right lanes, did layout
+metadata keep the right page/table/caption context visible, and did context
+assembly include the needed neighbors without hiding dropped evidence?
+
 ## Simple Meaning of Each Page
 
 | Page | Simple meaning | Use it for |
@@ -231,7 +236,7 @@ Look for these things:
 | --- | --- |
 | `Answer` | Does it answer the question directly? |
 | `Sources` | Did it use the expected source chunks? |
-| `Traces` | Did the right chunks make it into the context? |
+| `Traces` | Did the route plan, lane results, layout neighbors, context window, reranker, and context assembly explain why evidence was included or dropped? |
 | `Timings` | Did a better answer cost much more time? |
 | `Status` | Did any run fail? |
 

@@ -1,7 +1,15 @@
 <!-- generated-by: gsd-doc-writer -->
-# RAG-Anything Studio User Guide
+# Ragstudio User Guide
 
-RAG-Anything Studio is a local workbench for uploading source material, indexing chunks, creating retrieval variants, asking grounded questions, importing evaluation sets, scoring experiment runs, comparing answers, and checking runtime diagnostics.
+Ragstudio is a local RAG data-quality workbench for uploading source material,
+indexing canonical chunks, creating retrieval variants, asking grounded
+questions, importing evaluation sets, scoring experiment runs, comparing
+answers, and checking runtime diagnostics.
+
+The current architecture is domain-aware, layout-aware, and context-aware:
+domain metadata chooses retrieval profiles and policies, layout provenance stays
+attached to chunks and traces, and context assembly can recover neighboring
+evidence before the answer is produced.
 
 The app is designed for local RAG pipeline development. It stores state under `.ragstudio/` by default, serves the backend at `http://127.0.0.1:8000`, and serves the Vite frontend at `http://127.0.0.1:5173` when started with the project dev script.
 
@@ -77,7 +85,13 @@ Use this path to get from an empty local workspace to a completed answer and ins
 
 ### Pipeline
 
-`Pipeline` shows the RAG flow from source files to grounded answers. The canvas stages are `Documents`, `Chunking`, `Variants`, `Retrieval`, `Generation`, `Graph`, and `Answer`. The `Stage checklist` summarizes document count, chunk indexing, variant count, scoped retrieval, recorded runs, answer traces, and graph edges.
+`Pipeline` shows the RAG flow from source files to grounded answers. The canvas
+stages are `Documents`, `Chunking`, `Variants`, `Retrieval`, `Generation`,
+`Graph`, and `Answer`. The `Stage checklist` summarizes document count, chunk
+indexing, variant count, scoped retrieval, recorded runs, answer traces, and
+graph edges. Treat this as an operational map of the three pillars: domain
+metadata and quality gates before retrieval, layout-aware canonical chunks, and
+context-aware answer assembly.
 
 ### Documents
 
@@ -128,7 +142,8 @@ Results appear under `Answers and traces`:
 
 - Answer text, or the run error if generation failed.
 - `Sources`: source chunk objects used for the answer.
-- `Chunk traces`: adapter trace objects, including inclusion status when available.
+- `Chunk traces`: route plan, lane result, layout-neighbor, context-window,
+  fusion, reranker, context assembly, and candidate trace objects.
 - `Timings`: measured `search_ms`, `query_ms`, and `total_ms`, plus adapter timings when provided.
 
 Upload and Index actions use `MinerU strict`. The document is sent to MinerU and indexing fails if MinerU fails or returns invalid extracted text. Ragstudio does not silently fall back to local PDF parsing in the production workflow.
@@ -426,10 +441,14 @@ The returned chunk cards show:
 
 - `score`: search score added by Studio.
 - `text`: chunk content.
-- `Source location`: adapter-provided location data, such as a line number in fallback mode.
+- `Source location`: canonical page/block/artifact/reference data when available.
 - `Metadata`: safe metadata with absolute file paths removed.
 
-Fallback search scores use term overlap, term density, and a phrase bonus. An empty search query returns chunks in source order with score `1.0`.
+Chunk search uses scoped canonical chunks and preserves metadata needed by
+retrieval, including domain metadata, parser metadata, quality policy,
+reference metadata, layout hints, and source location. Fallback search scores
+use term overlap, term density, and a phrase bonus. An empty search query
+returns chunks in source order with score `1.0`.
 
 ## Asking Questions Against Chunk Contents
 
@@ -444,11 +463,18 @@ Required inputs:
 For each selected variant, Studio:
 
 1. Validates the selected document and variant IDs.
-2. Builds a native runtime query using the active runtime profile and selected variant parameters.
-3. Combines native runtime evidence with metadata and graph-derived evidence when those paths are available.
-4. Records a run with status, answer, sources, chunk traces, timings, and any error.
+2. Builds a route request from the query, document scope, domain metadata,
+   quality policy, materialization policy, runtime readiness, graph readiness,
+   reranker readiness, and variant parameters.
+3. Runs allowed retrieval lanes such as canonical metadata, lexical/reference,
+   vector, native runtime, graph, layout-neighbor, and context-window expansion.
+4. Fuses and optionally reranks the bounded candidate set.
+5. Assembles final context with breadcrumbs, layout summaries, direct evidence,
+   and dropped/truncated evidence reasons.
+6. Records a run with status, answer, sources, chunk traces, timings, and any error.
 
-If native document-scoped filtering is unsupported by the configured runtime storage, the run fails with a runtime error instead of falling back to metadata-only retrieval.
+If a lane is disabled, unavailable, blocked by policy, or out of budget, the run
+trace records that reason instead of silently treating the lane as successful.
 
 The returned runs are also available in `Comparison`, `Optimizer`, and the `Dashboard`.
 
@@ -456,7 +482,7 @@ The returned runs are also available in `Comparison`, `Optimizer`, and the `Dash
 
 Studio has a safe adapter boundary around the optional `raganything` integration.
 
-When `raganything` is available, Diagnostics reports `raganything_available: true` and clears the missing-dependency warning. Runtime profiles execute queries through the native RAG-Anything runtime; missing runtime profiles, inactive runtime modes, and unhealthy runtime dependencies create explicit failed runs instead of simple local answers.
+When `raganything` is available, Diagnostics reports `raganything_available: true` and clears the missing-dependency warning. Runtime profiles can use the native RAG-Anything lane, but canonical Postgres chunks remain the source of truth for fusion, context assembly, graph projection, and proof exports. Missing runtime profiles, inactive runtime modes, and unhealthy runtime dependencies create explicit skipped, degraded, or failed traces instead of hidden fallback behavior.
 
 Production document parsing uses MinerU strict extraction. Invalid extraction, missing MinerU health, or unusable artifacts fail the index job with a quality report instead of creating local chunks.
 
@@ -490,7 +516,9 @@ python -m pip install -e "backend[dev]"
 
 That backend install includes the declared `raganything[all]` dependency.
 
-Product query execution requires a configured native runtime profile, Postgres/PGVector storage, and indexed MinerU chunks.
+Product query execution requires Postgres/PGVector storage, indexed MinerU
+chunks, and a configured runtime profile for native runtime, embeddings,
+generation, reranking, or graph-backed behavior.
 
 ### Settings shows `No default profile saved`
 
