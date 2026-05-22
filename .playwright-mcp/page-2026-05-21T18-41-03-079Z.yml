@@ -1,0 +1,91 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - heading "Superpowers Brainstorming" [level=1] [ref=e3]:
+      - link "Superpowers Brainstorming" [ref=e4] [cursor=pointer]:
+        - /url: https://github.com/obra/superpowers
+    - generic [ref=e5]: Connected
+  - generic [ref=e7]:
+    - 'heading "Option A: Query Page Using the Chunks Template" [level=2] [ref=e8]'
+    - paragraph [ref=e9]: Compact command panel on top, proof-focused results table below, with query-specific controls kept visible.
+    - generic [ref=e10]:
+      - generic [ref=e11]: "Preview: /query"
+      - generic [ref=e12]:
+        - generic [ref=e13]:
+          - generic [ref=e14]:
+            - generic [ref=e15]:
+              - strong [ref=e18]: RAG query workbench
+              - generic [ref=e19]:
+                - generic [ref=e20]: hadith_bukhari.pdf · Succeeded
+                - generic [ref=e21]: arabic_refs.pdf · Succeeded
+                - generic [ref=e22]: Refresh
+            - generic [ref=e23]:
+              - generic [ref=e24]: Variants
+              - generic [ref=e25]:
+                - generic [ref=e26]: Evidence baseline
+                - generic [ref=e27]: Strict rerank
+          - generic [ref=e28]:
+            - generic [ref=e29]:
+              - generic [ref=e30]: Question, reference, or claim
+              - generic [ref=e31]: Which evidence supports the reference-heavy claim?
+            - generic [ref=e32]:
+              - generic [ref=e33]: Limit
+              - generic [ref=e34]: "8"
+            - generic [ref=e35]:
+              - generic [ref=e36]: Answer mode
+              - generic [ref=e37]:
+                - generic [ref=e38]: Fast
+                - generic [ref=e39]: Full
+            - generic [ref=e40]:
+              - generic [ref=e41]: Tune
+              - generic [ref=e42]: Run
+          - generic [ref=e44]:
+            - generic [ref=e45]: Advanced query options Budgets, search weights, and retrieval simulation
+            - generic [ref=e46]: ⌄
+        - generic [ref=e47]:
+          - generic [ref=e48]:
+            - generic [ref=e49]:
+              - strong [ref=e50]: Answers and evidence
+              - generic [ref=e51]: Latest scoped run across 2 documents and 1 variant.
+            - generic [ref=e52]: 1 run
+          - article [ref=e54]:
+            - generic [ref=e55]:
+              - generic [ref=e56]:
+                - strong [ref=e57]: Which evidence supports the reference-heavy claim?
+                - generic [ref=e58]: Evidence baseline · run_9fa3c2
+              - generic [ref=e59]:
+                - generic [ref=e60]: View pathway
+                - generic [ref=e61]: succeeded
+            - generic [ref=e62]:
+              - generic [ref=e63]: profile default
+              - generic [ref=e64]: documents 2
+              - generic [ref=e65]: reranker applied
+            - paragraph [ref=e66]: "Answer text stays readable, but the page leads with the proof path: selected scope, run status, reranker state, readable source rows, and inspectable raw traces."
+            - generic [ref=e67]:
+              - strong [ref=e68]: Readable sources
+              - generic [ref=e69]:
+                - generic [ref=e70]:
+                  - generic [ref=e71]:
+                    - generic [ref=e72]: chunk_4a82 · page 12 · reference 12:13
+                    - generic [ref=e73]: hadith_bukhari.pdf · No parser warnings
+                  - generic [ref=e74]: Inspect
+                - generic [ref=e75]:
+                  - generic [ref=e76]:
+                    - generic [ref=e77]: chunk_b19e · page 13 · related reference
+                    - generic [ref=e78]: arabic_refs.pdf · Relationship refs available
+                  - generic [ref=e79]: Inspect
+            - generic [ref=e80]:
+              - generic [ref=e81]: Sources JSON
+              - generic [ref=e82]: Chunk traces
+              - generic [ref=e83]: Timings
+    - generic [ref=e84]:
+      - generic [ref=e85] [cursor=pointer]:
+        - generic [ref=e86]: A
+        - generic [ref=e87]:
+          - heading "Approve this direction" [level=3] [ref=e88]
+          - paragraph [ref=e89]: Use the chunks-page top panel and results section structure, with expanded query controls.
+      - generic [ref=e90] [cursor=pointer]:
+        - generic [ref=e91]: R
+        - generic [ref=e92]:
+          - heading "Revise before implementation" [level=3] [ref=e93]
+          - paragraph [ref=e94]: Keep the template, but adjust density, controls, or result emphasis first.
+  - generic [ref=e95]: Click an option above, then return to the terminal

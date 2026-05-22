@@ -1,0 +1,371 @@
+
+> rag-anything-studio-frontend@0.1.0 dev
+> vite --host 127.0.0.1
+
+
+  [32m[1mVITE[22m v8.0.11[39m  [2mready in [0m[1m745[22m[2m[0m ms[22m
+
+  [32m➜[39m  [1mLocal[22m:   [36mhttp://127.0.0.1:[1m5173[22m/[39m
+[2m[32m  ➜[39m[22m[2m  press [22m[1mh + enter[22m[2m to show help[22m
+[2m1:53:33 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/diagnostics[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+[2m1:53:33 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/health[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+[2m1:53:33 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/jobs?client=%5Bobject+Object%5D&queryKey=jobs&signal=%5Bobject+AbortSignal%5D[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+[2m1:53:33 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/documents?client=%5Bobject+Object%5D&queryKey=documents&signal=%5Bobject+AbortSignal%5D[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+[2m1:53:33 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/variants?client=%5Bobject+Object%5D&queryKey=variants&signal=%5Bobject+AbortSignal%5D[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+[2m1:53:33 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/runs?client=%5Bobject+Object%5D&queryKey=runs&signal=%5Bobject+AbortSignal%5D[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+[2m1:53:34 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/graph?client=%5Bobject+Object%5D&queryKey=graph&signal=%5Bobject+AbortSignal%5D[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+[2m1:53:34 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/diagnostics[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+[2m1:53:34 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/jobs?client=%5Bobject+Object%5D&queryKey=jobs&signal=%5Bobject+AbortSignal%5D[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+[2m1:53:34 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/documents?client=%5Bobject+Object%5D&queryKey=documents&signal=%5Bobject+AbortSignal%5D[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+[2m1:53:34 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/variants?client=%5Bobject+Object%5D&queryKey=variants&signal=%5Bobject+AbortSignal%5D[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+[2m1:53:34 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/runs?client=%5Bobject+Object%5D&queryKey=runs&signal=%5Bobject+AbortSignal%5D[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+[2m1:53:34 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/graph?client=%5Bobject+Object%5D&queryKey=graph&signal=%5Bobject+AbortSignal%5D[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+[2m1:53:34 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/diagnostics[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+[2m1:53:35 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/health[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+[2m1:53:35 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/diagnostics[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+[2m1:53:35 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/jobs?client=%5Bobject+Object%5D&queryKey=jobs&signal=%5Bobject+AbortSignal%5D[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+[2m1:53:35 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/documents?client=%5Bobject+Object%5D&queryKey=documents&signal=%5Bobject+AbortSignal%5D[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+[2m1:53:35 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/variants?client=%5Bobject+Object%5D&queryKey=variants&signal=%5Bobject+AbortSignal%5D[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+[2m1:53:35 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/runs?client=%5Bobject+Object%5D&queryKey=runs&signal=%5Bobject+AbortSignal%5D[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+[2m1:53:35 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/graph?client=%5Bobject+Object%5D&queryKey=graph&signal=%5Bobject+AbortSignal%5D[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+[2m1:54:05 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/diagnostics[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+[2m1:54:06 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/diagnostics[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+[2m1:54:27 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/jobs?client=%5Bobject+Object%5D&queryKey=jobs&signal=%5Bobject+AbortSignal%5D[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+[2m1:54:27 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/health[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+[2m1:54:27 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/variants?client=%5Bobject+Object%5D&queryKey=variants&signal=%5Bobject+AbortSignal%5D[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+[2m1:54:27 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/documents?client=%5Bobject+Object%5D&queryKey=documents&signal=%5Bobject+AbortSignal%5D[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+[2m1:54:27 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/diagnostics[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+[2m1:54:27 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/runs?client=%5Bobject+Object%5D&queryKey=runs&signal=%5Bobject+AbortSignal%5D[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+[2m1:54:27 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/graph?client=%5Bobject+Object%5D&queryKey=graph&signal=%5Bobject+AbortSignal%5D[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+[2m1:54:30 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/documents?client=%5Bobject+Object%5D&queryKey=documents&signal=%5Bobject+AbortSignal%5D[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+[2m1:54:30 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/graph?client=%5Bobject+Object%5D&queryKey=graph&signal=%5Bobject+AbortSignal%5D[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+[2m1:54:30 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/variants?client=%5Bobject+Object%5D&queryKey=variants&signal=%5Bobject+AbortSignal%5D[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+[2m1:54:30 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/runs?client=%5Bobject+Object%5D&queryKey=runs&signal=%5Bobject+AbortSignal%5D[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+[2m1:54:30 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/jobs?client=%5Bobject+Object%5D&queryKey=jobs&signal=%5Bobject+AbortSignal%5D[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+[2m1:54:30 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/diagnostics[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+[2m1:54:30 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/health[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+[2m1:54:36 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/diagnostics[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+[2m1:54:37 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/diagnostics[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+[2m1:55:07 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/diagnostics[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+[2m1:55:08 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/diagnostics[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+[2m1:55:38 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/diagnostics[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+[2m1:55:39 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/diagnostics[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+[2m1:56:09 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/diagnostics[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+[2m1:56:10 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/diagnostics[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+[2m1:56:40 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/diagnostics[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+[2m1:56:41 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/diagnostics[39m
+Error: socket hang up
+    at Socket.socketOnEnd (node:_http_client:617:25)
+    at Socket.emit (node:events:521:24)
+    at endReadableNT (node:internal/streams/readable:1729:12)
+    at process.processTicksAndRejections (node:internal/process/task_queues:90:21)
+[2m1:57:11 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/diagnostics[39m
+Error: socket hang up
+    at Socket.socketOnEnd (node:_http_client:617:25)
+    at Socket.emit (node:events:521:24)
+    at endReadableNT (node:internal/streams/readable:1729:12)
+    at process.processTicksAndRejections (node:internal/process/task_queues:90:21)
+[2m1:57:12 PM[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/diagnostics[39m
+Error: socket hang up
+    at Socket.socketOnEnd (node:_http_client:617:25)
+    at Socket.emit (node:events:521:24)
+    at endReadableNT (node:internal/streams/readable:1729:12)
+    at process.processTicksAndRejections (node:internal/process/task_queues:90:21)
+[2m2:08:35 PM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/features/documents/documents-page.tsx, /src/styles.css[22m
+[2m2:08:36 PM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/features/documents/documents-page.tsx, /src/styles.css[22m
+[2m10:48:04 PM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/features/query/query-page.tsx, /src/styles.css[22m
+[2m10:48:13 PM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/features/query/query-page.tsx, /src/styles.css[22m
+[2m10:48:14 PM[22m [31m[1m[vite][22m[39m [31m[2m(client)[22m[39m [31m[Unhandled error] [1mTypeError[22m: Cannot read properties of null (reading 'includes')
+[39m > src/features/query/query-page.tsx:169:45
+    167 |                  label={document.filename}
+    168 |                  detail={`${titleCase(document.status)} · ${document.content_type}`}
+    169 |                  checked={selectedDocumentIds.includes(document.id)}
+        |                                               ^
+    170 |                  onChange={(checked) =>
+    171 |                    setSelectedDocumentIds((ids) => toggleId(ids, document.id, checked))
+ > QueryPage src/features/query/query-page.tsx:164:48
+ > Object.react_stack_bottom_frame node_modules/react-dom/cjs/react-dom-client.development.js:25904:19
+ > renderWithHooks node_modules/react-dom/cjs/react-dom-client.development.js:7662:21
+ > updateFunctionComponent node_modules/react-dom/cjs/react-dom-client.development.js:10166:18
+ > beginWork node_modules/react-dom/cjs/react-dom-client.development.js:11778:17
+ > runWithFiberInDEV node_modules/react-dom/cjs/react-dom-client.development.js:871:29
+ > performUnitOfWork node_modules/react-dom/cjs/react-dom-client.development.js:17641:21
+ > workLoopSync node_modules/react-dom/cjs/react-dom-client.development.js:17469:40
+
+[2m10:48:14 PM[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [2m[console.warn] [22mAn error occurred in the <QueryPage> component.
+
+Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries.
+
+[2m10:48:29 PM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/features/query/query-page.tsx, /src/styles.css[22m
+[2m10:48:30 PM[22m [31m[1m[vite][22m[39m [31m[2m(client)[22m[39m [31m[Unhandled error] [1mTypeError[22m: Cannot read properties of null (reading 'includes')
+[39m > src/features/query/query-page.tsx:199:45
+    197 |                  label={document.filename}
+    198 |                  detail={`${titleCase(document.status)} · ${document.content_type}`}
+    199 |                  checked={selectedDocumentIds.includes(document.id)}
+        |                                               ^
+    200 |                  onChange={(checked) =>
+    201 |                    setSelectedDocumentIds((ids) => toggleId(ids, document.id, checked))
+ > QueryPage src/features/query/query-page.tsx:194:48
+ > Object.react_stack_bottom_frame node_modules/react-dom/cjs/react-dom-client.development.js:25904:19
+ > renderWithHooks node_modules/react-dom/cjs/react-dom-client.development.js:7662:21
+ > updateFunctionComponent node_modules/react-dom/cjs/react-dom-client.development.js:10166:18
+ > beginWork node_modules/react-dom/cjs/react-dom-client.development.js:11778:17
+ > runWithFiberInDEV node_modules/react-dom/cjs/react-dom-client.development.js:871:29
+ > performUnitOfWork node_modules/react-dom/cjs/react-dom-client.development.js:17641:21
+ > workLoopSync node_modules/react-dom/cjs/react-dom-client.development.js:17469:40
+
+[2m10:48:30 PM[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [2m[console.warn] [22mAn error occurred in the <QueryPage> component.
+
+Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries.
+
+[2m10:49:32 PM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/features/query/query-page.tsx, /src/styles.css[22m
+[2m10:49:33 PM[22m [31m[1m[vite][22m[39m [31m[2m(client)[22m[39m [31m[Unhandled error] [1mTypeError[22m: Cannot read properties of null (reading 'includes')
+[39m > src/features/query/query-page.tsx:199:45
+    197 |                  label={document.filename}
+    198 |                  detail={`${titleCase(document.status)} · ${document.content_type}`}
+    199 |                  checked={selectedDocumentIds.includes(document.id)}
+        |                                               ^
+    200 |                  onChange={(checked) =>
+    201 |                    setSelectedDocumentIds((ids) => toggleId(ids, document.id, checked))
+ > QueryPage src/features/query/query-page.tsx:194:48
+ > Object.react_stack_bottom_frame node_modules/react-dom/cjs/react-dom-client.development.js:25904:19
+ > renderWithHooks node_modules/react-dom/cjs/react-dom-client.development.js:7662:21
+ > updateFunctionComponent node_modules/react-dom/cjs/react-dom-client.development.js:10166:18
+ > beginWork node_modules/react-dom/cjs/react-dom-client.development.js:11778:17
+ > runWithFiberInDEV node_modules/react-dom/cjs/react-dom-client.development.js:871:29
+ > performUnitOfWork node_modules/react-dom/cjs/react-dom-client.development.js:17641:21
+ > workLoopSync node_modules/react-dom/cjs/react-dom-client.development.js:17469:40
+
+[2m10:49:33 PM[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [2m[console.warn] [22mAn error occurred in the <QueryPage> component.
+
+Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries.
+
+[2m10:49:46 PM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/features/query/query-page.tsx, /src/styles.css[22m
+[2m10:49:47 PM[22m [31m[1m[vite][22m[39m [31m[2m(client)[22m[39m [31m[Unhandled error] [1mTypeError[22m: Cannot read properties of null (reading 'includes')
+[39m > src/features/query/query-page.tsx:199:45
+    197 |                  label={document.filename}
+    198 |                  detail={`${titleCase(document.status)} · ${document.content_type}`}
+    199 |                  checked={selectedDocumentIds.includes(document.id)}
+        |                                               ^
+    200 |                  onChange={(checked) =>
+    201 |                    setSelectedDocumentIds((ids) => toggleId(ids, document.id, checked))
+ > QueryPage src/features/query/query-page.tsx:194:48
+ > Object.react_stack_bottom_frame node_modules/react-dom/cjs/react-dom-client.development.js:25904:19
+ > renderWithHooks node_modules/react-dom/cjs/react-dom-client.development.js:7662:21
+ > updateFunctionComponent node_modules/react-dom/cjs/react-dom-client.development.js:10166:18
+ > beginWork node_modules/react-dom/cjs/react-dom-client.development.js:11778:17
+ > runWithFiberInDEV node_modules/react-dom/cjs/react-dom-client.development.js:871:29
+ > performUnitOfWork node_modules/react-dom/cjs/react-dom-client.development.js:17641:21
+ > workLoopSync node_modules/react-dom/cjs/react-dom-client.development.js:17469:40
+
+[2m10:49:47 PM[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [2m[console.warn] [22mAn error occurred in the <QueryPage> component.
+
+Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries.
+
+[2m10:50:01 PM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/features/query/query-page.tsx, /src/styles.css[22m
+[2m10:50:37 PM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/features/query/query-page.tsx, /src/styles.css[22m
+[2m10:50:39 PM[22m [31m[1m[vite][22m[39m [31m[2m(client)[22m[39m [31m[Unhandled error] [1mReferenceError[22m: SearchWeightsSummary is not defined
+[39m > QueryPage src/features/query/query-page.tsx:339:13
+    337 |            </summary>
+    338 |            <div className="grid gap-4 border-t border-[#dce5e8] p-3 lg:grid-cols-[minmax(0,1fr)_minmax(280px,0.45fr)]">
+    339 |              <SearchWeightsSummary weights={searchWeights} custom={hasCustomSearchWeights} />
+        |               ^
+    340 |              <div className="grid content-start gap-3 sm:grid-cols-2 lg:grid-cols-1">
+    341 |                <BudgetInput
+ > Object.react_stack_bottom_frame node_modules/react-dom/cjs/react-dom-client.development.js:25904:19
+ > renderWithHooks node_modules/react-dom/cjs/react-dom-client.development.js:7662:21
+ > updateFunctionComponent node_modules/react-dom/cjs/react-dom-client.development.js:10166:18
+ > beginWork node_modules/react-dom/cjs/react-dom-client.development.js:11778:17
+ > runWithFiberInDEV node_modules/react-dom/cjs/react-dom-client.development.js:871:29
+ > performUnitOfWork node_modules/react-dom/cjs/react-dom-client.development.js:17641:21
+ > workLoopSync node_modules/react-dom/cjs/react-dom-client.development.js:17469:40
+ > renderRootSync node_modules/react-dom/cjs/react-dom-client.development.js:17450:10
+ > performWorkOnRoot node_modules/react-dom/cjs/react-dom-client.development.js:16583:34
+
+[2m10:50:39 PM[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [2m[console.warn] [22mAn error occurred in the <QueryPage> component.
+
+Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries.
+
+[2m10:51:00 PM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/features/query/query-page.tsx, /src/styles.css[22m
+[2m10:51:00 PM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/features/query/query-page.tsx, /src/styles.css[22m
+[2m10:51:02 PM[22m [31m[1m[vite][22m[39m [31m[2m(client)[22m[39m [31m[Unhandled error] [1mReferenceError[22m: SearchWeightsSummary is not defined
+[39m > QueryPage src/features/query/query-page.tsx:313:13
+    311 |            </summary>
+    312 |            <div className="grid gap-4 border-t border-[#dce5e8] p-3 lg:grid-cols-[minmax(0,1fr)_minmax(280px,0.45fr)]">
+    313 |              <SearchWeightsSummary weights={searchWeights} custom={hasCustomSearchWeights} />
+        |               ^
+    314 |              <div className="grid content-start gap-3 sm:grid-cols-2 lg:grid-cols-1">
+    315 |                <BudgetInput
+ > Object.react_stack_bottom_frame node_modules/react-dom/cjs/react-dom-client.development.js:25904:19
+ > renderWithHooks node_modules/react-dom/cjs/react-dom-client.development.js:7662:21
+ > updateFunctionComponent node_modules/react-dom/cjs/react-dom-client.development.js:10166:18
+ > beginWork node_modules/react-dom/cjs/react-dom-client.development.js:11778:17
+ > runWithFiberInDEV node_modules/react-dom/cjs/react-dom-client.development.js:871:29
+ > performUnitOfWork node_modules/react-dom/cjs/react-dom-client.development.js:17641:21
+ > workLoopSync node_modules/react-dom/cjs/react-dom-client.development.js:17469:40
+ > renderRootSync node_modules/react-dom/cjs/react-dom-client.development.js:17450:10
+ > performWorkOnRoot node_modules/react-dom/cjs/react-dom-client.development.js:16583:34
+
+[2m10:51:02 PM[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [2m[console.warn] [22mAn error occurred in the <QueryPage> component.
+
+Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries.
+
+[2m10:51:14 PM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/features/query/query-page.tsx, /src/styles.css[22m
+[2m10:51:15 PM[22m [31m[1m[vite][22m[39m [31m[2m(client)[22m[39m [31m[Unhandled error] [1mReferenceError[22m: SearchWeightsSummary is not defined
+[39m > QueryPage src/features/query/query-page.tsx:313:13
+    311 |            </summary>
+    312 |            <div className="grid gap-4 border-t border-[#dce5e8] p-3 lg:grid-cols-[minmax(0,1fr)_minmax(280px,0.45fr)]">
+    313 |              <SearchWeightsSummary weights={searchWeights} custom={hasCustomSearchWeights} />
+        |               ^
+    314 |              <div className="grid content-start gap-3 sm:grid-cols-2 lg:grid-cols-1">
+    315 |                <BudgetInput
+ > Object.react_stack_bottom_frame node_modules/react-dom/cjs/react-dom-client.development.js:25904:19
+ > renderWithHooks node_modules/react-dom/cjs/react-dom-client.development.js:7662:21
+ > updateFunctionComponent node_modules/react-dom/cjs/react-dom-client.development.js:10166:18
+ > beginWork node_modules/react-dom/cjs/react-dom-client.development.js:11778:17
+ > runWithFiberInDEV node_modules/react-dom/cjs/react-dom-client.development.js:871:29
+ > performUnitOfWork node_modules/react-dom/cjs/react-dom-client.development.js:17641:21
+ > workLoopSync node_modules/react-dom/cjs/react-dom-client.development.js:17469:40
+ > renderRootSync node_modules/react-dom/cjs/react-dom-client.development.js:17450:10
+ > performWorkOnRoot node_modules/react-dom/cjs/react-dom-client.development.js:16583:34
+
+[2m10:51:15 PM[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [2m[console.warn] [22mAn error occurred in the <QueryPage> component.
+
+Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries.
+
+[2m10:51:31 PM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/features/query/query-page.tsx, /src/styles.css[22m
+[2m10:51:33 PM[22m [31m[1m[vite][22m[39m [31m[2m(client)[22m[39m [31m[Unhandled error] [1mReferenceError[22m: SearchWeightsSummary is not defined
+[39m > QueryPage src/features/query/query-page.tsx:313:13
+    311 |            </summary>
+    312 |            <div className="grid gap-4 border-t border-[#dce5e8] p-3 lg:grid-cols-[minmax(0,1fr)_minmax(280px,0.45fr)]">
+    313 |              <SearchWeightsSummary weights={searchWeights} custom={hasCustomSearchWeights} />
+        |               ^
+    314 |              <div className="grid content-start gap-3 sm:grid-cols-2 lg:grid-cols-1">
+    315 |                <BudgetInput
+ > Object.react_stack_bottom_frame node_modules/react-dom/cjs/react-dom-client.development.js:25904:19
+ > renderWithHooks node_modules/react-dom/cjs/react-dom-client.development.js:7662:21
+ > updateFunctionComponent node_modules/react-dom/cjs/react-dom-client.development.js:10166:18
+ > beginWork node_modules/react-dom/cjs/react-dom-client.development.js:11778:17
+ > runWithFiberInDEV node_modules/react-dom/cjs/react-dom-client.development.js:871:29
+ > performUnitOfWork node_modules/react-dom/cjs/react-dom-client.development.js:17641:21
+ > workLoopSync node_modules/react-dom/cjs/react-dom-client.development.js:17469:40
+ > renderRootSync node_modules/react-dom/cjs/react-dom-client.development.js:17450:10
+ > performWorkOnRoot node_modules/react-dom/cjs/react-dom-client.development.js:16583:34
+
+[2m10:51:33 PM[22m [33m[1m[vite][22m[39m [33m[2m(client)[22m[39m [2m[console.warn] [22mAn error occurred in the <QueryPage> component.
+
+Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries.
+
+[2m10:51:48 PM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/features/query/query-page.tsx, /src/styles.css[22m
+[2m10:52:37 PM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/features/query/query-page.tsx, /src/styles.css[22m
+[2m10:52:47 PM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/features/query/query-page.tsx, /src/styles.css[22m
+[2m10:53:17 PM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/features/query/query-page.tsx, /src/styles.css[22m
+[2m10:55:24 PM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/features/query/query-page.tsx, /src/styles.css[22m
+[2m11:01:22 PM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/features/query/query-page.tsx, /src/styles.css[22m
+[2m11:01:36 PM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/features/query/query-page.tsx, /src/styles.css[22m
+[2m11:01:51 PM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/features/query/query-page.tsx, /src/styles.css[22m
+[2m11:02:06 PM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/features/query/query-page.tsx, /src/styles.css[22m
+[2m11:02:49 PM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/features/query/query-page.tsx, /src/styles.css[22m
+[2m10:51:54 AM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/features/chunks/chunk-inspector.tsx, /src/styles.css[22m
+[2m10:51:54 AM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/features/chunks/chunk-inspector.tsx, /src/styles.css[22m
+[2m10:53:43 AM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/features/chunks/chunk-inspector.tsx, /src/styles.css[22m

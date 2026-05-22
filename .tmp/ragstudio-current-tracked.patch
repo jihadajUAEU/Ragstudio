@@ -1,0 +1,2492 @@
+diff --git a/.codex/skills/chunk-query-retrieval-auditor/SKILL.md b/.codex/skills/chunk-query-retrieval-auditor/SKILL.md
+index 1ea9dbd..3fa0433 100644
+--- a/.codex/skills/chunk-query-retrieval-auditor/SKILL.md
++++ b/.codex/skills/chunk-query-retrieval-auditor/SKILL.md
+@@ -29,6 +29,101 @@ Ragstudio retrieval must follow this architecture unless the user explicitly ask
+ 
+ 7. **Public proof requires replayable evidence.** Retrieval claims need static fixtures, valid proof packet artifacts, claim registry entries, redaction status, source paths, limitations, and screenshot signoff when screenshots are used.
+ 
++## Three-Pillar Retrieval Architecture
++
++Use these pillars as the preferred architecture for chunk search, query
++planning, candidate generation, fusion, reranking, graph expansion, and context
++assembly. Treat them as review criteria when deciding whether a retrieval change
++is good enough.
++
++### 1. Domain-Aware Ingestion And Retrieval
++
++Target behavior:
++
++- Domain metadata resolves to an executable retrieval contract: profile id,
++  reference schema, expected scripts/languages, query expansion adapter,
++  tokenizer/normalizer, quality policy, and materialization policy.
++- Query expansion is profile-driven and traceable. Arabic religious expansion is
++  one adapter; other domains should be able to supply legal/policy references,
++  technical synonyms, financial terms, medical aliases, code identifiers, or
++  multilingual/code-mixed mappings without editing core orchestration.
++- Exact reference and exact script retrieval stay canonical-first. Lexical,
++  vector, graph, runtime, and reranker lanes may help, but blocked or
++  provenance-only chunks must not re-enter through secondary lanes.
++- Candidate traces should answer: which domain/profile was resolved, which
++  expansion rules ran, which lanes were allowed or skipped, which policy allowed
++  this chunk, and which quality flags affected ranking or assembly.
++
++Audit prompts:
++
++- Is this retrieval path using a hardcoded domain family where a profile or
++  contract should decide?
++- Does every candidate preserve `domain_metadata`, `reference_metadata`,
++  canonical chunk identity, retrieval pass, and `quality_action_policy`?
++- Are language/token rules domain-specific enough for the query and corpus?
++- Can a chunk with `index_vector=false`, `project_graph=false`, or blocked exact
++  retrieval still leak into final evidence?
++
++### 2. Layout-Aware Ingestion And Retrieval
++
++Target behavior:
++
++- Retrieved chunks should retain layout semantics from canonical evidence:
++  `content_type`, page/page range, bbox when available, block type, reading
++  order, table/figure/caption relationships, preview refs, and
++  `provenance.blocks`.
++- Vector and native runtime lanes must hydrate back to canonical chunks before
++  fusion whenever possible. If a native lane only returns flat text and page id,
++  traces should mark the limitation and avoid treating that snippet as the sole
++  source of truth.
++- Query-time retrieval should be able to expand from a layout hit to nearby
++  evidence: same canonical reference, same page, same table/caption, same figure,
++  nearby bbox, previous/next visual block, or graph relationship.
++- Layout boosts should be explicit and measurable. Static boosts are acceptable
++  only when their inputs and score contribution are in the trace.
++
++Audit prompts:
++
++- Does this query path use `source_location`, `content_type`, preview/crop refs,
++  and `provenance.blocks`, or only raw text?
++- Are layout candidates flattened before reranking/context assembly without
++  breadcrumbs or neighborhood recovery?
++- Does graph expansion or metadata retrieval include spatial/layout neighbors
++  when they are necessary to understand the answer?
++- Are layout thresholds or boost constants covered by focused tests for
++  multi-column, RTL, tables, captions, and page-boundary cases?
++
++### 3. Context-Aware Ingestion And Retrieval
++
++Target behavior:
++
++- Each candidate should carry enough parent context to be meaningful:
++  document/title when safe, section/header chain, canonical reference, page
++  range, sibling/previous/next relationships, and graph path when available.
++- Embedding and vector retrieval should avoid isolated leaf chunks. Prefer safe
++  pre-embedding context, parent-window retrieval, late-chunking, or canonical
++  hydration plus context-window expansion.
++- Fusion should dedupe by canonical identity, preserve all retrieval passes, keep
++  parser warnings and quality flags, and add diversity for comparison or broad
++  coverage queries.
++- Reranking should operate on a bounded, canonical candidate set and record
++  before/after ranks, scores, provider/model, timeout/fallback, and degraded
++  status. If redundancy is high, prefer MMR/diversity selection or explicit
++  duplicate suppression before final context.
++- Context assembly should inject concise breadcrumbs, preserve direct evidence,
++  include necessary neighbors within budget, and record dropped/truncated
++  candidates with reasons.
++
++Audit prompts:
++
++- Would this chunk still make sense if read alone by the answer model?
++- Are parent headers, canonical references, or graph paths available in the
++  prompt or only hidden in metadata?
++- Are vector/runtime hits able to seed graph or context neighborhood expansion
++  after canonical hydration?
++- Does final context explain why evidence was included, dropped, truncated,
++  reranked, or blocked?
++
+ ## Starting Map
+ 
+ Read only the paths needed for the current task:
+diff --git a/.codex/skills/rag-pipeline-auditor/SKILL.md b/.codex/skills/rag-pipeline-auditor/SKILL.md
+index 8b77e9e..3d18468 100644
+--- a/.codex/skills/rag-pipeline-auditor/SKILL.md
++++ b/.codex/skills/rag-pipeline-auditor/SKILL.md
+@@ -115,6 +115,119 @@ Audit focus:
+   evidence unit type, canonical reference, page/block provenance, quality action
+   policy, and materialization policy.
+ 
++### Three-Pillar RAG Architecture Target
++
++Use this model when auditing or improving Ragstudio's evidence pipeline. The
++goal is not "more vectors"; the goal is to preserve domain, layout, and context
++semantics from ingestion through retrieval, reranking, context assembly, and
++proof export.
++
++#### 1. Domain-Aware Ingestion And Retrieval
++
++Target contract:
++
++- Domain profiles should be executable contracts, not labels. A profile should
++  define reference schemas, expected scripts/languages, canonical unit rules,
++  parser normalization rules, quality policy, retrieval preferences, graph
++  projection hints, and public-proof limitations.
++- Domain query expansion should be pluggable by domain/profile. Arabic
++  religious expansion is one adapter, not the architecture. Legal, policy,
++  medical, financial, code, tabular, and multilingual domains need their own
++  lexical adapters, synonym maps, reference parsers, tokenizers, and
++  cross-lingual/code-mixed rules when supported.
++- Domain metadata must compile before durable indexing. Raw AI/vision metadata
++  is descriptive until `domain_metadata_contract_compiler.py` turns it into a
++  validated contract with named regex groups and materialization policy.
++- Quality gates must travel with every evidence unit. `quality_action_policy`
++  decides exact search, vector materialization, graph projection, runtime lane
++  eligibility, and context assembly inclusion.
++- Retrieval should expose domain decisions in traces: resolved domain profile,
++  query expansion adapter, reference parser, blocked lanes, exact-match policy,
++  and whether a result came from canonical, lexical, vector, graph, or runtime
++  evidence.
++
++Audit checks:
++
++- Is the domain family hardcoded in the path being changed, or resolved through a
++  profile/registry/contract?
++- Does the change preserve `domain_metadata`, `reference_metadata`,
++  `canonical_reference_unit`, and `quality_action_policy` in persisted chunks
++  and response traces?
++- Are query expansions language/domain-specific and traceable, or silent
++  heuristic rewrites?
++- Can a quality-blocked chunk still enter vector, graph, native runtime, rerank,
++  or final context through a bypass?
++- Are specialized tokenization needs explicit for the domain, especially Arabic,
++  references, tables, legal citations, code, and numeric/financial content?
++
++#### 2. Layout-Aware Ingestion And Retrieval
++
++Target contract:
++
++- Parsing should preserve page/block provenance: page number, block id/type,
++  reading order, bbox, source artifact reference, preview/crop reference, and
++  parser warning codes.
++- Chunking should assemble canonical units from visual order and semantic
++  structure. Reading order, columns, tables, captions, figures, equations,
++  headers/footers, and reference headers must be distinguished instead of
++  flattened blindly.
++- Layout repair should be deterministic and local first. It may downgrade noise
++  to provenance-only, recover same-unit text, or request targeted vision
++  recovery, but it must not fabricate missing content or provenance.
++- Vector and runtime materialization should either carry layout metadata into
++  retrievable rows or explicitly bridge retrieved rows back to canonical
++  Postgres chunks before fusion.
++- Query-time retrieval should support layout-aware expansion when metadata is
++  present: same page, same reference unit, table/caption neighborhood, figure
++  text, bbox proximity, and graph relationships. If this is not implemented, the
++  trace should make the limitation visible.
++
++Audit checks:
++
++- Does the path preserve `source_location`, `preview_ref`, `content_type`,
++  `provenance.blocks`, bbox, page range, and parser warning metadata?
++- Are hardcoded layout thresholds appropriate for the domain, or should they be
++  profile-configured and covered by reading-order tests?
++- Are textless page artifacts treated as provenance/noise while text-bearing
++  disallowed blocks remain recoverable or blocked according to policy?
++- Does native RAG-Anything receive only flat text/page ids? If so, is there a
++  canonical hydration step before fusion and context assembly?
++- Can query-time retrieval pull neighboring layout evidence when a caption,
++  table cell, figure block, or reference header is retrieved?
++
++#### 3. Context-Aware Ingestion And Retrieval
++
++Target contract:
++
++- Every answerable chunk should know its parent context: document title when
++  public-safe, section/header chain, canonical reference, page range, sibling
++  links, previous/next unit relationships, and graph relationships.
++- Embedding text should include enough safe parent context to make standalone
++  chunks semantically meaningful, or the system should use late-chunking or an
++  equivalent parent-window embedding strategy when available.
++- Retrieval should be seedable across channels. Direct canonical/metadata hits
++  can seed graph expansion; vector hits should be able to seed canonical
++  hydration and graph/context neighborhood expansion when bridge ids exist.
++- Fusion should dedupe by canonical identity, preserve lane scores and reasons,
++  and keep diversity across documents/sections when the query asks for
++  comparison, coverage, or synthesis.
++- Context assembly should not be a blind text join. It should inject concise
++  breadcrumbs, preserve direct evidence, include needed neighbors within budget,
++  mark dropped/truncated evidence, and keep quality/reranker degradation visible.
++
++Audit checks:
++
++- Does the candidate carry enough parent context for the LLM to understand what
++  the chunk refers to?
++- Are breadcrumbs or section/reference labels injected at context assembly or
++  answer-prompt time?
++- Are duplicate chunks merged while preserving all retrieval passes and parser
++  warning metadata?
++- Can vector/runtime candidates hydrate to canonical chunks before graph
++  expansion, reranking, and final context?
++- Does reranking improve relevance without hiding redundancy, timeout, fallback,
++  degraded status, or provider/model details?
++
+ ### Ingestion And Jobs
+ 
+ - Routes: `backend/src/ragstudio/api/routes/documents.py`,
+diff --git a/backend/src/ragstudio/db/engine.py b/backend/src/ragstudio/db/engine.py
+index 3fc978d..dcd82bc 100644
+--- a/backend/src/ragstudio/db/engine.py
++++ b/backend/src/ragstudio/db/engine.py
+@@ -42,6 +42,15 @@ async def init_db(engine: AsyncEngine) -> None:
+ def _ensure_runtime_columns(connection) -> None:
+     inspector = inspect(connection)
+     table_names = set(inspector.get_table_names())
++    if "documents" in table_names:
++        _ensure_columns(
++            connection,
++            inspector,
++            "documents",
++            {
++                "index_contract": _json_object_column(connection),
++            },
++        )
+     if "settings_profiles" in table_names:
+         _ensure_columns(
+             connection,
+diff --git a/backend/src/ragstudio/db/models.py b/backend/src/ragstudio/db/models.py
+index 9911c0f..66672a7 100644
+--- a/backend/src/ragstudio/db/models.py
++++ b/backend/src/ragstudio/db/models.py
+@@ -106,6 +106,7 @@ class Document(Base, TimestampMixin):
+     sha256: Mapped[str] = mapped_column(String, unique=True)
+     artifact_path: Mapped[str] = mapped_column(String)
+     status: Mapped[str] = mapped_column(String, default="ready")
++    index_contract: Mapped[dict[str, Any]] = mapped_column(JsonDictType, default=dict)
+     chunks: Mapped[list["Chunk"]] = relationship(
+         back_populates="document", cascade="all, delete-orphan"
+     )
+diff --git a/backend/src/ragstudio/schemas/documents.py b/backend/src/ragstudio/schemas/documents.py
+index a0e59dd..230756b 100644
+--- a/backend/src/ragstudio/schemas/documents.py
++++ b/backend/src/ragstudio/schemas/documents.py
+@@ -1,3 +1,7 @@
++from typing import Any
++
++from pydantic import Field
++
+ from ragstudio.schemas.common import StageStatus, StudioModel
+ from ragstudio.schemas.parsing import IndexDocumentIn
+ 
+@@ -9,3 +13,4 @@ class DocumentOut(StudioModel):
+     sha256: str
+     status: StageStatus
+     latest_index_options: IndexDocumentIn | None = None
++    index_contract: dict[str, Any] = Field(default_factory=dict)
+diff --git a/backend/src/ragstudio/services/chunk_persistence_service.py b/backend/src/ragstudio/services/chunk_persistence_service.py
+index a731fec..5106b93 100644
+--- a/backend/src/ragstudio/services/chunk_persistence_service.py
++++ b/backend/src/ragstudio/services/chunk_persistence_service.py
+@@ -186,7 +186,6 @@ class ChunkPersistenceService:
+         merged = self._scrub_path_metadata(metadata)
+         merged["document_id"] = document_id
+         merged["domain_metadata"] = domain_metadata.model_dump(exclude_none=True)
+-        merged["index_shape"] = index_shape
+         merged["chunk_identity"] = self._chunk_identity(document_id, merged)
+         parser_metadata = dict(merged.get("parser_metadata") or {})
+         parser_metadata.setdefault("backend", "mineru")
+diff --git a/backend/src/ragstudio/services/chunk_service.py b/backend/src/ragstudio/services/chunk_service.py
+index 3655f5b..38537a4 100644
+--- a/backend/src/ragstudio/services/chunk_service.py
++++ b/backend/src/ragstudio/services/chunk_service.py
+@@ -245,7 +245,41 @@ class ChunkService:
+         seen_by_document: dict[str, set[str]] = {
+             document_id: set() for document_id in requested
+         }
++        document_rows = (
++            await self.session.execute(
++                select(Document.id, Document.index_contract).where(
++                    Document.id.in_(requested)
++                )
++            )
++        ).all()
++        for document_id, index_contract in document_rows:
++            if not isinstance(index_contract, dict):
++                continue
++            domain_metadata = index_contract.get("domain_metadata")
++            if not isinstance(domain_metadata, dict):
++                continue
++            metadata_copy = sanitize_db_value(domain_metadata)
++            scrubbed_metadata = self._scrub_domain_metadata_lookup_value(metadata_copy)
++            if not isinstance(scrubbed_metadata, dict):
++                continue
++            scrubbed_metadata["document_id"] = document_id
++            contract_status = index_contract.get("contract_status")
++            if isinstance(contract_status, str):
++                scrubbed_metadata["contract_status"] = contract_status
++            dedupe_key = json.dumps(
++                scrubbed_metadata,
++                sort_keys=True,
++                separators=(",", ":"),
++                default=str,
++            )
++            if dedupe_key in seen_by_document[document_id]:
++                continue
++            seen_by_document[document_id].add(dedupe_key)
++            metadata_by_document[document_id].append(scrubbed_metadata)
++
+         for document_id in requested:
++            if metadata_by_document[document_id]:
++                continue
+             rows = (
+                 await self.session.execute(
+                     select(Chunk.metadata_json)
+diff --git a/backend/src/ragstudio/services/chunk_splitter.py b/backend/src/ragstudio/services/chunk_splitter.py
+index cc8c199..87fb3a6 100644
+--- a/backend/src/ragstudio/services/chunk_splitter.py
++++ b/backend/src/ragstudio/services/chunk_splitter.py
+@@ -10,8 +10,8 @@ from typing import Any
+ 
+ from ragstudio.schemas.parsing import DomainMetadata, ParserMode
+ from ragstudio.services.adapter import AdapterChunk
+-from ragstudio.services.chunk_quality_gate import ChunkQualityGate
+ from ragstudio.services.canonical_assembly import CanonicalAssemblyStrategy
++from ragstudio.services.chunk_quality_gate import ChunkQualityGate
+ from ragstudio.services.domain_metadata_quality_gate import DomainMetadataQualityGate
+ from ragstudio.services.modal_preprocessor import MODAL_ROUTER_PROCESSED_FLAG
+ from ragstudio.services.parser_normalization import (
+@@ -466,7 +466,10 @@ class ChunkSplitter:
+         if semantics is None or not semantics.canonical_units_enabled:
+             return []
+ 
+-        ordered_blocks = self._canonical_block_order(normalized_blocks)
++        ordered_blocks = self._canonical_block_order(
++            normalized_blocks,
++            domain_metadata=domain_metadata,
++        )
+         strategy_units = self.canonical_assembly.assemble(
+             [block for _, block in ordered_blocks],
+             domain_metadata=domain_metadata,
+@@ -524,6 +527,8 @@ class ChunkSplitter:
+     def _canonical_block_order(
+         self,
+         normalized_blocks: list[NormalizedBlock],
++        *,
++        domain_metadata: DomainMetadata | None = None,
+     ) -> list[tuple[int, NormalizedBlock]]:
+         indexed_blocks = list(enumerate(normalized_blocks))
+         if not any(self._source_bbox(block) is not None for _, block in indexed_blocks):
+@@ -544,15 +549,166 @@ class ChunkSplitter:
+         ):
+             if all(self._source_bbox(block) is not None for _, block in page_blocks):
+                 ordered.extend(
+-                    sorted(
++                    self._banded_visual_order(
+                         page_blocks,
+-                        key=lambda item: self._visual_order_key(item[0], item[1]),
++                        domain_metadata=domain_metadata,
+                     )
+                 )
+                 continue
+             ordered.extend(page_blocks)
+         return ordered
+ 
++    def _banded_visual_order(
++        self,
++        page_blocks: list[tuple[int, NormalizedBlock]],
++        *,
++        domain_metadata: DomainMetadata | None,
++    ) -> list[tuple[int, NormalizedBlock]]:
++        page_width = self._page_width(page_blocks)
++        full_width_threshold = page_width * 0.70
++        full_width: list[tuple[int, NormalizedBlock]] = []
++        column_blocks: list[tuple[int, NormalizedBlock]] = []
++        for item in page_blocks:
++            bbox = self._source_bbox(item[1])
++            if bbox is None:
++                column_blocks.append(item)
++                continue
++            x0, _y0, x1, _y1 = bbox
++            if x1 - x0 >= full_width_threshold:
++                full_width.append(item)
++            else:
++                column_blocks.append(item)
++
++        if len(column_blocks) < 2:
++            return sorted(page_blocks, key=lambda item: self._visual_order_key(item[0], item[1]))
++
++        full_width_sorted = sorted(
++            full_width,
++            key=lambda item: self._visual_order_key(item[0], item[1]),
++        )
++        bands: dict[int, list[tuple[int, NormalizedBlock]]] = {}
++        for item in column_blocks:
++            band = self._band_index(item[1], full_width_sorted)
++            bands.setdefault(band, []).append(item)
++
++        ordered: list[tuple[int, NormalizedBlock]] = []
++        for band in range(len(full_width_sorted) + 1):
++            ordered.extend(
++                self._order_columns_in_band(
++                    bands.get(band, []),
++                    page_width=page_width,
++                    rtl=self._is_rtl_domain(domain_metadata),
++                )
++            )
++            if band < len(full_width_sorted):
++                ordered.append(full_width_sorted[band])
++        return ordered
++
++    def _page_width(self, page_blocks: list[tuple[int, NormalizedBlock]]) -> float:
++        widths: list[float] = []
++        max_x1 = 0.0
++        for _index, block in page_blocks:
++            bbox = self._source_bbox(block)
++            if bbox is None:
++                continue
++            x0, _y0, x1, _y1 = bbox
++            widths.append(x1 - x0)
++            max_x1 = max(max_x1, x1)
++        return max(1.0, max_x1, *(widths or [0.0]))
++
++    def _band_index(
++        self,
++        block: NormalizedBlock,
++        full_width_sorted: list[tuple[int, NormalizedBlock]],
++    ) -> int:
++        bbox = self._source_bbox(block)
++        if bbox is None:
++            return 0
++        _x0, y0, _x1, y1 = bbox
++        midpoint = (y0 + y1) / 2
++        band = 0
++        for _original_index, separator in full_width_sorted:
++            sep_bbox = self._source_bbox(separator)
++            if sep_bbox is None:
++                continue
++            _sx0, sy0, _sx1, _sy1 = sep_bbox
++            if midpoint >= sy0:
++                band += 1
++        return band
++
++    def _order_columns_in_band(
++        self,
++        blocks: list[tuple[int, NormalizedBlock]],
++        *,
++        page_width: float,
++        rtl: bool,
++    ) -> list[tuple[int, NormalizedBlock]]:
++        if not blocks:
++            return []
++        clusters = self._column_clusters(blocks, gap_tolerance=page_width * 0.05)
++        clusters = sorted(
++            clusters,
++            key=lambda cluster: self._cluster_x0(cluster),
++            reverse=rtl,
++        )
++        ordered: list[tuple[int, NormalizedBlock]] = []
++        for cluster in clusters:
++            ordered.extend(
++                sorted(
++                    cluster,
++                    key=lambda item: self._visual_order_key(item[0], item[1]),
++                )
++            )
++        return ordered
++
++    def _column_clusters(
++        self,
++        blocks: list[tuple[int, NormalizedBlock]],
++        *,
++        gap_tolerance: float,
++    ) -> list[list[tuple[int, NormalizedBlock]]]:
++        sorted_blocks = sorted(
++            blocks,
++            key=lambda item: (self._source_bbox(item[1]) or (0.0, 0.0, 0.0, 0.0))[0],
++        )
++        clusters: list[list[tuple[int, NormalizedBlock]]] = []
++        current: list[tuple[int, NormalizedBlock]] = []
++        current_right: float | None = None
++        for item in sorted_blocks:
++            bbox = self._source_bbox(item[1])
++            if bbox is None:
++                continue
++            x0, _y0, x1, _y1 = bbox
++            if current and current_right is not None and x0 - current_right > gap_tolerance:
++                clusters.append(current)
++                current = []
++                current_right = None
++            current.append(item)
++            current_right = max(current_right if current_right is not None else x1, x1)
++        if current:
++            clusters.append(current)
++        return clusters
++
++    def _cluster_x0(self, cluster: list[tuple[int, NormalizedBlock]]) -> float:
++        values = [
++            bbox[0]
++            for _index, block in cluster
++            if (bbox := self._source_bbox(block)) is not None
++        ]
++        return min(values) if values else 0.0
++
++    def _is_rtl_domain(self, domain_metadata: DomainMetadata | None) -> bool:
++        if domain_metadata is None:
++            return False
++        values = [
++            domain_metadata.script,
++            domain_metadata.language,
++            domain_metadata.domain,
++            *domain_metadata.tags,
++        ]
++        normalized = {str(value).casefold() for value in values if value}
++        return bool({"arabic", "ar", "quran", "quran_tafseer"} & normalized)
++
+     def _visual_order_key(
+         self,
+         index: int,
+diff --git a/backend/src/ragstudio/services/document_service.py b/backend/src/ragstudio/services/document_service.py
+index 2a5b02d..cff6712 100644
+--- a/backend/src/ragstudio/services/document_service.py
++++ b/backend/src/ragstudio/services/document_service.py
+@@ -13,6 +13,7 @@ from ragstudio.schemas.parsing import DomainMetadata, IndexDocumentIn, ParserMod
+ from ragstudio.schemas.runtime import RuntimeProfile
+ from ragstudio.services.artifact_store import ArtifactStore
+ from ragstudio.services.chunk_service import ChunkService
++from ragstudio.services.document_contract import build_document_index_contract
+ from ragstudio.services.domain_metadata_quality_gate import DomainMetadataQualityGate
+ from ragstudio.services.graph_projection_runner import GraphProjectionRunner
+ from ragstudio.services.index_artifact_cleanup import cleanup_document_index_artifacts
+@@ -75,6 +76,7 @@ class DocumentService:
+             sha256=digest,
+             artifact_path=str(artifact_path),
+             status=StageStatus.READY.value,
++            index_contract=build_document_index_contract(options or IndexDocumentIn()),
+         )
+         self.session.add(document)
+         try:
+@@ -234,6 +236,7 @@ class DocumentService:
+         document: Document,
+         options: IndexDocumentIn | None = None,
+     ) -> Job:
++        self._apply_index_contract_snapshot(document, options)
+         job = JobWorker.build(
+             "index_document",
+             document.id,
+@@ -333,12 +336,24 @@ class DocumentService:
+     def _job_options_payload(self, options: IndexDocumentIn | None) -> dict[str, Any]:
+         return (options or IndexDocumentIn()).model_dump(mode="json", exclude_none=True)
+ 
++    def _apply_index_contract_snapshot(
++        self,
++        document: Document,
++        options: IndexDocumentIn | None,
++    ) -> None:
++        if options is not None:
++            document.index_contract = build_document_index_contract(options)
++
+     async def _ensure_queued_index_job(
+         self,
+         document: Document,
+         options: IndexDocumentIn | None,
+     ) -> None:
+         if await self.active_index_job(document.id) is not None:
++            self._apply_index_contract_snapshot(document, options)
++            if options is not None:
++                await self.session.commit()
++                await self.session.refresh(document)
+             self.queued_index_job_id = None
+             return
+         if options is None:
+@@ -355,6 +370,7 @@ class DocumentService:
+         document: Document,
+         options: IndexDocumentIn | None = None,
+     ) -> None:
++        self._apply_index_contract_snapshot(document, options)
+         existing_chunk_id = await self.session.scalar(
+             select(Chunk.id).where(Chunk.document_id == document.id).limit(1)
+         )
+@@ -643,6 +659,7 @@ class DocumentService:
+         job = await self.session.get(Job, job_id)
+         if document is None or job is None:
+             return
++        self._apply_index_contract_snapshot(document, options)
+ 
+         async def ensure_current_lease() -> None:
+             if ensure_active_lease is not None:
+diff --git a/backend/src/ragstudio/services/domain_metadata_contract_compiler.py b/backend/src/ragstudio/services/domain_metadata_contract_compiler.py
+index 6d374fe..dd401d7 100644
+--- a/backend/src/ragstudio/services/domain_metadata_contract_compiler.py
++++ b/backend/src/ragstudio/services/domain_metadata_contract_compiler.py
+@@ -4,7 +4,7 @@ import re
+ from copy import deepcopy
+ from typing import Any
+ 
+-from ragstudio.schemas.parsing import DomainMetadata, IndexDocumentIn
++from ragstudio.schemas.parsing import DomainMetadata, IndexDocumentIn, MinerUParseOptionsIn
+ 
+ CHAPTER_VERSE_PRIMARY_ANCHOR_PATTERN = (
+     r"(\bVerse\s+|\[)(?P<chapter>\d{1,4})\s*:\s*(?P<verse>\d{1,4})\]?"
+@@ -40,8 +40,15 @@ class DomainMetadataContractError(ValueError):
+ 
+ 
+ def compile_index_options(options: IndexDocumentIn) -> IndexDocumentIn:
++    domain_metadata = compile_domain_metadata(options.domain_metadata)
++    mineru_parse_options = options.mineru_parse_options or _compile_mineru_parse_options(
++        domain_metadata
++    )
+     return options.model_copy(
+-        update={"domain_metadata": compile_domain_metadata(options.domain_metadata)},
++        update={
++            "domain_metadata": domain_metadata,
++            "mineru_parse_options": mineru_parse_options,
++        },
+         deep=True,
+     )
+ 
+@@ -290,6 +297,29 @@ def _compile_quality_policy(custom_json: dict[str, Any], family: str) -> None:
+     custom_json["quality_policy"] = policy
+ 
+ 
++def _compile_mineru_parse_options(metadata: DomainMetadata) -> MinerUParseOptionsIn | None:
++    custom_json = metadata.custom_json if isinstance(metadata.custom_json, dict) else {}
++    reference_family = _reference_family(metadata, custom_json)
++    values = [
++        metadata.domain,
++        metadata.language,
++        metadata.script,
++        metadata.reference_pattern,
++        *metadata.tags,
++    ]
++    normalized = {str(value).casefold() for value in values if value}
++    if reference_family == "chapter_verse" and (
++        "arabic" in normalized or "quran" in normalized or "surah:verse" in normalized
++    ):
++        return MinerUParseOptionsIn(
++            parse_method="ocr",
++            lang="arabic",
++            formula=False,
++            table=False,
++        )
++    return None
++
++
+ def _reference_family(metadata: DomainMetadata, custom_json: dict[str, Any]) -> str | None:
+     schema = _dict_value(custom_json.get("reference_schema"))
+     domain_structure = _dict_value(custom_json.get("domain_structure"))
+diff --git a/backend/src/ragstudio/services/hybrid_chunk_search.py b/backend/src/ragstudio/services/hybrid_chunk_search.py
+index 6751a1e..f2da92c 100644
+--- a/backend/src/ragstudio/services/hybrid_chunk_search.py
++++ b/backend/src/ragstudio/services/hybrid_chunk_search.py
+@@ -182,6 +182,7 @@ class HybridChunkSearch:
+         arabic_exact = self._arabic_exact_score(query, chunk)
+         arabic_token = self._arabic_token_score(query, chunk)
+         metadata_boost = self._metadata_boost(query_text, metadata)
++        layout_context = self._layout_context_boost(query_text, metadata)
+         answer_bearing_count = self._answer_bearing_count_boost(
+             query_text,
+             chunk.text,
+@@ -205,6 +206,7 @@ class HybridChunkSearch:
+             "arabic_exact": arabic_exact,
+             "arabic_token": arabic_token,
+             "metadata_boost": metadata_boost,
++            "layout_context": layout_context,
+             "answer_bearing_count": answer_bearing_count,
+             "guidance_request": guidance_request,
+             "domain_intent": domain_intent,
+@@ -264,6 +266,42 @@ class HybridChunkSearch:
+ 
+         return min(boost, 12.0)
+ 
++    def _layout_context_boost(self, query_text: str, metadata: dict[str, Any]) -> float:
++        query_terms = self._terms(query_text)
++        if not query_terms:
++            return 0.0
++
++        layout_terms: set[str] = set()
++        for key in ("modality", "content_type"):
++            value = metadata.get(key)
++            if isinstance(value, str):
++                layout_terms.update(self._terms(value))
++
++        layout_context = metadata.get("layout_context")
++        if isinstance(layout_context, dict):
++            for value in layout_context.values():
++                if isinstance(value, str):
++                    layout_terms.update(self._terms(value))
++                elif isinstance(value, list):
++                    for item in value:
++                        if isinstance(item, str):
++                            layout_terms.update(self._terms(item))
++
++        provenance = metadata.get("provenance")
++        if isinstance(provenance, dict):
++            blocks = provenance.get("blocks")
++            if isinstance(blocks, list):
++                for block in blocks[:8]:
++                    if not isinstance(block, dict):
++                        continue
++                    for key in ("role", "block_type", "text_preview"):
++                        value = block.get(key)
++                        if isinstance(value, str):
++                            layout_terms.update(self._terms(value))
++
++        overlap = query_terms & layout_terms
++        return min(16.0, len(overlap) * 4.0)
++
+     def _domain_intent_boost(
+         self,
+         policy: DomainSearchPolicy | None,
+diff --git a/backend/src/ragstudio/services/metadata_retrieval_service.py b/backend/src/ragstudio/services/metadata_retrieval_service.py
+index 29d7e96..6561851 100644
+--- a/backend/src/ragstudio/services/metadata_retrieval_service.py
++++ b/backend/src/ragstudio/services/metadata_retrieval_service.py
+@@ -212,6 +212,12 @@ class MetadataRetrievalService:
+         runtime_source_id = getattr(chunk, "runtime_source_id", None)
+         if runtime_source_id:
+             metadata.setdefault("runtime_source_id", runtime_source_id)
++        score_breakdown = metadata.get("score_breakdown")
++        layout_score = 0.0
++        if isinstance(score_breakdown, dict) and isinstance(
++            score_breakdown.get("layout_context"), (int, float)
++        ):
++            layout_score = float(score_breakdown["layout_context"])
+         chunk_id = _chunk_id(chunk)
+         effective_pass = self._effective_retrieval_pass(chunk, retrieval_pass, metadata)
+         if effective_pass == "reference_hypothesis":
+@@ -228,7 +234,10 @@ class MetadataRetrievalService:
+             tool_rank=rank,
+             base_score=base_score,
+             retrieval_pass=effective_pass,
+-            match_features=self._match_features(retrieval_pass, effective_pass),
++            match_features={
++                **self._match_features(retrieval_pass, effective_pass),
++                **({"layout_context": True} if layout_score > 0 else {}),
++            },
+             canonical_reference=self._first_reference(chunk),
+             scope_status="in_scope",
+             source_quality=self._source_quality(chunk),
+@@ -277,6 +286,8 @@ class MetadataRetrievalService:
+             return {"target_phrase": retrieval_pass.query}
+         if effective_pass == "title_count":
+             return {"title_count": True}
++        if effective_pass == "semantic_metadata":
++            return {"semantic_metadata": True}
+         return {}
+ 
+     def _first_reference(self, chunk: ChunkOut) -> str | None:
+diff --git a/backend/src/ragstudio/services/mineru_extraction_validator.py b/backend/src/ragstudio/services/mineru_extraction_validator.py
+index 65e0990..c75d88a 100644
+--- a/backend/src/ragstudio/services/mineru_extraction_validator.py
++++ b/backend/src/ragstudio/services/mineru_extraction_validator.py
+@@ -77,11 +77,6 @@ class MinerUExtractionValidator:
+             )
+ 
+         arabic_character_count = len(self._ARABIC_RE.findall(text))
+-        if expected_language.lower() == "arabic" and arabic_character_count == 0:
+-            raise MinerUExtractionContractError(
+-                "arabic_text_missing",
+-                "Expected Arabic text, but MinerU extraction contained none.",
+-            )
+ 
+         pages = self._observed_pages(non_empty_chunks)
+         total_pages = self._total_pages(non_empty_chunks)
+diff --git a/backend/src/ragstudio/services/retrieval_orchestrator.py b/backend/src/ragstudio/services/retrieval_orchestrator.py
+index 94f8607..dd2365c 100644
+--- a/backend/src/ragstudio/services/retrieval_orchestrator.py
++++ b/backend/src/ragstudio/services/retrieval_orchestrator.py
+@@ -38,7 +38,11 @@ from ragstudio.services.retrieval_observability import RetrievalObservability
+ from ragstudio.services.retrieval_route_input import build_retrieval_route_request
+ from ragstudio.services.retrieval_route_planner import RetrievalRoutePlanner
+ from ragstudio.services.runtime_answer_service import RuntimeAnswerService
+-from ragstudio.services.vector_retrieval_service import vector_lane_diagnostics
++from ragstudio.services.vector_candidate_repository import VectorCandidateRepository
++from ragstudio.services.vector_retrieval_service import (
++    prepare_vector_candidates,
++    vector_lane_diagnostics,
++)
+ 
+ 
+ class NativeRuntimeQueryFailed(RuntimeError):
+@@ -105,6 +109,7 @@ class RetrievalOrchestrator:
+         domain_query_expansion_service: DomainQueryExpansionService | None = None,
+         query_hypothesis_service: QueryHypothesisService | None = None,
+         query_hypothesis_verifier: QueryHypothesisVerifier | None = None,
++        vector_candidate_repository: Any | None = None,
+     ):
+         self.chunk_service = chunk_service
+         self.answer_service = answer_service or RuntimeAnswerService()
+@@ -125,6 +130,7 @@ class RetrievalOrchestrator:
+         )
+         self.query_hypothesis_service = query_hypothesis_service or QueryHypothesisService()
+         self.query_hypothesis_verifier = query_hypothesis_verifier or QueryHypothesisVerifier()
++        self.vector_candidate_repository = vector_candidate_repository
+ 
+     async def query(
+         self,
+@@ -243,19 +249,33 @@ class RetrievalOrchestrator:
+         except Exception as exc:
+             return self._failed_orchestrated_answer(exc, started, timings)
+ 
++        vector_candidates, vector_traces = await self._safe_vector_candidates(
++            query,
++            document_ids=document_ids,
++            route_plan=route_plan,
++            query_config=query_config,
++            timings=timings,
++        )
++
+         traces.append(retrieval_trace)
+         lane_results = retrieval_trace.get("lane_results")
+         if isinstance(lane_results, list):
+             traces.extend(trace for trace in lane_results if isinstance(trace, dict))
+-        traces.append(_vector_lane_trace(route_plan, query_config))
++        traces.extend(vector_traces)
+         observability.record_stage(
+             "primary_retrieval",
+-            candidate_count=len(native_candidates) + len(metadata_candidates),
+-            latency_ms=timings.get("native_stage_ms", 0.0) + timings.get("metadata_ms", 0.0),
++            candidate_count=(
++                len(native_candidates) + len(metadata_candidates) + len(vector_candidates)
++            ),
++            latency_ms=(
++                timings.get("native_stage_ms", 0.0)
++                + timings.get("metadata_ms", 0.0)
++                + timings.get("vector_ms", 0.0)
++            ),
+             detail={
+                 "native_candidates": len(native_candidates),
+                 "metadata_candidates": len(metadata_candidates),
+-                "vector_candidates": _vector_candidate_count(native_candidates),
++                "vector_candidates": len(vector_candidates),
+             },
+         )
+         traces.append(
+@@ -263,13 +283,16 @@ class RetrievalOrchestrator:
+                 "stage": "primary_retrieval",
+                 "native_candidates": len(native_candidates),
+                 "metadata_candidates": len(metadata_candidates),
+-                "vector_candidates": _vector_candidate_count(native_candidates),
++                "vector_candidates": len(vector_candidates),
+             }
+         )
+ 
+         try:
+             fuse_started = perf_counter()
+-            seed_candidates = fuse_candidates(plan, [*native_candidates, *metadata_candidates])
++            seed_candidates = fuse_candidates(
++                plan,
++                [*native_candidates, *metadata_candidates, *vector_candidates],
++            )
+             timings["initial_fusion_ms"] = _elapsed_ms(fuse_started)
+             seed_candidate_ids = [
+                 candidate.candidate_id for candidate in seed_candidates[:limit]
+@@ -322,11 +345,12 @@ class RetrievalOrchestrator:
+             metadata_ranked = (
+                 fuse_candidates(plan, metadata_candidates) if metadata_candidates else []
+             )
++            vector_ranked = fuse_candidates(plan, vector_candidates) if vector_candidates else []
+             graph_ranked = fuse_candidates(plan, graph_candidates) if graph_candidates else []
+             fused = apply_query_aware_ordering(
+                 plan,
+                 self.retrieval_fusion.fuse(
+-                    [native_ranked, metadata_ranked, graph_ranked],
++                    [native_ranked, metadata_ranked, vector_ranked, graph_ranked],
+                     limit=plan.candidate_limit,
+                 ),
+             )
+@@ -334,6 +358,7 @@ class RetrievalOrchestrator:
+             final_fusion_detail = {
+                 "native_candidates": len(native_candidates),
+                 "metadata_candidates": len(metadata_candidates),
++                "vector_candidates": len(vector_candidates),
+                 "graph_candidates": len(graph_candidates),
+                 "fused_candidates": len(fused),
+             }
+@@ -812,6 +837,86 @@ class RetrievalOrchestrator:
+             lane_traces=lane_traces,
+         )
+ 
++    async def _safe_vector_candidates(
++        self,
++        query: str,
++        *,
++        document_ids: list[str],
++        route_plan: Any,
++        query_config: dict[str, Any],
++        timings: dict[str, Any],
++    ) -> tuple[list[EvidenceCandidate], list[dict[str, Any]]]:
++        vector_started = perf_counter()
++        if not _lane_is_executable(route_plan, "vector"):
++            timings["vector_ms"] = _elapsed_ms(vector_started)
++            return [], [
++                _lane_result_trace(
++                    lane="vector",
++                    status="skipped",
++                    reason=_lane_plan_reason(route_plan, "vector"),
++                    candidates=[],
++                    latency_ms=timings["vector_ms"],
++                )
++            ]
++
++        vector_repo = self.vector_candidate_repository
++        if vector_repo is None and hasattr(self.chunk_service, "session"):
++            vector_repo = VectorCandidateRepository(self.chunk_service.session)
++        if vector_repo is None:
++            timings["vector_ms"] = _elapsed_ms(vector_started)
++            diagnostics = vector_lane_diagnostics(
++                {},
++                baseline_gate=_vector_baseline_gate(query_config),
++            )
++            trace = _lane_result_trace(
++                lane="vector",
++                status="skipped",
++                reason="vector_lane_executor_unavailable",
++                candidates=[],
++                latency_ms=timings["vector_ms"],
++            )
++            trace["diagnostics"] = diagnostics.as_dict()
++            return [], [trace]
++
++        try:
++            raw_vector_rows = await vector_repo.candidate_rows(
++                query=query,
++                document_ids=document_ids,
++                limit=route_plan.candidate_limit,
++            )
++            vector_result = prepare_vector_candidates(
++                raw_vector_rows,
++                baseline_gate=_vector_baseline_gate(query_config),
++                canonical_chunks={row["chunk_id"]: row for row in raw_vector_rows},
++            )
++        except Exception as exc:
++            timings["vector_ms"] = _elapsed_ms(vector_started)
++            timings["vector_degraded"] = True
++            timings["vector_error_type"] = exc.__class__.__name__
++            return [], [
++                _lane_result_trace(
++                    lane="vector",
++                    status="failed",
++                    reason=exc.__class__.__name__,
++                    candidates=[],
++                    latency_ms=timings["vector_ms"],
++                    error_type=exc.__class__.__name__,
++                )
++            ]
++
++        timings["vector_ms"] = _elapsed_ms(vector_started)
++        vector_candidates = list(vector_result.candidates)
++        lane_status = "ran" if vector_result.status == "ran" else vector_result.status
++        lane_trace = _lane_result_trace(
++            lane="vector",
++            status=lane_status,
++            reason=vector_result.reason,
++            candidates=vector_candidates,
++            latency_ms=timings["vector_ms"],
++        )
++        lane_trace["diagnostics"] = vector_result.diagnostics.as_dict()
++        return vector_candidates, [vector_result.diagnostics.as_dict(), lane_trace]
++
+     async def _metadata_after_native_result(
+         self,
+         query: str,
+diff --git a/backend/tests/test_chunk_persistence_service.py b/backend/tests/test_chunk_persistence_service.py
+index a025a9b..b7524ad 100644
+--- a/backend/tests/test_chunk_persistence_service.py
++++ b/backend/tests/test_chunk_persistence_service.py
+@@ -512,3 +512,41 @@ async def test_persist_chunks_scrubs_nested_absolute_metadata_paths(
+     assert "/private" not in persisted.metadata_json["chunk_identity"]
+     assert "/tmp" not in chunks[0].metadata["chunk_identity"]
+     assert "/private" not in chunks[0].metadata["chunk_identity"]
++
++
++@pytest.mark.asyncio
++async def test_persist_chunks_does_not_duplicate_index_shape_in_chunk_metadata(
++    tmp_path,
++    database_url,
++):
++    engine = make_engine(database_url)
++    await init_db(engine)
++    session_factory = make_session_factory(engine)
++    async with session_factory() as session:
++        document = Document(
++            id="doc-no-index-shape-bloat",
++            filename="shape.txt",
++            content_type="text/plain",
++            sha256="shape-sha",
++            artifact_path=str(tmp_path / "shape.txt"),
++        )
++        session.add(document)
++        await session.commit()
++
++        chunks = await ChunkPersistenceService(session).persist(
++            document,
++            [
++                AdapterChunk(
++                    text="Chunk with runtime shape",
++                    source_location={"page": 1},
++                    metadata={"parser_metadata": {"backend": "mineru"}},
++                )
++            ],
++            IndexDocumentIn(),
++            runtime_profile_id="default",
++            index_shape={"embedding_model": "text-embedding-3-large"},
++        )
++
++        stored = chunks[0]
++        assert "index_shape" not in stored.metadata
++    await engine.dispose()
+diff --git a/backend/tests/test_chunks.py b/backend/tests/test_chunks.py
+index 7a27ae5..de3e03a 100644
+--- a/backend/tests/test_chunks.py
++++ b/backend/tests/test_chunks.py
+@@ -175,6 +175,65 @@ async def test_domain_metadata_for_documents_dedupes_and_copies(
+     )
+ 
+ 
++@pytest.mark.asyncio
++async def test_domain_metadata_for_documents_prefers_document_index_contract(
++    database_url,
++    tmp_path,
++):
++    engine = make_engine(database_url)
++    await init_db(engine)
++    factory = make_session_factory(engine)
++
++    async with factory() as session:
++        doc = Document(
++            id="doc-contract-route",
++            filename="contract.txt",
++            content_type="text/plain",
++            sha256="contract-route-sha",
++            artifact_path=str(tmp_path / "contract.txt"),
++            index_contract={
++                "contract_status": "compiled_reference_contract",
++                "domain_metadata": {
++                    "domain": "quran_tafseer",
++                    "language": "arabic",
++                    "custom_json": {
++                        "reference_schema": {"type": "chapter_verse"},
++                        "reference_resolution": {"build_canonical_units": True},
++                    },
++                },
++            },
++        )
++        session.add(doc)
++        session.add(
++            Chunk(
++                id="chunk-generic-old",
++                document_id=doc.id,
++                text="old generic chunk",
++                metadata_json={"domain_metadata": {"domain": "generic"}},
++            )
++        )
++        await session.commit()
++
++        metadata = await ChunkService(session, tmp_path).domain_metadata_for_documents(
++            [doc.id]
++        )
++
++    await engine.dispose()
++
++    assert metadata == [
++        {
++            "domain": "quran_tafseer",
++            "language": "arabic",
++            "custom_json": {
++                "reference_schema": {"type": "chapter_verse"},
++                "reference_resolution": {"build_canonical_units": True},
++            },
++            "document_id": "doc-contract-route",
++            "contract_status": "compiled_reference_contract",
++        }
++    ]
++
++
+ @pytest.mark.asyncio
+ @pytest.mark.parametrize(
+     ("unsafe_value", "unsafe_key"),
+diff --git a/backend/tests/test_document_parser_service.py b/backend/tests/test_document_parser_service.py
+index 3b327d8..5e1efea 100644
+--- a/backend/tests/test_document_parser_service.py
++++ b/backend/tests/test_document_parser_service.py
+@@ -339,3 +339,53 @@ def test_mineru_parse_options_ignore_hidden_domain_metadata_overrides(tmp_path):
+         },
+         "maxConcurrentFiles": 2,
+     }
++
++
++@pytest.mark.asyncio
++async def test_mineru_parse_allows_missing_arabic_for_downstream_recovery(tmp_path):
++    from ragstudio.services.mineru_extraction_validator import MinerUExtractionValidator
++
++    session = EventSession()
++
++    class EnglishOnlyMinerUClient(EventMinerUClient):
++        def normalize_artifact_zip(self, **kwargs):
++            self.events.append("normalize")
++            return [
++                AdapterChunk(
++                    text="[2:28]\nHow can you disbelieve in Allah?",
++                    source_location={"page": 1},
++                    metadata={"parser_metadata": {"backend": "mineru"}},
++                )
++            ]
++
++    def mineru_client_factory(base_url, timeout_ms, poll_interval_ms):
++        return EnglishOnlyMinerUClient(
++            base_url,
++            timeout_ms,
++            poll_interval_ms,
++            events=session.events,
++        )
++
++    document = SimpleNamespace(
++        id="doc-1",
++        artifact_path=str(tmp_path / "document.pdf"),
++        content_type="application/pdf",
++        sha256="sha",
++    )
++
++    chunks = await DocumentParserService(
++        session,
++        tmp_path,
++        mineru_client_factory=mineru_client_factory,
++        extraction_validator=MinerUExtractionValidator(min_text_chars=8),
++    ).mineru_parse(
++        document,
++        IndexDocumentIn(
++            parser_mode="mineru_strict",
++            domain_metadata=DomainMetadata(domain="quran", script="arabic"),
++        ),
++    )
++
++    assert [chunk.text for chunk in chunks] == [
++        "[2:28]\nHow can you disbelieve in Allah?"
++    ]
+diff --git a/backend/tests/test_documents.py b/backend/tests/test_documents.py
+index 87b1f93..de9f39b 100644
+--- a/backend/tests/test_documents.py
++++ b/backend/tests/test_documents.py
+@@ -18,6 +18,7 @@ from ragstudio.schemas.common import StageStatus
+ from ragstudio.schemas.parsing import DomainMetadata, IndexDocumentIn
+ from ragstudio.schemas.runtime import RuntimeHealthCheck
+ from ragstudio.services.document_service import DocumentService
++from ragstudio.services.domain_metadata_contract_compiler import compile_index_options
+ from ragstudio.services.graph_materialization_service import GraphMaterializationResult
+ from ragstudio.services.graph_projection_runner import GraphProjectionCleanupError
+ from ragstudio.services.runtime_profile_service import RuntimeProfileService
+@@ -526,6 +527,45 @@ async def test_upload_persists_document_specific_mineru_parse_options(
+     assert job.job_options["mineru_parse_options"] == mineru_parse_options
+ 
+ 
++@pytest.mark.asyncio
++async def test_upload_stores_compiled_document_index_contract(client, monkeypatch):
++    async def fake_runtime_ready(*args, **kwargs):
++        return None
++
++    async def fake_validate_sidecar(self, options):
++        return None
++
++    monkeypatch.setattr(
++        "ragstudio.api.routes.documents._ensure_runtime_ready",
++        fake_runtime_ready,
++    )
++    monkeypatch.setattr(
++        "ragstudio.services.chunk_service.ChunkService.validate_strict_mineru_sidecar",
++        fake_validate_sidecar,
++    )
++
++    response = await client.post(
++        "/api/documents",
++        files={"file": ("sample.txt", b"Verse 1:1\nIn the name", "text/plain")},
++        data={
++            "parser_mode": "mineru_strict",
++            "domain_metadata": (
++                '{"domain":"quran_tafseer","language":"arabic",'
++                '"custom_json":{"reference_schema":{"type":"chapter_verse"},'
++                '"chunking":{"unit":"verse"},'
++                '"domain_structure":{"primary_anchor":'
++                '{"regex":"(?P<chapter>\\\\d{1,4}):(?P<verse>\\\\d{1,4})"}},'
++                '"reference_resolution":{"enabled":true,"build_canonical_units":true}}}'
++            ),
++        },
++    )
++
++    assert response.status_code == 201
++    body = response.json()
++    assert body["index_contract"]["contract_status"] == "compiled_reference_contract"
++    assert body["index_contract"]["reference_contract"]["schema_type"] == "chapter_verse"
++
++
+ @pytest.mark.asyncio
+ async def test_reindex_document_queues_job_with_updated_metadata(client, monkeypatch, tmp_path):
+     await seed_product_runtime_profile(client)
+@@ -583,10 +623,62 @@ async def test_reindex_document_queues_job_with_updated_metadata(client, monkeyp
+     assert job.job_options["domain_metadata"]["domain"] == "religion"
+     assert job.job_options["domain_metadata"]["document_type"] == "religious_text"
+     assert job.job_options["domain_metadata"]["tags"] == ["quran"]
+-    assert job.job_options["domain_metadata"]["custom_json"] == {
+-        "reference_schema": {"type": "surah_ayah"},
+-        "retrieval": {"exact_reference_top1": True},
+-    }
++    custom_json = job.job_options["domain_metadata"]["custom_json"]
++    assert custom_json["reference_schema"]["type"] == "chapter_verse"
++    assert custom_json["retrieval"]["exact_reference_top1"] is True
++
++
++@pytest.mark.asyncio
++async def test_reindex_stores_compiled_document_index_contract(client, monkeypatch, tmp_path):
++    await seed_product_runtime_profile(client)
++    allow_product_readiness(monkeypatch)
++    app = client._transport.app
++    artifact = tmp_path / "uploads" / "reindex-contract-sha"
++    artifact.parent.mkdir(parents=True)
++    artifact.write_text("Quran 1:1", encoding="utf-8")
++    async with app.state.session_factory() as session:
++        document = Document(
++            filename="quran.pdf",
++            content_type="application/pdf",
++            sha256="reindex-contract-sha",
++            artifact_path=str(artifact),
++            status=StageStatus.SUCCEEDED.value,
++            index_contract={"contract_status": "generic"},
++        )
++        session.add(document)
++        await session.commit()
++        document_id = document.id
++
++    response = await client.post(
++        f"/api/documents/{document_id}/reindex",
++        json={
++            "parser_mode": "mineru_strict",
++            "domain_metadata": {
++                "domain": "quran_tafseer",
++                "language": "arabic",
++                "custom_json": {
++                    "reference_schema": {"type": "chapter_verse"},
++                    "chunking": {"unit": "verse"},
++                    "domain_structure": {
++                        "primary_anchor": {
++                            "regex": "(?P<chapter>\\d{1,4}):(?P<verse>\\d{1,4})"
++                        }
++                    },
++                    "reference_resolution": {
++                        "enabled": True,
++                        "build_canonical_units": True,
++                    },
++                },
++            },
++        },
++    )
++
++    assert response.status_code == 202
++    async with app.state.session_factory() as session:
++        document = await session.get(Document, document_id)
++    assert document is not None
++    assert document.index_contract["contract_status"] == "compiled_reference_contract"
++    assert document.index_contract["reference_contract"]["schema_type"] == "chapter_verse"
+ 
+ 
+ @pytest.mark.asyncio
+@@ -648,10 +740,9 @@ async def test_reindex_persists_job_options_for_worker(client, tmp_path, monkeyp
+         "parser_mode": "mineru_strict",
+         "domain_metadata": {"domain": "quran", "tags": ["arabic"]},
+     }
+-    expected_options = IndexDocumentIn.model_validate(index_options).model_dump(
+-        mode="json",
+-        exclude_none=True,
+-    )
++    expected_options = compile_index_options(
++        IndexDocumentIn.model_validate(index_options)
++    ).model_dump(mode="json", exclude_none=True)
+ 
+     artifact = tmp_path / "uploads" / "durable-worker-sha"
+     artifact.parent.mkdir(parents=True)
+diff --git a/backend/tests/test_domain_metadata_contract_compiler.py b/backend/tests/test_domain_metadata_contract_compiler.py
+index 7b44477..163235b 100644
+--- a/backend/tests/test_domain_metadata_contract_compiler.py
++++ b/backend/tests/test_domain_metadata_contract_compiler.py
+@@ -1,8 +1,9 @@
+ import pytest
+-from ragstudio.schemas.parsing import DomainMetadata
++from ragstudio.schemas.parsing import DomainMetadata, IndexDocumentIn, MinerUParseOptionsIn
+ from ragstudio.services.domain_metadata_contract_compiler import (
+     DomainMetadataContractError,
+     compile_domain_metadata,
++    compile_index_options,
+     validate_executable_reference_contract,
+ )
+ from ragstudio.services.reference_metadata import ReferenceSemantics
+@@ -99,3 +100,48 @@ def test_compiler_preserves_hadith_contract_defaults():
+     assert "book" in compiled.custom_json["domain_structure"]["primary_anchor"]["regex"]
+     assert compiled.custom_json["reference_resolution"]["build_canonical_units"] is True
+     validate_executable_reference_contract(compiled)
++
++
++def test_compile_quran_reference_contract_adds_mineru_parser_hints():
++    options = compile_index_options(
++        IndexDocumentIn(
++            domain_metadata=DomainMetadata(
++                domain="quran",
++                language="mixed",
++                script="arabic",
++                reference_pattern="surah:verse",
++                custom_json={"chunking": {"unit": "verse"}},
++            )
++        )
++    )
++
++    assert options.mineru_parse_options is not None
++    assert options.mineru_parse_options.parse_method == "ocr"
++    assert options.mineru_parse_options.lang == "arabic"
++    assert options.mineru_parse_options.table is False
++    assert options.mineru_parse_options.formula is False
++
++
++def test_compile_index_options_preserves_explicit_mineru_parser_hints():
++    options = compile_index_options(
++        IndexDocumentIn(
++            domain_metadata=DomainMetadata(
++                domain="quran",
++                script="arabic",
++                reference_pattern="surah:verse",
++                custom_json={"chunking": {"unit": "verse"}},
++            ),
++            mineru_parse_options=MinerUParseOptionsIn(
++                parse_method="auto",
++                lang="en",
++                table=True,
++                formula=True,
++            ),
++        )
++    )
++
++    assert options.mineru_parse_options is not None
++    assert options.mineru_parse_options.parse_method == "auto"
++    assert options.mineru_parse_options.lang == "en"
++    assert options.mineru_parse_options.table is True
++    assert options.mineru_parse_options.formula is True
+diff --git a/backend/tests/test_metadata_retrieval_service.py b/backend/tests/test_metadata_retrieval_service.py
+index 47eef21..087e207 100644
+--- a/backend/tests/test_metadata_retrieval_service.py
++++ b/backend/tests/test_metadata_retrieval_service.py
+@@ -211,6 +211,61 @@ class LegacyLexicalExpandedPass:
+     direct_evidence = True
+ 
+ 
++def test_hybrid_search_boosts_layout_context_matches():
++    from ragstudio.services.hybrid_chunk_search import HybridChunkSearch
++
++    chunk = Chunk(
++        id="chunk-table-context",
++        document_id="doc-layout",
++        text="Revenue grew by 12 percent.",
++        metadata_json={
++            "modality": "table",
++            "provenance": {
++                "blocks": [
++                    {
++                        "role": "table",
++                        "block_type": "table",
++                        "page_start": 4,
++                        "text_preview": "Revenue table",
++                    }
++                ]
++            },
++            "layout_context": {
++                "section_title": "Financial results",
++                "visual_neighborhood": ["table", "caption"],
++            },
++        },
++    )
++
++    score = HybridChunkSearch().score("financial results table revenue", chunk)
++
++    assert score.breakdown["layout_context"] > 0
++    assert score.score >= score.breakdown["layout_context"]
++
++
++def test_metadata_candidate_preserves_layout_context_match_feature():
++    service = MetadataRetrievalService(FakeChunkService())
++    candidate = service._candidate_from_chunk(
++        ChunkOut(
++            id="chunk-layout-feature",
++            document_id="doc-layout",
++            text="Revenue table",
++            source_location={"page": 4},
++            metadata={
++                "score": 18.0,
++                "score_breakdown": {"layout_context": 8.0},
++            },
++        ),
++        1,
++        RetrievalPass("semantic_metadata", "financial results table"),
++    )
++
++    assert candidate.match_features == {
++        "semantic_metadata": True,
++        "layout_context": True,
++    }
++
++
+ @pytest.mark.asyncio
+ async def test_metadata_service_runs_non_blocking_passes_concurrently():
+     chunk_service = SlowMetadataPassChunkService()
+@@ -498,7 +553,7 @@ async def test_metadata_service_does_not_mark_mismatched_reference_as_exact():
+ 
+     assert candidates[0].chunk_id == "chunk-2-2"
+     assert candidates[0].retrieval_pass == "semantic_metadata"
+-    assert candidates[0].match_features == {}
++    assert candidates[0].match_features == {"semantic_metadata": True}
+     assert candidates[0].canonical_reference == "2:2"
+ 
+ 
+diff --git a/backend/tests/test_mineru_extraction_validator.py b/backend/tests/test_mineru_extraction_validator.py
+index 5c9869f..ed0e73f 100644
+--- a/backend/tests/test_mineru_extraction_validator.py
++++ b/backend/tests/test_mineru_extraction_validator.py
+@@ -31,11 +31,16 @@ def test_rejects_empty_extraction():
+         MinerUExtractionValidator(min_text_chars=8).validate([], expected_language="arabic")
+ 
+ 
+-def test_rejects_missing_arabic_when_expected():
++def test_reports_missing_arabic_without_blocking_before_recovery():
+     chunks = [_chunk("This is extracted English text.")]
+ 
+-    with pytest.raises(MinerUExtractionContractError, match="arabic_text_missing"):
+-        MinerUExtractionValidator(min_text_chars=8).validate(chunks, expected_language="arabic")
++    report = MinerUExtractionValidator(min_text_chars=8).validate(
++        chunks,
++        expected_language="arabic",
++    )
++
++    assert report.chunk_count == 1
++    assert report.arabic_character_count == 0
+ 
+ 
+ def test_rejects_non_mineru_backend():
+@@ -72,7 +77,10 @@ def test_accepts_valid_mineru_arabic_extraction():
+         ),
+     ]
+ 
+-    report = MinerUExtractionValidator(min_text_chars=8).validate(chunks, expected_language="arabic")
++    report = MinerUExtractionValidator(min_text_chars=8).validate(
++        chunks,
++        expected_language="arabic",
++    )
+ 
+     assert report.chunk_count == 2
+     assert report.page_count == 2
+diff --git a/backend/tests/test_mineru_reindex_jobs.py b/backend/tests/test_mineru_reindex_jobs.py
+index ed5b874..232f276 100644
+--- a/backend/tests/test_mineru_reindex_jobs.py
++++ b/backend/tests/test_mineru_reindex_jobs.py
+@@ -747,8 +747,10 @@ async def test_index_document_for_job_records_parser_quality_warning_summary(
+         "block_type": "paragraph",
+         "expected_script": None,
+         "action": None,
++        "counted": True,
+         "message": "Expected Arabic text in reference unit.",
+         "text_preview": "Chunk with parser quality warning.",
++        "vision_recovery_status": None,
+     }
+     assert refreshed_job.result["indexing_stage"]["stage"] == "ready_with_warnings"
+     assert refreshed_job.result["indexing_stage"]["warning"] == (
+diff --git a/backend/tests/test_retrieval_orchestrator.py b/backend/tests/test_retrieval_orchestrator.py
+index a5def44..1ff049c 100644
+--- a/backend/tests/test_retrieval_orchestrator.py
++++ b/backend/tests/test_retrieval_orchestrator.py
+@@ -822,6 +822,17 @@ class QuranDomainMetadataChunkSearchService:
+         )()
+ 
+ 
++class EmptyMetadataChunkSearchService:
++    async def domain_metadata_for_documents(self, document_ids):
++        return []
++
++    async def search(self, search_in):
++        return type("SearchResult", (), {"items": [], "total": 0})()
++
++    async def chunks_by_id(self, chunk_ids):
++        return []
++
++
+ class PolicyBlockedDomainChunkSearchService(FakeChunkSearchService):
+     async def domain_metadata_for_documents(self, document_ids):
+         return [
+@@ -1509,6 +1520,53 @@ async def test_orchestrator_route_plan_applies_document_quality_and_materializat
+     )
+ 
+ 
++@pytest.mark.asyncio
++async def test_orchestrator_runs_quality_gated_vector_lane_when_baseline_passes():
++    class VectorRepo:
++        async def candidate_rows(self, *, query, document_ids, limit):
++            return [
++                {
++                    "candidate_id": "vector-row:chunk-v1",
++                    "chunk_id": "chunk-v1",
++                    "document_id": document_ids[0],
++                    "text": "vector alpha evidence",
++                    "source_location": {"page": 1},
++                    "metadata": {"quality_action_policy": {"index_vector": True}},
++                    "score": 0.8,
++                    "rank": 1,
++                }
++            ]
++
++    orchestrator = RetrievalOrchestrator(
++        chunk_service=EmptyMetadataChunkSearchService(),
++        answer_service=FakeAnswerService(),
++        reranker_service=FakeRerankerService(),
++        graph_expansion_service=FakeGraphExpansionService(),
++        vector_candidate_repository=VectorRepo(),
++    )
++
++    result = await orchestrator.query(
++        "alpha",
++        runtime=NativeSearchShouldNotRun(),
++        profile=type("Profile", (), {"enable_rerank": False, "reranker_provider": "disabled"})(),
++        document_ids=["doc-vector"],
++        variant_id="variant-1",
++        query_config={
++            "limit": 3,
++            "vector_baseline_gate": {"passed": True},
++            "runtime_readiness": {"state": "disabled", "reason": "test_vector_lane_only"},
++            "graph_expansion_enabled": False,
++        },
++    )
++
++    assert result.error is None
++    assert any(source["chunk_id"] == "chunk-v1" for source in result.sources)
++    assert any(
++        trace.get("stage") == "vector_retrieval" and trace.get("status") == "ran"
++        for trace in result.chunk_traces
++    )
++
++
+ @pytest.mark.asyncio
+ async def test_orchestrator_records_grounding_validation_trace():
+     answer_service = FakeAnswerService()
+diff --git a/frontend/src/features/chunks/chunk-inspector.tsx b/frontend/src/features/chunks/chunk-inspector.tsx
+index 91faae6..b4511e1 100644
+--- a/frontend/src/features/chunks/chunk-inspector.tsx
++++ b/frontend/src/features/chunks/chunk-inspector.tsx
+@@ -2,11 +2,14 @@ import { useMemo, useState, type FormEvent, type ReactNode } from "react";
+ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+ import {
+   AlertCircle,
++  ChevronDown,
+   Database,
++  Eye,
+   FileText,
+   Loader2,
+   RefreshCcw,
+   Search,
++  SlidersHorizontal,
+   Wand2,
+ } from "lucide-react";
+ 
+@@ -15,6 +18,7 @@ import type {
+   ChunkOut,
+   ChunkSearchIn,
+   ChunkSearchOut,
++  DocumentOut,
+   IndexDocumentIn,
+ } from "../../api/generated";
+ import { EmptyState } from "../../components/empty-state";
+@@ -46,46 +50,65 @@ interface RetrievalExplain {
+ 
+ export function ChunkInspector() {
+   const queryClient = useQueryClient();
+-  const documentsQuery = useQuery({ queryKey: queryKeys.documents, queryFn: apiClient.documents });
++  const documentsQuery = useQuery({
++    queryKey: queryKeys.documents,
++    queryFn: () => apiClient.documents(),
++  });
+   const [queryText, setQueryText] = useState("");
+-  const [selectedDocumentIds, setSelectedDocumentIds] = useState<string[]>([]);
++  const [selectedDocumentIds, setSelectedDocumentIds] = useState<string[] | null>(null);
+   const [limit, setLimit] = useState(10);
+   const [formError, setFormError] = useState("");
+   const [searchResult, setSearchResult] = useState<SearchResult | null>(null);
+-  const [indexOptions, setIndexOptions] = useState<IndexDocumentIn>({
+-    parser_mode: DEFAULT_PARSER_MODE,
+-    domain_metadata: { domain: "generic", document_type: "document", tags: [] },
+-  });
++  const [expandedChunkId, setExpandedChunkId] = useState<string | null>(null);
++  const [selectedEvidence, setSelectedEvidence] = useState<NormalizedEvidence | null>(null);
++  const [indexOptionsOverride, setIndexOptionsOverride] = useState<IndexDocumentIn | null>(null);
+   const [metadataValid, setMetadataValid] = useState(true);
+   const profilesQuery = useQuery({
+     queryKey: ["domain-profiles"],
+     queryFn: apiClient.domainProfiles,
+   });
+ 
++  const documents = useMemo(() => documentsQuery.data?.items ?? [], [documentsQuery.data?.items]);
++  const defaultDocumentId = useMemo(
++    () => (documents.find((document) => document.status === "succeeded") ?? documents[0])?.id,
++    [documents],
++  );
++  const activeSelectedDocumentIds = useMemo(
++    () => selectedDocumentIds ?? (defaultDocumentId ? [defaultDocumentId] : []),
++    [defaultDocumentId, selectedDocumentIds],
++  );
++  const selectedDocuments = useMemo(
++    () => documents.filter((document) => activeSelectedDocumentIds.includes(document.id)),
++    [activeSelectedDocumentIds, documents],
++  );
++  const selectedDocumentNames = selectedDocuments.map((document) => document.filename).join(", ");
++  const activeIndexOptions = indexOptionsOverride ??
++    selectedDocuments[0]?.latest_index_options ?? {
++      parser_mode: DEFAULT_PARSER_MODE,
++      domain_metadata: { domain: "generic", document_type: "document", tags: [] },
++    };
++
+   const currentSearchFilters = useMemo(
+-    () => normalizeSearchFilters({ query: queryText.trim(), document_ids: selectedDocumentIds, limit }),
+-    [limit, queryText, selectedDocumentIds],
++    () => normalizeSearchFilters({ query: queryText.trim(), document_ids: activeSelectedDocumentIds, limit }),
++    [activeSelectedDocumentIds, limit, queryText],
+   );
+ 
+   const searchChunks = useMutation({
+     mutationFn: (request: SearchRequest) => apiClient.searchChunks(request.filters),
+     onSuccess: (data, variables) => {
+       setSearchResult({ filters: normalizeSearchFilters(variables.filters), data });
++      setExpandedChunkId(null);
+     },
+   });
+   const indexDocumentJob = useMutation({
+-    mutationFn: (documentId: string) => apiClient.createDocumentReindexJob(documentId, indexOptions),
++    mutationFn: (documentId: string) => apiClient.createDocumentReindexJob(documentId, activeIndexOptions),
+     onSuccess: () => {
+       setSearchResult(null);
++      setExpandedChunkId(null);
+       void queryClient.invalidateQueries({ queryKey: queryKeys.jobs });
+     },
+   });
+ 
+-  const selectedDocuments = useMemo(
+-    () => (documentsQuery.data?.items ?? []).filter((document) => selectedDocumentIds.includes(document.id)),
+-    [documentsQuery.data?.items, selectedDocumentIds],
+-  );
+-
+   const activeSearchResult =
+     searchResult && filtersEqual(searchResult.filters, currentSearchFilters)
+       ? searchResult.data
+@@ -93,8 +116,8 @@ export function ChunkInspector() {
+ 
+   const submit = (event: FormEvent<HTMLFormElement>) => {
+     event.preventDefault();
+-    if (selectedDocumentIds.length === 0) {
+-      setFormError("Select at least one document to avoid searching every chunk.");
++    if (activeSelectedDocumentIds.length === 0) {
++      setFormError("Select at least one document.");
+       return;
+     }
+     setFormError("");
+@@ -102,252 +125,395 @@ export function ChunkInspector() {
+   };
+ 
+   return (
+-    <div className="mx-auto grid max-w-7xl gap-6 xl:grid-cols-[340px_minmax(0,1fr)]">
+-      <aside className="rounded-md border border-[#d6dde1] bg-white p-4 sm:p-5">
+-        <div className="mb-5 flex items-center gap-2">
+-          <Database className="h-4 w-4 text-[#176b87]" aria-hidden="true" />
+-          <h2 className="truncate text-base font-semibold text-[#1f2933]">Chunk controls</h2>
+-        </div>
+-
+-        <div className="space-y-2">
+-          <p className="text-sm font-medium text-[#3a4a53]">Documents</p>
+-          <div className="max-h-72 space-y-2 overflow-auto pr-1">
+-            {documentsQuery.isLoading ? (
+-              <SmallState icon={Loader2} text="Loading documents" />
+-            ) : documentsQuery.isError ? (
+-              <SmallState icon={AlertCircle} text={documentsQuery.error.message} />
+-            ) : documentsQuery.data?.items.length ? (
+-              documentsQuery.data.items.map((document) => (
+-                <div
+-                  key={document.id}
+-                  className="flex items-start gap-3 rounded-md border border-[#e1e7ea] bg-[#f8fafb] p-3 text-sm"
+-                >
+-                  <label className="flex min-w-0 flex-1 cursor-pointer items-start gap-3">
+-                    <input
+-                      type="checkbox"
+-                      className="mt-1 h-4 w-4 accent-[#176b87]"
+-                      checked={selectedDocumentIds.includes(document.id)}
+-                      onChange={(event) =>
+-                        setSelectedDocumentIds((ids) => toggleId(ids, document.id, event.target.checked))
+-                      }
+-                    />
+-                    <span className="min-w-0 flex-1">
+-                      <span className="block truncate font-medium text-[#24313a]">{document.filename}</span>
+-                      <span className="block truncate text-xs text-[#62717a]">{titleCase(document.status)}</span>
+-                    </span>
+-                  </label>
+-                  <Button
+-                    type="button"
+-                    variant="secondary"
+-                    size="sm"
+-                    className="shrink-0"
+-                    disabled={indexDocumentJob.isPending || !metadataValid}
+-                    onClick={(event) => {
+-                      event.preventDefault();
+-                      indexDocumentJob.mutate(document.id);
+-                    }}
+-                  >
+-                    {indexDocumentJob.isPending && indexDocumentJob.variables === document.id ? (
+-                      <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+-                    ) : (
+-                      <Wand2 className="h-4 w-4" aria-hidden="true" />
+-                    )}
+-                    Index
+-                  </Button>
+-                </div>
+-              ))
+-            ) : (
+-              <SmallState icon={FileText} text="No documents uploaded" />
+-            )}
+-          </div>
+-        </div>
+-
+-        <div className="mt-5">
+-          <DomainMetadataPanel
+-            profiles={profilesQuery.data?.items ?? []}
+-            value={indexOptions}
+-            onChange={setIndexOptions}
+-            disabled={indexDocumentJob.isPending}
+-            onValidityChange={setMetadataValid}
+-          />
+-        </div>
+-
+-        <form onSubmit={submit} className="mt-5 space-y-4">
+-          <label className="block min-w-0 text-sm font-medium text-[#3a4a53]">
+-            <span className="mb-1.5 block truncate">Question or search text</span>
+-            <textarea
+-              className="min-h-24 w-full resize-y rounded-md border border-[#cfd8dd] bg-white px-3 py-2 text-sm text-[#1f2933] outline-none focus:border-[#176b87] focus:ring-2 focus:ring-[#176b87]/20"
+-              value={queryText}
+-              onChange={(event) => setQueryText(event.target.value)}
+-              placeholder="Search within selected document chunks."
++    <div className="mx-auto max-w-7xl space-y-4">
++      <section className="rounded-md border border-[#d6dde1] bg-white p-4 sm:p-5">
++        <div className="flex flex-col gap-4 xl:flex-row xl:items-end">
++          <div className="min-w-0 flex-1">
++            <div className="mb-2 flex items-center gap-2">
++              <Database className="h-4 w-4 text-[#176b87]" aria-hidden="true" />
++              <h2 className="truncate text-base font-semibold text-[#1f2933]">Chunk evidence table</h2>
++            </div>
++            <DocumentSelector
++              documents={documents}
++              selectedDocumentIds={activeSelectedDocumentIds}
++              documentsQueryState={{
++                isLoading: documentsQuery.isLoading,
++                isError: documentsQuery.isError,
++                errorMessage: documentsQuery.error?.message,
++              }}
++              onToggle={(document, checked) => {
++                setSelectedDocumentIds((ids) =>
++                  toggleId(ids ?? activeSelectedDocumentIds, document.id, checked),
++                );
++                setIndexOptionsOverride(checked ? document.latest_index_options ?? null : null);
++              }}
+             />
+-          </label>
++          </div>
+ 
+-          <div className="flex items-end gap-3">
+-            <label className="min-w-0 flex-1 text-sm font-medium text-[#3a4a53]">
++          <form onSubmit={submit} className="grid min-w-0 flex-[1.4] gap-3 lg:grid-cols-[minmax(0,1fr)_88px_auto]">
++            <label className="block min-w-0 text-sm font-medium text-[#3a4a53]">
++              <span className="mb-1.5 block truncate">Search reference, phrase, or question</span>
++              <input
++                className="h-11 w-full rounded-md border border-[#cfd8dd] bg-white px-3 text-sm text-[#1f2933] outline-none focus:border-[#176b87] focus:ring-2 focus:ring-[#176b87]/20"
++                value={queryText}
++                onChange={(event) => setQueryText(event.target.value)}
++                placeholder="12:13"
++              />
++            </label>
++            <label className="block min-w-0 text-sm font-medium text-[#3a4a53]">
+               <span className="mb-1.5 block truncate">Limit</span>
+               <input
+                 type="number"
+                 min={1}
+                 max={100}
+-                className="h-10 w-full rounded-md border border-[#cfd8dd] bg-white px-3 text-sm text-[#1f2933] outline-none focus:border-[#176b87] focus:ring-2 focus:ring-[#176b87]/20"
++                className="h-11 w-full rounded-md border border-[#cfd8dd] bg-white px-3 text-sm text-[#1f2933] outline-none focus:border-[#176b87] focus:ring-2 focus:ring-[#176b87]/20"
+                 value={limit}
+                 onChange={(event) => setLimit(Number(event.target.value))}
+               />
+             </label>
+-            <Button type="submit" disabled={searchChunks.isPending || selectedDocumentIds.length === 0}>
+-              {searchChunks.isPending ? (
+-                <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+-              ) : (
+-                <Search className="h-4 w-4" aria-hidden="true" />
+-              )}
+-              Search
+-            </Button>
++            <div className="flex items-end gap-2">
++              <Button type="submit" disabled={searchChunks.isPending || activeSelectedDocumentIds.length === 0}>
++                {searchChunks.isPending ? (
++                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
++                ) : (
++                  <Search className="h-4 w-4" aria-hidden="true" />
++                )}
++                Search
++              </Button>
++              <Button
++                type="button"
++                variant="secondary"
++                onClick={() => void documentsQuery.refetch()}
++                disabled={documentsQuery.isFetching}
++                aria-label="Refresh documents"
++              >
++                {documentsQuery.isFetching ? (
++                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
++                ) : (
++                  <RefreshCcw className="h-4 w-4" aria-hidden="true" />
++                )}
++              </Button>
++            </div>
++          </form>
++        </div>
++
++        <details className="mt-4 rounded-md border border-[#dce5e8] bg-[#f8fafb]">
++          <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-sm font-semibold text-[#24313a]">
++            <span className="flex min-w-0 items-center gap-2">
++              <SlidersHorizontal className="h-4 w-4 shrink-0 text-[#176b87]" aria-hidden="true" />
++              <span className="truncate">Index settings</span>
++              <span className="truncate text-xs font-medium text-[#62717a]">
++                MinerU strict, domain metadata, and custom JSON
++              </span>
++            </span>
++            <ChevronDown className="h-4 w-4 shrink-0 text-[#62717a]" aria-hidden="true" />
++          </summary>
++          <div className="grid gap-4 border-t border-[#dce5e8] p-3 lg:grid-cols-[minmax(0,1fr)_auto]">
++            <DomainMetadataPanel
++              profiles={profilesQuery.data?.items ?? []}
++              value={activeIndexOptions}
++              onChange={setIndexOptionsOverride}
++              disabled={indexDocumentJob.isPending}
++              onValidityChange={setMetadataValid}
++            />
++            <div className="flex flex-col justify-end gap-2">
++              <Button
++                type="button"
++                variant="secondary"
++                disabled={activeSelectedDocumentIds.length === 0 || indexDocumentJob.isPending || !metadataValid}
++                onClick={() => {
++                  const [documentId] = activeSelectedDocumentIds;
++                  if (documentId) {
++                    indexDocumentJob.mutate(documentId);
++                  }
++                }}
++              >
++                {indexDocumentJob.isPending ? (
++                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
++                ) : (
++                  <Wand2 className="h-4 w-4" aria-hidden="true" />
++                )}
++                Index selected
++              </Button>
++              <p className="max-w-48 text-xs leading-5 text-[#62717a]">
++                Indexing uses the first selected document. Search can inspect one or more documents.
++              </p>
++            </div>
+           </div>
+-        </form>
++        </details>
+ 
+-        <p className="mt-4 min-h-5 text-sm text-[#62717a]" role="status">
++        <p className="mt-3 min-h-5 text-sm text-[#62717a]" role="status">
+           {formError ||
+             indexDocumentJob.error?.message ||
+             searchChunks.error?.message ||
+             (indexDocumentJob.isSuccess ? `Index job queued: ${indexDocumentJob.data.job_id}` : "")}
+         </p>
+-      </aside>
++      </section>
+ 
+-      <section className="min-w-0">
+-        <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
++      <section className="min-w-0 rounded-md border border-[#d6dde1] bg-white">
++        <div className="flex flex-col gap-2 border-b border-[#d6dde1] px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+           <div className="min-w-0">
+             <h2 className="truncate text-base font-semibold text-[#1f2933]">Chunk results</h2>
+             <p className="truncate text-sm text-[#62717a]">
+-              {selectedDocuments.length
+-                ? selectedDocuments.map((document) => document.filename).join(", ")
+-                : "Select documents to inspect mirrored chunks and snapshots."}
++              {selectedDocumentNames || "Select documents to inspect mirrored chunks and snapshots."}
+             </p>
+           </div>
+-          <Button
+-            variant="secondary"
+-            onClick={() => void documentsQuery.refetch()}
+-            disabled={documentsQuery.isFetching}
+-          >
+-            {documentsQuery.isFetching ? (
+-              <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+-            ) : (
+-              <RefreshCcw className="h-4 w-4" aria-hidden="true" />
+-            )}
+-            Refresh
+-          </Button>
++          {activeSearchResult ? (
++            <Badge>{activeSearchResult.items.length} result{activeSearchResult.items.length === 1 ? "" : "s"}</Badge>
++          ) : null}
+         </div>
+ 
+         {searchChunks.isPending ? (
+-          <EmptyState icon={Loader2} title="Searching chunks" description="Ranking selected document chunks." />
+-        ) : activeSearchResult?.items.length ? (
+-          <div className="grid gap-3">
+-            {activeSearchResult.items.map((chunk) => (
+-              <ChunkCard key={chunk.id} chunk={chunk} />
+-            ))}
++          <div className="p-4">
++            <EmptyState icon={Loader2} title="Searching chunks" description="Ranking selected document chunks." />
+           </div>
++        ) : activeSearchResult?.items.length ? (
++          <ChunkEvidenceTable
++            chunks={activeSearchResult.items}
++            expandedChunkId={expandedChunkId}
++            onToggleExpanded={(chunkId) => setExpandedChunkId((current) => (current === chunkId ? null : chunkId))}
++            onInspectEvidence={(chunk, retrievalExplain) =>
++              setSelectedEvidence(normalizeChunkEvidence(chunk, retrievalExplain))
++            }
++          />
+         ) : activeSearchResult ? (
+-          <EmptyState icon={Search} title="No mirrored chunks matched" description="Try another question or index selected documents." />
++          <div className="p-4">
++            <EmptyState icon={Search} title="No mirrored chunks matched" description="Try another question or index selected documents." />
++          </div>
+         ) : (
+-          <EmptyState
+-            icon={Database}
+-            title="Inspect mirrored chunks"
+-            description="Index documents when needed, then search mirrored snapshots."
+-          />
++          <div className="p-4">
++            <EmptyState
++              icon={Database}
++              title="Inspect mirrored chunks"
++              description="Select a document, search by reference or phrase, then expand a row for evidence."
++            />
++          </div>
+         )}
+       </section>
++
++      <EvidenceViewer
++        evidence={selectedEvidence}
++        open={selectedEvidence !== null}
++        onClose={() => setSelectedEvidence(null)}
++      />
+     </div>
+   );
+ }
+ 
+-function ChunkCard({ chunk }: { chunk: ChunkOut }) {
+-  const retrievalExplain = getRetrievalExplain(chunk.metadata);
+-  const [selectedEvidence, setSelectedEvidence] = useState<NormalizedEvidence | null>(null);
+-  const evidence = useMemo(() => normalizeChunkEvidence(chunk, retrievalExplain), [chunk, retrievalExplain]);
++function DocumentSelector({
++  documents,
++  selectedDocumentIds,
++  documentsQueryState,
++  onToggle,
++}: {
++  documents: DocumentOut[];
++  selectedDocumentIds: string[];
++  documentsQueryState: { isLoading: boolean; isError: boolean; errorMessage?: string };
++  onToggle: (document: DocumentOut, checked: boolean) => void;
++}) {
++  if (documentsQueryState.isLoading) {
++    return <SmallState icon={Loader2} text="Loading documents" />;
++  }
++  if (documentsQueryState.isError) {
++    return <SmallState icon={AlertCircle} text={documentsQueryState.errorMessage ?? "Documents unavailable"} />;
++  }
++  if (!documents.length) {
++    return <SmallState icon={FileText} text="No documents uploaded" />;
++  }
+ 
+   return (
+-    <article className="rounded-md border border-[#d6dde1] bg-white p-4">
+-      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+-        <div className="min-w-0">
+-          <h3 className="truncate text-sm font-semibold text-[#1f2933]">{chunk.id}</h3>
+-          <p className="truncate text-xs text-[#62717a]">{chunk.document_id}</p>
+-        </div>
+-        <div className="flex shrink-0 flex-col items-start gap-2 sm:items-end">
+-          <div className="flex flex-wrap gap-2 sm:justify-end">
+-            <Badge>score {formatValue(chunk.metadata.score)}</Badge>
+-            <Badge>profile {chunk.runtime_profile_id ?? "n/a"}</Badge>
+-            <Badge>{chunk.content_type}</Badge>
+-            <Badge>snapshot {metadataValue(chunk.metadata, ["mirrored_snapshot"], "false")}</Badge>
+-            <Badge>{metadataValue(chunk.metadata, ["parser_metadata", "backend"], "fallback")}</Badge>
+-            <Badge>{metadataValue(chunk.metadata, ["domain_metadata", "domain"], "generic")}</Badge>
++    <div className="flex gap-2 overflow-x-auto pb-1" aria-label="Documents">
++      {documents.map((document) => {
++        const selected = selectedDocumentIds.includes(document.id);
++        return (
++          <label
++            key={document.id}
++            className={[
++              "flex min-h-11 max-w-80 shrink-0 cursor-pointer items-center gap-3 rounded-md border px-3 py-2 text-sm",
++              selected
++                ? "border-[#0f766e] bg-[#e3f3f1] text-[#0c524d]"
++                : "border-[#e1e7ea] bg-[#f8fafb] text-[#24313a]",
++            ].join(" ")}
++          >
++            <input
++              type="checkbox"
++              className="h-4 w-4 accent-[#0f766e]"
++              checked={selected}
++              onChange={(event) => onToggle(document, event.target.checked)}
++            />
++            <span className="min-w-0">
++              <span className="block truncate font-semibold">{document.filename}</span>
++              <span className="block truncate text-xs text-[#62717a]">{titleCase(document.status)}</span>
++            </span>
++          </label>
++        );
++      })}
++    </div>
++  );
++}
++
++function ChunkEvidenceTable({
++  chunks,
++  expandedChunkId,
++  onToggleExpanded,
++  onInspectEvidence,
++}: {
++  chunks: ChunkOut[];
++  expandedChunkId: string | null;
++  onToggleExpanded: (chunkId: string) => void;
++  onInspectEvidence: (chunk: ChunkOut, retrievalExplain: RetrievalExplain | null) => void;
++}) {
++  return (
++    <div className="overflow-x-auto">
++      <table className="w-full min-w-[920px] table-fixed text-left text-sm">
++        <thead className="border-b border-[#d6dde1] bg-[#f8fafb] text-xs uppercase text-[#62717a]">
++          <tr>
++            <th className="w-[18%] px-4 py-3 font-semibold">Reference</th>
++            <th className="w-[12%] px-4 py-3 font-semibold">Score</th>
++            <th className="w-[22%] px-4 py-3 font-semibold">Source</th>
++            <th className="w-[30%] px-4 py-3 font-semibold">Signals</th>
++            <th className="w-[18%] px-4 py-3 text-right font-semibold">Actions</th>
++          </tr>
++        </thead>
++        <tbody>
++          {chunks.map((chunk) => {
++            const retrievalExplain = getRetrievalExplain(chunk.metadata);
++            const referenceLabel = primaryReferenceLabel(retrievalExplain, chunk);
++            const expanded = expandedChunkId === chunk.id;
++            return (
++              <FragmentRow
++                key={chunk.id}
++                chunk={chunk}
++                retrievalExplain={retrievalExplain}
++                referenceLabel={referenceLabel}
++                expanded={expanded}
++                onToggleExpanded={() => onToggleExpanded(chunk.id)}
++                onInspectEvidence={() => onInspectEvidence(chunk, retrievalExplain)}
++              />
++            );
++          })}
++        </tbody>
++      </table>
++    </div>
++  );
++}
++
++function FragmentRow({
++  chunk,
++  retrievalExplain,
++  referenceLabel,
++  expanded,
++  onToggleExpanded,
++  onInspectEvidence,
++}: {
++  chunk: ChunkOut;
++  retrievalExplain: RetrievalExplain | null;
++  referenceLabel: string;
++  expanded: boolean;
++  onToggleExpanded: () => void;
++  onInspectEvidence: () => void;
++}) {
++  const sourceSummary = summarizeSourceLocation(chunk.source_location);
++  const signalSummary = summarizeSignals(retrievalExplain);
++
++  return (
++    <>
++      <tr className="border-b border-[#edf1f3] align-top hover:bg-[#fbfdfd]">
++        <td className="px-4 py-3">
++          <p className="font-mono text-sm font-semibold text-[#18211f]">{referenceLabel}</p>
++          <p className="mt-1 truncate text-xs text-[#62717a]">{shortId(chunk.id)}</p>
++        </td>
++        <td className="px-4 py-3">
++          <Badge>score {formatValue(chunk.metadata.score)}</Badge>
++        </td>
++        <td className="px-4 py-3">
++          <p className="truncate font-mono text-xs text-[#33413e]">{sourceSummary.primary}</p>
++          <p className="mt-1 truncate text-xs text-[#62717a]">{sourceSummary.secondary}</p>
++        </td>
++        <td className="px-4 py-3">
++          <div className="flex flex-wrap gap-1.5">
++            {signalSummary.map((signal) => (
++              <Badge key={signal}>{signal}</Badge>
++            ))}
+           </div>
+-          <Button type="button" variant="secondary" size="sm" onClick={() => setSelectedEvidence(evidence)}>
+-            Inspect evidence
+-          </Button>
+-        </div>
++        </td>
++        <td className="px-4 py-3">
++          <div className="flex justify-end gap-2">
++            <Button type="button" variant="secondary" size="sm" onClick={onToggleExpanded}>
++              <ChevronDown
++                className={["h-4 w-4 transition-transform", expanded ? "rotate-180" : ""].join(" ")}
++                aria-hidden="true"
++              />
++              {expanded ? "Hide" : "Preview"}
++            </Button>
++            <Button type="button" variant="secondary" size="sm" onClick={onInspectEvidence}>
++              <Eye className="h-4 w-4" aria-hidden="true" />
++              Inspect
++            </Button>
++          </div>
++        </td>
++      </tr>
++      {expanded ? (
++        <tr className="border-b border-[#d6dde1] bg-[#fbfdfd]">
++          <td colSpan={5} className="px-4 py-4">
++            <ChunkPreview chunk={chunk} retrievalExplain={retrievalExplain} />
++          </td>
++        </tr>
++      ) : null}
++    </>
++  );
++}
++
++function ChunkPreview({
++  chunk,
++  retrievalExplain,
++}: {
++  chunk: ChunkOut;
++  retrievalExplain: RetrievalExplain | null;
++}) {
++  return (
++    <div className="grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(320px,0.8fr)]">
++      <div className="min-w-0">
++        <p className="whitespace-pre-wrap text-sm leading-6 text-[#24313a]">{chunk.text}</p>
++        {retrievalExplain ? <RetrievalExplainPanel explain={retrievalExplain} /> : null}
+       </div>
+-      <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-[#24313a]">{chunk.text}</p>
+-      {retrievalExplain ? <RetrievalExplainPanel explain={retrievalExplain} /> : null}
+-      <div className="mt-4 grid gap-3 lg:grid-cols-2">
+-        <JsonBlock title="Source location" value={chunk.source_location} />
+-        <JsonBlock title="Snapshot metadata" value={chunk.metadata} />
++      <div className="grid content-start gap-2">
++        <MetadataSummary chunk={chunk} />
++        <CollapsibleJsonBlock
++          title="Source location"
++          summary={summarizeObject(chunk.source_location)}
++          value={chunk.source_location}
++        />
++        <CollapsibleJsonBlock
++          title="Snapshot metadata"
++          summary={metadataSummary(chunk.metadata)}
++          value={chunk.metadata}
++        />
+       </div>
+-      <EvidenceViewer
+-        evidence={selectedEvidence}
+-        open={selectedEvidence !== null}
+-        onClose={() => setSelectedEvidence(null)}
+-      />
+-    </article>
++    </div>
+   );
+ }
+ 
+-function normalizeChunkEvidence(
+-  chunk: ChunkOut,
+-  retrievalExplain: RetrievalExplain | null,
+-): NormalizedEvidence {
+-  const relationshipRefs = Object.entries(retrievalExplain?.relationship_refs ?? {}).map(
+-    ([name, reference]) => `${name}: ${reference}`,
+-  );
+-  const retrievalReasons = [
+-    ...(retrievalExplain?.matched_references ?? []).map((reference) => `matched ${reference}`),
+-    ...(retrievalExplain?.signals ?? []).map(
+-      (signal) => `${signal.name}: ${formatValue(signal.value)}`,
+-    ),
+-  ];
+-  const parserWarnings = stringArray(
+-    metadataAt(chunk.metadata, ["parser_quality_warning_codes"]) ??
+-      metadataAt(chunk.metadata, ["parser_warnings"]),
++function MetadataSummary({ chunk }: { chunk: ChunkOut }) {
++  return (
++    <div className="rounded-md border border-[#dce5e8] bg-white p-3 text-xs text-[#3a4a53]">
++      <div className="grid gap-2 sm:grid-cols-2">
++        <SummaryLine label="Profile" value={chunk.runtime_profile_id ?? "n/a"} />
++        <SummaryLine label="Content" value={chunk.content_type} />
++        <SummaryLine label="Snapshot" value={metadataValue(chunk.metadata, ["mirrored_snapshot"], "false")} />
++        <SummaryLine label="Domain" value={metadataValue(chunk.metadata, ["domain_metadata", "domain"], "generic")} />
++      </div>
++    </div>
+   );
++}
+ 
+-  return {
+-    id: chunk.id,
+-    kind: "chunk",
+-    documentId: chunk.document_id,
+-    runtimeProfileId: chunk.runtime_profile_id,
+-    text: chunk.text,
+-    sourceLocation: chunk.source_location,
+-    metadata: chunk.metadata,
+-    parserWarnings,
+-    qualityStatus:
+-      textMetadata(chunk.metadata, ["quality_action_policy"]) ??
+-      textMetadata(chunk.metadata, ["quality_status"]) ??
+-      null,
+-    retrievalReasons,
+-    relationshipRefs,
+-    graphUnavailableDetail:
+-      textMetadata(chunk.metadata, ["graph_unavailable_detail"]) ??
+-      textMetadata(chunk.metadata, ["graphUnavailableDetail"]) ??
+-      null,
+-    raw: chunk,
+-    routeLinks: {
+-      documents: Boolean(chunk.document_id),
+-      chunks: true,
+-      query: true,
+-      graph: relationshipRefs.length > 0,
+-      diagnostics: true,
+-      documentUnavailableLabel: "Document link not recorded",
+-    },
+-  };
++function SummaryLine({ label, value }: { label: string; value: string }) {
++  return (
++    <p className="min-w-0">
++      <span className="font-semibold uppercase text-[#62717a]">{label}</span>{" "}
++      <span className="break-words font-mono text-[#18211f]">{value}</span>
++    </p>
++  );
+ }
+ 
+ function RetrievalExplainPanel({ explain }: { explain: RetrievalExplain }) {
+@@ -357,13 +523,13 @@ function RetrievalExplainPanel({ explain }: { explain: RetrievalExplain }) {
+   return (
+     <section
+       aria-label="Retrieval explain"
+-      className="mt-4 rounded-md border border-[#dce5e8] bg-[#f8fafb] p-3 text-xs text-[#3a4a53]"
++      className="mt-4 rounded-md border border-[#dce5e8] bg-white p-3 text-xs text-[#3a4a53]"
+     >
+       <div className="mb-2 flex flex-wrap items-center gap-2">
+         <h4 className="font-semibold uppercase text-[#62717a]">Retrieval explain</h4>
+         {explain.query_reference ? <Badge>query {explain.query_reference}</Badge> : null}
+       </div>
+-      <div className="grid gap-2 sm:grid-cols-2">
++      <div className="grid gap-2 sm:grid-cols-3">
+         {explain.matched_references?.length ? (
+           <CompactExplainList title="Matched references" values={explain.matched_references} />
+         ) : null}
+@@ -392,7 +558,7 @@ function CompactExplainList({ title, values }: { title: string; values: string[]
+         {values.map((value) => (
+           <span
+             key={value}
+-            className="min-w-0 max-w-full break-words rounded-md border border-[#e1e7ea] bg-white px-2 py-1 text-[#24313a]"
++            className="min-w-0 max-w-full break-words rounded-md border border-[#e1e7ea] bg-[#f8fafb] px-2 py-1 text-[#24313a]"
+           >
+             {value}
+           </span>
+@@ -402,6 +568,43 @@ function CompactExplainList({ title, values }: { title: string; values: string[]
+   );
+ }
+ 
++function CollapsibleJsonBlock({
++  title,
++  summary,
++  value,
++}: {
++  title: string;
++  summary: string;
++  value: Record<string, unknown>;
++}) {
++  const [open, setOpen] = useState(false);
++
++  return (
++    <div className="rounded-md border border-[#dce5e8] bg-white">
++      <button
++        type="button"
++        className="flex min-h-10 w-full items-center justify-between gap-3 px-3 py-2 text-left text-xs"
++        onClick={() => setOpen((current) => !current)}
++        aria-expanded={open}
++      >
++        <span className="min-w-0">
++          <span className="block font-semibold uppercase text-[#62717a]">{title}</span>
++          <span className="block truncate text-[#3a4a53]">{summary}</span>
++        </span>
++        <ChevronDown
++          className={["h-4 w-4 shrink-0 text-[#62717a] transition-transform", open ? "rotate-180" : ""].join(" ")}
++          aria-hidden="true"
++        />
++      </button>
++      {open ? (
++        <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words border-t border-[#e1e7ea] bg-[#f8fafb] p-3 font-mono text-xs leading-5 text-[#3a4a53]">
++          {JSON.stringify(value, null, 2)}
++        </pre>
++      ) : null}
++    </div>
++  );
++}
++
+ function Badge({ children }: { children: ReactNode }) {
+   return (
+     <span className="rounded-md bg-[#eef4f6] px-2 py-1 text-xs font-medium text-[#174657]">
+@@ -410,26 +613,111 @@ function Badge({ children }: { children: ReactNode }) {
+   );
+ }
+ 
+-function JsonBlock({ title, value }: { title: string; value: Record<string, unknown> }) {
++function SmallState({ icon: Icon, text }: { icon: typeof AlertCircle; text: string }) {
+   return (
+-    <div>
+-      <h4 className="mb-2 text-xs font-semibold uppercase text-[#62717a]">{title}</h4>
+-      <pre className="max-h-44 overflow-auto whitespace-pre-wrap break-words rounded-md border border-[#e1e7ea] bg-[#f8fafb] p-3 text-xs leading-5 text-[#3a4a53]">
+-        {JSON.stringify(value, null, 2)}
+-      </pre>
++    <div className="flex min-h-11 items-center gap-2 rounded-md border border-dashed border-[#cdd6da] bg-[#f8fafb] p-3 text-sm text-[#62717a]">
++      <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
++      <span className="min-w-0 truncate">{text}</span>
+     </div>
+   );
+ }
+ 
+-function SmallState({ icon: Icon, text }: { icon: typeof AlertCircle; text: string }) {
++function normalizeChunkEvidence(
++  chunk: ChunkOut,
++  retrievalExplain: RetrievalExplain | null,
++): NormalizedEvidence {
++  const relationshipRefs = Object.entries(retrievalExplain?.relationship_refs ?? {}).map(
++    ([name, reference]) => `${name}: ${reference}`,
++  );
++  const retrievalReasons = [
++    ...(retrievalExplain?.matched_references ?? []).map((reference) => `matched ${reference}`),
++    ...(retrievalExplain?.signals ?? []).map(
++      (signal) => `${signal.name}: ${formatValue(signal.value)}`,
++    ),
++  ];
++  const parserWarnings = stringArray(
++    metadataAt(chunk.metadata, ["parser_quality_warning_codes"]) ??
++      metadataAt(chunk.metadata, ["parser_warnings"]),
++  );
++
++  return {
++    id: chunk.id,
++    kind: "chunk",
++    documentId: chunk.document_id,
++    runtimeProfileId: chunk.runtime_profile_id,
++    text: chunk.text,
++    sourceLocation: chunk.source_location,
++    metadata: chunk.metadata,
++    parserWarnings,
++    qualityStatus:
++      textMetadata(chunk.metadata, ["quality_action_policy"]) ??
++      textMetadata(chunk.metadata, ["quality_status"]) ??
++      null,
++    retrievalReasons,
++    relationshipRefs,
++    graphUnavailableDetail:
++      textMetadata(chunk.metadata, ["graph_unavailable_detail"]) ??
++      textMetadata(chunk.metadata, ["graphUnavailableDetail"]) ??
++      null,
++    raw: chunk,
++    routeLinks: {
++      documents: Boolean(chunk.document_id),
++      chunks: true,
++      query: true,
++      graph: relationshipRefs.length > 0,
++      diagnostics: true,
++      documentUnavailableLabel: "Document link not recorded",
++    },
++  };
++}
++
++function primaryReferenceLabel(retrievalExplain: RetrievalExplain | null, chunk: ChunkOut) {
+   return (
+-    <div className="flex items-center gap-2 rounded-md border border-dashed border-[#cdd6da] bg-[#f8fafb] p-3 text-sm text-[#62717a]">
+-      <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
+-      <span className="min-w-0 truncate">{text}</span>
+-    </div>
++    retrievalExplain?.query_reference ??
++    retrievalExplain?.matched_references?.[0] ??
++    metadataValue(chunk.metadata, ["canonical_reference_unit", "reference"], "n/a")
+   );
+ }
+ 
++function summarizeSignals(retrievalExplain: RetrievalExplain | null) {
++  const signals = retrievalExplain?.signals ?? [];
++  if (!signals.length) {
++    return ["no signals"];
++  }
++  return signals.slice(0, 4).map((signal) => `${signal.name} ${formatValue(signal.value)}`);
++}
++
++function summarizeSourceLocation(sourceLocation: Record<string, unknown>) {
++  const pageStart = sourceLocation.page_start;
++  const pageEnd = sourceLocation.page_end;
++  const pageLabel =
++    typeof pageStart === "number"
++      ? typeof pageEnd === "number" && pageEnd !== pageStart
++        ? `pages ${pageStart}-${pageEnd}`
++        : `page ${pageStart}`
++      : "page n/a";
++  const artifact =
++    typeof sourceLocation.artifact === "string" && sourceLocation.artifact
++      ? sourceLocation.artifact
++      : "artifact not recorded";
++  return {
++    primary: pageLabel,
++    secondary: artifact,
++  };
++}
++
++function summarizeObject(value: Record<string, unknown>) {
++  const keys = Object.keys(value);
++  return keys.length ? `${keys.length} field${keys.length === 1 ? "" : "s"}: ${keys.slice(0, 3).join(", ")}` : "No fields";
++}
++
++function metadataSummary(metadata: Record<string, unknown>) {
++  const keys = Object.keys(metadata);
++  const relatedArtifacts = metadataAt(metadata, ["parser_metadata", "related_artifacts"]);
++  const artifactCount = Array.isArray(relatedArtifacts) ? `, ${relatedArtifacts.length} artifacts` : "";
++  return `${keys.length} top-level field${keys.length === 1 ? "" : "s"}${artifactCount}`;
++}
++
+ function formatValue(value: unknown) {
+   if (typeof value === "number") {
+     return value.toFixed(2);
+@@ -440,6 +728,10 @@ function formatValue(value: unknown) {
+   return "n/a";
+ }
+ 
++function shortId(value: string) {
++  return value.length > 12 ? `${value.slice(0, 8)}...${value.slice(-4)}` : value;
++}
++
+ function metadataValue(metadata: Record<string, unknown>, path: string[], fallback: string) {
+   let current: unknown = metadata;
+   for (const segment of path) {
+@@ -454,6 +746,9 @@ function metadataValue(metadata: Record<string, unknown>, path: string[], fallba
+   if (typeof current === "boolean") {
+     return current ? "true" : "false";
+   }
++  if (typeof current === "number") {
++    return String(current);
++  }
+   return fallback;
+ }
+ 

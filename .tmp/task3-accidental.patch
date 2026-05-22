@@ -1,0 +1,194 @@
+diff --git a/backend/src/ragstudio/services/native_raganything_adapter.py b/backend/src/ragstudio/services/native_raganything_adapter.py
+index 2531137..4093ddf 100644
+--- a/backend/src/ragstudio/services/native_raganything_adapter.py
++++ b/backend/src/ragstudio/services/native_raganything_adapter.py
+@@ -11,6 +11,10 @@ from typing import Any
+ from ragstudio.config import AppSettings
+ from ragstudio.schemas.runtime import RuntimeProfile
+ from ragstudio.services.adapter import AdapterChunk
++from ragstudio.services.evidence_context import (
++    evidence_context_from_metadata,
++    prefixed_embedding_text,
++)
+ from ragstudio.services.graph_workspace import workspace_label
+ from ragstudio.services.native_storage_config import (
+     NATIVE_STORAGE_ENV_LOCK,
+@@ -743,6 +747,7 @@ class NativeRAGAnythingAdapter:
+     ) -> list[dict[str, Any]]:
+         content_list: list[dict[str, Any]] = []
+         for index, chunk in enumerate(chunks):
++            metadata = dict(chunk.metadata)
+             page_idx = chunk.source_location.get("page")
+             if not isinstance(page_idx, int):
+                 page = chunk.source_location.get("page_start")
+@@ -752,11 +757,39 @@ class NativeRAGAnythingAdapter:
+                 index,
+                 document_id=document_id,
+             )
++            metadata["chunk_identity"] = chunk_identity
++            content_type = chunk.content_type or "text"
++            metadata.setdefault("content_type", content_type)
++            evidence_context = evidence_context_from_metadata(
++                metadata,
++                source_location=chunk.source_location,
++                content_type=chunk.content_type,
++            )
++            if evidence_context:
++                metadata["evidence_context"] = evidence_context
+             item: dict[str, Any] = {
+                 "id": chunk_identity,
+                 "chunk_identity": chunk_identity,
+-                "type": "text",
+-                "text": chunk.text,
++                "canonical_chunk_id": chunk_identity,
++                "full_doc_id": document_id,
++                "type": content_type,
++                "text": prefixed_embedding_text(
++                    chunk.text,
++                    metadata,
++                    source_location=chunk.source_location,
++                    content_type=chunk.content_type,
++                ),
++                "metadata": {
++                    key: metadata[key]
++                    for key in (
++                        "chunk_identity",
++                        "reference_metadata",
++                        "quality_action_policy",
++                        "evidence_context",
++                        "content_type",
++                    )
++                    if key in metadata
++                },
+             }
+             if isinstance(page_idx, int):
+                 item["page_idx"] = page_idx
+@@ -807,13 +840,13 @@ class NativeRAGAnythingAdapter:
+         *,
+         document_id: str,
+     ) -> str:
++        if isinstance(chunk.runtime_source_id, str) and chunk.runtime_source_id.strip():
++            return chunk.runtime_source_id
++
+         metadata_identity = chunk.metadata.get("chunk_identity")
+         if isinstance(metadata_identity, str) and metadata_identity.strip():
+             return metadata_identity
+ 
+-        if isinstance(chunk.runtime_source_id, str) and chunk.runtime_source_id.strip():
+-            return chunk.runtime_source_id
+-
+         parser_metadata = chunk.metadata.get("parser_metadata")
+         parser_metadata = dict(parser_metadata) if isinstance(parser_metadata, dict) else {}
+         artifact_ref = parser_metadata.get("artifact_ref") or chunk.source_location.get("artifact")
+diff --git a/backend/tests/test_native_raganything_adapter.py b/backend/tests/test_native_raganything_adapter.py
+index ecca8a1..433ebb0 100644
+--- a/backend/tests/test_native_raganything_adapter.py
++++ b/backend/tests/test_native_raganything_adapter.py
+@@ -515,15 +515,18 @@ async def test_native_adapter_indexes_normalized_preparsed_chunks_without_local_
+     rag = FakeRAGAnything.instances[0]
+     assert rag.parse_called is False
+     assert rag.inserted_doc_id == "studio-doc-id"
+-    assert rag.inserted_content_list == [
+-        {
+-            "id": "studio-doc-id|page.md|None|0",
+-            "chunk_identity": "studio-doc-id|page.md|None|0",
+-            "type": "text",
+-            "text": "Remote MinerU text",
+-            "page_idx": 2,
+-        }
+-    ]
++    assert len(rag.inserted_content_list) == 1
++    row = rag.inserted_content_list[0]
++    assert row["id"] == "studio-doc-id|page.md|None|0"
++    assert row["chunk_identity"] == "studio-doc-id|page.md|None|0"
++    assert row["canonical_chunk_id"] == "studio-doc-id|page.md|None|0"
++    assert row["full_doc_id"] == "studio-doc-id"
++    assert row["type"] == "text"
++    assert row["text"] == "Remote MinerU text"
++    assert row["page_idx"] == 2
++    assert row["metadata"]["chunk_identity"] == "studio-doc-id|page.md|None|0"
++    assert row["metadata"]["content_type"] == "text"
++    assert row["metadata"]["evidence_context"]["page"] == 3
+     assert chunks[0].text == "Remote MinerU text"
+     assert chunks[0].metadata["backend"] == "mineru"
+     assert chunks[0].metadata["chunk_identity"] == "studio-doc-id|page.md|None|0"
+@@ -571,20 +574,66 @@ async def test_native_adapter_keeps_all_normalized_chunks_sharing_content_list(t
+     )
+ 
+     assert len(chunks) == 2
+-    assert FakeRAGAnything.instances[0].inserted_content_list == [
+-        {
+-            "id": "studio-doc-id|one.md|None|0",
+-            "chunk_identity": "studio-doc-id|one.md|None|0",
+-            "type": "text",
+-            "text": "Markdown artifact one",
+-        },
+-        {
+-            "id": "studio-doc-id|two.md|None|1",
+-            "chunk_identity": "studio-doc-id|two.md|None|1",
+-            "type": "text",
+-            "text": "Markdown artifact two",
+-        },
++    inserted_rows = FakeRAGAnything.instances[0].inserted_content_list
++    assert [row["id"] for row in inserted_rows] == [
++        "studio-doc-id|one.md|None|0",
++        "studio-doc-id|two.md|None|1",
++    ]
++    assert [row["canonical_chunk_id"] for row in inserted_rows] == [
++        "studio-doc-id|one.md|None|0",
++        "studio-doc-id|two.md|None|1",
++    ]
++    assert [row["full_doc_id"] for row in inserted_rows] == [
++        "studio-doc-id",
++        "studio-doc-id",
++    ]
++    assert [row["text"] for row in inserted_rows] == [
++        "Markdown artifact one",
++        "Markdown artifact two",
+     ]
++    assert inserted_rows[0]["metadata"]["chunk_identity"] == "studio-doc-id|one.md|None|0"
++    assert inserted_rows[1]["metadata"]["chunk_identity"] == "studio-doc-id|two.md|None|1"
++
++
++def test_preparsed_content_list_includes_context_prefix_and_bridge_metadata(tmp_path):
++    adapter = NativeRAGAnythingAdapter(profile(runtime_working_dir=str(tmp_path)), AppSettings())
++    chunk = AdapterChunk(
++        text="Guide us to the straight path.",
++        source_location={"page": 1, "reference": "1:5"},
++        metadata={
++            "chunk_identity": "doc-1|1:5",
++            "document_metadata": {"title": "Synthetic Tafseer"},
++            "reference_metadata": {"references": ["1:5"]},
++            "content_type": "text",
++            "quality_action_policy": {"index_vector": True, "project_graph": True},
++            "provenance": {"blocks": [{"block_type": "paragraph", "role": "body"}]},
++        },
++        runtime_source_id="runtime-1",
++        content_type="text",
++    )
++
++    rows = adapter._content_list_from_preparsed_chunks([chunk], document_id="doc-1")
++
++    assert rows[0]["text"].startswith("[Context: Synthetic Tafseer > 1:5")
++    assert rows[0]["canonical_chunk_id"] == "runtime-1"
++    assert rows[0]["full_doc_id"] == "doc-1"
++    assert rows[0]["metadata"]["quality_action_policy"]["index_vector"] is True
++    assert rows[0]["metadata"]["evidence_context"]["reference"] == "1:5"
++
++
++def test_preparsed_content_list_preserves_quality_policy_for_runtime_bridge(tmp_path):
++    adapter = NativeRAGAnythingAdapter(profile(runtime_working_dir=str(tmp_path)), AppSettings())
++    chunk = AdapterChunk(
++        text="Unsafe text",
++        source_location={"page": 1},
++        metadata={"quality_action_policy": {"index_vector": False, "project_graph": False}},
++        content_type="text",
++    )
++
++    rows = adapter._content_list_from_preparsed_chunks([chunk], document_id="doc-1")
++
++    assert rows[0]["metadata"]["quality_action_policy"]["index_vector"] is False
++    assert rows[0]["metadata"]["quality_action_policy"]["project_graph"] is False
+ 
+ 
+ @pytest.mark.asyncio

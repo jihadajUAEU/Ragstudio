@@ -1,0 +1,125 @@
+- generic [ref=e3]:
+  - complementary [ref=e4]:
+    - generic [ref=e6]:
+      - img [ref=e8]
+      - generic [ref=e10]:
+        - paragraph [ref=e11]: RAG-Anything
+        - paragraph [ref=e12]: Studio Workbench
+    - navigation "Studio" [ref=e13]:
+      - link "Dashboard" [ref=e14] [cursor=pointer]:
+        - /url: /
+        - img [ref=e15]
+        - generic [ref=e20]: Dashboard
+      - link "Pipeline" [ref=e21] [cursor=pointer]:
+        - /url: /pipeline
+        - img [ref=e22]
+        - generic [ref=e27]: Pipeline
+      - link "Documents" [ref=e28] [cursor=pointer]:
+        - /url: /documents
+        - img [ref=e29]
+        - generic [ref=e32]: Documents
+      - link "Chunks" [ref=e33] [cursor=pointer]:
+        - /url: /chunks
+        - img [ref=e34]
+        - generic [ref=e38]: Chunks
+      - link "Query" [ref=e39] [cursor=pointer]:
+        - /url: /query
+        - img [ref=e40]
+        - generic [ref=e42]: Query
+      - link "Evaluation" [ref=e43] [cursor=pointer]:
+        - /url: /evaluation
+        - img [ref=e44]
+        - generic [ref=e46]: Evaluation
+      - link "Experiments" [ref=e47] [cursor=pointer]:
+        - /url: /experiments
+        - img [ref=e48]
+        - generic [ref=e50]: Experiments
+      - link "Comparison" [ref=e51] [cursor=pointer]:
+        - /url: /comparison
+        - img [ref=e52]
+        - generic [ref=e57]: Comparison
+      - link "Optimizer" [ref=e58] [cursor=pointer]:
+        - /url: /optimizer
+        - img [ref=e59]
+        - generic [ref=e60]: Optimizer
+      - link "Variants" [ref=e61] [cursor=pointer]:
+        - /url: /variants
+        - img [ref=e62]
+        - generic [ref=e63]: Variants
+      - link "Graph" [ref=e64] [cursor=pointer]:
+        - /url: /graph
+        - img [ref=e65]
+        - generic [ref=e69]: Graph
+      - link "Diagnostics" [ref=e70] [cursor=pointer]:
+        - /url: /diagnostics
+        - img [ref=e71]
+        - generic [ref=e74]: Diagnostics
+      - link "Settings" [ref=e75] [cursor=pointer]:
+        - /url: /settings
+        - img [ref=e76]
+        - generic [ref=e79]: Settings
+  - generic [ref=e80]:
+    - banner [ref=e81]:
+      - generic [ref=e82]:
+        - heading "Documents" [level=1] [ref=e84]
+        - 'button "Runtime trust status: Degraded. Loading diagnostics" [ref=e86]':
+          - img [ref=e87]
+          - generic [ref=e89]: Degraded
+    - main [ref=e90]:
+      - generic [ref=e91]:
+        - generic [ref=e92]:
+          - generic [ref=e93]:
+            - paragraph [ref=e94]: Documents
+            - heading "Source files and ingestion jobs" [level=2] [ref=e95]
+          - button "Refresh" [disabled]:
+            - img
+            - text: Refresh
+        - generic [ref=e96]:
+          - generic [ref=e97]:
+            - generic [ref=e99]:
+              - generic [ref=e100]: Upload file
+              - button "Upload file" [ref=e101]
+            - generic [ref=e102]:
+              - button "Analyze with vision" [disabled]:
+                - img
+                - text: Analyze with vision
+              - generic [ref=e103]: Vision analysis required before upload.
+            - generic [ref=e104]:
+              - button "Upload and index" [disabled]:
+                - img
+                - text: Upload and index
+          - status [ref=e105]
+        - region "Document indexing status" [ref=e106]:
+          - generic [ref=e107]:
+            - generic [ref=e108]:
+              - paragraph [ref=e109]: Documents
+              - paragraph [ref=e110]: "0"
+            - generic [ref=e111]:
+              - paragraph [ref=e112]: Active jobs
+              - paragraph [ref=e113]: "0"
+            - generic [ref=e114]:
+              - paragraph [ref=e115]: Warning jobs
+              - paragraph [ref=e116]: "0"
+          - button "View jobs" [ref=e118]:
+            - img [ref=e119]
+            - text: View jobs
+        - generic [ref=e124]:
+          - status [ref=e125]
+          - status [ref=e126]
+        - region "Documents workspace" [ref=e127]:
+          - tablist "Document workspace sections" [ref=e128]:
+            - tab "Documents 0" [selected] [ref=e129]:
+              - generic [ref=e130]: Documents
+              - generic [ref=e131]: "0"
+            - tab "Jobs & Warnings 0" [ref=e132]:
+              - generic [ref=e133]: Jobs & Warnings
+              - generic [ref=e134]: "0"
+          - tabpanel "Documents 0" [ref=e135]:
+            - generic [ref=e136]:
+              - generic [ref=e137]:
+                - img [ref=e138]
+                - heading "Documents" [level=3] [ref=e142]
+              - generic [ref=e144]:
+                - img [ref=e145]
+                - heading "Loading documents" [level=3] [ref=e147]
+                - paragraph [ref=e148]: Fetching uploaded files.
