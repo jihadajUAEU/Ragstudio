@@ -11,6 +11,10 @@ from typing import Any
 from ragstudio.config import AppSettings
 from ragstudio.schemas.runtime import RuntimeProfile
 from ragstudio.services.adapter import AdapterChunk
+from ragstudio.services.evidence_context import (
+    evidence_context_from_metadata,
+    prefixed_embedding_text,
+)
 from ragstudio.services.graph_workspace import workspace_label
 from ragstudio.services.native_storage_config import (
     NATIVE_STORAGE_ENV_LOCK,
@@ -743,6 +747,7 @@ class NativeRAGAnythingAdapter:
     ) -> list[dict[str, Any]]:
         content_list: list[dict[str, Any]] = []
         for index, chunk in enumerate(chunks):
+            metadata = dict(chunk.metadata)
             page_idx = chunk.source_location.get("page")
             if not isinstance(page_idx, int):
                 page = chunk.source_location.get("page_start")
@@ -752,11 +757,39 @@ class NativeRAGAnythingAdapter:
                 index,
                 document_id=document_id,
             )
+            metadata["chunk_identity"] = chunk_identity
+            content_type = chunk.content_type or "text"
+            metadata.setdefault("content_type", content_type)
+            evidence_context = evidence_context_from_metadata(
+                metadata,
+                source_location=chunk.source_location,
+                content_type=chunk.content_type,
+            )
+            if evidence_context:
+                metadata["evidence_context"] = evidence_context
             item: dict[str, Any] = {
                 "id": chunk_identity,
                 "chunk_identity": chunk_identity,
-                "type": "text",
-                "text": chunk.text,
+                "canonical_chunk_id": chunk_identity,
+                "full_doc_id": document_id,
+                "type": content_type,
+                "text": prefixed_embedding_text(
+                    chunk.text,
+                    metadata,
+                    source_location=chunk.source_location,
+                    content_type=chunk.content_type,
+                ),
+                "metadata": {
+                    key: metadata[key]
+                    for key in (
+                        "chunk_identity",
+                        "reference_metadata",
+                        "quality_action_policy",
+                        "evidence_context",
+                        "content_type",
+                    )
+                    if key in metadata
+                },
             }
             if isinstance(page_idx, int):
                 item["page_idx"] = page_idx
@@ -807,12 +840,12 @@ class NativeRAGAnythingAdapter:
         *,
         document_id: str,
     ) -> str:
+        if isinstance(chunk.runtime_source_id, str) and chunk.runtime_source_id.strip():
+            return chunk.runtime_source_id
+
         metadata_identity = chunk.metadata.get("chunk_identity")
         if isinstance(metadata_identity, str) and metadata_identity.strip():
             return metadata_identity
-
-        if isinstance(chunk.runtime_source_id, str) and chunk.runtime_source_id.strip():
-            return chunk.runtime_source_id
 
         parser_metadata = chunk.metadata.get("parser_metadata")
         parser_metadata = dict(parser_metadata) if isinstance(parser_metadata, dict) else {}
