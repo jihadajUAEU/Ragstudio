@@ -43,6 +43,19 @@ def test_vector_lane_rejects_quality_blocked_chunks_even_when_gate_passes():
     assert diagnostics.reason == "vector_lane_blocked_by_quality_policy"
 
 
+def test_vector_lane_rejects_action_block_even_when_baseline_passes():
+    metadata = {"quality_action_policy": {"action": "block", "index_vector": True}}
+
+    result = prepare_vector_candidates(
+        [{"chunk_id": "chunk-1", "document_id": "doc-1", "text": "unsafe"}],
+        metadata=metadata,
+        baseline_gate={"passed": True},
+    )
+
+    assert result.status == "skipped"
+    assert result.reason == "vector_lane_blocked_by_quality_policy"
+
+
 def test_prepare_vector_candidates_hydrates_to_canonical_chunk_identity():
     result = prepare_vector_candidates(
         [
