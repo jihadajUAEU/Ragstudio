@@ -46,3 +46,17 @@ def test_prefixed_embedding_text_adds_context_once():
 
     assert first.startswith("[Context: Synthetic Tafseer > 1:5]")
     assert second == first
+
+
+def test_evidence_context_uses_first_available_path_family():
+    metadata = {
+        "document_metadata": {"title": "Synthetic Tafseer"},
+        "reference_metadata": {"references": ["1:5"]},
+        "section_path": ["Section A"],
+        "heading_path": ["Heading B"],
+        "breadcrumbs": ["Crumb C"],
+    }
+
+    context = evidence_context_from_metadata(metadata)
+
+    assert context["breadcrumb"] == "Synthetic Tafseer > Section A > 1:5"

@@ -60,7 +60,10 @@ def _breadcrumb(metadata: Mapping[str, Any], reference: str | None) -> str | Non
         _append_text(parts, document_metadata.get("title"))
 
     for key in ("section_path", "heading_path", "breadcrumbs"):
+        before_count = len(parts)
         _append_many(parts, metadata.get(key))
+        if len(parts) > before_count:
+            break
     _append_text(parts, reference)
 
     return " > ".join(parts) if parts else None
