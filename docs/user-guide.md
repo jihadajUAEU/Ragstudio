@@ -150,7 +150,10 @@ Fields and controls:
 Results appear under `Answers and traces`:
 
 - Answer text, or the run error if generation failed.
-- `Sources`: source chunk objects used for the answer.
+- `Metrics`: total latency, routes run, candidates seen, context tokens,
+  reranker, and grounding status.
+- `Sources`: source chunk objects used for the answer, shown with rank, score,
+  source details, and architecture signals before the raw JSON.
 - `Chunk traces`: route plan, lane result, layout-neighbor, context-window,
   fusion, reranker, context assembly, and candidate trace objects.
 - `Timings`: measured `search_ms`, `query_ms`, and `total_ms`, plus adapter timings when provided.
@@ -159,7 +162,7 @@ Use the **Query Pathway** inspector on each result to review the three-pillar
 route without reading raw JSON:
 
 - **Domain-aware** shows the retrieval route plan, selected domain/profile,
-  materialization hints, and retrieval lane results.
+  materialization hints, retrieval lane results, and candidate summary.
 - **Layout-aware** shows layout-neighbor expansion, layout roles, layout groups,
   reading order, source pages, and source coordinates when available.
 - **Context-aware** shows context-window expansion, assembled evidence order,
@@ -168,8 +171,8 @@ route without reading raw JSON:
 
 Each source evidence drawer also mirrors the same architecture contract. Inspect
 an evidence item to see domain and materialization metadata, layout chain
-metadata, context chain metadata, and any context assembly position attached to
-that source.
+metadata, context chain metadata, context slot, context-token count, and
+source-specific reranker rank movement when those traces are recorded.
 
 Upload and Index actions use `MinerU strict`. The document is sent to MinerU and indexing fails if MinerU fails or returns invalid extracted text. Ragstudio does not silently fall back to local PDF parsing in the production workflow.
 

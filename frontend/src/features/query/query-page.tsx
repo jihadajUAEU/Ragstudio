@@ -602,6 +602,7 @@ function RunResult({ run, variant }: { run: RunOut; variant?: VariantOut }) {
       </div>
       <RerankerSummary traces={run.reranker_traces} />
       <ArchitectureTraceSummary architecture={architecture} />
+      <RunMetricsSummary run={run} architecture={architecture} />
       {answerMode === "evidence_first" ? (
         <div className="mt-3 rounded-md border border-[#cfe3ea] bg-[#f5fafb] p-3 text-sm text-[#3a4a53]">
           <p className="font-semibold text-[#1f2933]">Evidence-first result</p>
@@ -667,8 +668,19 @@ function SourceEvidenceRow({
 }) {
   return (
     <div className="rounded-md border border-[#e1e7ea] bg-white p-3">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+      <div className="grid gap-3 md:grid-cols-[3rem_5rem_minmax(0,1fr)_minmax(0,1fr)_auto] md:items-start">
+        <div>
+          <p className="text-xs font-semibold uppercase text-[#62717a]">Rank</p>
+          <p className="mt-1 text-sm font-semibold text-[#1f2933]">{evidence.rank ?? "n/a"}</p>
+        </div>
+        <div>
+          <p className="text-xs font-semibold uppercase text-[#62717a]">Score</p>
+          <p className="mt-1 text-sm font-semibold text-[#1f2933]">
+            {evidence.score === null || evidence.score === undefined ? "n/a" : evidence.score.toFixed(2)}
+          </p>
+        </div>
         <div className="min-w-0">
+          <p className="text-xs font-semibold uppercase text-[#62717a]">Source</p>
           <p className="break-words font-mono text-xs font-semibold text-[#1f2933]">{evidence.id}</p>
           <p className="mt-1 break-words text-xs text-[#62717a]">
             {evidence.documentName || evidence.documentId || "Document link not recorded"}
@@ -679,8 +691,23 @@ function SourceEvidenceRow({
               : "Source location not recorded"}
           </p>
         </div>
-        <Button type="button" variant="secondary" size="sm" className="shrink-0" onClick={onInspect}>
-          Inspect evidence
+        <div className="min-w-0">
+          <p className="text-xs font-semibold uppercase text-[#62717a]">Signals</p>
+          <div className="mt-1 flex flex-wrap gap-1.5">
+            {(evidence.signals?.length ? evidence.signals : ["No signals"]).map((signal) => (
+              <Badge key={signal}>{signal}</Badge>
+            ))}
+          </div>
+        </div>
+        <Button
+          type="button"
+          variant="secondary"
+          size="sm"
+          className="shrink-0"
+          aria-label="Inspect evidence"
+          onClick={onInspect}
+        >
+          Inspect
         </Button>
       </div>
       <div className="mt-3 flex flex-wrap gap-2">
@@ -716,10 +743,20 @@ function normalizeQuerySource(
   const relationshipRefs = relationshipRefsFrom(source, metadata);
   const indexShape = recordValue(metadata?.index_shape);
   const sourceArchitecture = architecture.sources.find((item) => item.sourceId === sourceId);
+  const rankDelta = architecture.reranker.rankDeltas.find((delta) =>
+    candidateMatchesSource(delta.candidateId, sourceId, source),
+  );
+  const contextSlotIndex = architecture.assembly.evidenceIds.findIndex((evidenceId) =>
+    candidateMatchesSource(evidenceId, sourceId, source),
+  );
+  const rerankerSummary = rerankerSummaryForSource(sourceId, source, run.reranker_traces);
+  const score = scoreFromSource(source, metadata);
 
   return {
     id: sourceId,
     kind: "query-source",
+    rank: index + 1,
+    score,
     documentId:
       textValue(source.document_id) ??
       textValue(source.documentId) ??
@@ -756,7 +793,8 @@ function normalizeQuerySource(
     relationshipRefs,
     graphUnavailableDetail:
       textValue(source.graph_unavailable_detail) ?? textValue(source.graphUnavailableDetail) ?? null,
-    rerankerSummary: rerankerSummaryForSource(sourceId, source, run.reranker_traces),
+    rerankerSummary: mergeRankDeltaIntoRerankerSummary(rerankerSummary, rankDelta),
+    signals: evidenceSignals(source, metadata, sourceArchitecture, contextSlotIndex >= 0),
     architecture: sourceArchitecture
       ? {
           domain: sourceArchitecture.domain,
@@ -768,6 +806,13 @@ function normalizeQuerySource(
             droppedReasons: architecture.assembly.droppedReasons.map(
               (item) => `${item.candidateId}: ${item.reason}`,
             ),
+            contextSlot:
+              contextSlotIndex >= 0
+                ? `${contextSlotIndex + 1} of ${architecture.assembly.evidenceIds.length}`
+                : undefined,
+            linkedBy: relationshipRefs[0] ?? retrievalReasonsFrom(source)[0],
+            addedToContext: contextSlotIndex >= 0,
+            contextTokens: architecture.assembly.tokenCount,
           },
         }
       : undefined,
@@ -808,6 +853,53 @@ function rerankerSummaryForSource(
   };
 }
 
+function mergeRankDeltaIntoRerankerSummary(
+  summary: EvidenceRerankerSummary | null,
+  rankDelta: ThreePillarTraceSummary["reranker"]["rankDeltas"][number] | undefined,
+): EvidenceRerankerSummary | null {
+  if (!rankDelta) {
+    return summary;
+  }
+  return {
+    status: summary?.status ?? "recorded",
+    provider: summary?.provider,
+    model: summary?.model,
+    detail: summary?.detail,
+    note: summary?.note,
+    originalRank: rankDelta.before,
+    newRank: rankDelta.after,
+    rankChange: rankDelta.delta,
+    raw: summary?.raw,
+  };
+}
+
+function candidateMatchesSource(
+  candidateId: string,
+  sourceId: string,
+  source: Record<string, unknown>,
+) {
+  const normalizedCandidate = normalizeCandidateId(candidateId);
+  const aliases = [
+    sourceId,
+    source.id,
+    source.source_id,
+    source.sourceId,
+    source.chunk_id,
+    source.chunkId,
+  ]
+    .map(normalizeCandidateId)
+    .filter(Boolean);
+  return aliases.includes(normalizedCandidate);
+}
+
+function normalizeCandidateId(value: unknown) {
+  const text = textValue(value);
+  if (!text) {
+    return "";
+  }
+  return text.includes(":") ? text.split(":").at(-1) ?? text : text;
+}
+
 function traceMatchesSource(
   trace: Record<string, unknown>,
   sourceId: string,
@@ -825,6 +917,35 @@ function traceMatchesSource(
     .map(textValue)
     .filter(Boolean);
   return candidates.includes(sourceId);
+}
+
+function scoreFromSource(
+  source: Record<string, unknown>,
+  metadata: Record<string, unknown> | null | undefined,
+) {
+  return (
+    numberValue(source.score) ??
+    numberValue(source.relevance_score) ??
+    numberValue(source.relevanceScore) ??
+    numberValue(metadata?.score)
+  );
+}
+
+function evidenceSignals(
+  source: Record<string, unknown>,
+  metadata: Record<string, unknown> | null | undefined,
+  architecture: ThreePillarTraceSummary["sources"][number] | undefined,
+  addedToContext: boolean,
+) {
+  const signals = [
+    architecture?.domain.materializationHint !== "not recorded" ? "materialize" : null,
+    architecture?.layout.layoutGroupId !== "not recorded"
+      ? `layout group ${architecture?.layout.layoutGroupId}`
+      : null,
+    addedToContext ? "context linked" : null,
+    textValue(source.quality_action_policy) ?? textValue(metadata?.quality_action_policy),
+  ].filter(Boolean) as string[];
+  return Array.from(new Set(signals));
 }
 
 function retrievalReasonsFrom(source: Record<string, unknown>) {
@@ -1003,6 +1124,56 @@ function ArchitectureTraceSummary({ architecture }: { architecture: ThreePillarT
   );
 }
 
+function RunMetricsSummary({
+  run,
+  architecture,
+}: {
+  run: RunOut;
+  architecture: ThreePillarTraceSummary;
+}) {
+  const candidatesSeen = architecture.lanes.reduce(
+    (total, lane) => total + (lane.candidateCount ?? 0),
+    0,
+  );
+  const contextTokens =
+    architecture.assembly.tokenCount ??
+    numberValue(run.token_metadata.context_tokens) ??
+    numberValue(run.token_metadata.total_tokens);
+  const grounded =
+    architecture.assembly.groundingStatus === "not recorded"
+      ? run.status === "succeeded"
+        ? "yes"
+        : "no"
+      : architecture.assembly.groundingStatus;
+  const reranker =
+    architecture.reranker.model !== "not recorded"
+      ? architecture.reranker.model
+      : architecture.reranker.provider;
+
+  return (
+    <div className="mt-3 rounded-md border border-[#dce5e8] bg-white p-3">
+      <h4 className="text-sm font-semibold text-[#1f2933]">Metrics</h4>
+      <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+        <Metric label="Total latency" value={formatMs(numberValue(run.timings.total_ms))} />
+        <Metric label="Routes run" value={String(architecture.lanes.length)} />
+        <Metric label="Candidates seen" value={String(candidatesSeen)} />
+        <Metric label="Context tokens" value={contextTokens === undefined ? "not recorded" : String(contextTokens)} />
+        <Metric label="Reranker" value={reranker || "not recorded"} />
+        <Metric label="Grounded" value={grounded} />
+      </div>
+    </div>
+  );
+}
+
+function Metric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-md bg-[#f8fafb] px-3 py-2">
+      <p className="text-xs font-semibold text-[#62717a]">{label}</p>
+      <p className="mt-1 break-words text-sm font-medium text-[#1f2933]">{value}</p>
+    </div>
+  );
+}
+
 function RerankerSummary({ traces }: { traces: Record<string, unknown>[] }) {
   if (!traces.length) {
     return null;
@@ -1073,6 +1244,10 @@ function textValue(value: unknown) {
 
 function numberValue(value: unknown) {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function formatMs(value: number | undefined) {
+  return value === undefined ? "not recorded" : `${Math.round(value)} ms`;
 }
 
 function JsonPanel({

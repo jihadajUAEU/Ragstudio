@@ -88,6 +88,7 @@ const run: RunOut = {
         grounding_status: "grounded",
         breadcrumbs_visible: true,
         layout_summary_visible: true,
+        token_count: 1842,
       },
       dropped_reasons: { "vector:chunk-b": "lower_rank_supporting_context" },
     },
@@ -120,6 +121,7 @@ describe("buildThreePillarTrace", () => {
       { chunkId: "chunk-prev", reason: "reading_order_adjacent_and_linked_context" },
     ]);
     expect(summary.assembly.evidenceIds).toEqual(["metadata:chunk-a"]);
+    expect(summary.assembly.tokenCount).toBe(1842);
     expect(summary.assembly.droppedReasons).toEqual([
       { candidateId: "vector:chunk-b", reason: "lower_rank_supporting_context" },
     ]);

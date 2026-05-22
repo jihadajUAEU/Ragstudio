@@ -390,12 +390,13 @@ describe("QueryPage", () => {
     expect(screen.getByRole("tab", { name: "Raw traces" })).toBeVisible();
     expect(screen.getByText("Route plan", { selector: "summary" })).toBeVisible();
     expect(screen.getByText("Lane results", { selector: "summary" })).toBeVisible();
+    expect(screen.getByText("Candidate summary", { selector: "summary" })).toBeVisible();
     expect(screen.queryByText("Planner", { selector: "summary" })).not.toBeInTheDocument();
     expect(screen.queryByText("Retrieval", { selector: "summary" })).not.toBeInTheDocument();
     expect(screen.queryByText("Answer", { selector: "summary" })).not.toBeInTheDocument();
     expect(screen.getAllByText("reference_heavy").length).toBeGreaterThan(0);
     expect(screen.getAllByText("postgres_canonical_evidence").length).toBeGreaterThan(0);
-    expect(screen.getByText("metadata")).toBeVisible();
+    expect(screen.getAllByText("metadata").length).toBeGreaterThan(0);
     expect(screen.getByText("metadata_lane_completed")).toBeVisible();
     fireEvent.click(screen.getByRole("tab", { name: "Layout-aware" }));
     expect(screen.getByText("Layout neighbors", { selector: "summary" })).toBeVisible();
@@ -455,7 +456,7 @@ describe("QueryPage", () => {
 
     await waitFor(() => expect(apiClient.query).toHaveBeenCalled());
     expect(await screen.findByText("Reranker disabled")).toBeVisible();
-    expect(screen.getByText("disabled")).toBeVisible();
+    expect(screen.getAllByText("disabled").length).toBeGreaterThan(0);
   });
 
   it("summarizes the three-pillar route on the query result card", async () => {
@@ -520,7 +521,7 @@ describe("QueryPage", () => {
     expect(screen.getByText("reference_heavy")).toBeVisible();
     expect(screen.getByText("layout 2")).toBeVisible();
     expect(screen.getByText("context 4")).toBeVisible();
-    expect(screen.getByText("grounded")).toBeVisible();
+    expect(screen.getAllByText("grounded").length).toBeGreaterThan(0);
   });
 
   it("renders readable source rows and opens the evidence viewer", async () => {
@@ -541,6 +542,7 @@ describe("QueryPage", () => {
               document_name: "source.txt",
               text: "Book 1, Hadith 1",
               source_location: { page: 1, reference: "Book 1, Hadith 1" },
+              score: 0.92,
               metadata: {
                 domain_metadata: { domain: "hadith" },
                 materialization_hint: "graph",
@@ -555,8 +557,23 @@ describe("QueryPage", () => {
               quality_action_policy: "materialize",
             },
           ],
-          chunk_traces: [],
-          timings: {},
+          chunk_traces: [
+            {
+              stage: "retrieval_lane_result",
+              lane: "reranker",
+              status: "ran",
+              rank_deltas: { "chunk-1": { before: 2, after: 1 } },
+            },
+            {
+              stage: "context_assembly",
+              assembled_context: {
+                evidence_ids: ["metadata:chunk-1"],
+                grounding_status: "grounded",
+                token_count: 412,
+              },
+            },
+          ],
+          timings: { total_ms: 412 },
           error: null,
           runtime_profile_id: "profile-1",
           document_ids: ["doc-1"],
@@ -580,6 +597,9 @@ describe("QueryPage", () => {
 
     expect(await screen.findByText("Readable sources")).toBeVisible();
     expect(screen.getByText("source-1")).toBeVisible();
+    expect(screen.getByText("0.92")).toBeVisible();
+    expect(screen.getByText("layout group table-srg-001")).toBeVisible();
+    expect(screen.getByText("context linked")).toBeVisible();
     expect(screen.getAllByText("source.txt").length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: "Inspect evidence" })).toBeVisible();
     expect(screen.getByText("Sources")).toBeVisible();
@@ -602,7 +622,13 @@ describe("QueryPage", () => {
     expect(screen.getByText("chunk-parent")).toBeVisible();
     expect(screen.getByText("chunk-prev")).toBeVisible();
     expect(screen.getByText("chunk-next")).toBeVisible();
+    fireEvent.click(screen.getByText("Context assembly", { selector: "summary" }));
+    expect(screen.getByText("1 of 1")).toBeVisible();
+    expect(screen.getAllByText("412").length).toBeGreaterThan(0);
     fireEvent.click(screen.getByText("Reranker", { selector: "summary" }));
+    expect(screen.getByText("Original rank")).toBeVisible();
+    expect(screen.getByText("New rank")).toBeVisible();
+    expect(screen.getByText("Rank change")).toBeVisible();
     expect(screen.getByText("Run-level reranker summary; not source-specific")).toBeVisible();
   });
 

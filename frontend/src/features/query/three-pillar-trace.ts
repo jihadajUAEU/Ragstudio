@@ -54,6 +54,7 @@ export interface ContextWindowSummary {
 export interface ContextAssemblySummary {
   includedCandidates: number | null;
   droppedCandidates: number | null;
+  tokenCount: number | null;
   evidenceIds: string[];
   groundingStatus: string;
   breadcrumbsVisible: boolean;
@@ -150,6 +151,11 @@ export function buildThreePillarTrace(run: RunOut): ThreePillarTraceSummary {
     assembly: {
       includedCandidates: numberValue(assemblyTrace?.included_candidates),
       droppedCandidates: numberValue(assemblyTrace?.dropped_candidates),
+      tokenCount:
+        numberValue(assembledContext?.token_count) ??
+        numberValue(assembledContext?.context_tokens) ??
+        numberValue(assembledContext?.total_tokens) ??
+        null,
       evidenceIds: stringArray(assembledContext?.evidence_ids),
       groundingStatus: textValue(assembledContext?.grounding_status) ?? "not recorded",
       breadcrumbsVisible: assembledContext?.breadcrumbs_visible === true,

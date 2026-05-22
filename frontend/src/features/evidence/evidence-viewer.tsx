@@ -20,6 +20,9 @@ export interface EvidenceRerankerSummary {
   model?: string;
   detail?: string;
   note?: string;
+  originalRank?: number | null;
+  newRank?: number | null;
+  rankChange?: number | null;
   raw?: unknown;
 }
 
@@ -38,6 +41,9 @@ export interface NormalizedEvidence {
   relationshipRefs?: string[];
   graphUnavailableDetail?: string | null;
   rerankerSummary?: EvidenceRerankerSummary | null;
+  rank?: number | null;
+  score?: number | null;
+  signals?: string[];
   architecture?: {
     domain?: {
       domain: string;
@@ -58,6 +64,10 @@ export interface NormalizedEvidence {
       groundingStatus: string;
       evidenceIds: string[];
       droppedReasons: string[];
+      contextSlot?: string;
+      linkedBy?: string;
+      addedToContext?: boolean;
+      contextTokens?: number | null;
     };
   };
   raw?: unknown;
@@ -160,6 +170,16 @@ export function EvidenceViewer({
                 <ArchitectureKeyValues
                   values={[
                     ["Grounding", evidence.architecture.assembly.groundingStatus],
+                    ["Context slot", evidence.architecture.assembly.contextSlot],
+                    ["Linked by", evidence.architecture.assembly.linkedBy],
+                    ["Added to context", evidence.architecture.assembly.addedToContext ? "yes" : "no"],
+                    [
+                      "Context tokens",
+                      evidence.architecture.assembly.contextTokens === null ||
+                      evidence.architecture.assembly.contextTokens === undefined
+                        ? undefined
+                        : String(evidence.architecture.assembly.contextTokens),
+                    ],
                     ["Evidence ids", evidence.architecture.assembly.evidenceIds.join(", ")],
                     ["Dropped", evidence.architecture.assembly.droppedReasons.join(", ")],
                   ]}
@@ -179,6 +199,33 @@ export function EvidenceViewer({
                   <KeyValue label="Status" value={evidence.rerankerSummary.status || "Reranker status not recorded"} />
                   <KeyValue label="Provider" value={evidence.rerankerSummary.provider || "Provider not recorded"} />
                   <KeyValue label="Model" value={evidence.rerankerSummary.model || "Model not recorded"} />
+                  <KeyValue
+                    label="Original rank"
+                    value={
+                      evidence.rerankerSummary.originalRank === null ||
+                      evidence.rerankerSummary.originalRank === undefined
+                        ? "not recorded"
+                        : String(evidence.rerankerSummary.originalRank)
+                    }
+                  />
+                  <KeyValue
+                    label="New rank"
+                    value={
+                      evidence.rerankerSummary.newRank === null ||
+                      evidence.rerankerSummary.newRank === undefined
+                        ? "not recorded"
+                        : String(evidence.rerankerSummary.newRank)
+                    }
+                  />
+                  <KeyValue
+                    label="Rank change"
+                    value={
+                      evidence.rerankerSummary.rankChange === null ||
+                      evidence.rerankerSummary.rankChange === undefined
+                        ? "not recorded"
+                        : String(evidence.rerankerSummary.rankChange)
+                    }
+                  />
                   {evidence.rerankerSummary.detail ? <p>{evidence.rerankerSummary.detail}</p> : null}
                   {evidence.rerankerSummary.note ? (
                     <p className="rounded-md bg-[#fff4d7] px-2 py-1 text-xs text-[#8a5a00]">

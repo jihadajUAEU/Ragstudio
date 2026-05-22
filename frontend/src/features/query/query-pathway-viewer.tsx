@@ -1,4 +1,4 @@
-import { X } from "lucide-react";
+import { Code2, LayoutPanelTop, Network, Rows3, X } from "lucide-react";
 import { useMemo, useState, type ReactNode } from "react";
 
 import type { PathwayDiagnosticOut, RunOut } from "../../api/generated";
@@ -56,6 +56,8 @@ export function QueryPathwayViewer({
           </div>
 
           <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-4 sm:px-5">
+            <PathwayStatusStrip run={run} architecture={pathway.architecture} />
+            <PathwayRouteChips architecture={pathway.architecture} />
             <PathwaySection title="Summary" defaultOpen>
               <SummaryGrid run={run} pathway={pathway} />
             </PathwaySection>
@@ -93,6 +95,67 @@ function SummaryGrid({ run, pathway }: { run: RunOut; pathway: ReturnType<typeof
       <KeyValue label="Top reference" value={pathway.topReference} />
       <KeyValue label="Top source" value={pathway.topSource} />
       <KeyValue label="Error" value={run.error_type ?? run.error ?? "none"} />
+    </div>
+  );
+}
+
+function PathwayStatusStrip({
+  run,
+  architecture,
+}: {
+  run: RunOut;
+  architecture: ThreePillarTraceSummary;
+}) {
+  const candidatesSeen = architecture.lanes.reduce(
+    (total, lane) => total + (lane.candidateCount ?? 0),
+    0,
+  );
+  const tokens =
+    architecture.assembly.tokenCount ??
+    numberValue(run.token_metadata.context_tokens) ??
+    numberValue(run.token_metadata.total_tokens);
+  const reranker =
+    architecture.reranker.model !== "not recorded"
+      ? architecture.reranker.model
+      : architecture.reranker.provider;
+
+  return (
+    <div className="grid gap-2 rounded-md border border-[#d6dde1] bg-[#f8fafb] p-3 text-sm sm:grid-cols-5">
+      <MetricPill label="Grounding" value={architecture.assembly.groundingStatus} />
+      <MetricPill label="Latency" value={formatMs(numberValue(run.timings.total_ms))} />
+      <MetricPill label="Candidates" value={String(candidatesSeen)} />
+      <MetricPill label="Tokens" value={tokens === undefined || tokens === null ? "not recorded" : String(tokens)} />
+      <MetricPill label="Reranker" value={reranker || "not recorded"} />
+    </div>
+  );
+}
+
+function MetricPill({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0 rounded bg-white px-3 py-2">
+      <p className="text-xs font-semibold text-[#62717a]">{label}</p>
+      <p className="mt-1 truncate font-medium text-[#1f2933]">{value}</p>
+    </div>
+  );
+}
+
+function PathwayRouteChips({ architecture }: { architecture: ThreePillarTraceSummary }) {
+  const chips = [
+    architecture.route.domainProfileId,
+    architecture.route.sourceOfTruth,
+    architecture.route.materializationHint,
+    architecture.assembly.groundingStatus,
+  ].filter((value) => value && value !== "not recorded");
+  if (!chips.length) {
+    return null;
+  }
+  return (
+    <div className="flex flex-wrap gap-2">
+      {chips.map((chip) => (
+        <span key={chip} className="rounded-md border border-[#cfe3ea] bg-[#eef8f2] px-2 py-1 text-xs font-medium text-[#176b87]">
+          {chip}
+        </span>
+      ))}
     </div>
   );
 }
@@ -142,11 +205,11 @@ function TabList({
   activeTab: PathwayTab;
   onChange: (tab: PathwayTab) => void;
 }) {
-  const tabs: Array<{ id: PathwayTab; label: string }> = [
-    { id: "domain", label: "Domain-aware" },
-    { id: "layout", label: "Layout-aware" },
-    { id: "context", label: "Context-aware" },
-    { id: "raw", label: "Raw traces" },
+  const tabs: Array<{ id: PathwayTab; label: string; Icon: typeof Network }> = [
+    { id: "domain", label: "Domain-aware", Icon: Network },
+    { id: "layout", label: "Layout-aware", Icon: LayoutPanelTop },
+    { id: "context", label: "Context-aware", Icon: Rows3 },
+    { id: "raw", label: "Raw traces", Icon: Code2 },
   ];
   return (
     <div
@@ -154,21 +217,22 @@ function TabList({
       role="tablist"
       aria-label="Three-pillar pathway tabs"
     >
-      {tabs.map((tab) => (
+      {tabs.map(({ id, label, Icon }) => (
         <button
-          key={tab.id}
+          key={id}
           type="button"
           role="tab"
-          aria-selected={activeTab === tab.id}
+          aria-selected={activeTab === id}
           className={cn(
-            "min-h-9 rounded px-2 text-sm font-medium",
-            activeTab === tab.id
+            "flex min-h-9 items-center justify-center gap-2 rounded px-2 text-sm font-medium",
+            activeTab === id
               ? "bg-white text-[#174657] shadow-sm"
               : "text-[#62717a] hover:text-[#174657]",
           )}
-          onClick={() => onChange(tab.id)}
+          onClick={() => onChange(id)}
         >
-          {tab.label}
+          <Icon className="h-4 w-4" aria-hidden="true" />
+          {label}
         </button>
       ))}
     </div>
@@ -183,6 +247,9 @@ function DomainAwareTab({ architecture }: { architecture: ThreePillarTraceSummar
       </PathwaySection>
       <PathwaySection title="Lane results" defaultOpen>
         <LaneResults lanes={architecture.lanes} />
+      </PathwaySection>
+      <PathwaySection title="Candidate summary">
+        <CandidateSummary lanes={architecture.lanes} />
       </PathwaySection>
     </>
   );
@@ -263,6 +330,40 @@ function LaneResults({ lanes }: { lanes: ThreePillarTraceSummary["lanes"] }) {
           </div>
         </div>
       ))}
+    </div>
+  );
+}
+
+function CandidateSummary({ lanes }: { lanes: ThreePillarTraceSummary["lanes"] }) {
+  const rows = lanes.map((lane) => ({
+    source: lane.lane,
+    candidates: lane.candidateCount ?? 0,
+  }));
+  const total = rows.reduce((sum, row) => sum + row.candidates, 0);
+  if (!rows.length) {
+    return <MissingValue>No candidate counts recorded</MissingValue>;
+  }
+  return (
+    <div className="overflow-hidden rounded-md border border-[#e1e7ea] sm:col-span-2">
+      <div className="grid grid-cols-3 bg-[#f8fafb] px-3 py-2 text-xs font-semibold text-[#62717a]">
+        <span>Source type</span>
+        <span>Candidates</span>
+        <span>% of total</span>
+      </div>
+      {rows.map((row) => (
+        <div key={row.source} className="grid grid-cols-3 border-t border-[#e1e7ea] px-3 py-2 text-sm">
+          <span className="break-words text-[#1f2933]">{row.source}</span>
+          <span className="text-[#3a4a53]">{row.candidates}</span>
+          <span className="text-[#3a4a53]">
+            {total ? `${Math.round((row.candidates / total) * 100)}%` : "0%"}
+          </span>
+        </div>
+      ))}
+      <div className="grid grid-cols-3 border-t border-[#d6dde1] bg-[#f8fafb] px-3 py-2 text-sm font-semibold text-[#1f2933]">
+        <span>Total</span>
+        <span>{total}</span>
+        <span>{total ? "100%" : "0%"}</span>
+      </div>
     </div>
   );
 }

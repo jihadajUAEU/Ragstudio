@@ -300,7 +300,11 @@ The response contains `runs`. Each run includes `id`, `variant_id`, `experiment_
 The Query page displays each returned run in **Answers and traces**. For successful runs, inspect:
 
 - **Answer**: the generated or fallback answer text.
-- **Sources**: selected chunks used as source evidence when the adapter does not return explicit sources.
+- **Metrics**: total latency, route count, candidates seen, context token count,
+  reranker, and grounding status.
+- **Sources**: selected chunks used as source evidence when the adapter does not
+  return explicit sources. Source rows show rank, score, source details, and
+  domain/layout/context signals before raw JSON.
 - **Chunk traces**: route plan, lane result, layout-neighbor expansion,
   context-window expansion, fusion, reranker, context assembly, source
   location, metadata, and inclusion/drop status.
@@ -312,7 +316,7 @@ After a query run completes, open the result's **Query Pathway** inspector. The
 tabs should expose the complete runtime path without requiring raw JSON review:
 
 - **Domain-aware**: route plan, selected domain/profile, materialization hints,
-  retrieval strategy, and per-lane result status.
+  retrieval strategy, per-lane result status, and candidate summary.
 - **Layout-aware**: layout-neighbor expansion, layout group ids, layout roles,
   reading order, page ranges, and source coordinates.
 - **Context-aware**: context-window expansion, assembled evidence ids, grounding
@@ -322,8 +326,9 @@ tabs should expose the complete runtime path without requiring raw JSON review:
 
 Then open a source evidence drawer from the same result. Evidence should repeat
 the relevant source-level chain: domain/materialization, layout chain,
-parent/previous/next context chain, and context assembly position when present.
-Use **Chunks** for pre-query inspection of the same metadata on canonical chunks.
+parent/previous/next context chain, context slot, context token count, and
+reranker original/new rank when present. Use **Chunks** for pre-query inspection
+of the same metadata on canonical chunks.
 
 ## View RAGed Results and Evidence
 
