@@ -1479,9 +1479,15 @@ async def test_orchestrator_fuses_native_metadata_and_graph_before_answering():
     graph_evidence = next(
         candidate for candidate in answer_service.evidence if candidate.tool == "graph"
     )
-    assert graph_evidence.text == (
+    assert graph_evidence.text.startswith("[collection:bukhari | page=9]\n")
+    assert graph_evidence.text.endswith(
         "Full hydrated graph chunk confirms 7277 hadith in Sahih al-Bukhari."
     )
+    assert graph_evidence.metadata["assembled_context"] == {
+        "breadcrumb": "collection:bukhari",
+        "layout_summary": "page=9",
+        "context_text_applied": True,
+    }
     assert graph_evidence.source_location == {"page": 9}
     assert graph_evidence.metadata["graph_hydration"]["status"] == "hydrated"
 

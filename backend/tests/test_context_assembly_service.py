@@ -247,4 +247,6 @@ def test_context_assembly_dynamic_fallback_breadcrumb_resolution():
 
     assert context.evidence[0].breadcrumb == "Holy Book > Surah Al-Baqarah > 2:45"
     assert context.evidence[0].layout_summary == "page=2"
-    assert context.evidence[0].context_text.startswith("[Holy Book > Surah Al-Baqarah > 2:45 | page=2]")
+    assert context.evidence[0].context_text.startswith(
+        "[Holy Book > Surah Al-Baqarah > 2:45 | page=2]"
+    )

@@ -17,20 +17,54 @@ class DomainLexicalRegistry:
         self.register("arabic_religious", ArabicLexicalAdapter())
         self._family_triggers: dict[str, set[str]] = {
             "arabic_religious": {
-                "quran", "tafseer", "quran_tafseer", "hadith", "islamic_text", "religious_text", "fiqh", "fatwa", "islamic_law"
+                "quran",
+                "tafseer",
+                "quran_tafseer",
+                "hadith",
+                "islamic_text",
+                "religious_text",
+                "fiqh",
+                "fatwa",
+                "islamic_law",
             },
             "legal_reference": {
-                "case_law", "contract", "law", "legal", "legal_reference", "regulation", "statute"
+                "case_law",
+                "contract",
+                "law",
+                "legal",
+                "legal_reference",
+                "regulation",
+                "statute",
             },
             "medical_reference": {
-                "clinical", "diagnosis", "healthcare", "medical", "medical_reference", "medicine", "patient", "treatment"
+                "clinical",
+                "diagnosis",
+                "healthcare",
+                "medical",
+                "medical_reference",
+                "medicine",
+                "patient",
+                "treatment",
             },
             "financial_reference": {
-                "accounting", "banking", "finance", "financial", "financial_reference", "investment", "invoice", "tax"
+                "accounting",
+                "banking",
+                "finance",
+                "financial",
+                "financial_reference",
+                "investment",
+                "invoice",
+                "tax",
             },
             "code_reference": {
-                "api", "code", "code_reference", "programming", "software", "source_code", "stacktrace"
-            }
+                "api",
+                "code",
+                "code_reference",
+                "programming",
+                "software",
+                "source_code",
+                "stacktrace",
+            },
         }
 
     def register(self, domain_family: str, adapter: DomainLexicalAdapter) -> None:
