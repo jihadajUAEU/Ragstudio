@@ -1782,7 +1782,16 @@ def _graph_seed_candidates(
     allowed_documents = {document_id for document_id in document_ids if document_id}
     seeds: list[EvidenceCandidate] = []
     for candidate in candidates:
-        if candidate.tool not in {"metadata", "lexical", "reference_exact", "arabic_lexical"}:
+        vector_retrieval = candidate.metadata.get("vector_retrieval")
+        hydrated_vector = (
+            candidate.tool == "pgvector"
+            and isinstance(vector_retrieval, dict)
+            and vector_retrieval.get("hydrated_to_canonical") is True
+        )
+        if (
+            candidate.tool not in {"metadata", "lexical", "reference_exact", "arabic_lexical"}
+            and not hydrated_vector
+        ):
             continue
         if not candidate.chunk_id:
             continue

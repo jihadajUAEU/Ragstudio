@@ -18,7 +18,10 @@ from ragstudio.services.retrieval_evidence import (
     plan_for_query,
 )
 from ragstudio.services.retrieval_fusion import RetrievalFusion
-from ragstudio.services.retrieval_orchestrator import RetrievalOrchestrator
+from ragstudio.services.retrieval_orchestrator import (
+    RetrievalOrchestrator,
+    _graph_seed_candidates,
+)
 from ragstudio.services.runtime_types import RuntimeQueryResult
 
 
@@ -36,6 +39,28 @@ def test_plan_for_count_query_prefers_metadata_and_native():
     assert plan.use_relationships is True
     assert plan.candidate_limit == 20
     assert plan.document_ids == ["doc-1"]
+
+
+def test_graph_seed_candidates_accept_hydrated_vector_hits():
+    vector = EvidenceCandidate(
+        candidate_id="vector:chunk-1",
+        text="Hydrated canonical text",
+        document_id="doc-1",
+        chunk_id="chunk-1",
+        source_location={"page": 1},
+        metadata={
+            "vector_retrieval": {"hydrated_to_canonical": True},
+            "quality_action_policy": {"project_graph": True},
+        },
+        tool="pgvector",
+        tool_rank=1,
+        base_score=0.9,
+        retrieval_pass="vector_db",
+    )
+
+    seeds = _graph_seed_candidates([vector], document_ids=["doc-1"], max_seeds=5)
+
+    assert [seed.chunk_id for seed in seeds] == ["chunk-1"]
 
 
 @pytest.mark.asyncio
