@@ -25,7 +25,7 @@
 - Modify: `docs/benchmarks/ragstudio-oss-proof-v1/manifest.json:102-105`
 - Reference: `docs/benchmarks/ragstudio-oss-proof-v1/artifacts/retrieval-run.export.json`
 
-- [ ] **Step 1: Confirm the current retrieval artifact hash**
+- [x] **Step 1: Confirm the current retrieval artifact hash**
 
   Run:
 
@@ -44,7 +44,7 @@
   0b83f358b0146e21ecc6710edb8f4eedafda3577ee3cd9272bb66ff97fb2332a
   ```
 
-- [ ] **Step 2: Update the manifest hash**
+- [x] **Step 2: Update the manifest hash**
 
   Change `docs/benchmarks/ragstudio-oss-proof-v1/manifest.json` so this block:
 
@@ -66,7 +66,7 @@
   }
   ```
 
-- [ ] **Step 3: Run strict proof validation**
+- [x] **Step 3: Run strict proof validation**
 
   Run:
 
@@ -90,7 +90,7 @@
   "schema_valid": true
   ```
 
-- [ ] **Step 4: Re-run focused architecture validation**
+- [x] **Step 4: Re-run focused architecture validation**
 
   Run:
 
@@ -105,7 +105,7 @@
   170 passed
   ```
 
-- [ ] **Step 5: Run lint**
+- [x] **Step 5: Run lint**
 
   Run:
 
@@ -119,7 +119,7 @@
   All checks passed!
   ```
 
-- [ ] **Step 6: Commit and push**
+- [x] **Step 6: Commit and push**
 
   Run:
 
