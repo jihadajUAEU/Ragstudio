@@ -29,6 +29,11 @@ class QueryPathwayDiagnosticsService:
             query_config=query_config,
         )
         return [
+            _retrieval_route_plan(context),
+            _retrieval_lanes(context),
+            _layout_neighbor_expansion(context),
+            _context_window(context),
+            _reranker(context),
             _planner(context),
             _llm_planning(context),
             _metadata_retrieval(context),
@@ -68,6 +73,121 @@ class _DiagnosticContext:
 
     def trace(self, stage: str) -> dict[str, Any] | None:
         return next((trace for trace in self.traces if trace.get("stage") == stage), None)
+
+
+def _retrieval_route_plan(context: _DiagnosticContext) -> dict[str, Any]:
+    trace = context.trace("retrieval_route_plan")
+    output = _join_parts(
+        [
+            _field("domain", _text(trace, "domain_profile_id") or _text(trace, "domain_id")),
+            _field("layout", _text(trace, "layout_hint")),
+            _field("materialization", _text(trace, "materialization_hint")),
+            _field("source", _text(trace, "source_of_truth")),
+        ]
+    )
+    return _row(
+        "retrieval_route_plan",
+        "Retrieval route plan",
+        "query + domain metadata + runtime profile",
+        "Resolve the retrieval route across domain, layout, and context lanes",
+        output or "not recorded",
+        _status_from_text(_text(trace, "status") or ("success" if trace else None)),
+        _number(context.timings, "route_plan_ms"),
+        None,
+        trace_present=trace is not None,
+    )
+
+
+def _retrieval_lanes(context: _DiagnosticContext) -> dict[str, Any]:
+    lane_traces = _lane_traces(context)
+    visible_lanes = [
+        trace for trace in lane_traces if _text(trace, "lane") not in {"context_window", "reranker"}
+    ]
+    output = "; ".join(
+        f"{_text(trace, 'lane') or 'lane'} {_text(trace, 'status') or 'unknown'}: "
+        f"{int(_number(trace, 'candidate_count') or 0)} candidates"
+        for trace in visible_lanes
+    )
+    return _row(
+        "retrieval_lanes",
+        "Retrieval lanes",
+        "route plan + selected documents",
+        "Run planned canonical, metadata, vector, runtime, and graph lanes",
+        output or "no retrieval lanes recorded",
+        "success" if visible_lanes else "unknown",
+        _number(context.timings, "retrieval_ms"),
+        None,
+        trace_present=bool(visible_lanes),
+    )
+
+
+def _layout_neighbor_expansion(context: _DiagnosticContext) -> dict[str, Any]:
+    trace = context.trace("layout_neighbor_expansion")
+    layout_groups = _string_list(trace.get("layout_group_ids") if trace else None)
+    reading_order = "yes" if trace and trace.get("reading_order_neighbors") is True else "no"
+    output = _join_parts(
+        [
+            f"{int(_number(trace, 'candidate_count') or 0)} candidates" if trace else "",
+            _field("layout groups", ", ".join(layout_groups) if layout_groups else None),
+            _field("reading order neighbors", reading_order if trace else None),
+        ]
+    )
+    return _row(
+        "layout_neighbor_expansion",
+        "Layout neighbor expansion",
+        "seed evidence + source layout metadata",
+        "Add same-page, same-layout-group, and reading-order neighbors",
+        output or "not recorded",
+        _status_from_text(_text(trace, "status") or ("success" if trace else None)),
+        _number(context.timings, "layout_neighbor_ms"),
+        None,
+        trace_present=trace is not None,
+    )
+
+
+def _context_window(context: _DiagnosticContext) -> dict[str, Any]:
+    trace = _lane_trace(context, "context_window")
+    reasons = _reason_counts(_record(trace.get("relationship_reasons") if trace else None))
+    reason_text = "; ".join(f"{key}: {value}" for key, value in reasons.items())
+    output = _join_parts(
+        [
+            f"{int(_number(trace, 'candidate_count') or 0)} candidates" if trace else "",
+            reason_text,
+        ]
+    )
+    return _row(
+        "context_window",
+        "Context window",
+        "direct evidence + chunk relationships",
+        "Hydrate parent, sibling, previous, next, and linked context",
+        output or "not recorded",
+        _status_from_text(_text(trace, "status") or ("success" if trace else None)),
+        _number(context.timings, "context_window_ms"),
+        None,
+        trace_present=trace is not None,
+    )
+
+
+def _reranker(context: _DiagnosticContext) -> dict[str, Any]:
+    trace = _lane_trace(context, "reranker")
+    rank_deltas = _record(trace.get("rank_deltas") if trace else None) or {}
+    output = _join_parts(
+        [
+            f"{int(_number(trace, 'candidate_count') or 0)} candidates" if trace else "",
+            _field("rank changes", len(rank_deltas) if trace else None),
+        ]
+    )
+    return _row(
+        "reranker",
+        "Reranker",
+        "fused evidence candidates",
+        "Reorder evidence candidates and record rank deltas",
+        output or "not recorded",
+        _status_from_text(_text(trace, "status") or ("success" if trace else None)),
+        _number(trace, "latency_ms") or _number(context.timings, "rerank_ms"),
+        None,
+        trace_present=trace is not None,
+    )
 
 
 def _planner(context: _DiagnosticContext) -> dict[str, Any]:
@@ -282,10 +402,20 @@ def _context_assembly(context: _DiagnosticContext) -> dict[str, Any]:
     status = _status_from_trace(trace)
     if status == "unknown" and trace is not None:
         status = "success"
+    assembled_context = _record(trace.get("assembled_context") if trace else None) or {}
+    evidence_ids = _string_list(assembled_context.get("evidence_ids"))
     output = _join_parts(
         [
-            _field("included", _number(trace, "included_candidates")),
-            _field("dropped", _number(trace, "dropped_candidates")),
+            _field(
+                "included",
+                int(included) if (included := _number(trace, "included_candidates")) is not None else None,
+            ),
+            _field(
+                "dropped",
+                int(dropped) if (dropped := _number(trace, "dropped_candidates")) is not None else None,
+            ),
+            _field("evidence", ", ".join(evidence_ids) if evidence_ids else None),
+            _field("grounding", _text(assembled_context, "grounding_status")),
         ]
     )
     return _row(
@@ -451,7 +581,7 @@ def _status_from_text(
     if value is None:
         return "unknown"
     normalized = value.strip().casefold()
-    success = {"ok", "success", "succeeded", "valid", "confirmed", "grounded"}
+    success = {"ok", "ran", "success", "succeeded", "valid", "confirmed", "grounded"}
     if success_values:
         success |= success_values
     if normalized in success:
@@ -523,6 +653,29 @@ def _field(label: str, value: Any) -> str:
 
 def _join_parts(parts: list[str]) -> str:
     return "; ".join(part for part in parts if part)
+
+
+def _lane_traces(context: _DiagnosticContext) -> list[dict[str, Any]]:
+    return [
+        trace
+        for trace in context.traces
+        if isinstance(trace, dict) and trace.get("stage") == "retrieval_lane_result"
+    ]
+
+
+def _lane_trace(context: _DiagnosticContext, lane: str) -> dict[str, Any] | None:
+    return next((trace for trace in _lane_traces(context) if trace.get("lane") == lane), None)
+
+
+def _reason_counts(reasons: dict[str, Any] | None) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    if not reasons:
+        return counts
+    for reason in reasons.values():
+        key = str(reason).strip()
+        if key:
+            counts[key] = counts.get(key, 0) + 1
+    return counts
 
 
 def _record(value: Any) -> dict[str, Any] | None:

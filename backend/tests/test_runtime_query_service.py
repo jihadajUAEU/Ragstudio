@@ -252,12 +252,19 @@ async def test_query_service_uses_runtime_orchestrator_path(client):
     assert run.sources[0]["filename"] == "doc.txt"
     assert run.sources[0]["runtime_profile_id"] == "default"
     assert run.sources[0]["metadata"]["document_name"] == "doc.txt"
-    assert [row.stage for row in run.pathway_diagnostics][:3] == [
+    assert [row.stage for row in run.pathway_diagnostics][:5] == [
+        "retrieval_route_plan",
+        "retrieval_lanes",
+        "layout_neighbor_expansion",
+        "context_window",
+        "reranker",
+    ]
+    assert [row.stage for row in run.pathway_diagnostics][5:8] == [
         "planner",
         "llm_planning",
         "metadata_retrieval",
     ]
-    assert run.pathway_diagnostics[0].input == "query + selected documents"
+    assert run.pathway_diagnostics[5].input == "query + selected documents"
     assert "pathway_diagnostics" not in run.token_metadata
 
 
