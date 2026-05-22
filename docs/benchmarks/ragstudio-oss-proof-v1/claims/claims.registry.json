@@ -1,7 +1,7 @@
 {
   "packet_id": "ragstudio-oss-proof-v1",
   "registry_version": "0.1.0",
-  "source_commit": "03c2db457506725c44e3563395bfe6ed3dbe02c8",
+  "source_commit": "f907ddd36870b7c489e87a74779778254f434fcb",
   "claim_counts": {
     "proven": 3,
     "roadmap": 1,
@@ -118,7 +118,7 @@
       "status": "proven",
       "summary": "Ragstudio preserves canonical chunk identity, quality policy, layout provenance, lane decisions, and context breadcrumbs across retrieval lanes before answer assembly.",
       "source": {
-        "source_commit": "03c2db457506725c44e3563395bfe6ed3dbe02c8",
+        "source_commit": "f907ddd36870b7c489e87a74779778254f434fcb",
         "code_paths": [
           "backend/src/ragstudio/services/domain_classifier.py",
           "backend/src/ragstudio/services/domain_profile_registry.py",
@@ -138,7 +138,7 @@
           "evidence_type": "retrieval_trace",
           "public": true,
           "redaction_status": "passed",
-          "description": "Public retrieval-run artifact carries canonical identity, quality policy, layout provenance, lane decisions, reranker state, and context breadcrumbs across metadata, vector, graph, runtime, reranker, and context assembly traces."
+          "description": "Public retrieval-run artifact carries canonical identity, quality policy, layout-neighbor expansion, context-window parent/sibling/adjacent links, lane decisions, reranker state, and context breadcrumbs across metadata, vector, graph, runtime, reranker, and context assembly traces."
         }
       ],
       "limitations": [

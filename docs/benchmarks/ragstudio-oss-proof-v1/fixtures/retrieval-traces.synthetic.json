@@ -107,6 +107,31 @@
       }
     },
     {
+      "stage": "layout_neighbor_expansion",
+      "status": "ran",
+      "reason": "same_page_reference_layout_group_or_reading_order_neighbors",
+      "candidate_count": 1,
+      "candidate_ids": [
+        "layout-neighbor:chunk-srg-002"
+      ],
+      "canonical_chunk_ids": [
+        "chunk-srg-002"
+      ],
+      "document_ids": [
+        "synthetic-reference-guide"
+      ],
+      "latency_ms": 2.4,
+      "timed_out": false,
+      "partial": false,
+      "layout_group_ids": [
+        "table-srg-001"
+      ],
+      "reading_order_neighbors": true,
+      "layout_summaries": {
+        "chunk-srg-002": "table; page=2; layout_group=table-srg-001"
+      }
+    },
+    {
       "stage": "retrieval_lane_result",
       "lane": "graph",
       "status": "ran",
@@ -179,6 +204,37 @@
           "before": 2,
           "after": 2
         }
+      }
+    },
+    {
+      "stage": "retrieval_lane_result",
+      "lane": "context_window",
+      "status": "ran",
+      "reason": "adjacent_parent_sibling_context_window",
+      "candidate_count": 4,
+      "candidate_ids": [
+        "context-window:chunk-srg-parent",
+        "context-window:chunk-srg-prev",
+        "context-window:chunk-srg-sibling",
+        "context-window:chunk-srg-next"
+      ],
+      "canonical_chunk_ids": [
+        "chunk-srg-parent",
+        "chunk-srg-prev",
+        "chunk-srg-sibling",
+        "chunk-srg-next"
+      ],
+      "document_ids": [
+        "synthetic-reference-guide"
+      ],
+      "latency_ms": 2.8,
+      "timed_out": false,
+      "partial": false,
+      "relationship_reasons": {
+        "chunk-srg-parent": "parent_context",
+        "chunk-srg-prev": "linked_context",
+        "chunk-srg-sibling": "sibling_context",
+        "chunk-srg-next": "reading_order_adjacent_and_linked_context"
       }
     },
     {

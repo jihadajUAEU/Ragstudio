@@ -2,7 +2,7 @@
   "packet_id": "ragstudio-oss-proof-v1",
   "packet_version": "0.1.0",
   "schema_version": "2020-12",
-  "source_commit": "03c2db457506725c44e3563395bfe6ed3dbe02c8",
+  "source_commit": "f907ddd36870b7c489e87a74779778254f434fcb",
   "generated_at": "2026-05-14T09:30:02Z",
   "generated_from": {
     "repository": "Ragstudio",
@@ -101,7 +101,7 @@
     },
     "artifacts/retrieval-run.export.json": {
       "algorithm": "sha256",
-      "value": "d264bd32dc31c77edf869d9c651643d4c51f365e19a82fdbec3d7e1afd87602e",
+      "value": "1c058b5c84fca2de5d55e0bac958829ca618c6bdcd70d992d91b2946e604184b",
       "redaction_status": "passed"
     },
     "screenshots/documents-page-desktop-empty-state.png": {
