@@ -171,6 +171,9 @@ async def test_orchestrator_expands_layout_neighbors_from_seed_candidates(
     assert traces[0]["candidate_ids"] == ["layout-neighbor:neighbor-layout-orchestrator"]
     assert traces[0]["canonical_chunk_ids"] == ["neighbor-layout-orchestrator"]
     assert traces[0]["document_ids"] == ["doc-layout-neighbor-orchestrator"]
+    assert traces[0]["latency_ms"] >= 0
+    assert traces[0]["timed_out"] is False
+    assert traces[0]["partial"] is False
     assert traces[0]["layout_group_ids"] == ["figure-2"]
     assert traces[0]["reading_order_neighbors"] is True
     assert traces[0]["layout_summaries"]["neighbor-layout-orchestrator"] == "text; page=2"
@@ -286,12 +289,12 @@ async def test_orchestrator_expands_context_window_from_seed_candidates(
     assert traces[0]["relationship_reasons"][
         "parent-context-window-orchestrator"
     ] == "parent_context"
-    assert "linked_context" in traces[0]["relationship_reasons"][
-        "prev-context-window-orchestrator"
-    ]
-    assert "linked_context" in traces[0]["relationship_reasons"][
-        "next-context-window-orchestrator"
-    ]
+    assert traces[0]["relationship_reasons"]["prev-context-window-orchestrator"] == (
+        "reading_order_adjacent_and_linked_context"
+    )
+    assert traces[0]["relationship_reasons"]["next-context-window-orchestrator"] == (
+        "reading_order_adjacent_and_linked_context"
+    )
     assert traces[0]["relationship_reasons"][
         "sibling-context-window-orchestrator"
     ] == "sibling_context"
