@@ -189,7 +189,7 @@ def arabic_research_domain_metadata() -> dict[str, object]:
 def mixed_admin_domain_metadata() -> dict[str, object]:
     return {
         "domain": "admin",
-        "document_type": "policy",
+        "document_type": "memo",
         "language": "mixed",
         "tags": {"arabic", "internal"},
         "script": " Mixed ",
@@ -314,7 +314,7 @@ def test_domain_query_expansion_does_not_cross_script_expand_research_text():
 
     result = service.expand("hanan", domain_metadata=[research_domain_metadata()])
 
-    assert result.domain_family == "generic"
+    assert result.domain_family == "research_semantic"
     assert result.expansions == []
     assert result.retrieval_passes == []
     assert result.trace["expanded_terms"] == []
@@ -326,7 +326,7 @@ def test_domain_query_expansion_keeps_arabic_research_and_admin_generic():
     research_result = service.expand("hanan", domain_metadata=[arabic_research_domain_metadata()])
     admin_result = service.expand("hanan", domain_metadata=[mixed_admin_domain_metadata()])
 
-    assert research_result.domain_family == "generic"
+    assert research_result.domain_family == "research_semantic"
     assert research_result.expansions == []
     assert research_result.retrieval_passes == []
     assert admin_result.domain_family == "generic"
@@ -342,3 +342,26 @@ def test_domain_query_expansion_trace_terms_are_not_mutated_by_expansion_terms()
 
     assert result.trace["expanded_terms"] == ["حنانا", "وحنانا"]
     assert result.trace["expansions"][0]["terms"] == ["حنانا", "وحنانا"]
+
+
+def test_domain_query_expansion_uses_legal_keyword_adapter():
+    expansion = DomainQueryExpansionService().expand(
+        "breach of contract section 12",
+        domain_metadata=[{"domain": "legal", "document_type": "contract"}],
+    )
+
+    assert expansion.domain_family == "legal_reference"
+    assert "agreement" in expansion.trace["expanded_terms"]
+    assert "article" in expansion.trace["expanded_terms"]
+    assert any(pass_.name == "lexical_expanded_token" for pass_ in expansion.retrieval_passes)
+
+
+def test_domain_query_expansion_uses_financial_keyword_adapter():
+    expansion = DomainQueryExpansionService().expand(
+        "invoice tax amount",
+        domain_metadata=[{"domain": "finance", "document_type": "invoice"}],
+    )
+
+    assert expansion.domain_family == "financial_reference"
+    assert "bill" in expansion.trace["expanded_terms"]
+    assert "vat" in expansion.trace["expanded_terms"]

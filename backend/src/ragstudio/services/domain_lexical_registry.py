@@ -1,5 +1,12 @@
 from typing import Any, Protocol
 
+from ragstudio.services.domain_classifier import DomainClassifier
+from ragstudio.services.domain_lexical_adapters import (
+    CODE_LEXICAL_ADAPTER,
+    FINANCIAL_LEXICAL_ADAPTER,
+    LEGAL_LEXICAL_ADAPTER,
+    MEDICAL_LEXICAL_ADAPTER,
+)
 from ragstudio.services.lexical_language_adapters import ArabicLexicalAdapter, LexicalExpansion
 
 
@@ -15,6 +22,10 @@ class DomainLexicalRegistry:
     def __init__(self) -> None:
         self._adapters: dict[str, list[DomainLexicalAdapter]] = {}
         self.register("arabic_religious", ArabicLexicalAdapter())
+        self.register("legal_reference", LEGAL_LEXICAL_ADAPTER)
+        self.register("medical_reference", MEDICAL_LEXICAL_ADAPTER)
+        self.register("financial_reference", FINANCIAL_LEXICAL_ADAPTER)
+        self.register("code_reference", CODE_LEXICAL_ADAPTER)
         self._family_triggers: dict[str, set[str]] = {
             "arabic_religious": {
                 "quran",
@@ -90,26 +101,5 @@ class DomainLexicalRegistry:
         existing.update(t.strip().casefold() for t in triggers if t.strip())
 
     def resolve_domain_family(self, domain_metadata: list[dict[str, Any]]) -> str:
-        signals: set[str] = set()
-        for metadata in domain_metadata:
-            if not isinstance(metadata, dict):
-                continue
-            raw_tags = metadata.get("tags")
-            tags = raw_tags if isinstance(raw_tags, list | tuple | set) else []
-            signals.update(
-                normalized_value
-                for value in [
-                    metadata.get("domain"),
-                    metadata.get("document_type"),
-                    metadata.get("content_role"),
-                    *tags,
-                ]
-                if isinstance(value, str)
-                if (normalized_value := value.strip().casefold())
-            )
-        
-        for family, triggers in self._family_triggers.items():
-            if signals & triggers:
-                return family
-        return "generic"
+        return DomainClassifier().classify(domain_metadata).domain_family
 
