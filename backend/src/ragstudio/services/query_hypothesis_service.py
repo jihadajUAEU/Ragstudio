@@ -6,6 +6,8 @@ from dataclasses import asdict, dataclass, field, replace
 from typing import Any
 
 import httpx
+from ragstudio.services.http_client_provider import HttpClientProviderProtocol
+from ragstudio.services.http_retry import raise_for_transient_status, retry_async_http
 
 _ALLOWED_INTENTS = {
     "find_word_occurrence",
@@ -134,6 +136,9 @@ class QueryHypothesis:
 
 
 class QueryHypothesisService:
+    def __init__(self, http_client_provider: HttpClientProviderProtocol | None = None) -> None:
+        self.http_client_provider = http_client_provider
+
     async def hypothesize(
         self,
         query: str,
@@ -156,14 +161,31 @@ class QueryHypothesisService:
             headers["authorization"] = f"Bearer {api_key}"
 
         try:
-            async with httpx.AsyncClient(timeout=max(timeout_ms, 1) / 1000) as client:
-                response = await client.post(
-                    _chat_url(str(profile.llm_base_url)),
-                    headers=headers,
-                    json=payload,
+            timeout = max(timeout_ms, 1) / 1000
+            if self.http_client_provider is not None:
+                client = self.http_client_provider.client("query-hypothesis", timeout=timeout)
+                response = await retry_async_http(
+                    lambda: self._post_for_retry(
+                        client,
+                        _chat_url(str(profile.llm_base_url)),
+                        headers=headers,
+                        json=payload,
+                    ),
+                    attempts=2,
                 )
-                response.raise_for_status()
-                raw = _json_content(response.json())
+            else:
+                async with httpx.AsyncClient(timeout=timeout) as client:
+                    response = await retry_async_http(
+                        lambda: self._post_for_retry(
+                            client,
+                            _chat_url(str(profile.llm_base_url)),
+                            headers=headers,
+                            json=payload,
+                        ),
+                        attempts=2,
+                    )
+            response.raise_for_status()
+            raw = _json_content(response.json())
         except Exception as exc:
             return QueryHypothesis.empty(
                 query,
@@ -174,6 +196,18 @@ class QueryHypothesisService:
         if hypothesis.valid:
             return replace(hypothesis, source="llm", reason=None)
         return hypothesis
+
+    async def _post_for_retry(
+        self,
+        client: httpx.AsyncClient,
+        url: str,
+        *,
+        headers: dict[str, str],
+        json: dict[str, object],
+    ) -> httpx.Response:
+        response = await client.post(url, headers=headers, json=json)
+        raise_for_transient_status(response)
+        return response
 
     def deterministic_hypothesis(
         self,

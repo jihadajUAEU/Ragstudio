@@ -21,6 +21,7 @@ async def query(
             request.app.state.settings.data_dir,
             settings=request.app.state.settings,
             session_factory=request.app.state.session_factory,
+            http_client_provider=request.app.state.http_clients,
             reranker_service=RerankerService(
                 allowed_hosts=request.app.state.settings.allowed_reranker_hosts,
                 http_client_provider=request.app.state.http_clients,
@@ -41,6 +42,7 @@ async def simulate_retrieval(
             session,
             request.app.state.settings.data_dir,
             settings=request.app.state.settings,
+            http_client_provider=request.app.state.http_clients,
         ).simulate_retrieval(payload)
     except QueryResourceNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc

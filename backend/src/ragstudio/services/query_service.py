@@ -11,6 +11,7 @@ from ragstudio.schemas.runs import RunOut
 from ragstudio.schemas.runtime import RuntimeHealthCheck
 from ragstudio.services.adapter import RAGAnythingAdapter
 from ragstudio.services.chunk_service import ChunkService
+from ragstudio.services.http_client_provider import HttpClientProviderProtocol
 from ragstudio.services.index_progress import index_shape_compatible
 from ragstudio.services.metadata_retrieval_service import MetadataRetrievalService
 from ragstudio.services.query_pathway_diagnostics_service import (
@@ -63,6 +64,7 @@ class QueryService:
         reranker_service: RerankerService | None = None,
         retrieval_orchestrator: RetrievalOrchestrator | None = None,
         session_factory: async_sessionmaker[AsyncSession] | None = None,
+        http_client_provider: HttpClientProviderProtocol | None = None,
     ):
         self.session = session
         self.data_dir = data_dir
@@ -74,10 +76,12 @@ class QueryService:
             verify_storage=True,
         )
         self.reranker_service = reranker_service or RerankerService(
-            allowed_hosts=settings.allowed_reranker_hosts if settings else None
+            allowed_hosts=settings.allowed_reranker_hosts if settings else None,
+            http_client_provider=http_client_provider,
         )
         self.retrieval_orchestrator = retrieval_orchestrator
         self.session_factory = session_factory
+        self.http_client_provider = http_client_provider
 
     async def run_query(self, payload: QueryIn) -> QueryOut:
         await self._validate_query_inputs(payload)
@@ -163,7 +167,12 @@ class QueryService:
 
     async def simulate_retrieval(self, payload: SimulateRetrievalIn) -> SimulateRetrievalOut:
         await self._validate_simulation_inputs(payload)
-        result = await ChunkService(self.session, self.data_dir, self.adapter).search(
+        result = await ChunkService(
+            self.session,
+            self.data_dir,
+            self.adapter,
+            http_client_provider=self.http_client_provider,
+        ).search(
             ChunkSearchIn(
                 query=payload.query,
                 document_ids=payload.document_ids,
@@ -329,10 +338,16 @@ class QueryService:
     def _retrieval_orchestrator(self) -> RetrievalOrchestrator:
         if self.retrieval_orchestrator is not None:
             return self.retrieval_orchestrator
-        chunk_service = ChunkService(self.session, self.data_dir, self.adapter)
+        chunk_service = ChunkService(
+            self.session,
+            self.data_dir,
+            self.adapter,
+            http_client_provider=self.http_client_provider,
+        )
         return RetrievalOrchestrator(
             chunk_service=chunk_service,
             reranker_service=self.reranker_service,
+            http_client_provider=self.http_client_provider,
             metadata_retrieval_service=MetadataRetrievalService(
                 chunk_service,
                 parallel_search=self._parallel_metadata_search(),
@@ -345,7 +360,12 @@ class QueryService:
 
         async def search(search_in):
             async with self.session_factory() as session:
-                return await ChunkService(session, self.data_dir, self.adapter).search(search_in)
+                return await ChunkService(
+                    session,
+                    self.data_dir,
+                    self.adapter,
+                    http_client_provider=self.http_client_provider,
+                ).search(search_in)
 
         return search
 

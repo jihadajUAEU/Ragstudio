@@ -21,6 +21,7 @@ from ragstudio.services.index_lifecycle_service import (
     IndexLifecycleService,
     RuntimeHealthBlockedError,
 )
+from ragstudio.services.http_client_provider import HttpClientProviderProtocol
 from ragstudio.services.index_progress import (
     IndexStage,
     index_shape_compatible,
@@ -45,10 +46,18 @@ class ActiveIndexJobError(RuntimeError):
 
 
 class DocumentService:
-    def __init__(self, session: AsyncSession, data_dir: Path, settings: AppSettings | None = None):
+    def __init__(
+        self,
+        session: AsyncSession,
+        data_dir: Path,
+        settings: AppSettings | None = None,
+        *,
+        http_client_provider: HttpClientProviderProtocol | None = None,
+    ):
         self.session = session
         self.store = ArtifactStore(data_dir)
         self.settings = settings
+        self.http_client_provider = http_client_provider
         self.queued_index_job_id: str | None = None
 
     async def upload(
@@ -459,6 +468,7 @@ class DocumentService:
             lifecycle_result = await IndexLifecycleService(
                 self.session,
                 self.settings,
+                http_client_provider=self.http_client_provider,
             ).reindex_document(
                 document.id,
                 options=options,
@@ -470,7 +480,11 @@ class DocumentService:
                 dict(lifecycle_result.graph_materialization) if lifecycle_result is not None else {}
             )
         else:
-            chunks = await ChunkService(self.session, self.store.root).index_document(
+            chunks = await ChunkService(
+                self.session,
+                self.store.root,
+                http_client_provider=self.http_client_provider,
+            ).index_document(
                 document.id,
                 options=options,
                 commit=False,

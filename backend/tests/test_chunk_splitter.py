@@ -23,6 +23,13 @@ def parser_warnings(chunk: AdapterChunk) -> list[dict[str, str]]:
     return chunk.metadata.get("extraction_quality", {}).get("parser_warnings", [])
 
 
+def test_chunk_splitter_threads_http_client_provider_to_content_normalizer():
+    provider = object()
+    splitter = ChunkSplitter(http_client_provider=provider)
+
+    assert splitter.content_normalizer.vision_recovery_client.http_client_provider is provider
+
+
 def tafseer_cross_reference_metadata() -> DomainMetadata:
     return DomainMetadata(
         domain="quran_tafseer",

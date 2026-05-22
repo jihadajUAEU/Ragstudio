@@ -9,6 +9,8 @@ from ragstudio.schemas.settings import (
     ProviderSyncPreviewOut,
     SettingsProfileOut,
 )
+from ragstudio.services.http_client_provider import HttpClientProviderProtocol
+from ragstudio.services.http_retry import raise_for_transient_status, retry_async_http
 
 SUPPORTED_SECTIONS = {"reasoning", "embeddings", "hpcMineru", "reranker"}
 KNOWN_SECTIONS = {"stt", "reasoning", "embeddings", "ragAnything", "hpcMineru", "reranker"}
@@ -20,6 +22,9 @@ class ProviderManifestError(Exception):
 
 
 class ProviderManifestService:
+    def __init__(self, http_client_provider: HttpClientProviderProtocol | None = None) -> None:
+        self.http_client_provider = http_client_provider
+
     async def preview(
         self,
         manifest_url: str,
@@ -47,8 +52,18 @@ class ProviderManifestService:
 
     async def _fetch_manifest(self, manifest_url: str, timeout_s: float) -> dict[str, Any]:
         try:
-            async with httpx.AsyncClient(timeout=timeout_s) as client:
-                response = await client.get(manifest_url)
+            if self.http_client_provider is not None:
+                client = self.http_client_provider.client("provider-manifest", timeout=timeout_s)
+                response = await retry_async_http(
+                    lambda: self._get_for_retry(client, manifest_url),
+                    attempts=2,
+                )
+            else:
+                async with httpx.AsyncClient(timeout=timeout_s) as client:
+                    response = await retry_async_http(
+                        lambda: self._get_for_retry(client, manifest_url),
+                        attempts=2,
+                    )
             if response.status_code >= 400:
                 raise ProviderManifestError(
                     f"Provider manifest returned HTTP {response.status_code}."
@@ -71,6 +86,11 @@ class ProviderManifestService:
                 )
         self._validate_supported_fields(payload)
         return payload
+
+    async def _get_for_retry(self, client: httpx.AsyncClient, url: str) -> httpx.Response:
+        response = await client.get(url)
+        raise_for_transient_status(response)
+        return response
 
     def _validate_supported_fields(self, manifest: dict[str, Any]) -> None:
         reasoning = manifest.get("reasoning")

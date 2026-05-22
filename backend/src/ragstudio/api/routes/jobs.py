@@ -87,11 +87,15 @@ async def job_events(
 @router.get("/{job_id}/quality-warnings", response_model=JobQualityWarningsOut)
 async def job_quality_warnings(
     job_id: str,
+    request: Request,
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=5000, ge=1, le=5000),
     session: AsyncSession = Depends(get_session),
 ) -> JobQualityWarningsOut:
-    details = await JobQualityWarningService(session).details(
+    details = await JobQualityWarningService(
+        session,
+        http_client_provider=request.app.state.http_clients,
+    ).details(
         job_id,
         offset=offset,
         limit=limit,
@@ -113,7 +117,10 @@ async def fix_job_quality_warnings(
 ) -> JobQualityWarningRepairOut:
     settings = request.app.state.settings
     try:
-        result = await JobQualityWarningService(session).queue_repair_job(
+        result = await JobQualityWarningService(
+            session,
+            http_client_provider=request.app.state.http_clients,
+        ).queue_repair_job(
             job_id,
             data_dir=settings.data_dir,
             settings=settings,

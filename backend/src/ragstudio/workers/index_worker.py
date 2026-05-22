@@ -12,7 +12,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from ragstudio.config import AppSettings
 from ragstudio.db.engine import init_db, make_engine, make_session_factory
 from ragstudio.db.models import Job
-from ragstudio.services.index_job_runner import IndexJobRunner
+from ragstudio.services.background_runner_factory import BackgroundRunnerFactory
+from ragstudio.services.http_client_provider import HttpClientProvider
 from ragstudio.services.job_queue_service import JobQueueService
 
 logger = logging.getLogger(__name__)
@@ -25,12 +26,21 @@ async def run_once(
     worker_id: str,
     lease_seconds: int = 300,
     session_factory: async_sessionmaker[AsyncSession] | None = None,
+    http_client_provider: HttpClientProvider | None = None,
 ) -> int:
     queue = JobQueueService(session)
+    runner_factory = BackgroundRunnerFactory(
+        session,
+        settings,
+        worker_id=worker_id,
+        lease_seconds=lease_seconds,
+        session_factory=session_factory,
+        http_client_provider=http_client_provider,
+    )
     await queue.recover_expired_jobs()
     job = await queue.claim_next(
         worker_id=worker_id,
-        job_types=["index_document"],
+        job_types=runner_factory.job_types,
         lease_seconds=lease_seconds,
     )
     if job is None:
@@ -41,13 +51,7 @@ async def run_once(
     await session.commit()
 
     try:
-        await IndexJobRunner(
-            session,
-            settings,
-            worker_id=worker_id,
-            lease_seconds=lease_seconds,
-            session_factory=session_factory,
-        ).run(job)
+        await runner_factory.runner_for(job).run(job)
         await session.commit()
         return 1
     except Exception as exc:
@@ -91,6 +95,7 @@ async def run_forever(
     engine = make_engine(settings.resolved_database_url)
     await init_db(engine)
     session_factory = make_session_factory(engine)
+    http_client_provider = HttpClientProvider()
     resolved_worker_id = worker_id or f"{socket.gethostname()}-{os.getpid()}"
 
     try:
@@ -103,6 +108,7 @@ async def run_forever(
                         worker_id=resolved_worker_id,
                         lease_seconds=lease_seconds,
                         session_factory=session_factory,
+                        http_client_provider=http_client_provider,
                     )
                 except Exception:
                     await session.rollback()
@@ -111,6 +117,7 @@ async def run_forever(
             if processed == 0:
                 await asyncio.sleep(poll_seconds)
     finally:
+        await http_client_provider.aclose()
         await engine.dispose()
 
 

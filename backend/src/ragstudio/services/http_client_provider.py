@@ -1,6 +1,12 @@
 from __future__ import annotations
 
+from typing import Protocol
+
 import httpx
+
+
+class HttpClientProviderProtocol(Protocol):
+    def client(self, name: str, *, timeout: float | httpx.Timeout = 30.0) -> httpx.AsyncClient: ...
 
 
 class HttpClientProvider:

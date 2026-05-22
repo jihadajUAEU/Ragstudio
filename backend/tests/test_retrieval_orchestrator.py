@@ -85,6 +85,16 @@ def test_evidence_from_context_applies_assembled_context_text():
     assert evidence[0].metadata["assembled_context"]["context_text_applied"] is True
 
 
+def test_retrieval_orchestrator_threads_http_client_provider_to_default_reranker():
+    provider = object()
+    orchestrator = RetrievalOrchestrator(
+        chunk_service=_ChunkServiceWithSession(None),
+        http_client_provider=provider,
+    )
+
+    assert orchestrator.reranker_service._http_client_provider is provider
+
+
 @pytest.mark.asyncio
 async def test_orchestrator_expands_layout_neighbors_from_seed_candidates(
     database_url, tmp_path

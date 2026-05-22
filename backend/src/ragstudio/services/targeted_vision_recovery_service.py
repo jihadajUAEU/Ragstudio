@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from ragstudio.services.adapter import AdapterChunk
+from ragstudio.services.http_client_provider import HttpClientProviderProtocol
 from ragstudio.services.parser_normalization import (
     VisionBlockRecoveryClient,
     VisionRecoveryConfig,
@@ -34,8 +35,15 @@ class VisionRecoveryClient(Protocol):
 
 
 class TargetedVisionRecoveryService:
-    def __init__(self, client: VisionRecoveryClient | None = None) -> None:
-        self.client = client or VisionBlockRecoveryClient()
+    def __init__(
+        self,
+        client: VisionRecoveryClient | None = None,
+        *,
+        http_client_provider: HttpClientProviderProtocol | None = None,
+    ) -> None:
+        self.client = client or VisionBlockRecoveryClient(
+            http_client_provider=http_client_provider
+        )
 
     async def recover(
         self,

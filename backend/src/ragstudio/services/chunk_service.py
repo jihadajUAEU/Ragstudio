@@ -15,6 +15,7 @@ from ragstudio.services.chunk_splitter import ChunkSplitter
 from ragstudio.services.document_parser_service import DocumentParserService
 from ragstudio.services.domain_metadata_quality_gate import DomainMetadataQualityGate
 from ragstudio.services.hybrid_chunk_search import ChunkScore, HybridChunkSearch
+from ragstudio.services.http_client_provider import HttpClientProviderProtocol
 from ragstudio.services.index_quality_gate import IndexQualityGate
 from ragstudio.services.mineru_client import MinerUClient
 from ragstudio.services.mineru_relationship_builder import MinerURelationshipBuilder
@@ -41,12 +42,15 @@ class ChunkService:
         relationship_builder: MinerURelationshipBuilder | None = None,
         document_parser: DocumentParserService | None = None,
         quality_gate: IndexQualityGate | None = None,
+        http_client_provider: HttpClientProviderProtocol | None = None,
     ):
         self.session = session
         self.data_dir = data_dir
         self.adapter = adapter or RAGAnythingAdapter()
         self.mineru_client_factory = mineru_client_factory or MinerUClient
-        self.chunk_splitter = chunk_splitter or ChunkSplitter()
+        self.chunk_splitter = chunk_splitter or ChunkSplitter(
+            http_client_provider=http_client_provider
+        )
         self.chunk_search = chunk_search or HybridChunkSearch()
         self.relationship_builder = relationship_builder or MinerURelationshipBuilder()
         self.quality_gate = quality_gate or IndexQualityGate()
@@ -55,6 +59,7 @@ class ChunkService:
             data_dir,
             local_parser=self.adapter,
             mineru_client_factory=self.mineru_client_factory,
+            http_client_provider=http_client_provider,
         )
 
     async def index_document(

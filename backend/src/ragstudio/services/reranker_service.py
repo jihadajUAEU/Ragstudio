@@ -25,9 +25,11 @@ class RerankerService:
         http_client_provider: HttpClientProvider | None = None,
     ):
         self.allowed_hosts = {host.lower() for host in (allowed_hosts or [])}
-        self.llm_reranker = llm_reranker or LLMRerankerService()
         self._http_client = http_client
         self._http_client_provider = http_client_provider
+        self.llm_reranker = llm_reranker or LLMRerankerService(
+            http_client_provider=http_client_provider
+        )
 
     async def rerank(
         self,

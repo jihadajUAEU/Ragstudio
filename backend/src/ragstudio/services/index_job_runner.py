@@ -14,6 +14,7 @@ from ragstudio.schemas.parsing import IndexDocumentIn
 from ragstudio.services.document_service import DocumentService
 from ragstudio.services.domain_metadata_quality_gate import DomainMetadataQualityGate
 from ragstudio.services.graph_projection_runner import GraphProjectionRunner
+from ragstudio.services.http_client_provider import HttpClientProviderProtocol
 from ragstudio.services.index_progress import IndexStage, update_job_stage
 from ragstudio.services.job_queue_service import JobLeaseLostError, JobQueueService
 from sqlalchemy import select, update
@@ -30,12 +31,14 @@ class IndexJobRunner:
         lease_seconds: int = 300,
         heartbeat_interval_seconds: float = 60.0,
         session_factory: async_sessionmaker[AsyncSession] | None = None,
+        http_client_provider: HttpClientProviderProtocol | None = None,
     ) -> None:
         self.session = session
         self.settings = settings
         self.worker_id = worker_id
         self.lease_seconds = lease_seconds
         self._external_session_factory = session_factory
+        self.http_client_provider = http_client_provider
         self.heartbeat_interval_seconds = min(
             heartbeat_interval_seconds,
             max(lease_seconds / 3, 1.0),
@@ -59,6 +62,7 @@ class IndexJobRunner:
                 self.session,
                 self.settings.data_dir,
                 settings=self.settings,
+                http_client_provider=self.http_client_provider,
             ).run_index_job(
                 target_id,
                 job.id,

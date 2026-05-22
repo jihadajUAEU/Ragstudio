@@ -42,6 +42,16 @@ class FakeAsyncClient:
         )
 
 
+class FakeProvider:
+    def __init__(self, client):
+        self.client_instance = client
+        self.requests = []
+
+    def client(self, name, *, timeout=30.0):
+        self.requests.append({"name": name, "timeout": timeout})
+        return self.client_instance
+
+
 def profile():
     return type(
         "Profile",
@@ -92,6 +102,26 @@ async def test_llm_reranker_reorders_chunks(monkeypatch):
     assert traces[0]["score"] == 0.98
     assert FakeAsyncClient.requests[0]["url"] == "http://127.0.0.1:8004/v1/chat/completions"
     assert FakeAsyncClient.requests[0]["json"]["model"] == "QuantTrio/Qwen3-VL-32B-Instruct-AWQ"
+
+
+@pytest.mark.asyncio
+async def test_llm_reranker_uses_injected_http_client_provider():
+    FakeAsyncClient.requests = []
+    provider = FakeProvider(FakeAsyncClient())
+    chunks = [
+        ChunkOut(id="first", document_id="doc-1", text="first", source_location={}, metadata={}),
+        ChunkOut(id="second", document_id="doc-1", text="second", source_location={}, metadata={}),
+    ]
+
+    reranked, _traces = await LLMRerankerService(http_client_provider=provider).rerank(
+        "query",
+        chunks,
+        profile(),
+    )
+
+    assert provider.requests == [{"name": "llm-reranker", "timeout": 5.0}]
+    assert reranked[0].id == "second"
+    assert FakeAsyncClient.requests[0]["url"] == "http://127.0.0.1:8004/v1/chat/completions"
 
 
 @pytest.mark.asyncio

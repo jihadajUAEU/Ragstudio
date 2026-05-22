@@ -74,7 +74,11 @@ async def upload_document(
     settings = request.app.state.settings
     await _ensure_runtime_ready(session, settings)
     try:
-        await ChunkService(session, settings.data_dir).validate_strict_mineru_sidecar(index_options)
+        await ChunkService(
+            session,
+            settings.data_dir,
+            http_client_provider=request.app.state.http_clients,
+        ).validate_strict_mineru_sidecar(index_options)
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
@@ -84,6 +88,7 @@ async def upload_document(
             session,
             settings.data_dir,
             settings=settings,
+            http_client_provider=request.app.state.http_clients,
         )
         document = await service.upload(
             filename=file.filename or "upload.bin",
@@ -110,6 +115,7 @@ async def reindex_document(
             session,
             settings.data_dir,
             settings=settings,
+            http_client_provider=request.app.state.http_clients,
         )
         if not await service.document_exists(document_id):
             raise HTTPException(status_code=404, detail="Document not found")
@@ -122,7 +128,11 @@ async def reindex_document(
             )
         await _ensure_runtime_ready(session, settings)
         try:
-            await ChunkService(session, settings.data_dir).validate_strict_mineru_sidecar(options)
+            await ChunkService(
+                session,
+                settings.data_dir,
+                http_client_provider=request.app.state.http_clients,
+            ).validate_strict_mineru_sidecar(options)
         except RuntimeError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         try:
@@ -147,6 +157,7 @@ async def rematerialize_document_graph(
         session,
         settings.data_dir,
         settings=settings,
+        http_client_provider=request.app.state.http_clients,
     )
     await service.lock_document_workflow(document_id)
     if not await service.document_exists(document_id):
@@ -249,6 +260,7 @@ async def list_documents(
         session,
         request.app.state.settings.data_dir,
         settings=request.app.state.settings,
+        http_client_provider=request.app.state.http_clients,
     ).list(limit=limit, offset=offset)
     return {
         "items": items,
@@ -270,6 +282,7 @@ async def delete_document(
             session,
             request.app.state.settings.data_dir,
             settings=request.app.state.settings,
+            http_client_provider=request.app.state.http_clients,
         ).delete_document(document_id)
     except (ActiveIndexJobError, GraphProjectionCleanupError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc

@@ -18,6 +18,7 @@ from ragstudio.services.domain_query_expansion_service import DomainQueryExpansi
 from ragstudio.services.evidence_first_answer_service import EvidenceFirstAnswerService
 from ragstudio.services.graph_expansion_service import GraphExpansionService
 from ragstudio.services.grounding_validator import GroundingValidator
+from ragstudio.services.http_client_provider import HttpClientProviderProtocol
 from ragstudio.services.layout_neighbor_service import LayoutNeighborService
 from ragstudio.services.metadata_retrieval_service import MetadataRetrievalService
 from ragstudio.services.query_hypothesis_service import (
@@ -113,10 +114,15 @@ class RetrievalOrchestrator:
         query_hypothesis_service: QueryHypothesisService | None = None,
         query_hypothesis_verifier: QueryHypothesisVerifier | None = None,
         vector_candidate_repository: Any | None = None,
+        http_client_provider: HttpClientProviderProtocol | None = None,
     ):
         self.chunk_service = chunk_service
-        self.answer_service = answer_service or RuntimeAnswerService()
-        self.reranker_service = reranker_service or RerankerService()
+        self.answer_service = answer_service or RuntimeAnswerService(
+            http_client_provider=http_client_provider
+        )
+        self.reranker_service = reranker_service or RerankerService(
+            http_client_provider=http_client_provider
+        )
         self.graph_expansion_service = graph_expansion_service or GraphExpansionService()
         self.context_assembly_service = context_assembly_service or ContextAssemblyService()
         self.retrieval_fusion = retrieval_fusion or RetrievalFusion()
@@ -131,7 +137,9 @@ class RetrievalOrchestrator:
         self.domain_query_expansion_service = (
             domain_query_expansion_service or DomainQueryExpansionService()
         )
-        self.query_hypothesis_service = query_hypothesis_service or QueryHypothesisService()
+        self.query_hypothesis_service = query_hypothesis_service or QueryHypothesisService(
+            http_client_provider=http_client_provider
+        )
         self.query_hypothesis_verifier = query_hypothesis_verifier or QueryHypothesisVerifier()
         self.vector_candidate_repository = vector_candidate_repository
 

@@ -16,6 +16,8 @@ from ragstudio.services.block_types import (
     TEXT_BLOCK_TYPES,
     VISION_TARGET_BLOCK_TYPES,
 )
+from ragstudio.services.http_client_provider import HttpClientProviderProtocol
+from ragstudio.services.http_retry import raise_for_transient_status, retry_async_http
 from ragstudio.services.script_detection import SCRIPT_PATTERNS
 
 VISION_RECOVERY_TRIGGERS = frozenset(
@@ -215,6 +217,9 @@ class _VisionRecoveryState:
 
 
 class VisionBlockRecoveryClient:
+    def __init__(self, http_client_provider: HttpClientProviderProtocol | None = None) -> None:
+        self.http_client_provider = http_client_provider
+
     async def recover_text(
         self,
         *,
@@ -253,19 +258,57 @@ class VisionBlockRecoveryClient:
 
         url = f"{config.base_url.rstrip('/')}/chat/completions"
         try:
-            async with httpx.AsyncClient(timeout=config.timeout_ms / 1000) as client:
-                response = await client.post(url, headers=headers, json=payload)
-                if response.status_code in {400, 422}:
-                    fallback_payload = dict(payload)
-                    fallback_payload.pop("response_format", None)
-                    response = await client.post(url, headers=headers, json=fallback_payload)
-                response.raise_for_status()
-                response_payload = response.json()
+            timeout = config.timeout_ms / 1000
+            if self.http_client_provider is not None:
+                client = self.http_client_provider.client("vision-recovery", timeout=timeout)
+                response = await self._post_completion(client, url, headers, payload)
+            else:
+                async with httpx.AsyncClient(timeout=timeout) as client:
+                    response = await self._post_completion(client, url, headers, payload)
+            response.raise_for_status()
+            response_payload = response.json()
         except httpx.HTTPError:
             return None
         except ValueError:
             return None
         return _parse_vision_recovery_text(response_payload)
+
+    async def _post_completion(
+        self,
+        client: httpx.AsyncClient,
+        url: str,
+        headers: dict[str, str],
+        payload: dict[str, object],
+    ) -> httpx.Response:
+        response = await retry_async_http(
+            lambda: self._post_for_retry(client, url, headers=headers, json=payload),
+            attempts=2,
+        )
+        if response.status_code in {400, 422}:
+            fallback_payload = dict(payload)
+            fallback_payload.pop("response_format", None)
+            response = await retry_async_http(
+                lambda: self._post_for_retry(
+                    client,
+                    url,
+                    headers=headers,
+                    json=fallback_payload,
+                ),
+                attempts=2,
+            )
+        return response
+
+    async def _post_for_retry(
+        self,
+        client: httpx.AsyncClient,
+        url: str,
+        *,
+        headers: dict[str, str],
+        json: dict[str, object],
+    ) -> httpx.Response:
+        response = await client.post(url, headers=headers, json=json)
+        raise_for_transient_status(response)
+        return response
 
 
 @dataclass(frozen=True)
@@ -312,8 +355,11 @@ class MinerUContentNormalizer:
         self,
         *,
         vision_recovery_client: VisionBlockRecoveryClient | None = None,
+        http_client_provider: HttpClientProviderProtocol | None = None,
     ) -> None:
-        self.vision_recovery_client = vision_recovery_client or VisionBlockRecoveryClient()
+        self.vision_recovery_client = vision_recovery_client or VisionBlockRecoveryClient(
+            http_client_provider=http_client_provider
+        )
 
     async def normalize_content_list(
         self,

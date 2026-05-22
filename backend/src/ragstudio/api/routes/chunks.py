@@ -14,4 +14,8 @@ async def search_chunks(
     request: Request,
     session: AsyncSession = Depends(get_session),
 ) -> ChunkSearchOut:
-    return await ChunkService(session, request.app.state.settings.data_dir).search(search_in)
+    return await ChunkService(
+        session,
+        request.app.state.settings.data_dir,
+        http_client_provider=request.app.state.http_clients,
+    ).search(search_in)

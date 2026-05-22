@@ -65,7 +65,9 @@ async def suggest_domain_metadata(
             detail="Could not sample pages from this file for AI metadata autosuggest.",
         )
     try:
-        return await DomainMetadataAiSuggester().suggest(
+        return await DomainMetadataAiSuggester(
+            http_client_provider=request.app.state.http_clients,
+        ).suggest(
             settings_profile=settings_profile,
             filename=filename,
             content_type=content_type,

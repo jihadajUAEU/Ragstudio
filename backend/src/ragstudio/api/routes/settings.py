@@ -63,6 +63,7 @@ async def put_default_settings(
 @router.post("/default/sync-provider-preview", response_model=ProviderSyncPreviewOut)
 async def sync_provider_preview(
     payload: ProviderSyncPreviewIn,
+    request: Request,
     session: AsyncSession = Depends(get_session),
 ) -> ProviderSyncPreviewOut:
     settings_service = SettingsService(session)
@@ -71,7 +72,9 @@ async def sync_provider_preview(
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=_legacy_profile_detail(exc)) from exc
     try:
-        return await ProviderManifestService().preview(payload.manifest_url, current)
+        return await ProviderManifestService(
+            http_client_provider=request.app.state.http_clients,
+        ).preview(payload.manifest_url, current)
     except ProviderManifestError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 

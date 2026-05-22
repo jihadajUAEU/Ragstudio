@@ -13,6 +13,8 @@ from pydantic import BaseModel, Field, ValidationError
 from ragstudio.db.models import SettingsProfile
 from ragstudio.schemas.parsing import DomainMetadata, DomainMetadataSuggestOut
 from ragstudio.services.domain_metadata_contract_compiler import compile_domain_metadata
+from ragstudio.services.http_client_provider import HttpClientProviderProtocol
+from ragstudio.services.http_retry import raise_for_transient_status, retry_async_http
 from ragstudio.services.metadata_json_schema import validate_custom_json
 from ragstudio.services.page_sampler import SampledPage
 
@@ -42,6 +44,9 @@ class AiMetadataSuggestion(BaseModel):
 
 
 class DomainMetadataAiSuggester:
+    def __init__(self, http_client_provider: HttpClientProviderProtocol | None = None) -> None:
+        self.http_client_provider = http_client_provider
+
     async def suggest(
         self,
         *,
@@ -189,18 +194,49 @@ class DomainMetadataAiSuggester:
         payload: dict[str, object],
     ) -> httpx.Response:
         url = f"{target.base_url.rstrip('/')}/chat/completions"
-        async with httpx.AsyncClient(timeout=target.timeout_ms / 1000) as client:
-            response = await client.post(url, headers=headers, json=payload)
-            if (
-                response.status_code not in {400, 422}
-                or "response_format" not in payload
-                or not self._is_response_format_rejection(response)
-            ):
-                return response
+        timeout = target.timeout_ms / 1000
+        if self.http_client_provider is not None:
+            client = self.http_client_provider.client("domain-metadata-ai", timeout=timeout)
+            return await self._post_completion_with_client(client, url, headers, payload)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            return await self._post_completion_with_client(client, url, headers, payload)
 
-            fallback_payload = dict(payload)
-            fallback_payload.pop("response_format", None)
-            return await client.post(url, headers=headers, json=fallback_payload)
+    async def _post_completion_with_client(
+        self,
+        client: httpx.AsyncClient,
+        url: str,
+        headers: dict[str, str],
+        payload: dict[str, object],
+    ) -> httpx.Response:
+        response = await retry_async_http(
+            lambda: self._post_for_retry(client, url, headers=headers, json=payload),
+            attempts=2,
+        )
+        if (
+            response.status_code not in {400, 422}
+            or "response_format" not in payload
+            or not self._is_response_format_rejection(response)
+        ):
+            return response
+
+        fallback_payload = dict(payload)
+        fallback_payload.pop("response_format", None)
+        return await retry_async_http(
+            lambda: self._post_for_retry(client, url, headers=headers, json=fallback_payload),
+            attempts=2,
+        )
+
+    async def _post_for_retry(
+        self,
+        client: httpx.AsyncClient,
+        url: str,
+        *,
+        headers: dict[str, str],
+        json: dict[str, object],
+    ) -> httpx.Response:
+        response = await client.post(url, headers=headers, json=json)
+        raise_for_transient_status(response)
+        return response
 
     def _is_response_format_rejection(self, response: httpx.Response) -> bool:
         try:

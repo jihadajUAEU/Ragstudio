@@ -18,6 +18,8 @@ from ragstudio.schemas.jobs import (
 from ragstudio.schemas.parsing import DomainMetadata, IndexDocumentIn
 from ragstudio.services.document_service import ActiveIndexJobError, DocumentService
 from ragstudio.services.domain_metadata_quality_gate import DomainMetadataQualityGate
+from ragstudio.services.http_client_provider import HttpClientProviderProtocol
+from ragstudio.services.http_retry import raise_for_transient_status, retry_async_http
 from ragstudio.services.parser_warning_utils import (
     dedupe_parser_warnings,
     is_counted_parser_warning,
@@ -39,8 +41,14 @@ class JobQualityWarningRepairUnavailable(RuntimeError):
 
 
 class JobQualityWarningService:
-    def __init__(self, session: AsyncSession):
+    def __init__(
+        self,
+        session: AsyncSession,
+        *,
+        http_client_provider: HttpClientProviderProtocol | None = None,
+    ):
         self.session = session
+        self.http_client_provider = http_client_provider
 
     async def details(
         self,
@@ -153,7 +161,12 @@ class JobQualityWarningService:
             settings=settings,
         )
         options = self._options_with_repair_plan(options, repair_plan)
-        document_service = DocumentService(self.session, data_dir, settings=settings)
+        document_service = DocumentService(
+            self.session,
+            data_dir,
+            settings=settings,
+            http_client_provider=self.http_client_provider,
+        )
         try:
             queued_job = await document_service.create_index_job(document_id, options)
         except ActiveIndexJobError as exc:
@@ -913,22 +926,19 @@ class JobQualityWarningService:
         timeout = min(max((profile.llm_timeout_ms or 10_000) / 1000, 30), 90)
 
         try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                response = await client.post(
-                    self._chat_url(profile.llm_base_url),
-                    headers=headers,
-                    json=payload,
-                )
-                if self._is_response_format_rejection(response):
-                    fallback_payload = dict(payload)
-                    fallback_payload.pop("response_format", None)
-                    response = await client.post(
-                        self._chat_url(profile.llm_base_url),
-                        headers=headers,
-                        json=fallback_payload,
+            if self.http_client_provider is not None:
+                client = self.http_client_provider.client("job-quality-repair", timeout=timeout)
+                response = await self._post_completion(client, profile.llm_base_url, headers, payload)
+            else:
+                async with httpx.AsyncClient(timeout=timeout) as client:
+                    response = await self._post_completion(
+                        client,
+                        profile.llm_base_url,
+                        headers,
+                        payload,
                     )
-                response.raise_for_status()
-                body = response.json()
+            response.raise_for_status()
+            body = response.json()
         except (httpx.HTTPError, json.JSONDecodeError, ValueError) as exc:
             return {
                 "status": "failed",
@@ -954,6 +964,48 @@ class JobQualityWarningService:
             "suggestion": suggestion,
             "usage": self._dict_value(body.get("usage")),
         }
+
+    async def _post_completion(
+        self,
+        client: httpx.AsyncClient,
+        base_url: str,
+        headers: dict[str, str],
+        payload: dict[str, Any],
+    ) -> httpx.Response:
+        response = await retry_async_http(
+            lambda: self._post_for_retry(
+                client,
+                self._chat_url(base_url),
+                headers=headers,
+                json=payload,
+            ),
+            attempts=2,
+        )
+        if self._is_response_format_rejection(response):
+            fallback_payload = dict(payload)
+            fallback_payload.pop("response_format", None)
+            response = await retry_async_http(
+                lambda: self._post_for_retry(
+                    client,
+                    self._chat_url(base_url),
+                    headers=headers,
+                    json=fallback_payload,
+                ),
+                attempts=2,
+            )
+        return response
+
+    async def _post_for_retry(
+        self,
+        client: httpx.AsyncClient,
+        url: str,
+        *,
+        headers: dict[str, str],
+        json: dict[str, Any],
+    ) -> httpx.Response:
+        response = await client.post(url, headers=headers, json=json)
+        raise_for_transient_status(response)
+        return response
 
     def _ai_repair_prompt(
         self,

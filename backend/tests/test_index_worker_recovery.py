@@ -99,6 +99,7 @@ async def test_worker_cycle_claims_and_runs_one_job(client, tmp_path, monkeypatc
             worker_id,
             lease_seconds=300,
             session_factory=None,
+            http_client_provider=None,
         ):
             self.session = session
             self.settings = settings
@@ -112,7 +113,10 @@ async def test_worker_cycle_claims_and_runs_one_job(client, tmp_path, monkeypatc
             job.worker_id = None
             job.lease_expires_at = None
 
-    monkeypatch.setattr("ragstudio.workers.index_worker.IndexJobRunner", FakeIndexJobRunner)
+    monkeypatch.setattr(
+        "ragstudio.services.background_runner_factory.IndexJobRunner",
+        FakeIndexJobRunner,
+    )
 
     from ragstudio.workers.index_worker import run_once
 
@@ -176,6 +180,7 @@ async def test_worker_cycle_recovers_expired_graph_projection_job(
             worker_id,
             lease_seconds=300,
             session_factory=None,
+            http_client_provider=None,
         ):
             self.session = session
             self.worker_id = worker_id
@@ -188,7 +193,10 @@ async def test_worker_cycle_recovers_expired_graph_projection_job(
             job.lease_expires_at = None
             job.recovery_action = None
 
-    monkeypatch.setattr("ragstudio.workers.index_worker.IndexJobRunner", FakeIndexJobRunner)
+    monkeypatch.setattr(
+        "ragstudio.services.background_runner_factory.IndexJobRunner",
+        FakeIndexJobRunner,
+    )
 
     from ragstudio.workers.index_worker import run_once
 

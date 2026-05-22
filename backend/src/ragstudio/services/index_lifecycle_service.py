@@ -15,6 +15,7 @@ from ragstudio.services.chunk_persistence_service import ChunkPersistenceService
 from ragstudio.services.chunk_splitter import ChunkSplitter
 from ragstudio.services.document_parser_service import DocumentParserService
 from ragstudio.services.graph_workspace import workspace_label
+from ragstudio.services.http_client_provider import HttpClientProviderProtocol
 from ragstudio.services.index_artifact_cleanup import cleanup_document_index_artifacts
 from ragstudio.services.index_progress import IndexStage
 from ragstudio.services.index_quality_gate import IndexQualityGate
@@ -73,6 +74,7 @@ class IndexLifecycleService:
         modal_preprocessor: Any | None = None,
         layout_auto_repair: LayoutAutoRepairService | None = None,
         targeted_vision_recovery: TargetedVisionRecoveryService | None = None,
+        http_client_provider: HttpClientProviderProtocol | None = None,
     ):
         self.session = session
         self.settings = settings
@@ -87,11 +89,12 @@ class IndexLifecycleService:
             session,
             settings.data_dir,
             commit_before_remote_parse=True,
+            http_client_provider=http_client_provider,
         )
         self.modal_preprocessor = modal_preprocessor or ModalPreprocessor()
         self.layout_auto_repair = layout_auto_repair or LayoutAutoRepairService()
-        self.targeted_vision_recovery = (
-            targeted_vision_recovery or TargetedVisionRecoveryService()
+        self.targeted_vision_recovery = targeted_vision_recovery or TargetedVisionRecoveryService(
+            http_client_provider=http_client_provider
         )
 
     async def reindex_document(
@@ -170,6 +173,7 @@ class IndexLifecycleService:
             adapter_chunks = await self._run_cpu_bound(
                 ChunkSplitter(
                     vision_recovery_config=vision_recovery_config,
+                    http_client_provider=http_client_provider,
                 ).split,
                 normalized_chunks,
                 domain_metadata=options.domain_metadata,

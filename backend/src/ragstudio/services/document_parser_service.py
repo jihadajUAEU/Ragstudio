@@ -7,6 +7,7 @@ import httpx
 from ragstudio.db.models import Document, SettingsProfile
 from ragstudio.schemas.parsing import IndexDocumentIn
 from ragstudio.services.adapter import AdapterChunk, RAGAnythingAdapter
+from ragstudio.services.http_client_provider import HttpClientProviderProtocol
 from ragstudio.services.mineru_client import MinerUClient, MinerUParseOptions
 from ragstudio.services.mineru_extraction_validator import MinerUExtractionValidator
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,6 +23,7 @@ class DocumentParserService:
         *,
         local_parser: RAGAnythingAdapter | None = None,
         mineru_client_factory: type[MinerUClient] | None = None,
+        http_client_provider: HttpClientProviderProtocol | None = None,
         extraction_validator: MinerUExtractionValidator | None = None,
         commit_before_remote_parse: bool = False,
     ):
@@ -29,6 +31,7 @@ class DocumentParserService:
         self.data_dir = data_dir
         self.local_parser = local_parser or RAGAnythingAdapter()
         self.mineru_client_factory = mineru_client_factory or MinerUClient
+        self.http_client_provider = http_client_provider
         self.extraction_validator = extraction_validator or MinerUExtractionValidator()
         self.commit_before_remote_parse = commit_before_remote_parse
 
@@ -171,11 +174,21 @@ class DocumentParserService:
             raise RuntimeError("MinerU base URL is not configured.")
         if not settings.mineru_enabled:
             raise RuntimeError("MinerU is disabled in settings.")
-        client = self.mineru_client_factory(
-            base_url=settings.mineru_base_url,
-            timeout_ms=settings.mineru_timeout_ms or 14_400_000,
-            poll_interval_ms=settings.mineru_poll_interval_ms or 1_000,
-        )
+        client_kwargs = {
+            "base_url": settings.mineru_base_url,
+            "timeout_ms": settings.mineru_timeout_ms or 14_400_000,
+            "poll_interval_ms": settings.mineru_poll_interval_ms or 1_000,
+        }
+        if self.http_client_provider is not None:
+            client_kwargs["http_client"] = self.http_client_provider.client(
+                "mineru",
+                timeout=(settings.mineru_timeout_ms or 14_400_000) / 1000,
+            )
+        try:
+            client = self.mineru_client_factory(**client_kwargs)
+        except TypeError:
+            client_kwargs.pop("http_client", None)
+            client = self.mineru_client_factory(**client_kwargs)
         try:
             health = await client.health()
         except httpx.HTTPError as exc:

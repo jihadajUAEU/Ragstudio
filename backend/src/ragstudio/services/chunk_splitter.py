@@ -13,6 +13,7 @@ from ragstudio.services.adapter import AdapterChunk
 from ragstudio.services.canonical_assembly import CanonicalAssemblyStrategy
 from ragstudio.services.chunk_quality_gate import ChunkQualityGate
 from ragstudio.services.domain_metadata_quality_gate import DomainMetadataQualityGate
+from ragstudio.services.http_client_provider import HttpClientProviderProtocol
 from ragstudio.services.modal_preprocessor import MODAL_ROUTER_PROCESSED_FLAG
 from ragstudio.services.parser_normalization import (
     ExpectedContentProfile,
@@ -85,10 +86,13 @@ class ChunkSplitter:
         *,
         max_words: int = 1500,
         vision_recovery_config: VisionRecoveryConfig | None = None,
+        http_client_provider: HttpClientProviderProtocol | None = None,
     ) -> None:
         self.max_words = max_words
         self.vision_recovery_config = vision_recovery_config
-        self.content_normalizer = MinerUContentNormalizer()
+        self.content_normalizer = MinerUContentNormalizer(
+            http_client_provider=http_client_provider
+        )
         self.reference_unit_assembler = ReferenceUnitAssembler()
         self.canonical_assembly = CanonicalAssemblyStrategy()
 

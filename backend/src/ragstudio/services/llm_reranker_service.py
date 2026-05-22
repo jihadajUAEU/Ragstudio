@@ -5,9 +5,14 @@ from typing import Any
 
 import httpx
 from ragstudio.schemas.chunks import ChunkOut
+from ragstudio.services.http_client_provider import HttpClientProviderProtocol
+from ragstudio.services.http_retry import raise_for_transient_status, retry_async_http
 
 
 class LLMRerankerService:
+    def __init__(self, http_client_provider: HttpClientProviderProtocol | None = None) -> None:
+        self.http_client_provider = http_client_provider
+
     async def rerank(
         self,
         query: str,
@@ -30,16 +35,31 @@ class LLMRerankerService:
             headers["Authorization"] = f"Bearer {api_key}"
 
         try:
-            async with httpx.AsyncClient(
-                timeout=(getattr(profile, "llm_timeout_ms", None) or 10000) / 1000
-            ) as client:
-                response = await client.post(
-                    _chat_url(str(profile.llm_base_url)),
-                    headers=headers,
-                    json=payload,
+            timeout = (getattr(profile, "llm_timeout_ms", None) or 10000) / 1000
+            if self.http_client_provider is not None:
+                client = self.http_client_provider.client("llm-reranker", timeout=timeout)
+                response = await retry_async_http(
+                    lambda: self._post_for_retry(
+                        client,
+                        _chat_url(str(profile.llm_base_url)),
+                        headers=headers,
+                        json=payload,
+                    ),
+                    attempts=2,
                 )
-                response.raise_for_status()
-                body = response.json()
+            else:
+                async with httpx.AsyncClient(timeout=timeout) as client:
+                    response = await retry_async_http(
+                        lambda: self._post_for_retry(
+                            client,
+                            _chat_url(str(profile.llm_base_url)),
+                            headers=headers,
+                            json=payload,
+                        ),
+                        attempts=2,
+                    )
+            response.raise_for_status()
+            body = response.json()
         except Exception as exc:
             return chunks, [
                 {
@@ -88,6 +108,18 @@ class LLMRerankerService:
             for rank, index in enumerate(ranked_indices, start=1)
         ]
         return reranked, traces
+
+    async def _post_for_retry(
+        self,
+        client: httpx.AsyncClient,
+        url: str,
+        *,
+        headers: dict[str, str],
+        json: dict[str, object],
+    ) -> httpx.Response:
+        response = await client.post(url, headers=headers, json=json)
+        raise_for_transient_status(response)
+        return response
 
 
 def _payload(query: str, chunks: list[ChunkOut], profile: Any) -> dict[str, Any]:

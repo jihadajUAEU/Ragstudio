@@ -3,10 +3,15 @@ from __future__ import annotations
 from typing import Any
 
 import httpx
+from ragstudio.services.http_client_provider import HttpClientProviderProtocol
+from ragstudio.services.http_retry import raise_for_transient_status, retry_async_http
 from ragstudio.services.retrieval_evidence import EvidenceCandidate
 
 
 class RuntimeAnswerService:
+    def __init__(self, http_client_provider: HttpClientProviderProtocol | None = None) -> None:
+        self.http_client_provider = http_client_provider
+
     async def answer(
         self,
         query: str,
@@ -33,16 +38,44 @@ class RuntimeAnswerService:
         }
         timeout = (getattr(profile, "llm_timeout_ms", None) or 10_000) / 1000
 
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            response = await client.post(
-                self._chat_url(str(profile.llm_base_url)),
-                headers=self._headers(getattr(profile, "llm_api_key", None)),
-                json=payload,
+        if self.http_client_provider is not None:
+            client = self.http_client_provider.client("runtime-answer", timeout=timeout)
+            response = await retry_async_http(
+                lambda: self._post_for_retry(
+                    client,
+                    self._chat_url(str(profile.llm_base_url)),
+                    headers=self._headers(getattr(profile, "llm_api_key", None)),
+                    json=payload,
+                ),
+                attempts=2,
             )
-            response.raise_for_status()
-            body = response.json()
+        else:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                response = await retry_async_http(
+                    lambda: self._post_for_retry(
+                        client,
+                        self._chat_url(str(profile.llm_base_url)),
+                        headers=self._headers(getattr(profile, "llm_api_key", None)),
+                        json=payload,
+                    ),
+                    attempts=2,
+                )
+        response.raise_for_status()
+        body = response.json()
 
         return self._content(body), self._usage(body)
+
+    async def _post_for_retry(
+        self,
+        client: httpx.AsyncClient,
+        url: str,
+        *,
+        headers: dict[str, str],
+        json: dict[str, object],
+    ) -> httpx.Response:
+        response = await client.post(url, headers=headers, json=json)
+        raise_for_transient_status(response)
+        return response
 
     def _prompt(self, query: str, evidence: list[EvidenceCandidate]) -> str:
         sections = [
