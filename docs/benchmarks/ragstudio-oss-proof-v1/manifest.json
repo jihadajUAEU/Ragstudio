@@ -101,7 +101,7 @@
     },
     "artifacts/retrieval-run.export.json": {
       "algorithm": "sha256",
-      "value": "1d7ef7fb0322997e057116ebecf929b9f6cb5272bda2073c56a14d67f9b1019e",
+      "value": "0b83f358b0146e21ecc6710edb8f4eedafda3577ee3cd9272bb66ff97fb2332a",
       "redaction_status": "passed"
     },
     "screenshots/documents-page-desktop-empty-state.png": {
