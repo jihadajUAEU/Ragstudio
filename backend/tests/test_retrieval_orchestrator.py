@@ -1444,6 +1444,7 @@ async def test_orchestrator_fuses_native_metadata_and_graph_before_answering():
     assert result.timings["graph_hydration_ms"] >= 0
     assert any(trace.get("stage") == "planner" for trace in result.chunk_traces)
     assert any(trace.get("stage") == "final_fusion" for trace in result.chunk_traces)
+    assert any(trace.get("stage") == "candidate_diversity" for trace in result.chunk_traces)
     context_trace = next(
         trace for trace in result.chunk_traces if trace.get("stage") == "context_assembly"
     )

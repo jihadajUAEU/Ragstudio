@@ -9,6 +9,7 @@ from typing import Any
 import httpx
 from ragstudio.schemas.chunks import ChunkOut
 from ragstudio.services.arabic_text import arabic_tokens
+from ragstudio.services.candidate_diversity import select_diverse_candidates
 from ragstudio.services.chunk_service import ChunkService
 from ragstudio.services.context_assembly_service import ContextAssemblyService
 from ragstudio.services.domain_metadata_quality_gate import DomainMetadataQualityGate
@@ -433,6 +434,12 @@ class RetrievalOrchestrator:
             reranked, parser_quality_trace = _annotate_parser_quality_warnings(reranked)
             if parser_quality_trace is not None:
                 traces.append(parser_quality_trace)
+            diversity_limit = int(query_config.get("diversity_limit") or limit)
+            reranked, diversity_trace = select_diverse_candidates(
+                reranked,
+                limit=diversity_limit,
+            )
+            traces.append(diversity_trace)
 
             context_started = perf_counter()
             context_service = self._context_assembly_service(profile)
