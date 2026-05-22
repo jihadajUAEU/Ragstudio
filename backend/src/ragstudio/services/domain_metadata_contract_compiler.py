@@ -4,7 +4,7 @@ import re
 from copy import deepcopy
 from typing import Any
 
-from ragstudio.schemas.parsing import DomainMetadata, IndexDocumentIn
+from ragstudio.schemas.parsing import DomainMetadata, IndexDocumentIn, MinerUParseOptionsIn
 
 CHAPTER_VERSE_PRIMARY_ANCHOR_PATTERN = (
     r"(\bVerse\s+|\[)(?P<chapter>\d{1,4})\s*:\s*(?P<verse>\d{1,4})\]?"
@@ -40,8 +40,15 @@ class DomainMetadataContractError(ValueError):
 
 
 def compile_index_options(options: IndexDocumentIn) -> IndexDocumentIn:
+    domain_metadata = compile_domain_metadata(options.domain_metadata)
+    mineru_parse_options = options.mineru_parse_options or _compile_mineru_parse_options(
+        domain_metadata
+    )
     return options.model_copy(
-        update={"domain_metadata": compile_domain_metadata(options.domain_metadata)},
+        update={
+            "domain_metadata": domain_metadata,
+            "mineru_parse_options": mineru_parse_options,
+        },
         deep=True,
     )
 
@@ -288,6 +295,29 @@ def _compile_quality_policy(custom_json: dict[str, Any], family: str) -> None:
     )
     policy["reference_contract_gate"] = gate
     custom_json["quality_policy"] = policy
+
+
+def _compile_mineru_parse_options(metadata: DomainMetadata) -> MinerUParseOptionsIn | None:
+    custom_json = metadata.custom_json if isinstance(metadata.custom_json, dict) else {}
+    reference_family = _reference_family(metadata, custom_json)
+    values = [
+        metadata.domain,
+        metadata.language,
+        metadata.script,
+        metadata.reference_pattern,
+        *metadata.tags,
+    ]
+    normalized = {str(value).casefold() for value in values if value}
+    if reference_family == "chapter_verse" and (
+        "arabic" in normalized or "quran" in normalized or "surah:verse" in normalized
+    ):
+        return MinerUParseOptionsIn(
+            parse_method="ocr",
+            lang="arabic",
+            formula=False,
+            table=False,
+        )
+    return None
 
 
 def _reference_family(metadata: DomainMetadata, custom_json: dict[str, Any]) -> str | None:

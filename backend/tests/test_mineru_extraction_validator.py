@@ -31,11 +31,16 @@ def test_rejects_empty_extraction():
         MinerUExtractionValidator(min_text_chars=8).validate([], expected_language="arabic")
 
 
-def test_rejects_missing_arabic_when_expected():
+def test_reports_missing_arabic_without_blocking_before_recovery():
     chunks = [_chunk("This is extracted English text.")]
 
-    with pytest.raises(MinerUExtractionContractError, match="arabic_text_missing"):
-        MinerUExtractionValidator(min_text_chars=8).validate(chunks, expected_language="arabic")
+    report = MinerUExtractionValidator(min_text_chars=8).validate(
+        chunks,
+        expected_language="arabic",
+    )
+
+    assert report.chunk_count == 1
+    assert report.arabic_character_count == 0
 
 
 def test_rejects_non_mineru_backend():
@@ -72,7 +77,10 @@ def test_accepts_valid_mineru_arabic_extraction():
         ),
     ]
 
-    report = MinerUExtractionValidator(min_text_chars=8).validate(chunks, expected_language="arabic")
+    report = MinerUExtractionValidator(min_text_chars=8).validate(
+        chunks,
+        expected_language="arabic",
+    )
 
     assert report.chunk_count == 2
     assert report.page_count == 2

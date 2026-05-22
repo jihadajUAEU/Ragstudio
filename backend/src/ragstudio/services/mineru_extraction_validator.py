@@ -77,11 +77,6 @@ class MinerUExtractionValidator:
             )
 
         arabic_character_count = len(self._ARABIC_RE.findall(text))
-        if expected_language.lower() == "arabic" and arabic_character_count == 0:
-            raise MinerUExtractionContractError(
-                "arabic_text_missing",
-                "Expected Arabic text, but MinerU extraction contained none.",
-            )
 
         pages = self._observed_pages(non_empty_chunks)
         total_pages = self._total_pages(non_empty_chunks)

@@ -212,6 +212,12 @@ class MetadataRetrievalService:
         runtime_source_id = getattr(chunk, "runtime_source_id", None)
         if runtime_source_id:
             metadata.setdefault("runtime_source_id", runtime_source_id)
+        score_breakdown = metadata.get("score_breakdown")
+        layout_score = 0.0
+        if isinstance(score_breakdown, dict) and isinstance(
+            score_breakdown.get("layout_context"), (int, float)
+        ):
+            layout_score = float(score_breakdown["layout_context"])
         chunk_id = _chunk_id(chunk)
         effective_pass = self._effective_retrieval_pass(chunk, retrieval_pass, metadata)
         if effective_pass == "reference_hypothesis":
@@ -228,7 +234,10 @@ class MetadataRetrievalService:
             tool_rank=rank,
             base_score=base_score,
             retrieval_pass=effective_pass,
-            match_features=self._match_features(retrieval_pass, effective_pass),
+            match_features={
+                **self._match_features(retrieval_pass, effective_pass),
+                **({"layout_context": True} if layout_score > 0 else {}),
+            },
             canonical_reference=self._first_reference(chunk),
             scope_status="in_scope",
             source_quality=self._source_quality(chunk),
@@ -277,6 +286,8 @@ class MetadataRetrievalService:
             return {"target_phrase": retrieval_pass.query}
         if effective_pass == "title_count":
             return {"title_count": True}
+        if effective_pass == "semantic_metadata":
+            return {"semantic_metadata": True}
         return {}
 
     def _first_reference(self, chunk: ChunkOut) -> str | None:

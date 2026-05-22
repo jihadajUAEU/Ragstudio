@@ -822,6 +822,17 @@ class QuranDomainMetadataChunkSearchService:
         )()
 
 
+class EmptyMetadataChunkSearchService:
+    async def domain_metadata_for_documents(self, document_ids):
+        return []
+
+    async def search(self, search_in):
+        return type("SearchResult", (), {"items": [], "total": 0})()
+
+    async def chunks_by_id(self, chunk_ids):
+        return []
+
+
 class PolicyBlockedDomainChunkSearchService(FakeChunkSearchService):
     async def domain_metadata_for_documents(self, document_ids):
         return [
@@ -1505,6 +1516,53 @@ async def test_orchestrator_route_plan_applies_document_quality_and_materializat
         trace.get("stage") == "retrieval_lane_result"
         and trace.get("lane") == "vector"
         and trace.get("status") == "skipped"
+        for trace in result.chunk_traces
+    )
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_runs_quality_gated_vector_lane_when_baseline_passes():
+    class VectorRepo:
+        async def candidate_rows(self, *, query, document_ids, limit):
+            return [
+                {
+                    "candidate_id": "vector-row:chunk-v1",
+                    "chunk_id": "chunk-v1",
+                    "document_id": document_ids[0],
+                    "text": "vector alpha evidence",
+                    "source_location": {"page": 1},
+                    "metadata": {"quality_action_policy": {"index_vector": True}},
+                    "score": 0.8,
+                    "rank": 1,
+                }
+            ]
+
+    orchestrator = RetrievalOrchestrator(
+        chunk_service=EmptyMetadataChunkSearchService(),
+        answer_service=FakeAnswerService(),
+        reranker_service=FakeRerankerService(),
+        graph_expansion_service=FakeGraphExpansionService(),
+        vector_candidate_repository=VectorRepo(),
+    )
+
+    result = await orchestrator.query(
+        "alpha",
+        runtime=NativeSearchShouldNotRun(),
+        profile=type("Profile", (), {"enable_rerank": False, "reranker_provider": "disabled"})(),
+        document_ids=["doc-vector"],
+        variant_id="variant-1",
+        query_config={
+            "limit": 3,
+            "vector_baseline_gate": {"passed": True},
+            "runtime_readiness": {"state": "disabled", "reason": "test_vector_lane_only"},
+            "graph_expansion_enabled": False,
+        },
+    )
+
+    assert result.error is None
+    assert any(source["chunk_id"] == "chunk-v1" for source in result.sources)
+    assert any(
+        trace.get("stage") == "vector_retrieval" and trace.get("status") == "ran"
         for trace in result.chunk_traces
     )
 

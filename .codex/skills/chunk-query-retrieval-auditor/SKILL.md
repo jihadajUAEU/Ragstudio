@@ -29,6 +29,101 @@ Ragstudio retrieval must follow this architecture unless the user explicitly ask
 
 7. **Public proof requires replayable evidence.** Retrieval claims need static fixtures, valid proof packet artifacts, claim registry entries, redaction status, source paths, limitations, and screenshot signoff when screenshots are used.
 
+## Three-Pillar Retrieval Architecture
+
+Use these pillars as the preferred architecture for chunk search, query
+planning, candidate generation, fusion, reranking, graph expansion, and context
+assembly. Treat them as review criteria when deciding whether a retrieval change
+is good enough.
+
+### 1. Domain-Aware Ingestion And Retrieval
+
+Target behavior:
+
+- Domain metadata resolves to an executable retrieval contract: profile id,
+  reference schema, expected scripts/languages, query expansion adapter,
+  tokenizer/normalizer, quality policy, and materialization policy.
+- Query expansion is profile-driven and traceable. Arabic religious expansion is
+  one adapter; other domains should be able to supply legal/policy references,
+  technical synonyms, financial terms, medical aliases, code identifiers, or
+  multilingual/code-mixed mappings without editing core orchestration.
+- Exact reference and exact script retrieval stay canonical-first. Lexical,
+  vector, graph, runtime, and reranker lanes may help, but blocked or
+  provenance-only chunks must not re-enter through secondary lanes.
+- Candidate traces should answer: which domain/profile was resolved, which
+  expansion rules ran, which lanes were allowed or skipped, which policy allowed
+  this chunk, and which quality flags affected ranking or assembly.
+
+Audit prompts:
+
+- Is this retrieval path using a hardcoded domain family where a profile or
+  contract should decide?
+- Does every candidate preserve `domain_metadata`, `reference_metadata`,
+  canonical chunk identity, retrieval pass, and `quality_action_policy`?
+- Are language/token rules domain-specific enough for the query and corpus?
+- Can a chunk with `index_vector=false`, `project_graph=false`, or blocked exact
+  retrieval still leak into final evidence?
+
+### 2. Layout-Aware Ingestion And Retrieval
+
+Target behavior:
+
+- Retrieved chunks should retain layout semantics from canonical evidence:
+  `content_type`, page/page range, bbox when available, block type, reading
+  order, table/figure/caption relationships, preview refs, and
+  `provenance.blocks`.
+- Vector and native runtime lanes must hydrate back to canonical chunks before
+  fusion whenever possible. If a native lane only returns flat text and page id,
+  traces should mark the limitation and avoid treating that snippet as the sole
+  source of truth.
+- Query-time retrieval should be able to expand from a layout hit to nearby
+  evidence: same canonical reference, same page, same table/caption, same figure,
+  nearby bbox, previous/next visual block, or graph relationship.
+- Layout boosts should be explicit and measurable. Static boosts are acceptable
+  only when their inputs and score contribution are in the trace.
+
+Audit prompts:
+
+- Does this query path use `source_location`, `content_type`, preview/crop refs,
+  and `provenance.blocks`, or only raw text?
+- Are layout candidates flattened before reranking/context assembly without
+  breadcrumbs or neighborhood recovery?
+- Does graph expansion or metadata retrieval include spatial/layout neighbors
+  when they are necessary to understand the answer?
+- Are layout thresholds or boost constants covered by focused tests for
+  multi-column, RTL, tables, captions, and page-boundary cases?
+
+### 3. Context-Aware Ingestion And Retrieval
+
+Target behavior:
+
+- Each candidate should carry enough parent context to be meaningful:
+  document/title when safe, section/header chain, canonical reference, page
+  range, sibling/previous/next relationships, and graph path when available.
+- Embedding and vector retrieval should avoid isolated leaf chunks. Prefer safe
+  pre-embedding context, parent-window retrieval, late-chunking, or canonical
+  hydration plus context-window expansion.
+- Fusion should dedupe by canonical identity, preserve all retrieval passes, keep
+  parser warnings and quality flags, and add diversity for comparison or broad
+  coverage queries.
+- Reranking should operate on a bounded, canonical candidate set and record
+  before/after ranks, scores, provider/model, timeout/fallback, and degraded
+  status. If redundancy is high, prefer MMR/diversity selection or explicit
+  duplicate suppression before final context.
+- Context assembly should inject concise breadcrumbs, preserve direct evidence,
+  include necessary neighbors within budget, and record dropped/truncated
+  candidates with reasons.
+
+Audit prompts:
+
+- Would this chunk still make sense if read alone by the answer model?
+- Are parent headers, canonical references, or graph paths available in the
+  prompt or only hidden in metadata?
+- Are vector/runtime hits able to seed graph or context neighborhood expansion
+  after canonical hydration?
+- Does final context explain why evidence was included, dropped, truncated,
+  reranked, or blocked?
+
 ## Starting Map
 
 Read only the paths needed for the current task:

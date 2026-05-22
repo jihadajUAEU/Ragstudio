@@ -10,8 +10,8 @@ from typing import Any
 
 from ragstudio.schemas.parsing import DomainMetadata, ParserMode
 from ragstudio.services.adapter import AdapterChunk
-from ragstudio.services.chunk_quality_gate import ChunkQualityGate
 from ragstudio.services.canonical_assembly import CanonicalAssemblyStrategy
+from ragstudio.services.chunk_quality_gate import ChunkQualityGate
 from ragstudio.services.domain_metadata_quality_gate import DomainMetadataQualityGate
 from ragstudio.services.modal_preprocessor import MODAL_ROUTER_PROCESSED_FLAG
 from ragstudio.services.parser_normalization import (
@@ -466,7 +466,10 @@ class ChunkSplitter:
         if semantics is None or not semantics.canonical_units_enabled:
             return []
 
-        ordered_blocks = self._canonical_block_order(normalized_blocks)
+        ordered_blocks = self._canonical_block_order(
+            normalized_blocks,
+            domain_metadata=domain_metadata,
+        )
         strategy_units = self.canonical_assembly.assemble(
             [block for _, block in ordered_blocks],
             domain_metadata=domain_metadata,
@@ -524,6 +527,8 @@ class ChunkSplitter:
     def _canonical_block_order(
         self,
         normalized_blocks: list[NormalizedBlock],
+        *,
+        domain_metadata: DomainMetadata | None = None,
     ) -> list[tuple[int, NormalizedBlock]]:
         indexed_blocks = list(enumerate(normalized_blocks))
         if not any(self._source_bbox(block) is not None for _, block in indexed_blocks):
@@ -544,14 +549,165 @@ class ChunkSplitter:
         ):
             if all(self._source_bbox(block) is not None for _, block in page_blocks):
                 ordered.extend(
-                    sorted(
+                    self._banded_visual_order(
                         page_blocks,
-                        key=lambda item: self._visual_order_key(item[0], item[1]),
+                        domain_metadata=domain_metadata,
                     )
                 )
                 continue
             ordered.extend(page_blocks)
         return ordered
+
+    def _banded_visual_order(
+        self,
+        page_blocks: list[tuple[int, NormalizedBlock]],
+        *,
+        domain_metadata: DomainMetadata | None,
+    ) -> list[tuple[int, NormalizedBlock]]:
+        page_width = self._page_width(page_blocks)
+        full_width_threshold = page_width * 0.70
+        full_width: list[tuple[int, NormalizedBlock]] = []
+        column_blocks: list[tuple[int, NormalizedBlock]] = []
+        for item in page_blocks:
+            bbox = self._source_bbox(item[1])
+            if bbox is None:
+                column_blocks.append(item)
+                continue
+            x0, _y0, x1, _y1 = bbox
+            if x1 - x0 >= full_width_threshold:
+                full_width.append(item)
+            else:
+                column_blocks.append(item)
+
+        if len(column_blocks) < 2:
+            return sorted(page_blocks, key=lambda item: self._visual_order_key(item[0], item[1]))
+
+        full_width_sorted = sorted(
+            full_width,
+            key=lambda item: self._visual_order_key(item[0], item[1]),
+        )
+        bands: dict[int, list[tuple[int, NormalizedBlock]]] = {}
+        for item in column_blocks:
+            band = self._band_index(item[1], full_width_sorted)
+            bands.setdefault(band, []).append(item)
+
+        ordered: list[tuple[int, NormalizedBlock]] = []
+        for band in range(len(full_width_sorted) + 1):
+            ordered.extend(
+                self._order_columns_in_band(
+                    bands.get(band, []),
+                    page_width=page_width,
+                    rtl=self._is_rtl_domain(domain_metadata),
+                )
+            )
+            if band < len(full_width_sorted):
+                ordered.append(full_width_sorted[band])
+        return ordered
+
+    def _page_width(self, page_blocks: list[tuple[int, NormalizedBlock]]) -> float:
+        widths: list[float] = []
+        max_x1 = 0.0
+        for _index, block in page_blocks:
+            bbox = self._source_bbox(block)
+            if bbox is None:
+                continue
+            x0, _y0, x1, _y1 = bbox
+            widths.append(x1 - x0)
+            max_x1 = max(max_x1, x1)
+        return max(1.0, max_x1, *(widths or [0.0]))
+
+    def _band_index(
+        self,
+        block: NormalizedBlock,
+        full_width_sorted: list[tuple[int, NormalizedBlock]],
+    ) -> int:
+        bbox = self._source_bbox(block)
+        if bbox is None:
+            return 0
+        _x0, y0, _x1, y1 = bbox
+        midpoint = (y0 + y1) / 2
+        band = 0
+        for _original_index, separator in full_width_sorted:
+            sep_bbox = self._source_bbox(separator)
+            if sep_bbox is None:
+                continue
+            _sx0, sy0, _sx1, _sy1 = sep_bbox
+            if midpoint >= sy0:
+                band += 1
+        return band
+
+    def _order_columns_in_band(
+        self,
+        blocks: list[tuple[int, NormalizedBlock]],
+        *,
+        page_width: float,
+        rtl: bool,
+    ) -> list[tuple[int, NormalizedBlock]]:
+        if not blocks:
+            return []
+        clusters = self._column_clusters(blocks, gap_tolerance=page_width * 0.05)
+        clusters = sorted(
+            clusters,
+            key=lambda cluster: self._cluster_x0(cluster),
+            reverse=rtl,
+        )
+        ordered: list[tuple[int, NormalizedBlock]] = []
+        for cluster in clusters:
+            ordered.extend(
+                sorted(
+                    cluster,
+                    key=lambda item: self._visual_order_key(item[0], item[1]),
+                )
+            )
+        return ordered
+
+    def _column_clusters(
+        self,
+        blocks: list[tuple[int, NormalizedBlock]],
+        *,
+        gap_tolerance: float,
+    ) -> list[list[tuple[int, NormalizedBlock]]]:
+        sorted_blocks = sorted(
+            blocks,
+            key=lambda item: (self._source_bbox(item[1]) or (0.0, 0.0, 0.0, 0.0))[0],
+        )
+        clusters: list[list[tuple[int, NormalizedBlock]]] = []
+        current: list[tuple[int, NormalizedBlock]] = []
+        current_right: float | None = None
+        for item in sorted_blocks:
+            bbox = self._source_bbox(item[1])
+            if bbox is None:
+                continue
+            x0, _y0, x1, _y1 = bbox
+            if current and current_right is not None and x0 - current_right > gap_tolerance:
+                clusters.append(current)
+                current = []
+                current_right = None
+            current.append(item)
+            current_right = max(current_right if current_right is not None else x1, x1)
+        if current:
+            clusters.append(current)
+        return clusters
+
+    def _cluster_x0(self, cluster: list[tuple[int, NormalizedBlock]]) -> float:
+        values = [
+            bbox[0]
+            for _index, block in cluster
+            if (bbox := self._source_bbox(block)) is not None
+        ]
+        return min(values) if values else 0.0
+
+    def _is_rtl_domain(self, domain_metadata: DomainMetadata | None) -> bool:
+        if domain_metadata is None:
+            return False
+        values = [
+            domain_metadata.script,
+            domain_metadata.language,
+            domain_metadata.domain,
+            *domain_metadata.tags,
+        ]
+        normalized = {str(value).casefold() for value in values if value}
+        return bool({"arabic", "ar", "quran", "quran_tafseer"} & normalized)
 
     def _visual_order_key(
         self,
