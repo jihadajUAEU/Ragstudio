@@ -16,6 +16,7 @@ from ragstudio.services.domain_query_expansion_service import DomainQueryExpansi
 from ragstudio.services.evidence_first_answer_service import EvidenceFirstAnswerService
 from ragstudio.services.graph_expansion_service import GraphExpansionService
 from ragstudio.services.grounding_validator import GroundingValidator
+from ragstudio.services.layout_neighbor_service import LayoutNeighborService
 from ragstudio.services.metadata_retrieval_service import MetadataRetrievalService
 from ragstudio.services.query_hypothesis_service import (
     QueryHypothesis,
@@ -262,10 +263,20 @@ class RetrievalOrchestrator:
         if isinstance(lane_results, list):
             traces.extend(trace for trace in lane_results if isinstance(trace, dict))
         traces.extend(vector_traces)
+        layout_neighbors, layout_neighbor_traces = await self._safe_layout_neighbors(
+            [*metadata_candidates, *vector_candidates],
+            document_ids=document_ids,
+            limit=max(limit, 1),
+            timings=timings,
+        )
+        traces.extend(layout_neighbor_traces)
         observability.record_stage(
             "primary_retrieval",
             candidate_count=(
-                len(native_candidates) + len(metadata_candidates) + len(vector_candidates)
+                len(native_candidates)
+                + len(metadata_candidates)
+                + len(vector_candidates)
+                + len(layout_neighbors)
             ),
             latency_ms=(
                 timings.get("native_stage_ms", 0.0)
@@ -276,6 +287,7 @@ class RetrievalOrchestrator:
                 "native_candidates": len(native_candidates),
                 "metadata_candidates": len(metadata_candidates),
                 "vector_candidates": len(vector_candidates),
+                "layout_neighbor_candidates": len(layout_neighbors),
             },
         )
         traces.append(
@@ -284,6 +296,7 @@ class RetrievalOrchestrator:
                 "native_candidates": len(native_candidates),
                 "metadata_candidates": len(metadata_candidates),
                 "vector_candidates": len(vector_candidates),
+                "layout_neighbor_candidates": len(layout_neighbors),
             }
         )
 
@@ -291,7 +304,12 @@ class RetrievalOrchestrator:
             fuse_started = perf_counter()
             seed_candidates = fuse_candidates(
                 plan,
-                [*native_candidates, *metadata_candidates, *vector_candidates],
+                [
+                    *native_candidates,
+                    *metadata_candidates,
+                    *vector_candidates,
+                    *layout_neighbors,
+                ],
             )
             timings["initial_fusion_ms"] = _elapsed_ms(fuse_started)
             seed_candidate_ids = [
@@ -347,10 +365,19 @@ class RetrievalOrchestrator:
             )
             vector_ranked = fuse_candidates(plan, vector_candidates) if vector_candidates else []
             graph_ranked = fuse_candidates(plan, graph_candidates) if graph_candidates else []
+            layout_neighbor_ranked = (
+                fuse_candidates(plan, layout_neighbors) if layout_neighbors else []
+            )
             fused = apply_query_aware_ordering(
                 plan,
                 self.retrieval_fusion.fuse(
-                    [native_ranked, metadata_ranked, vector_ranked, graph_ranked],
+                    [
+                        native_ranked,
+                        metadata_ranked,
+                        vector_ranked,
+                        graph_ranked,
+                        layout_neighbor_ranked,
+                    ],
                     limit=plan.candidate_limit,
                 ),
             )
@@ -360,6 +387,7 @@ class RetrievalOrchestrator:
                 "metadata_candidates": len(metadata_candidates),
                 "vector_candidates": len(vector_candidates),
                 "graph_candidates": len(graph_candidates),
+                "layout_neighbor_candidates": len(layout_neighbors),
                 "fused_candidates": len(fused),
             }
             traces.append({"stage": "final_fusion", **final_fusion_detail})
@@ -916,6 +944,61 @@ class RetrievalOrchestrator:
         )
         lane_trace["diagnostics"] = vector_result.diagnostics.as_dict()
         return vector_candidates, [vector_result.diagnostics.as_dict(), lane_trace]
+
+    async def _safe_layout_neighbors(
+        self,
+        seeds: list[EvidenceCandidate],
+        *,
+        document_ids: list[str],
+        limit: int,
+        timings: dict[str, Any],
+    ) -> tuple[list[EvidenceCandidate], list[dict[str, Any]]]:
+        started = perf_counter()
+        seed_chunk_ids = [
+            candidate.chunk_id
+            for candidate in seeds
+            if candidate.chunk_id and candidate.tool in {"metadata", "pgvector", "graph"}
+        ]
+        if not seed_chunk_ids or not hasattr(self.chunk_service, "session"):
+            timings["layout_neighbor_ms"] = _elapsed_ms(started)
+            return [], [
+                {
+                    "stage": "layout_neighbor_expansion",
+                    "status": "skipped",
+                    "reason": "no_seed_chunks_or_session",
+                    "candidate_count": 0,
+                }
+            ]
+
+        try:
+            candidates = await LayoutNeighborService(
+                self.chunk_service.session
+            ).neighbors_for(
+                seed_chunk_ids=list(dict.fromkeys(seed_chunk_ids)),
+                document_ids=document_ids,
+                limit=limit,
+            )
+        except Exception as exc:
+            timings["layout_neighbor_ms"] = _elapsed_ms(started)
+            return [], [
+                {
+                    "stage": "layout_neighbor_expansion",
+                    "status": "failed",
+                    "reason": exc.__class__.__name__,
+                    "candidate_count": 0,
+                }
+            ]
+
+        timings["layout_neighbor_ms"] = _elapsed_ms(started)
+        return candidates, [
+            {
+                "stage": "layout_neighbor_expansion",
+                "status": "ran",
+                "reason": "same_page_or_reference_neighbors",
+                "candidate_count": len(candidates),
+                "candidate_ids": [candidate.candidate_id for candidate in candidates],
+            }
+        ]
 
     async def _metadata_after_native_result(
         self,

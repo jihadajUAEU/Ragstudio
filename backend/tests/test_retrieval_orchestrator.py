@@ -2,6 +2,8 @@ import asyncio
 
 import httpx
 import pytest
+from ragstudio.db.engine import init_db, make_engine, make_session_factory
+from ragstudio.db.models import Chunk, Document
 from ragstudio.schemas.chunks import ChunkOut
 from ragstudio.services.domain_query_expansion_service import DomainQueryExpansionService
 from ragstudio.services.query_hypothesis_service import (
@@ -20,6 +22,11 @@ from ragstudio.services.retrieval_orchestrator import RetrievalOrchestrator
 from ragstudio.services.runtime_types import RuntimeQueryResult
 
 
+class _ChunkServiceWithSession:
+    def __init__(self, session):
+        self.session = session
+
+
 def test_plan_for_count_query_prefers_metadata_and_native():
     plan = plan_for_query("how many hadith in bukhari", document_ids=["doc-1"], limit=8)
 
@@ -29,6 +36,83 @@ def test_plan_for_count_query_prefers_metadata_and_native():
     assert plan.use_relationships is True
     assert plan.candidate_limit == 20
     assert plan.document_ids == ["doc-1"]
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_expands_layout_neighbors_from_seed_candidates(
+    database_url, tmp_path
+):
+    engine = make_engine(database_url)
+    await init_db(engine)
+    factory = make_session_factory(engine)
+
+    async with factory() as session:
+        session.add(
+            Document(
+                id="doc-layout-neighbor-orchestrator",
+                filename="layout.pdf",
+                content_type="application/pdf",
+                sha256="layout-orchestrator-sha",
+                artifact_path=str(tmp_path / "layout.pdf"),
+            )
+        )
+        session.add_all(
+            [
+                Chunk(
+                    id="seed-layout-orchestrator",
+                    document_id="doc-layout-neighbor-orchestrator",
+                    text="Figure caption.",
+                    source_location={"page": 2, "reference": "fig:2"},
+                    metadata_json={"layout": {"role": "caption"}},
+                ),
+                Chunk(
+                    id="neighbor-layout-orchestrator",
+                    document_id="doc-layout-neighbor-orchestrator",
+                    text="Figure body details.",
+                    source_location={"page": 2, "reference": "fig:2"},
+                    metadata_json={"layout": {"role": "body"}},
+                ),
+            ]
+        )
+        await session.commit()
+
+        orchestrator = RetrievalOrchestrator(
+            chunk_service=_ChunkServiceWithSession(session)
+        )
+        candidates, traces = await orchestrator._safe_layout_neighbors(
+            [
+                EvidenceCandidate(
+                    candidate_id="pgvector:seed-layout-orchestrator",
+                    text="Figure caption.",
+                    document_id="doc-layout-neighbor-orchestrator",
+                    chunk_id="seed-layout-orchestrator",
+                    source_location={"page": 2, "reference": "fig:2"},
+                    metadata={},
+                    tool="pgvector",
+                    tool_rank=1,
+                    base_score=10.0,
+                    final_score=10.0,
+                )
+            ],
+            document_ids=["doc-layout-neighbor-orchestrator"],
+            limit=5,
+            timings={},
+        )
+
+    await engine.dispose()
+
+    assert [candidate.chunk_id for candidate in candidates] == [
+        "neighbor-layout-orchestrator"
+    ]
+    assert traces == [
+        {
+            "stage": "layout_neighbor_expansion",
+            "status": "ran",
+            "reason": "same_page_or_reference_neighbors",
+            "candidate_count": 1,
+            "candidate_ids": ["layout-neighbor:neighbor-layout-orchestrator"],
+        }
+    ]
 
 
 def test_plan_for_reference_query_marks_reference_intent():
