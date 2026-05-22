@@ -1,10 +1,10 @@
 {
   "packet_id": "ragstudio-oss-proof-v1",
   "registry_version": "0.1.0",
-  "source_commit": "5edb186280e4a49ad207a1052a2fb3776d89e8c4",
+  "source_commit": "03c2db457506725c44e3563395bfe6ed3dbe02c8",
   "claim_counts": {
-    "proven": 2,
-    "roadmap": 2,
+    "proven": 3,
+    "roadmap": 1,
     "disabled": 1,
     "total": 5
   },
@@ -115,32 +115,39 @@
     {
       "claim_id": "RAGSTUDIO-RETRIEVAL-ARCHITECTURE",
       "title": "Canonical retrieval architecture metadata remains visible across retrieval lanes",
-      "status": "roadmap",
-      "summary": "Ragstudio keeps canonical chunk identity, quality policy, layout provenance, and context breadcrumbs visible across retrieval lanes before answer assembly.",
+      "status": "proven",
+      "summary": "Ragstudio preserves canonical chunk identity, quality policy, layout provenance, lane decisions, and context breadcrumbs across retrieval lanes before answer assembly.",
       "source": {
-        "source_commit": "5edb186280e4a49ad207a1052a2fb3776d89e8c4",
+        "source_commit": "03c2db457506725c44e3563395bfe6ed3dbe02c8",
         "code_paths": [
-          "backend/src/ragstudio/services/evidence_context.py",
+          "backend/src/ragstudio/services/domain_classifier.py",
+          "backend/src/ragstudio/services/domain_profile_registry.py",
+          "backend/src/ragstudio/services/retrieval_route_input.py",
+          "backend/src/ragstudio/services/retrieval_route_planner.py",
           "backend/src/ragstudio/services/layout_neighbor_service.py",
+          "backend/src/ragstudio/services/context_window_service.py",
           "backend/src/ragstudio/services/retrieval_orchestrator.py",
           "backend/src/ragstudio/services/context_assembly_service.py",
           "backend/src/ragstudio/services/native_raganything_adapter.py",
-          "docs/benchmarks/ragstudio-oss-proof-v1/docs/LIMITATIONS.md"
+          "docs/benchmarks/ragstudio-oss-proof-v1/artifacts/retrieval-run.export.json"
         ]
       },
-      "evidence": [],
+      "evidence": [
+        {
+          "artifact_path": "artifacts/retrieval-run.export.json",
+          "evidence_type": "retrieval_trace",
+          "public": true,
+          "redaction_status": "passed",
+          "description": "Public retrieval-run artifact carries canonical identity, quality policy, layout provenance, lane decisions, reranker state, and context breadcrumbs across metadata, vector, graph, runtime, reranker, and context assembly traces."
+        }
+      ],
       "limitations": [
-        "Retrieval Architecture Limitations apply until public static fixtures include exported traces for every retrieval lane."
+        "Retrieval architecture proof uses deterministic synthetic fixtures. It proves trace shape and public-safe propagation of architecture metadata, not production retrieval quality over a customer corpus."
       ],
-      "missing_evidence": [
-        "A public retrieval-run artifact with canonical identity, quality policy, layout provenance, and breadcrumb fields visible across metadata, vector, graph, runtime, reranker, and context assembly traces.",
-        "A validation result proving those exported traces are public-safe and hash-covered in the proof packet."
-      ],
-      "planned_proof_path": [
-        "Extend the synthetic static fixtures to include the new retrieval architecture trace fields.",
-        "Run proof validation and update this claim to proven only after public artifacts carry the trace evidence."
-      ],
-      "screenshots": []
+      "missing_evidence": [],
+      "planned_proof_path": [],
+      "screenshots": [],
+      "explanation": "The static public artifact exposes the same trace contract exercised by the focused backend architecture tests, without relying on private documents, providers, or runtime endpoints."
     },
     {
       "claim_id": "RAGSTUDIO-PUBLIC-UPLOAD",

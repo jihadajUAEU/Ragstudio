@@ -893,3 +893,22 @@ For public proof changes:
 ```powershell
 ./scripts/proof.sh --strict --json
 ```
+
+## Implementation Compliance Status
+
+Ragstudio's retrieval architecture is implemented against the three-pillar
+contract:
+
+- Domain-aware ingestion and retrieval is implemented through domain
+  classification, executable profiles, domain lexical adapters, route input,
+  quality policy, materialization policy, and public lane traces.
+- Layout-aware ingestion and retrieval is implemented through canonical source
+  location, provenance, layout group expansion, bbox proximity, native bridge
+  metadata, and context-visible layout summaries.
+- Context-aware ingestion and retrieval is implemented through evidence context,
+  adjacent context-window expansion, graph-seeded canonical hydration, context
+  assembly, direct-evidence preservation, and dropped/truncated evidence reasons.
+
+The public proof packet validates this with deterministic synthetic fixtures.
+Production retrieval quality over customer corpora remains measured by separate
+retrieval quality baselines.

@@ -2,7 +2,7 @@
   "packet_id": "ragstudio-oss-proof-v1",
   "packet_version": "0.1.0",
   "schema_version": "2020-12",
-  "source_commit": "ad1febe626fd96afff414bf5c425b4a672213a14",
+  "source_commit": "03c2db457506725c44e3563395bfe6ed3dbe02c8",
   "generated_at": "2026-05-14T09:30:02Z",
   "generated_from": {
     "repository": "Ragstudio",
@@ -49,8 +49,8 @@
     "matrix": "claims/claims.matrix.md"
   },
   "claim_counts": {
-    "proven": 2,
-    "roadmap": 2,
+    "proven": 3,
+    "roadmap": 1,
     "disabled": 1,
     "total": 5
   },
@@ -101,7 +101,7 @@
     },
     "artifacts/retrieval-run.export.json": {
       "algorithm": "sha256",
-      "value": "fe1d36ff652f09969876851e3e8879050b3019caf23c8b104c6fb562e28b7292",
+      "value": "d264bd32dc31c77edf869d9c651643d4c51f365e19a82fdbec3d7e1afd87602e",
       "redaction_status": "passed"
     },
     "screenshots/documents-page-desktop-empty-state.png": {
@@ -121,6 +121,7 @@
   "limitations": [
     "Phase 1 is a static public proof packet contract and baseline evidence package; it does not implement proof replay tooling.",
     "Synthetic fixtures demonstrate parser quality, reference metadata, retrieval trace, graph projection, and reranker evidence shapes without using restricted real corpus text.",
+    "Retrieval architecture proof uses deterministic synthetic fixtures. It proves trace shape and public-safe propagation of architecture metadata, not production retrieval quality over a customer corpus.",
     "Artifact hashes are populated after exported artifacts are created in this phase.",
     "Claims registry contains proven, roadmap, and disabled statuses; screenshot-backed claims remain deferred until manual signoff."
   ]

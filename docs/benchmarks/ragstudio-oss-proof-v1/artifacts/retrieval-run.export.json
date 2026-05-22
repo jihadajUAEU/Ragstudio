@@ -4,7 +4,7 @@
   "source": {
     "document_id": "synthetic-reference-guide",
     "capture_mode": "static-fixtures",
-    "source_commit": "ad1febe626fd96afff414bf5c425b4a672213a14",
+    "source_commit": "03c2db457506725c44e3563395bfe6ed3dbe02c8",
     "fixture_path": "fixtures/retrieval-traces.synthetic.json"
   },
   "redaction_status": "passed",
@@ -30,6 +30,160 @@
         "policy_status": "parser_quality_blocked"
       }
     ],
+    "architecture_trace_status": "static_fixture_runtime_tests_passed",
+    "architecture_trace": [
+      {
+        "stage": "retrieval_route_plan",
+        "domain_profile_id": "reference_heavy",
+        "source_of_truth": "postgres_canonical_evidence",
+        "direct_evidence_required": true,
+        "graph_context_required": true,
+        "document_ids": [
+          "synthetic-reference-guide"
+        ]
+      },
+      {
+        "stage": "retrieval_lane_result",
+        "lane": "metadata",
+        "status": "ran",
+        "reason": "metadata_lane_completed",
+        "candidate_count": 1,
+        "candidate_ids": [
+          "metadata:chunk-srg-003"
+        ],
+        "canonical_chunk_ids": [
+          "chunk-srg-003"
+        ],
+        "document_ids": [
+          "synthetic-reference-guide"
+        ],
+        "latency_ms": 2.1,
+        "timed_out": false,
+        "partial": false,
+        "quality_policy_statuses": {
+          "chunk-srg-003": "parser_quality_blocked"
+        },
+        "layout_summaries": {
+          "chunk-srg-003": "page=3; block=p3-b1"
+        }
+      },
+      {
+        "stage": "retrieval_lane_result",
+        "lane": "vector",
+        "status": "ran",
+        "reason": "retrieval_quality_baseline_gate_passed",
+        "candidate_count": 1,
+        "candidate_ids": [
+          "vector:chunk-srg-001"
+        ],
+        "canonical_chunk_ids": [
+          "chunk-srg-001"
+        ],
+        "document_ids": [
+          "synthetic-reference-guide"
+        ],
+        "latency_ms": 1.9,
+        "timed_out": false,
+        "partial": false,
+        "quality_policy_statuses": {
+          "chunk-srg-001": "passed"
+        },
+        "layout_summaries": {
+          "chunk-srg-001": "page=1; block=p1-b1"
+        }
+      },
+      {
+        "stage": "retrieval_lane_result",
+        "lane": "graph",
+        "status": "ran",
+        "reason": "graph_expansion_completed",
+        "candidate_count": 1,
+        "candidate_ids": [
+          "graph:chunk-srg-001"
+        ],
+        "canonical_chunk_ids": [
+          "chunk-srg-001"
+        ],
+        "document_ids": [
+          "synthetic-reference-guide"
+        ],
+        "latency_ms": 3.2,
+        "timed_out": false,
+        "partial": false,
+        "quality_policy_statuses": {
+          "chunk-srg-001": "passed"
+        }
+      },
+      {
+        "stage": "retrieval_lane_result",
+        "lane": "raganything_runtime",
+        "status": "degraded",
+        "reason": "canonical_bridge_ready",
+        "candidate_count": 1,
+        "candidate_ids": [
+          "native:chunk-srg-001"
+        ],
+        "canonical_chunk_ids": [
+          "chunk-srg-001"
+        ],
+        "document_ids": [
+          "synthetic-reference-guide"
+        ],
+        "latency_ms": 4.0,
+        "timed_out": false,
+        "partial": true,
+        "warning_flags": [
+          "secondary_runtime_lane"
+        ]
+      },
+      {
+        "stage": "retrieval_lane_result",
+        "lane": "reranker",
+        "status": "ran",
+        "reason": "reranker_trace_completed",
+        "candidate_count": 2,
+        "candidate_ids": [
+          "metadata:chunk-srg-003",
+          "vector:chunk-srg-001"
+        ],
+        "canonical_chunk_ids": [
+          "chunk-srg-003",
+          "chunk-srg-001"
+        ],
+        "document_ids": [
+          "synthetic-reference-guide"
+        ],
+        "latency_ms": 4.0,
+        "timed_out": false,
+        "partial": false,
+        "rank_deltas": {
+          "chunk-srg-003": {
+            "before": 1,
+            "after": 1
+          },
+          "chunk-srg-001": {
+            "before": 2,
+            "after": 2
+          }
+        }
+      },
+      {
+        "stage": "context_assembly",
+        "included_candidates": 1,
+        "dropped_candidates": 1,
+        "assembled_context": {
+          "evidence_ids": [
+            "metadata:chunk-srg-003"
+          ],
+          "grounding_status": "grounded",
+          "breadcrumbs_visible": true,
+          "layout_summary_visible": true
+        },
+        "dropped_reasons": {
+          "vector:chunk-srg-001": "lower_rank_supporting_context"
+        }
+      }
+    ],
     "timings": {
       "retrieval_ms": 12,
       "rerank_ms": 4,
@@ -45,6 +199,7 @@
   },
   "limitations": [
     "No live query backend or provider is called.",
-    "Timing values are synthetic fixture metadata and must not be used as performance claims."
+    "Timing values are synthetic fixture metadata and must not be used as performance claims.",
+    "Retrieval architecture proof uses deterministic synthetic fixtures. It proves trace shape and public-safe propagation of architecture metadata, not production retrieval quality over a customer corpus."
   ]
 }

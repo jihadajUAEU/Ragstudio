@@ -40,6 +40,9 @@ shape, not rights-cleared coverage of a real corpus.
 
 ## Retrieval Architecture Limitations
 
+- Retrieval architecture proof uses deterministic synthetic fixtures. It proves
+  trace shape and public-safe propagation of architecture metadata, not production
+  retrieval quality over a customer corpus.
 - Domain-specific lexical expansion is registry-based, but only adapters present
   in the public fixture are proven by this packet.
 - Native RAG-Anything is a secondary runtime lane. Public proof claims are made

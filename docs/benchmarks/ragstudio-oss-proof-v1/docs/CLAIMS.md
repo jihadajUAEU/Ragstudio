@@ -43,14 +43,19 @@ unsafe materialization.
 It demonstrates that retrieval traces, graph projection state, and reranker
 evidence can be inspected as public static artifacts.
 
+`RAGSTUDIO-RETRIEVAL-ARCHITECTURE` is proven by:
+
+- `artifacts/retrieval-run.export.json`
+- `fixtures/retrieval-traces.synthetic.json`
+
+It demonstrates canonical identity, quality policy, layout provenance, lane
+decisions, reranker state, and context breadcrumbs across the public synthetic
+retrieval trace.
+
 ## Visible Non-Claims
 
 `RAGSTUDIO-SCALE-2000P` is roadmap because no measured 2000+ page public packet
 exists yet.
-
-`RAGSTUDIO-RETRIEVAL-ARCHITECTURE` is roadmap until the public static fixtures
-include exported traces for canonical identity, quality policy, layout
-provenance, and breadcrumb propagation across every retrieval lane.
 
 `RAGSTUDIO-PUBLIC-UPLOAD` is disabled because v1 uses a static public site with
 no upload, auth, live backend, or provider calls.
