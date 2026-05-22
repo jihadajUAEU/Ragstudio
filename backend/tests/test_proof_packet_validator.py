@@ -2,12 +2,14 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 from ragstudio.proof_packet.errors import (
     CLAIM_COUNTS_MISMATCH,
     CLAIM_EVIDENCE_INVALID,
+    CLAIM_SOURCE_INVALID,
     ERROR_CODES,
     EXPORT_MANIFEST_INVALID,
     HASH_MISMATCH,
@@ -53,9 +55,19 @@ def _codes(result) -> set[str]:
 
 def _run_proof(*args: str) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
-    env["PYTHONPATH"] = f"{REPO_ROOT / 'backend' / 'src'}:{env.get('PYTHONPATH', '')}"
+    existing_pythonpath = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = os.pathsep.join(
+        part
+        for part in (str(REPO_ROOT / "backend" / "src"), existing_pythonpath)
+        if part
+    )
+    command = (
+        [sys.executable, "-m", "ragstudio.proof_packet.cli", *args]
+        if os.name == "nt"
+        else [str(REPO_ROOT / "scripts" / "proof.sh"), *args]
+    )
     return subprocess.run(
-        [str(REPO_ROOT / "scripts" / "proof.sh"), *args],
+        command,
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
@@ -200,6 +212,21 @@ def test_stale_source_commit_fails(packet_copy: Path):
     assert STALE_SOURCE_COMMIT in _codes(result)
 
 
+def test_claim_source_path_missing_at_source_commit_fails(packet_copy: Path):
+    registry_path = packet_copy / "claims" / "claims.registry.json"
+    registry = _read_json(registry_path)
+    registry["claims"][0]["source"]["source_commit"] = "ad1febe626fd96afff414bf5c425b4a672213a14"
+    registry["claims"][0]["source"]["code_paths"] = [
+        "docs/benchmarks/ragstudio-oss-proof-v1/docs/LIMITATIONS.md"
+    ]
+    _write_json(registry_path, registry)
+
+    result = validate_packet(packet_copy, repo_root=REPO_ROOT)
+
+    assert CLAIM_SOURCE_INVALID in _codes(result)
+    assert result.summary.claims_valid is False
+
+
 def test_export_manifest_records_static_packet_metadata(packet_copy: Path):
     result = validate_packet(packet_copy, repo_root=REPO_ROOT)
 
@@ -224,7 +251,7 @@ def test_proof_script_no_args_succeeds():
 
     assert completed.returncode == 0, completed.stderr + completed.stdout
     assert "Status: passed" in completed.stdout
-    assert "docs/benchmarks/ragstudio-oss-proof-v1" in completed.stdout
+    assert "docs/benchmarks/ragstudio-oss-proof-v1" in completed.stdout.replace("\\", "/")
 
 
 def test_proof_script_json_is_compact_parseable():

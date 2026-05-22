@@ -22,6 +22,7 @@ Use automation mode when a machine needs the result:
 | REDACTION_LEAK | A text packet file contains a private token, private host, local path, or similar leak pattern. | Remove or redact the private value, then rerun proof validation. |
 | CLAIM_EVIDENCE_INVALID | A proven claim lacks valid public redacted artifact evidence. | Attach public evidence or change the claim status to roadmap or disabled. |
 | CLAIM_COUNTS_MISMATCH | Manifest claim counts do not match `claims.registry.json`. | Recompute `claim_counts` from the registry. |
+| CLAIM_SOURCE_INVALID | A claim source commit or source path is not traceable in repository history. | Update claim source_commit and code_paths so every referenced path exists at that commit. |
 | SCREENSHOT_SIGNOFF_INVALID | Screenshot approval metadata is missing or inconsistent. | Fix `screenshots/signoff.json` and ensure referenced screenshots exist. |
 | STALE_SOURCE_COMMIT | The manifest source commit is not present in repository history. | Use a source commit that exists in the current repository history. |
 | EXPORT_MANIFEST_INVALID | Static export manifest metadata cannot be generated. | Regenerate export manifest metadata from a valid static packet root. |

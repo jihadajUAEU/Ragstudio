@@ -8,6 +8,7 @@ HASH_MISMATCH = "HASH_MISMATCH"
 REDACTION_LEAK = "REDACTION_LEAK"
 CLAIM_EVIDENCE_INVALID = "CLAIM_EVIDENCE_INVALID"
 CLAIM_COUNTS_MISMATCH = "CLAIM_COUNTS_MISMATCH"
+CLAIM_SOURCE_INVALID = "CLAIM_SOURCE_INVALID"
 SCREENSHOT_SIGNOFF_INVALID = "SCREENSHOT_SIGNOFF_INVALID"
 STALE_SOURCE_COMMIT = "STALE_SOURCE_COMMIT"
 EXPORT_MANIFEST_INVALID = "EXPORT_MANIFEST_INVALID"
@@ -21,6 +22,7 @@ ERROR_CODES = (
     REDACTION_LEAK,
     CLAIM_EVIDENCE_INVALID,
     CLAIM_COUNTS_MISMATCH,
+    CLAIM_SOURCE_INVALID,
     SCREENSHOT_SIGNOFF_INVALID,
     STALE_SOURCE_COMMIT,
     EXPORT_MANIFEST_INVALID,
@@ -35,6 +37,9 @@ RECOVERY_GUIDANCE = {
     REDACTION_LEAK: "Remove or redact the private value, then rerun proof validation.",
     CLAIM_EVIDENCE_INVALID: "Attach public redacted artifact evidence or change the claim status.",
     CLAIM_COUNTS_MISMATCH: "Recompute claim_counts from claims.registry.json.",
+    CLAIM_SOURCE_INVALID: (
+        "Update claim source_commit and code_paths so every referenced path exists at that commit."
+    ),
     SCREENSHOT_SIGNOFF_INVALID: (
         "Fix screenshots/signoff.json and ensure referenced screenshots exist."
     ),
