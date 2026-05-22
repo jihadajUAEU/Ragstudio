@@ -653,6 +653,37 @@ def test_preparsed_content_list_preserves_quality_policy_for_runtime_bridge(tmp_
     assert rows[0]["metadata"]["quality_action_policy"]["project_graph"] is False
 
 
+def test_preparsed_content_list_preserves_layout_bridge_fields(tmp_path):
+    adapter = NativeRAGAnythingAdapter(profile(runtime_working_dir=str(tmp_path)), AppSettings())
+    chunk = AdapterChunk(
+        text="Figure caption text.",
+        content_type="figure",
+        source_location={"page": 4, "bbox": [10, 20, 200, 80]},
+        metadata={
+            "chunk_identity": "chunk-layout",
+            "quality_action_policy": {"index_vector": True, "project_graph": True},
+            "layout_group_id": "figure-1",
+            "layout_role": "caption",
+            "reading_order": 7,
+            "provenance": {"blocks": [{"block_type": "caption", "role": "figure"}]},
+        },
+    )
+
+    content_list = adapter._content_list_from_preparsed_chunks(
+        [chunk],
+        document_id="doc-layout",
+    )
+
+    metadata = content_list[0]["metadata"]
+    assert metadata["layout_group_id"] == "figure-1"
+    assert metadata["layout_role"] == "caption"
+    assert metadata["reading_order"] == 7
+    assert metadata["quality_action_policy"]["index_vector"] is True
+    assert metadata["evidence_context"]["layout_summary"] == (
+        "figure; page=4; block=caption; role=figure"
+    )
+
+
 @pytest.mark.asyncio
 async def test_native_adapter_raises_failed_lightrag_doc_status_after_insert(tmp_path):
     artifact = tmp_path / "paper.pdf"
