@@ -5,10 +5,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ragstudio.services.domain_lexical_registry import DomainLexicalAdapter, DomainLexicalRegistry
-from ragstudio.services.lexical_language_adapters import (
-    ArabicLexicalAdapter,
-    LexicalExpansion,
-)
+from ragstudio.services.lexical_language_adapters import LexicalExpansion
 from ragstudio.services.query_hypothesis_service import QueryHypothesis
 from ragstudio.services.query_understanding import RetrievalPass
 
@@ -26,14 +23,22 @@ class DomainQueryExpansionService:
     def __init__(
         self,
         registry: DomainLexicalRegistry | DomainLexicalAdapter | None = None,
-        arabic_adapter: ArabicLexicalAdapter | None = None,
-    ):
-        if registry is not None and not isinstance(registry, DomainLexicalRegistry):
-            arabic_adapter = registry
-            registry = None
-        self.registry = registry or DomainLexicalRegistry()
-        if arabic_adapter is not None:
-            self.registry.register("arabic_religious", arabic_adapter)
+        arabic_adapter: DomainLexicalAdapter | None = None,
+    ) -> None:
+        selected_registry: DomainLexicalRegistry
+        selected_arabic_adapter = arabic_adapter
+
+        if registry is None:
+            selected_registry = DomainLexicalRegistry()
+        elif isinstance(registry, DomainLexicalRegistry):
+            selected_registry = registry
+        else:
+            selected_registry = DomainLexicalRegistry()
+            selected_arabic_adapter = registry
+
+        self.registry = selected_registry
+        if selected_arabic_adapter is not None:
+            self.registry.replace("arabic_religious", selected_arabic_adapter)
 
     def expand(
         self,
