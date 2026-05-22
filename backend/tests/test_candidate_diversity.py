@@ -44,3 +44,20 @@ def test_select_diverse_candidates_keeps_parser_quality_evidence():
 
     assert [item.chunk_id for item in selected] == ["a", "b"]
     assert trace["suppressed_candidate_ids"] == []
+
+
+def test_select_diverse_candidates_keeps_direct_evidence_past_limit():
+    semantic = candidate("a", "general semantic context", 20)
+    direct = candidate("b", "exact reference answer", 10)
+    direct = direct.__class__(
+        **{
+            **direct.__dict__,
+            "match_features": {"reference_exact": True},
+            "retrieval_pass": "reference_exact",
+        }
+    )
+
+    selected, trace = select_diverse_candidates([semantic, direct], limit=1)
+
+    assert [item.chunk_id for item in selected] == ["a", "b"]
+    assert trace["selected_count"] == 2

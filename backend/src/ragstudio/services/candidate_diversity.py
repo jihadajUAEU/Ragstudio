@@ -12,9 +12,10 @@ def select_diverse_candidates(
     selected: list[EvidenceCandidate] = []
     suppressed: list[str] = []
     for candidate in candidates:
-        if len(selected) >= max(limit, 1):
-            break
-        if not _must_keep(candidate) and any(
+        must_keep = _must_keep(candidate)
+        if len(selected) >= max(limit, 1) and not must_keep:
+            continue
+        if not must_keep and any(
             _jaccard(candidate.text, existing.text) >= similarity_threshold
             for existing in selected
         ):
@@ -45,6 +46,13 @@ def _terms(value: str) -> set[str]:
 
 
 def _must_keep(candidate: EvidenceCandidate) -> bool:
+    features = candidate.match_features
+    metadata_features = candidate.metadata.get("match_features")
+    if not features and isinstance(metadata_features, dict):
+        features = metadata_features
+    if features.get("reference_exact") or features.get("arabic_exact"):
+        return True
+
     warning_codes = candidate.metadata.get("parser_quality_warning_codes")
     if isinstance(warning_codes, list) and warning_codes:
         return True

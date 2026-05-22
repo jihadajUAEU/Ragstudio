@@ -43,9 +43,14 @@ class LayoutNeighborService:
         if not pages and not references:
             return []
 
-        statement = select(Chunk)
-        if document_ids:
-            statement = statement.where(Chunk.document_id.in_(document_ids))
+        seed_document_ids = [seed.document_id for seed in seed_rows if seed.document_id]
+        scoped_document_ids = list(
+            dict.fromkeys(document_ids if document_ids else seed_document_ids)
+        )
+        if not scoped_document_ids:
+            return []
+
+        statement = select(Chunk).where(Chunk.document_id.in_(scoped_document_ids))
         rows = (
             await self.session.execute(
                 statement.order_by(Chunk.created_at.asc(), Chunk.id.asc())

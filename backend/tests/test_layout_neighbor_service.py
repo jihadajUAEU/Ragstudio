@@ -73,3 +73,68 @@ async def test_layout_neighbor_service_returns_same_reference_and_page_neighbors
     assert neighbors[0].metadata["evidence_context"]["layout_summary"] == (
         "text; page=4; role=body"
     )
+
+
+@pytest.mark.asyncio
+async def test_layout_neighbor_service_uses_seed_documents_when_scope_is_empty(
+    database_url, tmp_path
+):
+    engine = make_engine(database_url)
+    await init_db(engine)
+    factory = make_session_factory(engine)
+
+    async with factory() as session:
+        session.add_all(
+            [
+                Document(
+                    id="doc-seed",
+                    filename="seed.pdf",
+                    content_type="application/pdf",
+                    sha256="seed-sha",
+                    artifact_path=str(tmp_path / "seed.pdf"),
+                ),
+                Document(
+                    id="doc-other",
+                    filename="other.pdf",
+                    content_type="application/pdf",
+                    sha256="other-sha",
+                    artifact_path=str(tmp_path / "other.pdf"),
+                ),
+            ]
+        )
+        session.add_all(
+            [
+                Chunk(
+                    id="seed-empty-scope",
+                    document_id="doc-seed",
+                    text="Seed evidence.",
+                    source_location={"page": 1, "reference": "1:5"},
+                    metadata_json={"reference_metadata": {"references": ["1:5"]}},
+                ),
+                Chunk(
+                    id="same-doc-neighbor",
+                    document_id="doc-seed",
+                    text="Same document neighbor.",
+                    source_location={"page": 1, "reference": "1:5"},
+                    metadata_json={"reference_metadata": {"references": ["1:5"]}},
+                ),
+                Chunk(
+                    id="cross-doc-neighbor",
+                    document_id="doc-other",
+                    text="Cross document neighbor.",
+                    source_location={"page": 1, "reference": "1:5"},
+                    metadata_json={"reference_metadata": {"references": ["1:5"]}},
+                ),
+            ]
+        )
+        await session.commit()
+
+        neighbors = await LayoutNeighborService(session).neighbors_for(
+            seed_chunk_ids=["seed-empty-scope"],
+            document_ids=[],
+            limit=5,
+        )
+
+    await engine.dispose()
+
+    assert [candidate.chunk_id for candidate in neighbors] == ["same-doc-neighbor"]

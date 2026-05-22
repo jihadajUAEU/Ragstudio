@@ -5,6 +5,7 @@ import pytest
 from ragstudio.db.engine import init_db, make_engine, make_session_factory
 from ragstudio.db.models import Chunk, Document
 from ragstudio.schemas.chunks import ChunkOut
+from ragstudio.services.context_assembly_service import ContextAssemblyService
 from ragstudio.services.domain_query_expansion_service import DomainQueryExpansionService
 from ragstudio.services.query_hypothesis_service import (
     ProbableAnswer,
@@ -20,6 +21,7 @@ from ragstudio.services.retrieval_evidence import (
 from ragstudio.services.retrieval_fusion import RetrievalFusion
 from ragstudio.services.retrieval_orchestrator import (
     RetrievalOrchestrator,
+    _evidence_from_context,
     _graph_seed_candidates,
 )
 from ragstudio.services.runtime_types import RuntimeQueryResult
@@ -61,6 +63,26 @@ def test_graph_seed_candidates_accept_hydrated_vector_hits():
     seeds = _graph_seed_candidates([vector], document_ids=["doc-1"], max_seeds=5)
 
     assert [seed.chunk_id for seed in seeds] == ["chunk-1"]
+
+
+def test_evidence_from_context_applies_assembled_context_text():
+    candidate = EvidenceCandidate(
+        candidate_id="metadata:chunk-1",
+        text="Guide us to the straight path.",
+        document_id="doc-1",
+        chunk_id="chunk-1",
+        source_location={"page": 1},
+        metadata={"evidence_context": {"breadcrumb": "Synthetic Tafseer > 1:5"}},
+        tool="metadata",
+        tool_rank=1,
+        base_score=10,
+    )
+    assembled_context = ContextAssemblyService(max_context_tokens=200).assemble([candidate])
+
+    evidence = _evidence_from_context([candidate], assembled_context)
+
+    assert evidence[0].text.startswith("[Synthetic Tafseer > 1:5]")
+    assert evidence[0].metadata["assembled_context"]["context_text_applied"] is True
 
 
 @pytest.mark.asyncio

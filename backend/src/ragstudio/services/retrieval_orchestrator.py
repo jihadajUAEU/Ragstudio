@@ -434,7 +434,7 @@ class RetrievalOrchestrator:
             reranked, parser_quality_trace = _annotate_parser_quality_warnings(reranked)
             if parser_quality_trace is not None:
                 traces.append(parser_quality_trace)
-            diversity_limit = int(query_config.get("diversity_limit") or limit)
+            diversity_limit = int(query_config.get("diversity_limit") or plan.candidate_limit)
             reranked, diversity_trace = select_diverse_candidates(
                 reranked,
                 limit=diversity_limit,
@@ -2183,7 +2183,22 @@ def _evidence_from_context(
     for item in assembled_context.evidence:
         candidate = by_id.get(item.candidate_id)
         if candidate is not None:
-            ordered.append(candidate)
+            metadata = dict(candidate.metadata)
+            assembled_payload = {
+                "breadcrumb": item.breadcrumb,
+                "layout_summary": item.layout_summary,
+                "context_text_applied": bool(item.context_text),
+            }
+            metadata["assembled_context"] = {
+                key: value for key, value in assembled_payload.items() if value is not None
+            }
+            ordered.append(
+                replace(
+                    candidate,
+                    text=item.context_text or item.original_text,
+                    metadata=metadata,
+                )
+            )
     return ordered
 
 
