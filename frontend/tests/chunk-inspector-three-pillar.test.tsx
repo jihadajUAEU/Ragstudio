@@ -40,7 +40,7 @@ describe("ChunkInspector three-pillar metadata", () => {
       ],
       total: 1,
     });
-    vi.mocked(apiClient.domainProfiles).mockResolvedValue({ items: [] });
+    vi.mocked(apiClient.domainProfiles).mockResolvedValue({ items: [], total: 0 });
     vi.mocked(apiClient.searchChunks).mockResolvedValue({
       items: [
         {

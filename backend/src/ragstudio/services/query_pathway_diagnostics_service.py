@@ -404,16 +404,15 @@ def _context_assembly(context: _DiagnosticContext) -> dict[str, Any]:
         status = "success"
     assembled_context = _record(trace.get("assembled_context") if trace else None) or {}
     evidence_ids = _string_list(assembled_context.get("evidence_ids"))
+    included_candidates = _number(trace, "included_candidates")
+    dropped_candidates = _number(trace, "dropped_candidates")
     output = _join_parts(
         [
             _field(
                 "included",
-                int(included) if (included := _number(trace, "included_candidates")) is not None else None,
+                int(included_candidates) if included_candidates is not None else None,
             ),
-            _field(
-                "dropped",
-                int(dropped) if (dropped := _number(trace, "dropped_candidates")) is not None else None,
-            ),
+            _field("dropped", int(dropped_candidates) if dropped_candidates is not None else None),
             _field("evidence", ", ".join(evidence_ids) if evidence_ids else None),
             _field("grounding", _text(assembled_context, "grounding_status")),
         ]

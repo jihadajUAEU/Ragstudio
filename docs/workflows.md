@@ -306,6 +306,25 @@ The Query page displays each returned run in **Answers and traces**. For success
   location, metadata, and inclusion/drop status.
 - **Timings**: search, query, and total elapsed milliseconds.
 
+### Validate Three-Pillar Query Observability
+
+After a query run completes, open the result's **Query Pathway** inspector. The
+tabs should expose the complete runtime path without requiring raw JSON review:
+
+- **Domain-aware**: route plan, selected domain/profile, materialization hints,
+  retrieval strategy, and per-lane result status.
+- **Layout-aware**: layout-neighbor expansion, layout group ids, layout roles,
+  reading order, page ranges, and source coordinates.
+- **Context-aware**: context-window expansion, assembled evidence ids, grounding
+  ids, token budget, and reranker rank movement.
+- **Raw traces**: the exact timings, chunk traces, token metadata, and pathway
+  diagnostics used to build the UI summaries.
+
+Then open a source evidence drawer from the same result. Evidence should repeat
+the relevant source-level chain: domain/materialization, layout chain,
+parent/previous/next context chain, and context assembly position when present.
+Use **Chunks** for pre-query inspection of the same metadata on canonical chunks.
+
 ## View RAGed Results and Evidence
 
 Use **Comparison** after running queries or experiments. It loads recorded runs from `GET /api/runs` and variants from `GET /api/variants`.
@@ -470,15 +489,27 @@ Use Diagnostics when:
 Open **Pipeline** for an operational map of the Studio flow. The canvas is read-only and shows:
 
 ```text
-Documents -> Chunking -> Route Planning -> Retrieval Lanes -> Fusion/Rerank -> Context -> Answer
-                 |                   |              ^
-                 v                   v              |
-              Graph              Variants       Diagnostics
+Documents -> Chunking -> Domain resolver -> Quality gate -> Route planner
+      |              |                 |               |
+      v              v                 v               v
+   Variants      Layout neighbors -> Context window -> Reranker
+                                                   |
+                                                   v
+                                      Context assembly -> Answer
+                                                   |
+                                                   v
+                                                 Graph
 ```
 
 The page reads live counts from documents, variants, runs, graph, and diagnostics. Use **Refresh** when another page has changed state.
 
-The Pipeline page is a live status map, not a separate pipeline editor. Use it to identify which stage needs attention, then use the stage actions to open Documents, Settings, Variants, or Query. Blocking diagnostics and warnings are shown beside affected stages when the current runtime profile exposes enough detail.
+The Pipeline page is a live status map, not a separate pipeline editor. Use it
+to identify which stage needs attention, then use the stage actions to open
+Documents, Settings, Variants, or Query. Blocking diagnostics and warnings are
+shown beside affected stages when the current runtime profile exposes enough
+detail. The stage checklist should show the three architecture pillars directly:
+domain resolver and quality gate, layout neighbors, context window, reranker,
+and context assembly.
 
 ### Reranker Diagnostics
 

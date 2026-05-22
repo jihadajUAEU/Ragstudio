@@ -182,14 +182,25 @@ export function buildThreePillarTrace(run: RunOut): ThreePillarTraceSummary {
   };
 }
 
-export function traceByStage(traces: Record<string, unknown>[], stage: string) {
-  return traces.map(recordValue).find((trace) => trace?.stage === stage);
-}
-
-function laneTrace(traces: Record<string, unknown>[], lane: string) {
+export function traceByStage(
+  traces: Record<string, unknown>[],
+  stage: string,
+): Record<string, unknown> | undefined {
   return traces
     .map(recordValue)
-    .find((trace) => trace?.stage === "retrieval_lane_result" && trace.lane === lane);
+    .find((trace): trace is Record<string, unknown> => trace?.stage === stage);
+}
+
+function laneTrace(
+  traces: Record<string, unknown>[],
+  lane: string,
+): Record<string, unknown> | undefined {
+  return traces
+    .map(recordValue)
+    .find(
+      (trace): trace is Record<string, unknown> =>
+        trace?.stage === "retrieval_lane_result" && trace.lane === lane,
+    );
 }
 
 function sourceArchitectureSummary(

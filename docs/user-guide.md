@@ -86,12 +86,21 @@ Use this path to get from an empty local workspace to a completed answer and ins
 ### Pipeline
 
 `Pipeline` shows the RAG flow from source files to grounded answers. The canvas
-stages are `Documents`, `Chunking`, `Variants`, `Retrieval`, `Generation`,
-`Graph`, and `Answer`. The `Stage checklist` summarizes document count, chunk
-indexing, variant count, scoped retrieval, recorded runs, answer traces, and
-graph edges. Treat this as an operational map of the three pillars: domain
-metadata and quality gates before retrieval, layout-aware canonical chunks, and
-context-aware answer assembly.
+stages are `Documents`, `Chunking`, `Variants`, `Domain resolver`, `Quality
+gate`, `Route planner`, `Layout neighbors`, `Context window`, `Reranker`,
+`Context assembly`, `Graph`, and `Answer`. The `Stage checklist` summarizes
+document count, chunk indexing, variant count, scoped retrieval, recorded runs,
+answer traces, graph edges, and the readiness of the domain-aware,
+layout-aware, and context-aware retrieval path.
+
+Treat this as the operational map of the three pillars:
+
+- Domain-aware ingestion and retrieval: document metadata, domain profiles,
+  quality gates, materialization policy, and route planning.
+- Layout-aware ingestion and retrieval: parser provenance, layout groups,
+  reading order, source coordinates, and neighbor expansion.
+- Context-aware ingestion and retrieval: breadcrumbs, parent/previous/next
+  relationships, context windows, reranker movement, and final context assembly.
 
 ### Documents
 
@@ -122,7 +131,7 @@ Controls:
 - `Limit`: maximum returned chunks, from `1` to `100`.
 - `Search`: searches selected document chunks.
 
-Results show each chunk's `id`, `document_id`, `score`, chunk text, `Source location`, and `Metadata`.
+Results show each chunk's `id`, `document_id`, `score`, chunk text, `Source location`, and `Metadata`. The metadata summary highlights materialization hints, layout group and role, reading order, parent chunk id, previous chunk id, and next chunk id so the chunk can be audited before it reaches query-time context assembly.
 
 Chunk search is scoped by selected document IDs. If you submit without a document selected, the UI shows `Select at least one document to avoid searching every chunk.`
 
@@ -145,6 +154,22 @@ Results appear under `Answers and traces`:
 - `Chunk traces`: route plan, lane result, layout-neighbor, context-window,
   fusion, reranker, context assembly, and candidate trace objects.
 - `Timings`: measured `search_ms`, `query_ms`, and `total_ms`, plus adapter timings when provided.
+
+Use the **Query Pathway** inspector on each result to review the three-pillar
+route without reading raw JSON:
+
+- **Domain-aware** shows the retrieval route plan, selected domain/profile,
+  materialization hints, and retrieval lane results.
+- **Layout-aware** shows layout-neighbor expansion, layout roles, layout groups,
+  reading order, source pages, and source coordinates when available.
+- **Context-aware** shows context-window expansion, assembled evidence order,
+  token budget, grounding ids, and reranker rank changes.
+- **Raw traces** remains available for exact trace payload inspection.
+
+Each source evidence drawer also mirrors the same architecture contract. Inspect
+an evidence item to see domain and materialization metadata, layout chain
+metadata, context chain metadata, and any context assembly position attached to
+that source.
 
 Upload and Index actions use `MinerU strict`. The document is sent to MinerU and indexing fails if MinerU fails or returns invalid extracted text. Ragstudio does not silently fall back to local PDF parsing in the production workflow.
 

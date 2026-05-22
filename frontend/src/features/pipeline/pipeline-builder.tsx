@@ -51,13 +51,13 @@ const queryKeys = {
 const nodeTypes = { pipelineStage: PipelineStageNode };
 
 export function PipelineBuilder() {
-  const documentsQuery = useQuery({ queryKey: queryKeys.documents, queryFn: apiClient.documents });
-  const variantsQuery = useQuery({ queryKey: queryKeys.variants, queryFn: apiClient.variants });
-  const runsQuery = useQuery({ queryKey: queryKeys.runs, queryFn: apiClient.runs });
-  const graphQuery = useQuery({ queryKey: queryKeys.graph, queryFn: apiClient.graph });
+  const documentsQuery = useQuery({ queryKey: queryKeys.documents, queryFn: () => apiClient.documents() });
+  const variantsQuery = useQuery({ queryKey: queryKeys.variants, queryFn: () => apiClient.variants() });
+  const runsQuery = useQuery({ queryKey: queryKeys.runs, queryFn: () => apiClient.runs() });
+  const graphQuery = useQuery({ queryKey: queryKeys.graph, queryFn: () => apiClient.graph() });
   const diagnosticsQuery = useQuery({
     queryKey: queryKeys.diagnostics,
-    queryFn: apiClient.diagnostics,
+    queryFn: () => apiClient.diagnostics(),
   });
   const stageDiagnostics = useMemo(
     () => getStageDiagnostics(diagnosticsQuery.data?.checks ?? [], diagnosticsQuery.data?.warnings ?? []),
