@@ -502,6 +502,13 @@ function MetadataSummary({ chunk }: { chunk: ChunkOut }) {
         <SummaryLine label="Content" value={chunk.content_type} />
         <SummaryLine label="Snapshot" value={metadataValue(chunk.metadata, ["mirrored_snapshot"], "false")} />
         <SummaryLine label="Domain" value={metadataValue(chunk.metadata, ["domain_metadata", "domain"], "generic")} />
+        <SummaryLine label="Materialization" value={metadataValue(chunk.metadata, ["materialization_hint"], "not recorded")} />
+        <SummaryLine label="Layout group" value={metadataValue(chunk.metadata, ["layout_group_id"], "not recorded")} />
+        <SummaryLine label="Layout role" value={metadataValue(chunk.metadata, ["layout_role"], "not recorded")} />
+        <SummaryLine label="Reading order" value={metadataValue(chunk.metadata, ["reading_order"], "not recorded")} />
+        <SummaryLine label="Parent" value={metadataValue(chunk.metadata, ["parent_chunk_id"], "not recorded")} />
+        <SummaryLine label="Previous" value={metadataValue(chunk.metadata, ["previous_chunk_id"], "not recorded")} />
+        <SummaryLine label="Next" value={metadataValue(chunk.metadata, ["next_chunk_id"], "not recorded")} />
       </div>
     </div>
   );
@@ -659,6 +666,23 @@ function normalizeChunkEvidence(
       textMetadata(chunk.metadata, ["graph_unavailable_detail"]) ??
       textMetadata(chunk.metadata, ["graphUnavailableDetail"]) ??
       null,
+    architecture: {
+      domain: {
+        domain: metadataValue(chunk.metadata, ["domain_metadata", "domain"], "not recorded"),
+        materializationHint: metadataValue(chunk.metadata, ["materialization_hint"], "not recorded"),
+        qualityPolicy: metadataValue(chunk.metadata, ["quality_action_policy"], "not recorded"),
+      },
+      layout: {
+        layoutGroupId: metadataValue(chunk.metadata, ["layout_group_id"], "not recorded"),
+        layoutRole: metadataValue(chunk.metadata, ["layout_role"], "not recorded"),
+        readingOrder: metadataValue(chunk.metadata, ["reading_order"], "not recorded"),
+      },
+      context: {
+        parentChunkId: metadataValue(chunk.metadata, ["parent_chunk_id"], "not recorded"),
+        previousChunkId: metadataValue(chunk.metadata, ["previous_chunk_id"], "not recorded"),
+        nextChunkId: metadataValue(chunk.metadata, ["next_chunk_id"], "not recorded"),
+      },
+    },
     raw: chunk,
     routeLinks: {
       documents: Boolean(chunk.document_id),
