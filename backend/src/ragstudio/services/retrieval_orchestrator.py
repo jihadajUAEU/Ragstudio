@@ -12,6 +12,7 @@ from ragstudio.services.arabic_text import arabic_tokens
 from ragstudio.services.candidate_diversity import select_diverse_candidates
 from ragstudio.services.chunk_service import ChunkService
 from ragstudio.services.context_assembly_service import ContextAssemblyService
+from ragstudio.services.context_window_service import ContextWindowService
 from ragstudio.services.domain_metadata_quality_gate import DomainMetadataQualityGate
 from ragstudio.services.domain_query_expansion_service import DomainQueryExpansionService
 from ragstudio.services.evidence_first_answer_service import EvidenceFirstAnswerService
@@ -271,6 +272,13 @@ class RetrievalOrchestrator:
             timings=timings,
         )
         traces.extend(layout_neighbor_traces)
+        context_neighbors, context_neighbor_traces = await self._safe_context_neighbors(
+            [*metadata_candidates, *vector_candidates, *layout_neighbors],
+            document_ids=document_ids,
+            limit=max(limit, 1),
+            timings=timings,
+        )
+        traces.extend(context_neighbor_traces)
         observability.record_stage(
             "primary_retrieval",
             candidate_count=(
@@ -278,6 +286,7 @@ class RetrievalOrchestrator:
                 + len(metadata_candidates)
                 + len(vector_candidates)
                 + len(layout_neighbors)
+                + len(context_neighbors)
             ),
             latency_ms=(
                 timings.get("native_stage_ms", 0.0)
@@ -289,6 +298,7 @@ class RetrievalOrchestrator:
                 "metadata_candidates": len(metadata_candidates),
                 "vector_candidates": len(vector_candidates),
                 "layout_neighbor_candidates": len(layout_neighbors),
+                "context_neighbor_candidates": len(context_neighbors),
             },
         )
         traces.append(
@@ -298,6 +308,7 @@ class RetrievalOrchestrator:
                 "metadata_candidates": len(metadata_candidates),
                 "vector_candidates": len(vector_candidates),
                 "layout_neighbor_candidates": len(layout_neighbors),
+                "context_neighbor_candidates": len(context_neighbors),
             }
         )
 
@@ -310,6 +321,7 @@ class RetrievalOrchestrator:
                     *metadata_candidates,
                     *vector_candidates,
                     *layout_neighbors,
+                    *context_neighbors,
                 ],
             )
             timings["initial_fusion_ms"] = _elapsed_ms(fuse_started)
@@ -369,6 +381,9 @@ class RetrievalOrchestrator:
             layout_neighbor_ranked = (
                 fuse_candidates(plan, layout_neighbors) if layout_neighbors else []
             )
+            context_neighbor_ranked = (
+                fuse_candidates(plan, context_neighbors) if context_neighbors else []
+            )
             fused = apply_query_aware_ordering(
                 plan,
                 self.retrieval_fusion.fuse(
@@ -378,6 +393,7 @@ class RetrievalOrchestrator:
                         vector_ranked,
                         graph_ranked,
                         layout_neighbor_ranked,
+                        context_neighbor_ranked,
                     ],
                     limit=plan.candidate_limit,
                 ),
@@ -389,6 +405,7 @@ class RetrievalOrchestrator:
                 "vector_candidates": len(vector_candidates),
                 "graph_candidates": len(graph_candidates),
                 "layout_neighbor_candidates": len(layout_neighbors),
+                "context_neighbor_candidates": len(context_neighbors),
                 "fused_candidates": len(fused),
             }
             traces.append({"stage": "final_fusion", **final_fusion_detail})
@@ -1005,6 +1022,59 @@ class RetrievalOrchestrator:
                 "candidate_count": len(candidates),
                 "candidate_ids": [candidate.candidate_id for candidate in candidates],
             }
+        ]
+
+    async def _safe_context_neighbors(
+        self,
+        seeds: list[EvidenceCandidate],
+        *,
+        document_ids: list[str],
+        limit: int,
+        timings: dict[str, Any],
+    ) -> tuple[list[EvidenceCandidate], list[dict[str, Any]]]:
+        started = perf_counter()
+        if not seeds or not hasattr(self.chunk_service, "session"):
+            timings["context_window_ms"] = _elapsed_ms(started)
+            return [], [
+                _lane_result_trace(
+                    lane="context_window",
+                    status="skipped",
+                    reason="no_seed_chunks_or_session",
+                    candidates=[],
+                    latency_ms=timings["context_window_ms"],
+                )
+            ]
+        try:
+            candidates = await ContextWindowService(self.chunk_service.session).window_for(
+                seeds,
+                document_ids=document_ids,
+                limit=limit,
+            )
+        except Exception as exc:
+            timings["context_window_ms"] = _elapsed_ms(started)
+            return [], [
+                _lane_result_trace(
+                    lane="context_window",
+                    status="failed",
+                    reason=exc.__class__.__name__,
+                    candidates=[],
+                    latency_ms=timings["context_window_ms"],
+                    error_type=exc.__class__.__name__,
+                )
+            ]
+        timings["context_window_ms"] = _elapsed_ms(started)
+        return candidates, [
+            _lane_result_trace(
+                lane="context_window",
+                status="ran" if candidates else "skipped",
+                reason=(
+                    "adjacent_context_window"
+                    if candidates
+                    else "no_adjacent_context_window"
+                ),
+                candidates=candidates,
+                latency_ms=timings["context_window_ms"],
+            )
         ]
 
     async def _metadata_after_native_result(

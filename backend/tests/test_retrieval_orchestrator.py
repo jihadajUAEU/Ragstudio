@@ -162,6 +162,86 @@ async def test_orchestrator_expands_layout_neighbors_from_seed_candidates(
     ]
 
 
+@pytest.mark.asyncio
+async def test_orchestrator_expands_context_window_from_seed_candidates(
+    database_url, tmp_path
+):
+    engine = make_engine(database_url)
+    await init_db(engine)
+    factory = make_session_factory(engine)
+
+    async with factory() as session:
+        session.add(
+            Document(
+                id="doc-context-window-orchestrator",
+                filename="context-window.pdf",
+                content_type="application/pdf",
+                sha256="context-window-orchestrator-sha",
+                artifact_path=str(tmp_path / "context-window.pdf"),
+            )
+        )
+        session.add_all(
+            [
+                Chunk(
+                    id="prev-context-window-orchestrator",
+                    document_id="doc-context-window-orchestrator",
+                    text="Previous canonical chunk.",
+                    source_location={"page": 1},
+                    metadata_json={"reading_order": 1},
+                ),
+                Chunk(
+                    id="seed-context-window-orchestrator",
+                    document_id="doc-context-window-orchestrator",
+                    text="Seed canonical chunk.",
+                    source_location={"page": 1},
+                    metadata_json={"reading_order": 2},
+                ),
+                Chunk(
+                    id="next-context-window-orchestrator",
+                    document_id="doc-context-window-orchestrator",
+                    text="Next canonical chunk.",
+                    source_location={"page": 1},
+                    metadata_json={"reading_order": 3},
+                ),
+            ]
+        )
+        await session.commit()
+
+        orchestrator = RetrievalOrchestrator(
+            chunk_service=_ChunkServiceWithSession(session)
+        )
+        candidates, traces = await orchestrator._safe_context_neighbors(
+            [
+                EvidenceCandidate(
+                    candidate_id="metadata:seed-context-window-orchestrator",
+                    text="Seed canonical chunk.",
+                    document_id="doc-context-window-orchestrator",
+                    chunk_id="seed-context-window-orchestrator",
+                    source_location={"page": 1},
+                    metadata={"reading_order": 2},
+                    tool="metadata",
+                    tool_rank=1,
+                    base_score=10.0,
+                )
+            ],
+            document_ids=["doc-context-window-orchestrator"],
+            limit=4,
+            timings={},
+        )
+
+    await engine.dispose()
+
+    assert [candidate.chunk_id for candidate in candidates] == [
+        "prev-context-window-orchestrator",
+        "next-context-window-orchestrator",
+    ]
+    assert traces[0]["stage"] == "retrieval_lane_result"
+    assert traces[0]["lane"] == "context_window"
+    assert traces[0]["status"] == "ran"
+    assert traces[0]["reason"] == "adjacent_context_window"
+    assert traces[0]["candidate_count"] == 2
+
+
 def test_plan_for_reference_query_marks_reference_intent():
     plan = plan_for_query("show Book 64 Hadith 486", document_ids=[], limit=8)
 
