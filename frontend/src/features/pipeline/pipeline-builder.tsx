@@ -67,28 +67,33 @@ export function PipelineBuilder() {
   const nodes = useMemo<Node<PipelineNodeData>[]>(
     () => [
       stage("documents", "Documents", "Upload source files", formatCount(documentsQuery.data?.total), 0, 0, "input"),
-      stage("chunking", "Chunking", "Index document chunks", "Searchable spans", 260, 0, "process"),
+      stage("chunking", "Chunking", "Parse and mirror chunks", "Searchable spans", 240, 0, "process"),
       stage(
         "variants",
         "Variants",
         "Tune retrieval and generation",
         formatCount(variantsQuery.data?.total),
-        520,
-        -86,
+        500,
+        -260,
         "process",
       ),
-      stage("retrieval", "Retrieval", "Rank matching chunks", "Top-k trace", 520, 86, "process"),
-      stage("generation", "Generation", "Compose grounded answer", formatCount(runsQuery.data?.total), 780, 0, "process"),
+      stage("domain", "Domain resolver", "Classify domain and reference style", "Profile route", 500, -140, "process"),
+      stage("quality", "Quality gate", "Apply parser and materialization policy", "Safe lanes", 500, 0, "process"),
+      stage("route", "Route planner", "Plan metadata, vector, runtime, graph lanes", "Lane plan", 760, 0, "process"),
+      stage("layout", "Layout neighbors", "Expand page, group, and reading-order context", "Layout trace", 1020, -110, "process"),
+      stage("context", "Context window", "Hydrate parent, sibling, previous, and next chunks", "Context trace", 1020, 110, "process"),
+      stage("reranker", "Reranker", "Record rank deltas and degraded status", "Rank trace", 1280, -110, "process"),
+      stage("assembly", "Context assembly", "Preserve evidence and record dropped context", "Grounded context", 1280, 110, "process"),
       stage(
         "graph",
         "Graph",
         "Inspect entities and edges",
         `${formatCount(graphQuery.data?.nodes.length)} nodes`,
-        1040,
-        -86,
+        760,
+        180,
         "output",
       ),
-      stage("answer", "Answer", "Sources, traces, timings", "Run result", 1040, 86, "output"),
+      stage("answer", "Answer", "Sources, traces, timings", `${formatCount(runsQuery.data?.total)} runs`, 1540, 0, "output"),
     ],
     [documentsQuery.data?.total, graphQuery.data?.nodes.length, runsQuery.data?.total, variantsQuery.data?.total],
   );
@@ -96,11 +101,17 @@ export function PipelineBuilder() {
   const edges = useMemo<Edge[]>(
     () => [
       edge("documents", "chunking", "parse"),
-      edge("chunking", "retrieval", "embed/search"),
-      edge("variants", "retrieval", "params"),
-      edge("retrieval", "generation", "context"),
-      edge("generation", "answer", "ground"),
-      edge("chunking", "graph", "entities"),
+      edge("chunking", "domain", "metadata"),
+      edge("domain", "quality", "policy"),
+      edge("variants", "route", "params"),
+      edge("quality", "route", "lanes"),
+      edge("route", "layout", "layout"),
+      edge("route", "context", "context"),
+      edge("route", "graph", "graph"),
+      edge("layout", "reranker", "candidates"),
+      edge("context", "assembly", "neighbors"),
+      edge("reranker", "assembly", "ranked"),
+      edge("assembly", "answer", "ground"),
       edge("graph", "answer", "evidence"),
     ],
     [],
@@ -203,13 +214,13 @@ export function PipelineBuilder() {
               value={formatCount(variantsQuery.data?.total)}
               diagnostic={stageDiagnostics.variants}
             />
-            <StageCheck icon={Search} label="Retrieval" value="Scoped search" diagnostic={stageDiagnostics.retrieval} />
-            <StageCheck
-              icon={BrainCircuit}
-              label="Generation"
-              value={formatCount(runsQuery.data?.total)}
-              diagnostic={stageDiagnostics.generation}
-            />
+            <StageCheck icon={Search} label="Domain resolver" value="Profile route" diagnostic={stageDiagnostics.retrieval} />
+            <StageCheck icon={AlertTriangle} label="Quality gate" value="Materialization policy" diagnostic={stageDiagnostics.chunks} />
+            <StageCheck icon={GitBranch} label="Route planner" value="Lane plan" diagnostic={stageDiagnostics.retrieval} />
+            <StageCheck icon={FileText} label="Layout neighbors" value="Reading-order trace" diagnostic={stageDiagnostics.retrieval} />
+            <StageCheck icon={Database} label="Context window" value="Parent and sibling context" diagnostic={stageDiagnostics.retrieval} />
+            <StageCheck icon={BrainCircuit} label="Reranker" value="Rank deltas" diagnostic={stageDiagnostics.retrieval} />
+            <StageCheck icon={SlidersHorizontal} label="Context assembly" value="Dropped reasons" diagnostic={stageDiagnostics.answers} />
             <StageCheck
               icon={MessageSquareText}
               label="Answers"

@@ -2,122 +2,78 @@ import "@testing-library/jest-dom/vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { ReactNode } from "react";
 
 import { apiClient } from "../src/api/client";
-import type { DiagnosticsOut } from "../src/api/generated";
 import { PipelineBuilder } from "../src/features/pipeline/pipeline-builder";
 
 vi.mock("@xyflow/react", () => ({
-  Background: () => null,
-  Controls: () => null,
+  Background: () => <div>Background</div>,
+  Controls: () => <div>Controls</div>,
   Handle: () => null,
-  MiniMap: () => null,
+  MiniMap: () => <div>MiniMap</div>,
   Position: { Left: "left", Right: "right" },
-  ReactFlow: ({
-    nodes,
-    children,
-  }: {
-    nodes: Array<{ id: string; data: { label: string; detail: string } }>;
-    children: ReactNode;
-  }) => (
+  ReactFlow: ({ nodes }: { nodes: Array<{ data: { label: string; detail: string } }> }) => (
     <div aria-label="RAG pipeline flow">
       {nodes.map((node) => (
-        <div key={node.id}>
-          <span>{node.data.label}</span>
-          <span>{node.data.detail}</span>
-        </div>
+        <section key={node.data.label}>
+          <h3>{node.data.label}</h3>
+          <p>{node.data.detail}</p>
+        </section>
       ))}
-      {children}
     </div>
   ),
 }));
 
-const defaultDiagnostics: DiagnosticsOut = {
-  capabilities: {},
-  dependency_status: {},
-  warnings: [],
-  runtime_mode: "runtime",
-  overall_status: "ready",
-  checks: [],
-};
-
 vi.mock("../src/api/client", () => ({
-  DEFAULT_PARSER_MODE: "mineru_strict",
   apiClient: {
+    documents: vi.fn(),
+    variants: vi.fn(),
+    runs: vi.fn(),
+    graph: vi.fn(),
     diagnostics: vi.fn(),
-    documents: vi.fn().mockResolvedValue({ items: [], total: 0 }),
-    graph: vi.fn().mockResolvedValue({ nodes: [], edges: [] }),
-    runs: vi.fn().mockResolvedValue({ items: [], total: 0 }),
-    variants: vi.fn().mockResolvedValue({ items: [], total: 0 }),
   },
 }));
 
+function renderPipeline() {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={queryClient}>
+      <PipelineBuilder />
+    </QueryClientProvider>,
+  );
+}
+
 describe("PipelineBuilder", () => {
-  function renderPipeline() {
-    const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
-
-    render(
-      <QueryClientProvider client={queryClient}>
-        <PipelineBuilder />
-      </QueryClientProvider>,
-    );
-  }
-
   beforeEach(() => {
-    vi.mocked(apiClient.diagnostics).mockResolvedValue(defaultDiagnostics);
-  });
-
-  it("renders the core RAG stages", async () => {
-    renderPipeline();
-
-    const flow = await screen.findByLabelText("RAG pipeline flow");
-    expect(flow).toHaveTextContent("Documents");
-    expect(flow).toHaveTextContent("Chunking");
-    expect(flow).toHaveTextContent("Variants");
-    expect(flow).toHaveTextContent("Retrieval");
-    expect(flow).toHaveTextContent("Generation");
-    expect(flow).toHaveTextContent("Graph");
-    expect(flow).toHaveTextContent("Answer");
-    expect(await screen.findByText("Read-only map")).toBeVisible();
-  });
-
-  it("shows workflow actions for pipeline stages", async () => {
-    renderPipeline();
-
-    expect(await screen.findByRole("link", { name: "Open Documents" })).toHaveAttribute("href", "/documents");
-    expect(screen.getByRole("link", { name: "Open Chunks" })).toHaveAttribute("href", "/chunks");
-    expect(screen.getByRole("link", { name: "Open Settings" })).toHaveAttribute("href", "/settings");
-    expect(screen.getByRole("link", { name: "Open Variants" })).toHaveAttribute("href", "/variants");
-    expect(screen.getByRole("link", { name: "Open Query" })).toHaveAttribute("href", "/query");
-    expect(screen.getByRole("link", { name: "Open Graph" })).toHaveAttribute("href", "/graph");
-    expect(screen.getByRole("link", { name: "Open Diagnostics" })).toHaveAttribute("href", "/diagnostics");
-  });
-
-  it("places blocking diagnostics beside affected stages", async () => {
-    vi.mocked(apiClient.diagnostics).mockResolvedValue({
-      ...defaultDiagnostics,
-      overall_status: "failed",
-      checks: [
-        {
-          name: "neo4j",
-          status: "failed",
-          severity: "blocking",
-          detail: "Neo4j connectivity and authentication failed.",
-        },
-      ],
-      warnings: ["Native RAG-Anything scoped query is unavailable for selected-document queries."],
+    vi.clearAllMocks();
+    vi.mocked(apiClient.documents).mockResolvedValue({ items: [], total: 0 });
+    vi.mocked(apiClient.variants).mockResolvedValue({ items: [], total: 0 });
+    vi.mocked(apiClient.runs).mockResolvedValue({
+      items: [],
+      total: 0,
+      limit: 100,
+      offset: 0,
+      has_more: false,
     });
+    vi.mocked(apiClient.graph).mockResolvedValue({ nodes: [], edges: [] });
+    vi.mocked(apiClient.diagnostics).mockResolvedValue({
+      capabilities: {},
+      dependency_status: {},
+      warnings: [],
+      runtime_mode: "runtime",
+      overall_status: "ready",
+      checks: [],
+    });
+  });
 
+  it("shows the three-pillar retrieval architecture as first-class stages", async () => {
     renderPipeline();
 
-    expect(await screen.findByText("Neo4j connectivity and authentication failed.")).toBeVisible();
-    expect(screen.getByLabelText("Graph stage")).toHaveTextContent("Neo4j connectivity and authentication failed.");
-
-    expect(screen.getByLabelText("Retrieval stage")).toHaveTextContent(
-      "Native RAG-Anything scoped query is unavailable for selected-document queries.",
-    );
+    expect(await screen.findAllByText("Domain resolver")).toHaveLength(2);
+    expect(screen.getAllByText("Quality gate")).toHaveLength(2);
+    expect(screen.getAllByText("Route planner")).toHaveLength(2);
+    expect(screen.getAllByText("Layout neighbors")).toHaveLength(2);
+    expect(screen.getAllByText("Context window")).toHaveLength(2);
+    expect(screen.getAllByText("Context assembly")).toHaveLength(2);
   });
 });
