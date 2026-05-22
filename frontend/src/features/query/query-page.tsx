@@ -3,11 +3,13 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertCircle,
   CheckSquare,
+  ChevronDown,
   FileText,
   GitBranch,
   Loader2,
   MessageSquareText,
   PlayCircle,
+  RefreshCcw,
   Search,
   SlidersHorizontal,
 } from "lucide-react";
@@ -50,13 +52,15 @@ type QueryResponseMode = "fast" | "full";
 
 export function QueryPage() {
   const queryClient = useQueryClient();
-  const documentsQuery = useQuery({ queryKey: queryKeys.documents, queryFn: apiClient.documents });
-  const variantsQuery = useQuery({ queryKey: queryKeys.variants, queryFn: apiClient.variants });
+  const documentsQuery = useQuery({ queryKey: queryKeys.documents, queryFn: () => apiClient.documents() });
+  const variantsQuery = useQuery({ queryKey: queryKeys.variants, queryFn: () => apiClient.variants() });
   const [queryText, setQueryText] = useState("");
   const [limit, setLimit] = useState(8);
   const [responseMode, setResponseMode] = useState<QueryResponseMode>("fast");
-  const [selectedDocumentIds, setSelectedDocumentIds] = useState<string[]>([]);
-  const [selectedVariantIds, setSelectedVariantIds] = useState<string[]>([]);
+  const [selectedDocumentIds, setSelectedDocumentIds] = useState<string[] | null>(null);
+  const [selectedVariantIds, setSelectedVariantIds] = useState<string[] | null>(null);
+  const [answerBudgetMs, setAnswerBudgetMs] = useState(3000);
+  const [responseBudgetMs, setResponseBudgetMs] = useState(15000);
   const [formError, setFormError] = useState("");
   const [searchTuningOpen, setSearchTuningOpen] = useState(false);
   const [searchWeights, setSearchWeights] = useState<HybridSearchWeights>(defaultSearchWeights);
@@ -76,29 +80,59 @@ export function QueryPage() {
       setFormError("Enter a query before running.");
       return;
     }
-    if (selectedDocumentIds.length === 0) {
+    if (activeSelectedDocumentIds.length === 0) {
       setFormError("Select at least one document so the run is scoped.");
       return;
     }
-    if (selectedVariantIds.length === 0) {
+    if (activeSelectedVariantIds.length === 0) {
       setFormError("Select at least one variant.");
       return;
     }
     runQuery.mutate({
       query: queryText.trim(),
-      document_ids: selectedDocumentIds,
-      variant_ids: selectedVariantIds,
+      document_ids: activeSelectedDocumentIds,
+      variant_ids: activeSelectedVariantIds,
       limit,
       response_mode: responseMode,
-      answer_budget_ms: responseMode === "fast" ? 3000 : null,
-      response_budget_ms: responseMode === "fast" ? 15000 : null,
+      answer_budget_ms: responseMode === "fast" ? answerBudgetMs : null,
+      response_budget_ms: responseMode === "fast" ? responseBudgetMs : null,
       search_weights: hasCustomSearchWeights ? searchWeights : null,
     });
   };
 
+  const documents = useMemo(() => documentsQuery.data?.items ?? [], [documentsQuery.data?.items]);
+  const variants = useMemo(() => variantsQuery.data?.items ?? [], [variantsQuery.data?.items]);
+  const defaultDocumentId = useMemo(
+    () => (documents.find((document) => document.status === "succeeded") ?? documents[0])?.id,
+    [documents],
+  );
+  const defaultVariantId = useMemo(() => variants[0]?.id, [variants]);
+  const defaultDocumentIds = useMemo(
+    () => (defaultDocumentId ? [defaultDocumentId] : []),
+    [defaultDocumentId],
+  );
+  const defaultVariantIds = useMemo(() => (defaultVariantId ? [defaultVariantId] : []), [defaultVariantId]);
+  const activeSelectedDocumentIds = selectedDocumentIds ?? defaultDocumentIds;
+  const activeSelectedVariantIds = selectedVariantIds ?? defaultVariantIds;
+  const selectedDocumentNames = useMemo(
+    () =>
+      documents
+        .filter((document) => activeSelectedDocumentIds.includes(document.id))
+        .map((document) => document.filename)
+        .join(", "),
+    [activeSelectedDocumentIds, documents],
+  );
+  const selectedVariantNames = useMemo(
+    () =>
+      variants
+        .filter((variant) => activeSelectedVariantIds.includes(variant.id))
+        .map((variant) => variant.name)
+        .join(", "),
+    [activeSelectedVariantIds, variants],
+  );
   const variantById = useMemo(
-    () => new Map((variantsQuery.data?.items ?? []).map((variant) => [variant.id, variant])),
-    [variantsQuery.data?.items],
+    () => new Map<string, VariantOut>(variants.map((variant) => [variant.id, variant])),
+    [variants],
   );
 
   const isLoadingChoices = documentsQuery.isLoading || variantsQuery.isLoading;
@@ -107,23 +141,22 @@ export function QueryPage() {
     !runQuery.isPending &&
     !isLoadingChoices &&
     queryText.trim().length > 0 &&
-    selectedDocumentIds.length > 0 &&
-    selectedVariantIds.length > 0;
-  const canTune =
-    !isLoadingChoices && queryText.trim().length > 0 && selectedDocumentIds.length > 0;
+    activeSelectedDocumentIds.length > 0 &&
+    activeSelectedVariantIds.length > 0;
+  const canTune = !isLoadingChoices && queryText.trim().length > 0 && activeSelectedDocumentIds.length > 0;
   const simulationQuery = useQuery({
     queryKey: queryKeys.simulateRetrieval(
       queryText.trim(),
-      selectedDocumentIds,
-      selectedVariantIds,
+      activeSelectedDocumentIds,
+      activeSelectedVariantIds,
       limit,
       searchWeights,
     ),
     queryFn: () =>
       apiClient.simulateRetrieval({
         query: queryText.trim(),
-        document_ids: selectedDocumentIds,
-        variant_ids: selectedVariantIds,
+        document_ids: activeSelectedDocumentIds,
+        variant_ids: activeSelectedVariantIds,
         limit,
         search_weights: hasCustomSearchWeights ? searchWeights : null,
       }),
@@ -131,40 +164,42 @@ export function QueryPage() {
   });
 
   return (
-    <div className="mx-auto grid max-w-7xl gap-6 xl:grid-cols-[minmax(340px,0.42fr)_minmax(0,0.58fr)]">
-      <form onSubmit={submit} className="rounded-md border border-[#d6dde1] bg-white p-4 sm:p-5">
-        <div className="mb-5 flex items-center gap-2">
+    <div className="mx-auto max-w-7xl space-y-3">
+      <form onSubmit={submit} className="rounded-md border border-[#d6dde1] bg-white p-3 sm:p-4">
+        <div className="mb-3 flex items-center gap-2">
           <MessageSquareText className="h-4 w-4 text-[#176b87]" aria-hidden="true" />
-          <h2 className="truncate text-base font-semibold text-[#1f2933]">Run RAG query</h2>
+          <h2 className="truncate text-base font-semibold text-[#1f2933]">RAG query workbench</h2>
         </div>
 
-        <label className="block min-w-0 text-sm font-medium text-[#3a4a53]">
-          <span className="mb-1.5 block truncate">Question</span>
-          <textarea
-            className="min-h-28 w-full resize-y rounded-md border border-[#cfd8dd] bg-white px-3 py-2 text-sm text-[#1f2933] outline-none focus:border-[#176b87] focus:ring-2 focus:ring-[#176b87]/20 disabled:bg-[#f4f7f8]"
-            value={queryText}
-            onChange={(event) => setQueryText(event.target.value)}
-            disabled={runQuery.isPending}
-            placeholder="Ask a focused question against selected documents."
-          />
-        </label>
-
-        <div className="mt-4 grid gap-4">
+        <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(220px,0.3fr)_minmax(220px,0.3fr)] xl:items-end">
+          <label className="block min-w-0 text-sm font-medium text-[#3a4a53]">
+            <span className="mb-1 block truncate">Question, reference, or claim</span>
+            <input
+              className="h-10 w-full rounded-md border border-[#cfd8dd] bg-white px-3 text-sm text-[#1f2933] outline-none focus:border-[#176b87] focus:ring-2 focus:ring-[#176b87]/20 disabled:bg-[#f4f7f8]"
+              value={queryText}
+              onChange={(event) => setQueryText(event.target.value)}
+              disabled={runQuery.isPending}
+              placeholder="Ask a focused question against selected documents."
+            />
+          </label>
           <ChoicePanel
             icon={FileText}
             title="Documents"
+            selectedSummary={selectedDocumentNames || "Select documents"}
             isLoading={documentsQuery.isLoading}
             error={documentsQuery.error?.message}
             empty="Upload documents before querying."
           >
-            {(documentsQuery.data?.items ?? []).map((document) => (
+            {documents.map((document) => (
               <CheckboxRow
                 key={document.id}
                 label={document.filename}
                 detail={`${titleCase(document.status)} · ${document.content_type}`}
-                checked={selectedDocumentIds.includes(document.id)}
+                checked={activeSelectedDocumentIds.includes(document.id)}
                 onChange={(checked) =>
-                  setSelectedDocumentIds((ids) => toggleId(ids, document.id, checked))
+                  setSelectedDocumentIds((ids) =>
+                    toggleId(ids ?? activeSelectedDocumentIds, document.id, checked),
+                  )
                 }
               />
             ))}
@@ -173,80 +208,146 @@ export function QueryPage() {
           <ChoicePanel
             icon={SlidersHorizontal}
             title="Variants"
+            selectedSummary={selectedVariantNames || "Select variants"}
             isLoading={variantsQuery.isLoading}
             error={variantsQuery.error?.message}
             empty="Create a variant before querying."
           >
-            {(variantsQuery.data?.items ?? []).map((variant) => (
+            {variants.map((variant) => (
               <CheckboxRow
                 key={variant.id}
                 label={variant.name}
                 detail={titleCase(variant.preset)}
-                checked={selectedVariantIds.includes(variant.id)}
+                checked={activeSelectedVariantIds.includes(variant.id)}
                 onChange={(checked) =>
-                  setSelectedVariantIds((ids) => toggleId(ids, variant.id, checked))
+                  setSelectedVariantIds((ids) =>
+                    toggleId(ids ?? activeSelectedVariantIds, variant.id, checked),
+                  )
                 }
               />
             ))}
           </ChoicePanel>
         </div>
 
-        <div className="mt-4">
-          <span className="mb-1.5 block text-sm font-medium text-[#3a4a53]">Answer mode</span>
-          <div
-            className="grid grid-cols-2 rounded-md border border-[#cfd8dd] bg-[#f8fafb] p-1"
-            role="group"
-            aria-label="Answer mode"
-          >
-            {(["fast", "full"] as const).map((mode) => (
-              <button
-                key={mode}
-                type="button"
-                aria-pressed={responseMode === mode}
-                className={`rounded px-3 py-2 text-sm font-medium ${
-                  responseMode === mode
-                    ? "bg-white text-[#174657] shadow-sm"
-                    : "text-[#62717a] hover:text-[#174657]"
-                }`}
-                onClick={() => setResponseMode(mode)}
-                disabled={runQuery.isPending}
-              >
-                {mode === "fast" ? "Fast evidence" : "Full answer"}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="mt-4 flex items-end gap-3">
-          <label className="min-w-0 flex-1 text-sm font-medium text-[#3a4a53]">
-            <span className="mb-1.5 block truncate">Chunk limit</span>
+        <div className="mt-3 flex flex-wrap items-end gap-2">
+          <label className="w-24 text-sm font-medium text-[#3a4a53]">
+            <span className="mb-1 block truncate">Limit</span>
             <input
               type="number"
-              min={0}
+              min={1}
               max={50}
               value={limit}
               onChange={(event) => setLimit(Number(event.target.value))}
-              className="h-10 w-full rounded-md border border-[#cfd8dd] bg-white px-3 text-sm text-[#1f2933] outline-none focus:border-[#176b87] focus:ring-2 focus:ring-[#176b87]/20"
+              className="h-9 w-full rounded-md border border-[#cfd8dd] bg-white px-2 text-sm text-[#1f2933] outline-none focus:border-[#176b87] focus:ring-2 focus:ring-[#176b87]/20"
             />
           </label>
-          <Button
-            type="button"
-            variant="secondary"
-            disabled={!canTune}
-            onClick={() => setSearchTuningOpen(true)}
-          >
-            <SlidersHorizontal className="h-4 w-4" aria-hidden="true" />
-            Tune
-          </Button>
-          <Button type="submit" disabled={!canRun}>
-            {runQuery.isPending ? (
-              <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-            ) : (
-              <PlayCircle className="h-4 w-4" aria-hidden="true" />
-            )}
-            Run
-          </Button>
+          <div className="w-56">
+            <span className="mb-1 block text-sm font-medium text-[#3a4a53]">Answer mode</span>
+            <div
+              className="grid h-9 grid-cols-2 rounded-md border border-[#cfd8dd] bg-[#f8fafb] p-1"
+              role="group"
+              aria-label="Answer mode"
+            >
+              {(["fast", "full"] as const).map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  aria-pressed={responseMode === mode}
+                  className={`rounded px-2 text-xs font-medium ${
+                    responseMode === mode
+                      ? "bg-white text-[#174657] shadow-sm"
+                      : "text-[#62717a] hover:text-[#174657]"
+                  }`}
+                  onClick={() => setResponseMode(mode)}
+                  disabled={runQuery.isPending}
+                >
+                  {mode === "fast" ? "Fast" : "Full"}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="ml-auto flex items-end gap-2">
+            <Button
+              type="button"
+              variant="secondary"
+              disabled={documentsQuery.isFetching || variantsQuery.isFetching}
+              onClick={() => {
+                void documentsQuery.refetch();
+                void variantsQuery.refetch();
+              }}
+              aria-label="Refresh documents and variants"
+            >
+              {documentsQuery.isFetching || variantsQuery.isFetching ? (
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+              ) : (
+                <RefreshCcw className="h-4 w-4" aria-hidden="true" />
+              )}
+            </Button>
+            <Button type="button" variant="secondary" disabled={!canTune} onClick={() => setSearchTuningOpen(true)}>
+              <SlidersHorizontal className="h-4 w-4" aria-hidden="true" />
+              Tune retrieval
+            </Button>
+            <Button type="submit" disabled={!canRun}>
+              {runQuery.isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+              ) : (
+                <PlayCircle className="h-4 w-4" aria-hidden="true" />
+              )}
+              Run
+            </Button>
+          </div>
         </div>
+
+        <details open className="mt-3 rounded-md border border-[#dce5e8] bg-[#f8fafb]">
+          <summary className="flex min-h-9 cursor-pointer list-none items-center justify-between gap-3 px-3 py-1.5 text-sm font-semibold text-[#24313a]">
+            <span className="flex min-w-0 items-center gap-2">
+              <SlidersHorizontal className="h-4 w-4 shrink-0 text-[#176b87]" aria-hidden="true" />
+              <span className="truncate">Retrieval tuning</span>
+              <span className="truncate text-xs font-medium text-[#62717a]">
+                Search weights, preview ranking, and fast-mode budgets
+              </span>
+            </span>
+            <ChevronDown className="h-4 w-4 shrink-0 text-[#62717a]" aria-hidden="true" />
+          </summary>
+          <div className="grid gap-3 border-t border-[#dce5e8] p-3 lg:grid-cols-[minmax(0,1fr)_auto]">
+            <SearchWeightsSummary weights={searchWeights} custom={hasCustomSearchWeights} />
+            <div className="flex flex-wrap content-start items-end gap-2">
+              <BudgetInput
+                label="Answer budget"
+                value={answerBudgetMs}
+                min={500}
+                max={30000}
+                disabled={responseMode !== "fast" || runQuery.isPending}
+                onChange={setAnswerBudgetMs}
+              />
+              <BudgetInput
+                label="Response budget"
+                value={responseBudgetMs}
+                min={1000}
+                max={60000}
+                disabled={responseMode !== "fast" || runQuery.isPending}
+                onChange={setResponseBudgetMs}
+              />
+              <div className="flex gap-2">
+                <Button type="button" variant="secondary" disabled={!canTune} onClick={() => setSearchTuningOpen(true)}>
+                  <SlidersHorizontal className="h-4 w-4" aria-hidden="true" />
+                  Open preview
+                </Button>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={!hasCustomSearchWeights || runQuery.isPending}
+                  onClick={() => {
+                    setSearchWeights(defaultSearchWeights);
+                    setHasCustomSearchWeights(false);
+                  }}
+                >
+                  Reset weights
+                </Button>
+              </div>
+            </div>
+          </div>
+        </details>
 
         <p className="mt-4 min-h-5 text-sm text-[#62717a]" role="status">
           {formError || choiceError || runQuery.error?.message || (runQuery.isSuccess ? "Run complete" : "")}
@@ -266,35 +367,51 @@ export function QueryPage() {
         onClose={() => setSearchTuningOpen(false)}
       />
 
-      <section className="min-w-0">
-        <div className="mb-3 flex items-center gap-2">
-          <Search className="h-4 w-4 text-[#176b87]" aria-hidden="true" />
-          <h2 className="truncate text-base font-semibold text-[#1f2933]">Answers and traces</h2>
+      <section className="min-w-0 rounded-md border border-[#d6dde1] bg-white">
+        <div className="flex flex-col gap-2 border-b border-[#d6dde1] px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <Search className="h-4 w-4 text-[#176b87]" aria-hidden="true" />
+              <h2 className="truncate text-base font-semibold text-[#1f2933]">Answers and evidence</h2>
+            </div>
+            <p className="mt-1 truncate text-sm text-[#62717a]">
+              {selectedDocumentNames || "Select documents"} / {selectedVariantNames || "select variants"}
+            </p>
+          </div>
+          {runQuery.data?.runs.length ? (
+            <Badge>{runQuery.data.runs.length} run{runQuery.data.runs.length === 1 ? "" : "s"}</Badge>
+          ) : null}
         </div>
         {isLoadingChoices ? (
-          <EmptyState icon={Loader2} title="Loading query controls" description="Fetching documents and variants." />
+          <div className="p-4">
+            <EmptyState icon={Loader2} title="Loading query controls" description="Fetching documents and variants." />
+          </div>
         ) : runQuery.isPending ? (
-          <EmptyState
-            icon={Loader2}
-            title="Running query"
-            description={
-              responseMode === "fast"
-                ? "Preparing grounded evidence."
-                : "Searching chunks and generating answers."
-            }
-          />
+          <div className="p-4">
+            <EmptyState
+              icon={Loader2}
+              title="Running query"
+              description={
+                responseMode === "fast"
+                  ? "Preparing grounded evidence."
+                  : "Searching chunks and generating answers."
+              }
+            />
+          </div>
         ) : runQuery.data?.runs.length ? (
-          <div className="space-y-4">
+          <div className="space-y-4 p-4">
             {runQuery.data.runs.map((run) => (
               <RunResult key={run.id} run={run} variant={variantById.get(run.variant_id)} />
             ))}
           </div>
         ) : (
-          <EmptyState
-            icon={CheckSquare}
-            title="No run selected"
-            description="Choose documents and variants, then run a scoped query."
-          />
+          <div className="p-4">
+            <EmptyState
+              icon={CheckSquare}
+              title="No run selected"
+              description="Choose documents and variants, then run a scoped query."
+            />
+          </div>
         )}
       </section>
     </div>
@@ -304,6 +421,7 @@ export function QueryPage() {
 function ChoicePanel({
   icon: Icon,
   title,
+  selectedSummary,
   isLoading,
   error,
   empty,
@@ -311,6 +429,7 @@ function ChoicePanel({
 }: {
   icon: typeof FileText;
   title: string;
+  selectedSummary: string;
   isLoading: boolean;
   error?: string;
   empty: string;
@@ -318,12 +437,17 @@ function ChoicePanel({
 }) {
   const rows = Array.isArray(children) ? children : [children];
   return (
-    <fieldset className="min-w-0 rounded-md border border-[#e1e7ea] p-3">
-      <legend className="flex items-center gap-2 px-1 text-sm font-semibold text-[#24313a]">
+    <fieldset className="min-w-0">
+      <legend className="mb-1 flex items-center gap-2 px-1 text-sm font-semibold text-[#24313a]">
         <Icon className="h-4 w-4 text-[#176b87]" aria-hidden="true" />
         {title}
       </legend>
-      <div className="mt-2 max-h-56 space-y-2 overflow-auto pr-1">
+      <details className="relative">
+        <summary className="flex h-10 cursor-pointer list-none items-center justify-between gap-2 rounded-md border border-[#cfd8dd] bg-white px-3 text-sm text-[#24313a]">
+          <span className="min-w-0 truncate">{selectedSummary}</span>
+          <ChevronDown className="h-4 w-4 shrink-0 text-[#62717a]" aria-hidden="true" />
+        </summary>
+        <div className="absolute z-20 mt-1 max-h-72 w-full overflow-auto rounded-md border border-[#cfd8dd] bg-white p-2 shadow-lg">
         {isLoading ? (
           <SmallState icon={Loader2} text="Loading" />
         ) : error ? (
@@ -333,7 +457,8 @@ function ChoicePanel({
         ) : (
           <SmallState icon={AlertCircle} text={empty} />
         )}
-      </div>
+        </div>
+      </details>
     </fieldset>
   );
 }
@@ -350,17 +475,93 @@ function CheckboxRow({
   onChange: (checked: boolean) => void;
 }) {
   return (
-    <label className="flex min-h-12 cursor-pointer items-center gap-3 rounded-md border border-[#e1e7ea] bg-[#f8fafb] px-3 py-2 text-sm">
+    <label
+      className={[
+        "flex min-h-9 cursor-pointer items-center gap-2 rounded-md border px-2 py-1.5 text-sm",
+        checked
+          ? "border-[#0f766e] bg-[#e3f3f1] text-[#0c524d]"
+          : "border-[#e1e7ea] bg-[#f8fafb] text-[#24313a]",
+      ].join(" ")}
+    >
       <input
         type="checkbox"
-        className="h-4 w-4 accent-[#176b87]"
+        className="h-4 w-4 accent-[#0f766e]"
         checked={checked}
         onChange={(event) => onChange(event.target.checked)}
       />
       <span className="min-w-0">
-        <span className="block truncate font-medium text-[#24313a]">{label}</span>
+        <span className="block truncate font-semibold">{label}</span>
         <span className="block truncate text-xs text-[#62717a]">{detail}</span>
       </span>
+    </label>
+  );
+}
+
+function SearchWeightsSummary({ weights, custom }: { weights: HybridSearchWeights; custom: boolean }) {
+  const weightItems = [
+    { key: "reference_exact", label: "Reference exact" },
+    { key: "term_coverage", label: "Term coverage" },
+    { key: "metadata_boost", label: "Metadata boost" },
+    { key: "semantic_density", label: "Semantic density" },
+  ] as const;
+
+  return (
+    <div>
+      <div className="mb-2 flex flex-wrap items-center gap-2">
+        <h3 className="text-sm font-semibold text-[#1f2933]">Search weights</h3>
+        <Badge>{custom ? "custom" : "default"}</Badge>
+      </div>
+      <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+        {weightItems.map((item) => {
+          const value = Number(weights[item.key] ?? 1);
+          return (
+            <div key={item.key} className="rounded-md border border-[#e1e7ea] bg-white px-2 py-2">
+              <div className="flex items-center justify-between gap-2 text-xs font-semibold text-[#62717a]">
+                <span className="truncate">{item.label}</span>
+                <span>{value.toFixed(1)}</span>
+              </div>
+              <div className="mt-2 h-1.5 rounded-full bg-[#d6dde1]">
+                <span
+                  className="block h-1.5 rounded-full bg-[#176b87]"
+                  style={{ width: `${Math.min(100, Math.max(0, (value / 2) * 100))}%` }}
+                />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function BudgetInput({
+  label,
+  value,
+  min,
+  max,
+  disabled,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  disabled: boolean;
+  onChange: (value: number) => void;
+}) {
+  return (
+    <label className="block w-32 text-sm font-medium text-[#3a4a53]">
+      <span className="mb-1 block truncate">{label}</span>
+      <input
+        type="number"
+        min={min}
+        max={max}
+        step={500}
+        value={value}
+        disabled={disabled}
+        onChange={(event) => onChange(Number(event.target.value))}
+        className="h-9 w-full rounded-md border border-[#cfd8dd] bg-white px-2 text-sm text-[#1f2933] outline-none focus:border-[#176b87] focus:ring-2 focus:ring-[#176b87]/20 disabled:bg-[#eef4f6] disabled:text-[#62717a]"
+      />
     </label>
   );
 }
