@@ -42,6 +42,15 @@ async def init_db(engine: AsyncEngine) -> None:
 def _ensure_runtime_columns(connection) -> None:
     inspector = inspect(connection)
     table_names = set(inspector.get_table_names())
+    if "documents" in table_names:
+        _ensure_columns(
+            connection,
+            inspector,
+            "documents",
+            {
+                "index_contract": _json_object_column(connection),
+            },
+        )
     if "settings_profiles" in table_names:
         _ensure_columns(
             connection,

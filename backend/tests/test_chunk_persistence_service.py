@@ -512,3 +512,41 @@ async def test_persist_chunks_scrubs_nested_absolute_metadata_paths(
     assert "/private" not in persisted.metadata_json["chunk_identity"]
     assert "/tmp" not in chunks[0].metadata["chunk_identity"]
     assert "/private" not in chunks[0].metadata["chunk_identity"]
+
+
+@pytest.mark.asyncio
+async def test_persist_chunks_does_not_duplicate_index_shape_in_chunk_metadata(
+    tmp_path,
+    database_url,
+):
+    engine = make_engine(database_url)
+    await init_db(engine)
+    session_factory = make_session_factory(engine)
+    async with session_factory() as session:
+        document = Document(
+            id="doc-no-index-shape-bloat",
+            filename="shape.txt",
+            content_type="text/plain",
+            sha256="shape-sha",
+            artifact_path=str(tmp_path / "shape.txt"),
+        )
+        session.add(document)
+        await session.commit()
+
+        chunks = await ChunkPersistenceService(session).persist(
+            document,
+            [
+                AdapterChunk(
+                    text="Chunk with runtime shape",
+                    source_location={"page": 1},
+                    metadata={"parser_metadata": {"backend": "mineru"}},
+                )
+            ],
+            IndexDocumentIn(),
+            runtime_profile_id="default",
+            index_shape={"embedding_model": "text-embedding-3-large"},
+        )
+
+        stored = chunks[0]
+        assert "index_shape" not in stored.metadata
+    await engine.dispose()

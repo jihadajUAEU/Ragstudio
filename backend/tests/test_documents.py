@@ -18,6 +18,7 @@ from ragstudio.schemas.common import StageStatus
 from ragstudio.schemas.parsing import DomainMetadata, IndexDocumentIn
 from ragstudio.schemas.runtime import RuntimeHealthCheck
 from ragstudio.services.document_service import DocumentService
+from ragstudio.services.domain_metadata_contract_compiler import compile_index_options
 from ragstudio.services.graph_materialization_service import GraphMaterializationResult
 from ragstudio.services.graph_projection_runner import GraphProjectionCleanupError
 from ragstudio.services.runtime_profile_service import RuntimeProfileService
@@ -527,6 +528,45 @@ async def test_upload_persists_document_specific_mineru_parse_options(
 
 
 @pytest.mark.asyncio
+async def test_upload_stores_compiled_document_index_contract(client, monkeypatch):
+    async def fake_runtime_ready(*args, **kwargs):
+        return None
+
+    async def fake_validate_sidecar(self, options):
+        return None
+
+    monkeypatch.setattr(
+        "ragstudio.api.routes.documents._ensure_runtime_ready",
+        fake_runtime_ready,
+    )
+    monkeypatch.setattr(
+        "ragstudio.services.chunk_service.ChunkService.validate_strict_mineru_sidecar",
+        fake_validate_sidecar,
+    )
+
+    response = await client.post(
+        "/api/documents",
+        files={"file": ("sample.txt", b"Verse 1:1\nIn the name", "text/plain")},
+        data={
+            "parser_mode": "mineru_strict",
+            "domain_metadata": (
+                '{"domain":"quran_tafseer","language":"arabic",'
+                '"custom_json":{"reference_schema":{"type":"chapter_verse"},'
+                '"chunking":{"unit":"verse"},'
+                '"domain_structure":{"primary_anchor":'
+                '{"regex":"(?P<chapter>\\\\d{1,4}):(?P<verse>\\\\d{1,4})"}},'
+                '"reference_resolution":{"enabled":true,"build_canonical_units":true}}}'
+            ),
+        },
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["index_contract"]["contract_status"] == "compiled_reference_contract"
+    assert body["index_contract"]["reference_contract"]["schema_type"] == "chapter_verse"
+
+
+@pytest.mark.asyncio
 async def test_reindex_document_queues_job_with_updated_metadata(client, monkeypatch, tmp_path):
     await seed_product_runtime_profile(client)
     allow_product_readiness(monkeypatch)
@@ -583,10 +623,62 @@ async def test_reindex_document_queues_job_with_updated_metadata(client, monkeyp
     assert job.job_options["domain_metadata"]["domain"] == "religion"
     assert job.job_options["domain_metadata"]["document_type"] == "religious_text"
     assert job.job_options["domain_metadata"]["tags"] == ["quran"]
-    assert job.job_options["domain_metadata"]["custom_json"] == {
-        "reference_schema": {"type": "surah_ayah"},
-        "retrieval": {"exact_reference_top1": True},
-    }
+    custom_json = job.job_options["domain_metadata"]["custom_json"]
+    assert custom_json["reference_schema"]["type"] == "chapter_verse"
+    assert custom_json["retrieval"]["exact_reference_top1"] is True
+
+
+@pytest.mark.asyncio
+async def test_reindex_stores_compiled_document_index_contract(client, monkeypatch, tmp_path):
+    await seed_product_runtime_profile(client)
+    allow_product_readiness(monkeypatch)
+    app = client._transport.app
+    artifact = tmp_path / "uploads" / "reindex-contract-sha"
+    artifact.parent.mkdir(parents=True)
+    artifact.write_text("Quran 1:1", encoding="utf-8")
+    async with app.state.session_factory() as session:
+        document = Document(
+            filename="quran.pdf",
+            content_type="application/pdf",
+            sha256="reindex-contract-sha",
+            artifact_path=str(artifact),
+            status=StageStatus.SUCCEEDED.value,
+            index_contract={"contract_status": "generic"},
+        )
+        session.add(document)
+        await session.commit()
+        document_id = document.id
+
+    response = await client.post(
+        f"/api/documents/{document_id}/reindex",
+        json={
+            "parser_mode": "mineru_strict",
+            "domain_metadata": {
+                "domain": "quran_tafseer",
+                "language": "arabic",
+                "custom_json": {
+                    "reference_schema": {"type": "chapter_verse"},
+                    "chunking": {"unit": "verse"},
+                    "domain_structure": {
+                        "primary_anchor": {
+                            "regex": "(?P<chapter>\\d{1,4}):(?P<verse>\\d{1,4})"
+                        }
+                    },
+                    "reference_resolution": {
+                        "enabled": True,
+                        "build_canonical_units": True,
+                    },
+                },
+            },
+        },
+    )
+
+    assert response.status_code == 202
+    async with app.state.session_factory() as session:
+        document = await session.get(Document, document_id)
+    assert document is not None
+    assert document.index_contract["contract_status"] == "compiled_reference_contract"
+    assert document.index_contract["reference_contract"]["schema_type"] == "chapter_verse"
 
 
 @pytest.mark.asyncio
@@ -648,10 +740,9 @@ async def test_reindex_persists_job_options_for_worker(client, tmp_path, monkeyp
         "parser_mode": "mineru_strict",
         "domain_metadata": {"domain": "quran", "tags": ["arabic"]},
     }
-    expected_options = IndexDocumentIn.model_validate(index_options).model_dump(
-        mode="json",
-        exclude_none=True,
-    )
+    expected_options = compile_index_options(
+        IndexDocumentIn.model_validate(index_options)
+    ).model_dump(mode="json", exclude_none=True)
 
     artifact = tmp_path / "uploads" / "durable-worker-sha"
     artifact.parent.mkdir(parents=True)

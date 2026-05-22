@@ -1,12 +1,12 @@
 {
   "packet_id": "ragstudio-oss-proof-v1",
   "registry_version": "0.1.0",
-  "source_commit": "ad1febe626fd96afff414bf5c425b4a672213a14",
+  "source_commit": "5edb186280e4a49ad207a1052a2fb3776d89e8c4",
   "claim_counts": {
     "proven": 2,
-    "roadmap": 1,
+    "roadmap": 2,
     "disabled": 1,
-    "total": 4
+    "total": 5
   },
   "claims": [
     {
@@ -15,7 +15,7 @@
       "status": "proven",
       "summary": "The proof packet shows a reference-bearing synthetic chunk with a missing expected script warning and a quality action policy that blocks vector and graph materialization.",
       "source": {
-        "source_commit": "ad1febe626fd96afff414bf5c425b4a672213a14",
+        "source_commit": "5edb186280e4a49ad207a1052a2fb3776d89e8c4",
         "code_paths": [
           "backend/src/ragstudio/services/domain_metadata_quality_gate.py",
           "docs/benchmarks/ragstudio-oss-proof-v1/artifacts/parser-quality.export.json",
@@ -50,7 +50,7 @@
       "status": "proven",
       "summary": "The proof packet includes retrieval traces, graph projection state, and reranker traces linked back to synthetic source chunks and warning evidence.",
       "source": {
-        "source_commit": "ad1febe626fd96afff414bf5c425b4a672213a14",
+        "source_commit": "5edb186280e4a49ad207a1052a2fb3776d89e8c4",
         "code_paths": [
           "backend/src/ragstudio/services/trace_normalizer.py",
           "docs/benchmarks/ragstudio-oss-proof-v1/artifacts/retrieval-run.export.json",
@@ -93,7 +93,7 @@
       "status": "roadmap",
       "summary": "Large-scale document performance remains a future benchmark until measured with public artifacts.",
       "source": {
-        "source_commit": "ad1febe626fd96afff414bf5c425b4a672213a14",
+        "source_commit": "5edb186280e4a49ad207a1052a2fb3776d89e8c4",
         "code_paths": [
           "docs/benchmarks/ragstudio-oss-proof-v1/docs/LIMITATIONS.md"
         ]
@@ -113,12 +113,42 @@
       "screenshots": []
     },
     {
+      "claim_id": "RAGSTUDIO-RETRIEVAL-ARCHITECTURE",
+      "title": "Canonical retrieval architecture metadata remains visible across retrieval lanes",
+      "status": "roadmap",
+      "summary": "Ragstudio keeps canonical chunk identity, quality policy, layout provenance, and context breadcrumbs visible across retrieval lanes before answer assembly.",
+      "source": {
+        "source_commit": "5edb186280e4a49ad207a1052a2fb3776d89e8c4",
+        "code_paths": [
+          "backend/src/ragstudio/services/evidence_context.py",
+          "backend/src/ragstudio/services/layout_neighbor_service.py",
+          "backend/src/ragstudio/services/retrieval_orchestrator.py",
+          "backend/src/ragstudio/services/context_assembly_service.py",
+          "backend/src/ragstudio/services/native_raganything_adapter.py",
+          "docs/benchmarks/ragstudio-oss-proof-v1/docs/LIMITATIONS.md"
+        ]
+      },
+      "evidence": [],
+      "limitations": [
+        "Retrieval Architecture Limitations apply until public static fixtures include exported traces for every retrieval lane."
+      ],
+      "missing_evidence": [
+        "A public retrieval-run artifact with canonical identity, quality policy, layout provenance, and breadcrumb fields visible across metadata, vector, graph, runtime, reranker, and context assembly traces.",
+        "A validation result proving those exported traces are public-safe and hash-covered in the proof packet."
+      ],
+      "planned_proof_path": [
+        "Extend the synthetic static fixtures to include the new retrieval architecture trace fields.",
+        "Run proof validation and update this claim to proven only after public artifacts carry the trace evidence."
+      ],
+      "screenshots": []
+    },
+    {
       "claim_id": "RAGSTUDIO-PUBLIC-UPLOAD",
       "title": "Visitors can upload documents to a public Ragstudio demo",
       "status": "disabled",
       "summary": "Public upload is intentionally disabled for v1 because it needs abuse, cost, provider, and private-content controls beyond this launch.",
       "source": {
-        "source_commit": "ad1febe626fd96afff414bf5c425b4a672213a14",
+        "source_commit": "5edb186280e4a49ad207a1052a2fb3776d89e8c4",
         "code_paths": [
           ".planning/REQUIREMENTS.md",
           ".planning/PROJECT.md"

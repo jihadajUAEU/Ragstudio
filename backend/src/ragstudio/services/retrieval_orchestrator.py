@@ -9,6 +9,7 @@ from typing import Any
 import httpx
 from ragstudio.schemas.chunks import ChunkOut
 from ragstudio.services.arabic_text import arabic_tokens
+from ragstudio.services.candidate_diversity import select_diverse_candidates
 from ragstudio.services.chunk_service import ChunkService
 from ragstudio.services.context_assembly_service import ContextAssemblyService
 from ragstudio.services.domain_metadata_quality_gate import DomainMetadataQualityGate
@@ -16,6 +17,7 @@ from ragstudio.services.domain_query_expansion_service import DomainQueryExpansi
 from ragstudio.services.evidence_first_answer_service import EvidenceFirstAnswerService
 from ragstudio.services.graph_expansion_service import GraphExpansionService
 from ragstudio.services.grounding_validator import GroundingValidator
+from ragstudio.services.layout_neighbor_service import LayoutNeighborService
 from ragstudio.services.metadata_retrieval_service import MetadataRetrievalService
 from ragstudio.services.query_hypothesis_service import (
     QueryHypothesis,
@@ -38,7 +40,11 @@ from ragstudio.services.retrieval_observability import RetrievalObservability
 from ragstudio.services.retrieval_route_input import build_retrieval_route_request
 from ragstudio.services.retrieval_route_planner import RetrievalRoutePlanner
 from ragstudio.services.runtime_answer_service import RuntimeAnswerService
-from ragstudio.services.vector_retrieval_service import vector_lane_diagnostics
+from ragstudio.services.vector_candidate_repository import VectorCandidateRepository
+from ragstudio.services.vector_retrieval_service import (
+    prepare_vector_candidates,
+    vector_lane_diagnostics,
+)
 
 
 class NativeRuntimeQueryFailed(RuntimeError):
@@ -105,6 +111,7 @@ class RetrievalOrchestrator:
         domain_query_expansion_service: DomainQueryExpansionService | None = None,
         query_hypothesis_service: QueryHypothesisService | None = None,
         query_hypothesis_verifier: QueryHypothesisVerifier | None = None,
+        vector_candidate_repository: Any | None = None,
     ):
         self.chunk_service = chunk_service
         self.answer_service = answer_service or RuntimeAnswerService()
@@ -125,6 +132,7 @@ class RetrievalOrchestrator:
         )
         self.query_hypothesis_service = query_hypothesis_service or QueryHypothesisService()
         self.query_hypothesis_verifier = query_hypothesis_verifier or QueryHypothesisVerifier()
+        self.vector_candidate_repository = vector_candidate_repository
 
     async def query(
         self,
@@ -243,19 +251,44 @@ class RetrievalOrchestrator:
         except Exception as exc:
             return self._failed_orchestrated_answer(exc, started, timings)
 
+        vector_candidates, vector_traces = await self._safe_vector_candidates(
+            query,
+            document_ids=document_ids,
+            route_plan=route_plan,
+            query_config=query_config,
+            timings=timings,
+        )
+
         traces.append(retrieval_trace)
         lane_results = retrieval_trace.get("lane_results")
         if isinstance(lane_results, list):
             traces.extend(trace for trace in lane_results if isinstance(trace, dict))
-        traces.append(_vector_lane_trace(route_plan, query_config))
+        traces.extend(vector_traces)
+        layout_neighbors, layout_neighbor_traces = await self._safe_layout_neighbors(
+            [*metadata_candidates, *vector_candidates],
+            document_ids=document_ids,
+            limit=max(limit, 1),
+            timings=timings,
+        )
+        traces.extend(layout_neighbor_traces)
         observability.record_stage(
             "primary_retrieval",
-            candidate_count=len(native_candidates) + len(metadata_candidates),
-            latency_ms=timings.get("native_stage_ms", 0.0) + timings.get("metadata_ms", 0.0),
+            candidate_count=(
+                len(native_candidates)
+                + len(metadata_candidates)
+                + len(vector_candidates)
+                + len(layout_neighbors)
+            ),
+            latency_ms=(
+                timings.get("native_stage_ms", 0.0)
+                + timings.get("metadata_ms", 0.0)
+                + timings.get("vector_ms", 0.0)
+            ),
             detail={
                 "native_candidates": len(native_candidates),
                 "metadata_candidates": len(metadata_candidates),
-                "vector_candidates": _vector_candidate_count(native_candidates),
+                "vector_candidates": len(vector_candidates),
+                "layout_neighbor_candidates": len(layout_neighbors),
             },
         )
         traces.append(
@@ -263,13 +296,22 @@ class RetrievalOrchestrator:
                 "stage": "primary_retrieval",
                 "native_candidates": len(native_candidates),
                 "metadata_candidates": len(metadata_candidates),
-                "vector_candidates": _vector_candidate_count(native_candidates),
+                "vector_candidates": len(vector_candidates),
+                "layout_neighbor_candidates": len(layout_neighbors),
             }
         )
 
         try:
             fuse_started = perf_counter()
-            seed_candidates = fuse_candidates(plan, [*native_candidates, *metadata_candidates])
+            seed_candidates = fuse_candidates(
+                plan,
+                [
+                    *native_candidates,
+                    *metadata_candidates,
+                    *vector_candidates,
+                    *layout_neighbors,
+                ],
+            )
             timings["initial_fusion_ms"] = _elapsed_ms(fuse_started)
             seed_candidate_ids = [
                 candidate.candidate_id for candidate in seed_candidates[:limit]
@@ -322,11 +364,21 @@ class RetrievalOrchestrator:
             metadata_ranked = (
                 fuse_candidates(plan, metadata_candidates) if metadata_candidates else []
             )
+            vector_ranked = fuse_candidates(plan, vector_candidates) if vector_candidates else []
             graph_ranked = fuse_candidates(plan, graph_candidates) if graph_candidates else []
+            layout_neighbor_ranked = (
+                fuse_candidates(plan, layout_neighbors) if layout_neighbors else []
+            )
             fused = apply_query_aware_ordering(
                 plan,
                 self.retrieval_fusion.fuse(
-                    [native_ranked, metadata_ranked, graph_ranked],
+                    [
+                        native_ranked,
+                        metadata_ranked,
+                        vector_ranked,
+                        graph_ranked,
+                        layout_neighbor_ranked,
+                    ],
                     limit=plan.candidate_limit,
                 ),
             )
@@ -334,7 +386,9 @@ class RetrievalOrchestrator:
             final_fusion_detail = {
                 "native_candidates": len(native_candidates),
                 "metadata_candidates": len(metadata_candidates),
+                "vector_candidates": len(vector_candidates),
                 "graph_candidates": len(graph_candidates),
+                "layout_neighbor_candidates": len(layout_neighbors),
                 "fused_candidates": len(fused),
             }
             traces.append({"stage": "final_fusion", **final_fusion_detail})
@@ -380,6 +434,12 @@ class RetrievalOrchestrator:
             reranked, parser_quality_trace = _annotate_parser_quality_warnings(reranked)
             if parser_quality_trace is not None:
                 traces.append(parser_quality_trace)
+            diversity_limit = int(query_config.get("diversity_limit") or plan.candidate_limit)
+            reranked, diversity_trace = select_diverse_candidates(
+                reranked,
+                limit=diversity_limit,
+            )
+            traces.append(diversity_trace)
 
             context_started = perf_counter()
             context_service = self._context_assembly_service(profile)
@@ -811,6 +871,141 @@ class RetrievalOrchestrator:
             parallel_started=parallel_started,
             lane_traces=lane_traces,
         )
+
+    async def _safe_vector_candidates(
+        self,
+        query: str,
+        *,
+        document_ids: list[str],
+        route_plan: Any,
+        query_config: dict[str, Any],
+        timings: dict[str, Any],
+    ) -> tuple[list[EvidenceCandidate], list[dict[str, Any]]]:
+        vector_started = perf_counter()
+        if not _lane_is_executable(route_plan, "vector"):
+            timings["vector_ms"] = _elapsed_ms(vector_started)
+            return [], [
+                _lane_result_trace(
+                    lane="vector",
+                    status="skipped",
+                    reason=_lane_plan_reason(route_plan, "vector"),
+                    candidates=[],
+                    latency_ms=timings["vector_ms"],
+                )
+            ]
+
+        vector_repo = self.vector_candidate_repository
+        if vector_repo is None and hasattr(self.chunk_service, "session"):
+            vector_repo = VectorCandidateRepository(self.chunk_service.session)
+        if vector_repo is None:
+            timings["vector_ms"] = _elapsed_ms(vector_started)
+            diagnostics = vector_lane_diagnostics(
+                {},
+                baseline_gate=_vector_baseline_gate(query_config),
+            )
+            trace = _lane_result_trace(
+                lane="vector",
+                status="skipped",
+                reason="vector_lane_executor_unavailable",
+                candidates=[],
+                latency_ms=timings["vector_ms"],
+            )
+            trace["diagnostics"] = diagnostics.as_dict()
+            return [], [trace]
+
+        try:
+            raw_vector_rows = await vector_repo.candidate_rows(
+                query=query,
+                document_ids=document_ids,
+                limit=route_plan.candidate_limit,
+            )
+            vector_result = prepare_vector_candidates(
+                raw_vector_rows,
+                baseline_gate=_vector_baseline_gate(query_config),
+                canonical_chunks={row["chunk_id"]: row for row in raw_vector_rows},
+            )
+        except Exception as exc:
+            timings["vector_ms"] = _elapsed_ms(vector_started)
+            timings["vector_degraded"] = True
+            timings["vector_error_type"] = exc.__class__.__name__
+            return [], [
+                _lane_result_trace(
+                    lane="vector",
+                    status="failed",
+                    reason=exc.__class__.__name__,
+                    candidates=[],
+                    latency_ms=timings["vector_ms"],
+                    error_type=exc.__class__.__name__,
+                )
+            ]
+
+        timings["vector_ms"] = _elapsed_ms(vector_started)
+        vector_candidates = list(vector_result.candidates)
+        lane_status = "ran" if vector_result.status == "ran" else vector_result.status
+        lane_trace = _lane_result_trace(
+            lane="vector",
+            status=lane_status,
+            reason=vector_result.reason,
+            candidates=vector_candidates,
+            latency_ms=timings["vector_ms"],
+        )
+        lane_trace["diagnostics"] = vector_result.diagnostics.as_dict()
+        return vector_candidates, [vector_result.diagnostics.as_dict(), lane_trace]
+
+    async def _safe_layout_neighbors(
+        self,
+        seeds: list[EvidenceCandidate],
+        *,
+        document_ids: list[str],
+        limit: int,
+        timings: dict[str, Any],
+    ) -> tuple[list[EvidenceCandidate], list[dict[str, Any]]]:
+        started = perf_counter()
+        seed_chunk_ids = [
+            candidate.chunk_id
+            for candidate in seeds
+            if candidate.chunk_id and candidate.tool in {"metadata", "pgvector", "graph"}
+        ]
+        if not seed_chunk_ids or not hasattr(self.chunk_service, "session"):
+            timings["layout_neighbor_ms"] = _elapsed_ms(started)
+            return [], [
+                {
+                    "stage": "layout_neighbor_expansion",
+                    "status": "skipped",
+                    "reason": "no_seed_chunks_or_session",
+                    "candidate_count": 0,
+                }
+            ]
+
+        try:
+            candidates = await LayoutNeighborService(
+                self.chunk_service.session
+            ).neighbors_for(
+                seed_chunk_ids=list(dict.fromkeys(seed_chunk_ids)),
+                document_ids=document_ids,
+                limit=limit,
+            )
+        except Exception as exc:
+            timings["layout_neighbor_ms"] = _elapsed_ms(started)
+            return [], [
+                {
+                    "stage": "layout_neighbor_expansion",
+                    "status": "failed",
+                    "reason": exc.__class__.__name__,
+                    "candidate_count": 0,
+                }
+            ]
+
+        timings["layout_neighbor_ms"] = _elapsed_ms(started)
+        return candidates, [
+            {
+                "stage": "layout_neighbor_expansion",
+                "status": "ran",
+                "reason": "same_page_or_reference_neighbors",
+                "candidate_count": len(candidates),
+                "candidate_ids": [candidate.candidate_id for candidate in candidates],
+            }
+        ]
 
     async def _metadata_after_native_result(
         self,
@@ -1594,7 +1789,16 @@ def _graph_seed_candidates(
     allowed_documents = {document_id for document_id in document_ids if document_id}
     seeds: list[EvidenceCandidate] = []
     for candidate in candidates:
-        if candidate.tool not in {"metadata", "lexical", "reference_exact", "arabic_lexical"}:
+        vector_retrieval = candidate.metadata.get("vector_retrieval")
+        hydrated_vector = (
+            candidate.tool == "pgvector"
+            and isinstance(vector_retrieval, dict)
+            and vector_retrieval.get("hydrated_to_canonical") is True
+        )
+        if (
+            candidate.tool not in {"metadata", "lexical", "reference_exact", "arabic_lexical"}
+            and not hydrated_vector
+        ):
             continue
         if not candidate.chunk_id:
             continue
@@ -1979,7 +2183,22 @@ def _evidence_from_context(
     for item in assembled_context.evidence:
         candidate = by_id.get(item.candidate_id)
         if candidate is not None:
-            ordered.append(candidate)
+            metadata = dict(candidate.metadata)
+            assembled_payload = {
+                "breadcrumb": item.breadcrumb,
+                "layout_summary": item.layout_summary,
+                "context_text_applied": bool(item.context_text),
+            }
+            metadata["assembled_context"] = {
+                key: value for key, value in assembled_payload.items() if value is not None
+            }
+            ordered.append(
+                replace(
+                    candidate,
+                    text=item.context_text or item.original_text,
+                    metadata=metadata,
+                )
+            )
     return ordered
 
 

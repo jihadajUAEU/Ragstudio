@@ -515,15 +515,18 @@ async def test_native_adapter_indexes_normalized_preparsed_chunks_without_local_
     rag = FakeRAGAnything.instances[0]
     assert rag.parse_called is False
     assert rag.inserted_doc_id == "studio-doc-id"
-    assert rag.inserted_content_list == [
-        {
-            "id": "studio-doc-id|page.md|None|0",
-            "chunk_identity": "studio-doc-id|page.md|None|0",
-            "type": "text",
-            "text": "Remote MinerU text",
-            "page_idx": 2,
-        }
-    ]
+    assert len(rag.inserted_content_list) == 1
+    row = rag.inserted_content_list[0]
+    assert row["id"] == "studio-doc-id|page.md|None|0"
+    assert row["chunk_identity"] == "studio-doc-id|page.md|None|0"
+    assert row["canonical_chunk_id"] == "studio-doc-id|page.md|None|0"
+    assert row["full_doc_id"] == "studio-doc-id"
+    assert row["type"] == "text"
+    assert row["text"] == "Remote MinerU text"
+    assert row["page_idx"] == 2
+    assert row["metadata"]["chunk_identity"] == "studio-doc-id|page.md|None|0"
+    assert row["metadata"]["content_type"] == "text"
+    assert row["metadata"]["evidence_context"]["page"] == 3
     assert chunks[0].text == "Remote MinerU text"
     assert chunks[0].metadata["backend"] == "mineru"
     assert chunks[0].metadata["chunk_identity"] == "studio-doc-id|page.md|None|0"
@@ -571,20 +574,83 @@ async def test_native_adapter_keeps_all_normalized_chunks_sharing_content_list(t
     )
 
     assert len(chunks) == 2
-    assert FakeRAGAnything.instances[0].inserted_content_list == [
-        {
-            "id": "studio-doc-id|one.md|None|0",
-            "chunk_identity": "studio-doc-id|one.md|None|0",
-            "type": "text",
-            "text": "Markdown artifact one",
-        },
-        {
-            "id": "studio-doc-id|two.md|None|1",
-            "chunk_identity": "studio-doc-id|two.md|None|1",
-            "type": "text",
-            "text": "Markdown artifact two",
-        },
+    inserted_rows = FakeRAGAnything.instances[0].inserted_content_list
+    assert [row["id"] for row in inserted_rows] == [
+        "studio-doc-id|one.md|None|0",
+        "studio-doc-id|two.md|None|1",
     ]
+    assert [row["canonical_chunk_id"] for row in inserted_rows] == [
+        "studio-doc-id|one.md|None|0",
+        "studio-doc-id|two.md|None|1",
+    ]
+    assert [row["full_doc_id"] for row in inserted_rows] == [
+        "studio-doc-id",
+        "studio-doc-id",
+    ]
+    assert [row["text"] for row in inserted_rows] == [
+        "Markdown artifact one",
+        "Markdown artifact two",
+    ]
+    assert inserted_rows[0]["metadata"]["chunk_identity"] == "studio-doc-id|one.md|None|0"
+    assert inserted_rows[1]["metadata"]["chunk_identity"] == "studio-doc-id|two.md|None|1"
+
+
+def test_preparsed_content_list_includes_context_prefix_and_bridge_metadata(tmp_path):
+    adapter = NativeRAGAnythingAdapter(profile(runtime_working_dir=str(tmp_path)), AppSettings())
+    chunk = AdapterChunk(
+        text="Guide us to the straight path.",
+        source_location={"page": 1, "reference": "1:5"},
+        metadata={
+            "chunk_identity": "doc-1|1:5",
+            "document_metadata": {"title": "Synthetic Tafseer"},
+            "reference_metadata": {"references": ["1:5"]},
+            "content_type": "text",
+            "quality_action_policy": {"index_vector": True, "project_graph": True},
+            "provenance": {"blocks": [{"block_type": "paragraph", "role": "body"}]},
+        },
+        runtime_source_id="runtime-1",
+        content_type="text",
+    )
+
+    rows = adapter._content_list_from_preparsed_chunks([chunk], document_id="doc-1")
+
+    assert rows[0]["text"].startswith("[Context: Synthetic Tafseer > 1:5")
+    assert rows[0]["canonical_chunk_id"] == "doc-1|1:5"
+    assert rows[0]["chunk_identity"] == "doc-1|1:5"
+    assert rows[0]["full_doc_id"] == "doc-1"
+    assert rows[0]["metadata"]["runtime_source_id"] == "runtime-1"
+    assert rows[0]["metadata"]["quality_action_policy"]["index_vector"] is True
+    assert rows[0]["metadata"]["evidence_context"]["reference"] == "1:5"
+
+
+def test_preparsed_content_list_keeps_native_type_text_for_studio_chunk_types(tmp_path):
+    adapter = NativeRAGAnythingAdapter(profile(runtime_working_dir=str(tmp_path)), AppSettings())
+    chunk = AdapterChunk(
+        text="Structured warning payload",
+        source_location={"page": 1},
+        metadata={"chunk_identity": "doc-1|warning"},
+        content_type="parser_quality_warning",
+    )
+
+    rows = adapter._content_list_from_preparsed_chunks([chunk], document_id="doc-1")
+
+    assert rows[0]["type"] == "text"
+    assert rows[0]["metadata"]["content_type"] == "parser_quality_warning"
+
+
+def test_preparsed_content_list_preserves_quality_policy_for_runtime_bridge(tmp_path):
+    adapter = NativeRAGAnythingAdapter(profile(runtime_working_dir=str(tmp_path)), AppSettings())
+    chunk = AdapterChunk(
+        text="Unsafe text",
+        source_location={"page": 1},
+        metadata={"quality_action_policy": {"index_vector": False, "project_graph": False}},
+        content_type="text",
+    )
+
+    rows = adapter._content_list_from_preparsed_chunks([chunk], document_id="doc-1")
+
+    assert rows[0]["metadata"]["quality_action_policy"]["index_vector"] is False
+    assert rows[0]["metadata"]["quality_action_policy"]["project_graph"] is False
 
 
 @pytest.mark.asyncio

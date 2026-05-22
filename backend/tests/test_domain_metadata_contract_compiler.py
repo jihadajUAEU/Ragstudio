@@ -1,8 +1,9 @@
 import pytest
-from ragstudio.schemas.parsing import DomainMetadata
+from ragstudio.schemas.parsing import DomainMetadata, IndexDocumentIn, MinerUParseOptionsIn
 from ragstudio.services.domain_metadata_contract_compiler import (
     DomainMetadataContractError,
     compile_domain_metadata,
+    compile_index_options,
     validate_executable_reference_contract,
 )
 from ragstudio.services.reference_metadata import ReferenceSemantics
@@ -99,3 +100,48 @@ def test_compiler_preserves_hadith_contract_defaults():
     assert "book" in compiled.custom_json["domain_structure"]["primary_anchor"]["regex"]
     assert compiled.custom_json["reference_resolution"]["build_canonical_units"] is True
     validate_executable_reference_contract(compiled)
+
+
+def test_compile_quran_reference_contract_adds_mineru_parser_hints():
+    options = compile_index_options(
+        IndexDocumentIn(
+            domain_metadata=DomainMetadata(
+                domain="quran",
+                language="mixed",
+                script="arabic",
+                reference_pattern="surah:verse",
+                custom_json={"chunking": {"unit": "verse"}},
+            )
+        )
+    )
+
+    assert options.mineru_parse_options is not None
+    assert options.mineru_parse_options.parse_method == "ocr"
+    assert options.mineru_parse_options.lang == "arabic"
+    assert options.mineru_parse_options.table is False
+    assert options.mineru_parse_options.formula is False
+
+
+def test_compile_index_options_preserves_explicit_mineru_parser_hints():
+    options = compile_index_options(
+        IndexDocumentIn(
+            domain_metadata=DomainMetadata(
+                domain="quran",
+                script="arabic",
+                reference_pattern="surah:verse",
+                custom_json={"chunking": {"unit": "verse"}},
+            ),
+            mineru_parse_options=MinerUParseOptionsIn(
+                parse_method="auto",
+                lang="en",
+                table=True,
+                formula=True,
+            ),
+        )
+    )
+
+    assert options.mineru_parse_options is not None
+    assert options.mineru_parse_options.parse_method == "auto"
+    assert options.mineru_parse_options.lang == "en"
+    assert options.mineru_parse_options.table is True
+    assert options.mineru_parse_options.formula is True

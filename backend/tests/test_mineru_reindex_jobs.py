@@ -747,8 +747,10 @@ async def test_index_document_for_job_records_parser_quality_warning_summary(
         "block_type": "paragraph",
         "expected_script": None,
         "action": None,
+        "counted": True,
         "message": "Expected Arabic text in reference unit.",
         "text_preview": "Chunk with parser quality warning.",
+        "vision_recovery_status": None,
     }
     assert refreshed_job.result["indexing_stage"]["stage"] == "ready_with_warnings"
     assert refreshed_job.result["indexing_stage"]["warning"] == (

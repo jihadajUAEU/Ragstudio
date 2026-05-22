@@ -115,6 +115,119 @@ Audit focus:
   evidence unit type, canonical reference, page/block provenance, quality action
   policy, and materialization policy.
 
+### Three-Pillar RAG Architecture Target
+
+Use this model when auditing or improving Ragstudio's evidence pipeline. The
+goal is not "more vectors"; the goal is to preserve domain, layout, and context
+semantics from ingestion through retrieval, reranking, context assembly, and
+proof export.
+
+#### 1. Domain-Aware Ingestion And Retrieval
+
+Target contract:
+
+- Domain profiles should be executable contracts, not labels. A profile should
+  define reference schemas, expected scripts/languages, canonical unit rules,
+  parser normalization rules, quality policy, retrieval preferences, graph
+  projection hints, and public-proof limitations.
+- Domain query expansion should be pluggable by domain/profile. Arabic
+  religious expansion is one adapter, not the architecture. Legal, policy,
+  medical, financial, code, tabular, and multilingual domains need their own
+  lexical adapters, synonym maps, reference parsers, tokenizers, and
+  cross-lingual/code-mixed rules when supported.
+- Domain metadata must compile before durable indexing. Raw AI/vision metadata
+  is descriptive until `domain_metadata_contract_compiler.py` turns it into a
+  validated contract with named regex groups and materialization policy.
+- Quality gates must travel with every evidence unit. `quality_action_policy`
+  decides exact search, vector materialization, graph projection, runtime lane
+  eligibility, and context assembly inclusion.
+- Retrieval should expose domain decisions in traces: resolved domain profile,
+  query expansion adapter, reference parser, blocked lanes, exact-match policy,
+  and whether a result came from canonical, lexical, vector, graph, or runtime
+  evidence.
+
+Audit checks:
+
+- Is the domain family hardcoded in the path being changed, or resolved through a
+  profile/registry/contract?
+- Does the change preserve `domain_metadata`, `reference_metadata`,
+  `canonical_reference_unit`, and `quality_action_policy` in persisted chunks
+  and response traces?
+- Are query expansions language/domain-specific and traceable, or silent
+  heuristic rewrites?
+- Can a quality-blocked chunk still enter vector, graph, native runtime, rerank,
+  or final context through a bypass?
+- Are specialized tokenization needs explicit for the domain, especially Arabic,
+  references, tables, legal citations, code, and numeric/financial content?
+
+#### 2. Layout-Aware Ingestion And Retrieval
+
+Target contract:
+
+- Parsing should preserve page/block provenance: page number, block id/type,
+  reading order, bbox, source artifact reference, preview/crop reference, and
+  parser warning codes.
+- Chunking should assemble canonical units from visual order and semantic
+  structure. Reading order, columns, tables, captions, figures, equations,
+  headers/footers, and reference headers must be distinguished instead of
+  flattened blindly.
+- Layout repair should be deterministic and local first. It may downgrade noise
+  to provenance-only, recover same-unit text, or request targeted vision
+  recovery, but it must not fabricate missing content or provenance.
+- Vector and runtime materialization should either carry layout metadata into
+  retrievable rows or explicitly bridge retrieved rows back to canonical
+  Postgres chunks before fusion.
+- Query-time retrieval should support layout-aware expansion when metadata is
+  present: same page, same reference unit, table/caption neighborhood, figure
+  text, bbox proximity, and graph relationships. If this is not implemented, the
+  trace should make the limitation visible.
+
+Audit checks:
+
+- Does the path preserve `source_location`, `preview_ref`, `content_type`,
+  `provenance.blocks`, bbox, page range, and parser warning metadata?
+- Are hardcoded layout thresholds appropriate for the domain, or should they be
+  profile-configured and covered by reading-order tests?
+- Are textless page artifacts treated as provenance/noise while text-bearing
+  disallowed blocks remain recoverable or blocked according to policy?
+- Does native RAG-Anything receive only flat text/page ids? If so, is there a
+  canonical hydration step before fusion and context assembly?
+- Can query-time retrieval pull neighboring layout evidence when a caption,
+  table cell, figure block, or reference header is retrieved?
+
+#### 3. Context-Aware Ingestion And Retrieval
+
+Target contract:
+
+- Every answerable chunk should know its parent context: document title when
+  public-safe, section/header chain, canonical reference, page range, sibling
+  links, previous/next unit relationships, and graph relationships.
+- Embedding text should include enough safe parent context to make standalone
+  chunks semantically meaningful, or the system should use late-chunking or an
+  equivalent parent-window embedding strategy when available.
+- Retrieval should be seedable across channels. Direct canonical/metadata hits
+  can seed graph expansion; vector hits should be able to seed canonical
+  hydration and graph/context neighborhood expansion when bridge ids exist.
+- Fusion should dedupe by canonical identity, preserve lane scores and reasons,
+  and keep diversity across documents/sections when the query asks for
+  comparison, coverage, or synthesis.
+- Context assembly should not be a blind text join. It should inject concise
+  breadcrumbs, preserve direct evidence, include needed neighbors within budget,
+  mark dropped/truncated evidence, and keep quality/reranker degradation visible.
+
+Audit checks:
+
+- Does the candidate carry enough parent context for the LLM to understand what
+  the chunk refers to?
+- Are breadcrumbs or section/reference labels injected at context assembly or
+  answer-prompt time?
+- Are duplicate chunks merged while preserving all retrieval passes and parser
+  warning metadata?
+- Can vector/runtime candidates hydrate to canonical chunks before graph
+  expansion, reranking, and final context?
+- Does reranking improve relevance without hiding redundancy, timeout, fallback,
+  degraded status, or provider/model details?
+
 ### Ingestion And Jobs
 
 - Routes: `backend/src/ragstudio/api/routes/documents.py`,

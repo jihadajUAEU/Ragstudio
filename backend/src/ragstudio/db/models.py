@@ -106,6 +106,7 @@ class Document(Base, TimestampMixin):
     sha256: Mapped[str] = mapped_column(String, unique=True)
     artifact_path: Mapped[str] = mapped_column(String)
     status: Mapped[str] = mapped_column(String, default="ready")
+    index_contract: Mapped[dict[str, Any]] = mapped_column(JsonDictType, default=dict)
     chunks: Mapped[list["Chunk"]] = relationship(
         back_populates="document", cascade="all, delete-orphan"
     )

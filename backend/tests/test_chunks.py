@@ -176,6 +176,65 @@ async def test_domain_metadata_for_documents_dedupes_and_copies(
 
 
 @pytest.mark.asyncio
+async def test_domain_metadata_for_documents_prefers_document_index_contract(
+    database_url,
+    tmp_path,
+):
+    engine = make_engine(database_url)
+    await init_db(engine)
+    factory = make_session_factory(engine)
+
+    async with factory() as session:
+        doc = Document(
+            id="doc-contract-route",
+            filename="contract.txt",
+            content_type="text/plain",
+            sha256="contract-route-sha",
+            artifact_path=str(tmp_path / "contract.txt"),
+            index_contract={
+                "contract_status": "compiled_reference_contract",
+                "domain_metadata": {
+                    "domain": "quran_tafseer",
+                    "language": "arabic",
+                    "custom_json": {
+                        "reference_schema": {"type": "chapter_verse"},
+                        "reference_resolution": {"build_canonical_units": True},
+                    },
+                },
+            },
+        )
+        session.add(doc)
+        session.add(
+            Chunk(
+                id="chunk-generic-old",
+                document_id=doc.id,
+                text="old generic chunk",
+                metadata_json={"domain_metadata": {"domain": "generic"}},
+            )
+        )
+        await session.commit()
+
+        metadata = await ChunkService(session, tmp_path).domain_metadata_for_documents(
+            [doc.id]
+        )
+
+    await engine.dispose()
+
+    assert metadata == [
+        {
+            "domain": "quran_tafseer",
+            "language": "arabic",
+            "custom_json": {
+                "reference_schema": {"type": "chapter_verse"},
+                "reference_resolution": {"build_canonical_units": True},
+            },
+            "document_id": "doc-contract-route",
+            "contract_status": "compiled_reference_contract",
+        }
+    ]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("unsafe_value", "unsafe_key"),
     [

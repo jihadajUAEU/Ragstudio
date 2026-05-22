@@ -90,6 +90,23 @@ def git_commit_exists(commit: str, *, repo_root: Path | None = None) -> bool:
     return completed.returncode == 0
 
 
+def git_path_exists_at_commit(
+    commit: str,
+    path: str,
+    *,
+    repo_root: Path | None = None,
+) -> bool:
+    cwd = repo_root or Path.cwd()
+    completed = subprocess.run(
+        ["git", "cat-file", "-e", f"{commit}:{path}"],
+        cwd=cwd,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    return completed.returncode == 0
+
+
 def current_git_commit(*, repo_root: Path | None = None) -> str | None:
     completed = subprocess.run(
         ["git", "rev-parse", "HEAD"],

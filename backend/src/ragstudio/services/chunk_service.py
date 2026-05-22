@@ -245,7 +245,41 @@ class ChunkService:
         seen_by_document: dict[str, set[str]] = {
             document_id: set() for document_id in requested
         }
+        document_rows = (
+            await self.session.execute(
+                select(Document.id, Document.index_contract).where(
+                    Document.id.in_(requested)
+                )
+            )
+        ).all()
+        for document_id, index_contract in document_rows:
+            if not isinstance(index_contract, dict):
+                continue
+            domain_metadata = index_contract.get("domain_metadata")
+            if not isinstance(domain_metadata, dict):
+                continue
+            metadata_copy = sanitize_db_value(domain_metadata)
+            scrubbed_metadata = self._scrub_domain_metadata_lookup_value(metadata_copy)
+            if not isinstance(scrubbed_metadata, dict):
+                continue
+            scrubbed_metadata["document_id"] = document_id
+            contract_status = index_contract.get("contract_status")
+            if isinstance(contract_status, str):
+                scrubbed_metadata["contract_status"] = contract_status
+            dedupe_key = json.dumps(
+                scrubbed_metadata,
+                sort_keys=True,
+                separators=(",", ":"),
+                default=str,
+            )
+            if dedupe_key in seen_by_document[document_id]:
+                continue
+            seen_by_document[document_id].add(dedupe_key)
+            metadata_by_document[document_id].append(scrubbed_metadata)
+
         for document_id in requested:
+            if metadata_by_document[document_id]:
+                continue
             rows = (
                 await self.session.execute(
                     select(Chunk.metadata_json)

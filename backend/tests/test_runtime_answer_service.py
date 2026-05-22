@@ -65,6 +65,26 @@ def profile(**overrides):
     return RuntimeProfile(**values)
 
 
+def test_runtime_answer_prompt_includes_breadcrumb_when_available():
+    service = RuntimeAnswerService()
+    candidate = EvidenceCandidate(
+        candidate_id="metadata:chunk-1",
+        text="Guide us to the straight path.",
+        document_id="doc-1",
+        chunk_id="chunk-1",
+        source_location={"page": 1},
+        metadata={"evidence_context": {"breadcrumb": "Synthetic Tafseer > 1:5"}},
+        tool="metadata",
+        tool_rank=1,
+        base_score=10,
+    )
+
+    prompt = service._prompt("What is 1:5?", [candidate])
+
+    assert "context=Synthetic Tafseer > 1:5" in prompt
+    assert "Guide us to the straight path." in prompt
+
+
 class FakeResponse:
     def __init__(self, body):
         self.body = body

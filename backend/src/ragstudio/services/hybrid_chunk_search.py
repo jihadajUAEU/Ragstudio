@@ -182,6 +182,7 @@ class HybridChunkSearch:
         arabic_exact = self._arabic_exact_score(query, chunk)
         arabic_token = self._arabic_token_score(query, chunk)
         metadata_boost = self._metadata_boost(query_text, metadata)
+        layout_context = self._layout_context_boost(query_text, metadata)
         answer_bearing_count = self._answer_bearing_count_boost(
             query_text,
             chunk.text,
@@ -205,6 +206,7 @@ class HybridChunkSearch:
             "arabic_exact": arabic_exact,
             "arabic_token": arabic_token,
             "metadata_boost": metadata_boost,
+            "layout_context": layout_context,
             "answer_bearing_count": answer_bearing_count,
             "guidance_request": guidance_request,
             "domain_intent": domain_intent,
@@ -263,6 +265,42 @@ class HybridChunkSearch:
                     boost += min(10.0, len(shared_title_terms) * 2.0)
 
         return min(boost, 12.0)
+
+    def _layout_context_boost(self, query_text: str, metadata: dict[str, Any]) -> float:
+        query_terms = self._terms(query_text)
+        if not query_terms:
+            return 0.0
+
+        layout_terms: set[str] = set()
+        for key in ("modality", "content_type"):
+            value = metadata.get(key)
+            if isinstance(value, str):
+                layout_terms.update(self._terms(value))
+
+        layout_context = metadata.get("layout_context")
+        if isinstance(layout_context, dict):
+            for value in layout_context.values():
+                if isinstance(value, str):
+                    layout_terms.update(self._terms(value))
+                elif isinstance(value, list):
+                    for item in value:
+                        if isinstance(item, str):
+                            layout_terms.update(self._terms(item))
+
+        provenance = metadata.get("provenance")
+        if isinstance(provenance, dict):
+            blocks = provenance.get("blocks")
+            if isinstance(blocks, list):
+                for block in blocks[:8]:
+                    if not isinstance(block, dict):
+                        continue
+                    for key in ("role", "block_type", "text_preview"):
+                        value = block.get(key)
+                        if isinstance(value, str):
+                            layout_terms.update(self._terms(value))
+
+        overlap = query_terms & layout_terms
+        return min(16.0, len(overlap) * 4.0)
 
     def _domain_intent_boost(
         self,

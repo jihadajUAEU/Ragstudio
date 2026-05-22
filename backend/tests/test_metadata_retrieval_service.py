@@ -211,6 +211,87 @@ class LegacyLexicalExpandedPass:
     direct_evidence = True
 
 
+def test_hybrid_search_boosts_layout_context_matches():
+    from ragstudio.services.hybrid_chunk_search import HybridChunkSearch
+
+    chunk = Chunk(
+        id="chunk-table-context",
+        document_id="doc-layout",
+        text="Revenue grew by 12 percent.",
+        metadata_json={
+            "modality": "table",
+            "provenance": {
+                "blocks": [
+                    {
+                        "role": "table",
+                        "block_type": "table",
+                        "page_start": 4,
+                        "text_preview": "Revenue table",
+                    }
+                ]
+            },
+            "layout_context": {
+                "section_title": "Financial results",
+                "visual_neighborhood": ["table", "caption"],
+            },
+        },
+    )
+
+    score = HybridChunkSearch().score("financial results table revenue", chunk)
+
+    assert score.breakdown["layout_context"] > 0
+    assert score.score >= score.breakdown["layout_context"]
+
+
+def test_metadata_candidate_preserves_layout_context_match_feature():
+    service = MetadataRetrievalService(FakeChunkService())
+    candidate = service._candidate_from_chunk(
+        ChunkOut(
+            id="chunk-layout-feature",
+            document_id="doc-layout",
+            text="Revenue table",
+            source_location={"page": 4},
+            metadata={
+                "score": 18.0,
+                "score_breakdown": {"layout_context": 8.0},
+            },
+        ),
+        1,
+        RetrievalPass("semantic_metadata", "financial results table"),
+    )
+
+    assert candidate.match_features == {
+        "semantic_metadata": True,
+        "layout_context": True,
+    }
+
+
+def test_metadata_candidate_attaches_evidence_context_from_chunk_metadata():
+    service = MetadataRetrievalService(FakeChunkService())
+    candidate = service._candidate_from_chunk(
+        ChunkOut(
+            id="chunk-context",
+            document_id="doc-context",
+            text="Guide us to the straight path.",
+            source_location={"page": 1},
+            content_type="text",
+            metadata={
+                "document_metadata": {"title": "Synthetic Tafseer"},
+                "reference_metadata": {"references": ["1:5"]},
+            },
+        ),
+        1,
+        RetrievalPass("semantic_metadata", "straight path"),
+    )
+
+    assert candidate.metadata["evidence_context"] == {
+        "breadcrumb": "Synthetic Tafseer > 1:5",
+        "layout_summary": "text; page=1",
+        "page": 1,
+        "reference": "1:5",
+    }
+
+
 @pytest.mark.asyncio
 async def test_metadata_service_runs_non_blocking_passes_concurrently():
     chunk_service = SlowMetadataPassChunkService()
@@ -498,7 +579,7 @@ async def test_metadata_service_does_not_mark_mismatched_reference_as_exact():
 
     assert candidates[0].chunk_id == "chunk-2-2"
     assert candidates[0].retrieval_pass == "semantic_metadata"
-    assert candidates[0].match_features == {}
+    assert candidates[0].match_features == {"semantic_metadata": True}
     assert candidates[0].canonical_reference == "2:2"
 
 

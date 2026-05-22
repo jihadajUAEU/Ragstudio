@@ -50,9 +50,9 @@
   },
   "claim_counts": {
     "proven": 2,
-    "roadmap": 1,
+    "roadmap": 2,
     "disabled": 1,
-    "total": 4
+    "total": 5
   },
   "redaction_status": {
     "overall": "passed_human_approved",

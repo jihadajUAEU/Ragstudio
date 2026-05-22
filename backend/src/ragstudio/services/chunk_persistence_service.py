@@ -186,7 +186,6 @@ class ChunkPersistenceService:
         merged = self._scrub_path_metadata(metadata)
         merged["document_id"] = document_id
         merged["domain_metadata"] = domain_metadata.model_dump(exclude_none=True)
-        merged["index_shape"] = index_shape
         merged["chunk_identity"] = self._chunk_identity(document_id, merged)
         parser_metadata = dict(merged.get("parser_metadata") or {})
         parser_metadata.setdefault("backend", "mineru")

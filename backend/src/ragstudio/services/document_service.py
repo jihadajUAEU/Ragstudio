@@ -13,6 +13,7 @@ from ragstudio.schemas.parsing import DomainMetadata, IndexDocumentIn, ParserMod
 from ragstudio.schemas.runtime import RuntimeProfile
 from ragstudio.services.artifact_store import ArtifactStore
 from ragstudio.services.chunk_service import ChunkService
+from ragstudio.services.document_contract import build_document_index_contract
 from ragstudio.services.domain_metadata_quality_gate import DomainMetadataQualityGate
 from ragstudio.services.graph_projection_runner import GraphProjectionRunner
 from ragstudio.services.index_artifact_cleanup import cleanup_document_index_artifacts
@@ -75,6 +76,7 @@ class DocumentService:
             sha256=digest,
             artifact_path=str(artifact_path),
             status=StageStatus.READY.value,
+            index_contract=build_document_index_contract(options or IndexDocumentIn()),
         )
         self.session.add(document)
         try:
@@ -234,6 +236,7 @@ class DocumentService:
         document: Document,
         options: IndexDocumentIn | None = None,
     ) -> Job:
+        self._apply_index_contract_snapshot(document, options)
         job = JobWorker.build(
             "index_document",
             document.id,
@@ -333,12 +336,24 @@ class DocumentService:
     def _job_options_payload(self, options: IndexDocumentIn | None) -> dict[str, Any]:
         return (options or IndexDocumentIn()).model_dump(mode="json", exclude_none=True)
 
+    def _apply_index_contract_snapshot(
+        self,
+        document: Document,
+        options: IndexDocumentIn | None,
+    ) -> None:
+        if options is not None:
+            document.index_contract = build_document_index_contract(options)
+
     async def _ensure_queued_index_job(
         self,
         document: Document,
         options: IndexDocumentIn | None,
     ) -> None:
         if await self.active_index_job(document.id) is not None:
+            self._apply_index_contract_snapshot(document, options)
+            if options is not None:
+                await self.session.commit()
+                await self.session.refresh(document)
             self.queued_index_job_id = None
             return
         if options is None:
@@ -355,6 +370,7 @@ class DocumentService:
         document: Document,
         options: IndexDocumentIn | None = None,
     ) -> None:
+        self._apply_index_contract_snapshot(document, options)
         existing_chunk_id = await self.session.scalar(
             select(Chunk.id).where(Chunk.document_id == document.id).limit(1)
         )
@@ -643,6 +659,7 @@ class DocumentService:
         job = await self.session.get(Job, job_id)
         if document is None or job is None:
             return
+        self._apply_index_contract_snapshot(document, options)
 
         async def ensure_current_lease() -> None:
             if ensure_active_lease is not None:

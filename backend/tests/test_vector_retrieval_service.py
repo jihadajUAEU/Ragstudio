@@ -43,6 +43,19 @@ def test_vector_lane_rejects_quality_blocked_chunks_even_when_gate_passes():
     assert diagnostics.reason == "vector_lane_blocked_by_quality_policy"
 
 
+def test_vector_lane_rejects_action_block_even_when_baseline_passes():
+    metadata = {"quality_action_policy": {"action": "block", "index_vector": True}}
+
+    result = prepare_vector_candidates(
+        [{"chunk_id": "chunk-1", "document_id": "doc-1", "text": "unsafe"}],
+        metadata=metadata,
+        baseline_gate={"passed": True},
+    )
+
+    assert result.status == "skipped"
+    assert result.reason == "vector_lane_blocked_by_quality_policy"
+
+
 def test_prepare_vector_candidates_hydrates_to_canonical_chunk_identity():
     result = prepare_vector_candidates(
         [
@@ -82,6 +95,43 @@ def test_prepare_vector_candidates_hydrates_to_canonical_chunk_identity():
     assert candidate.metadata["chunk_identity"] == "doc-1|page-3|chunk-1"
     assert candidate.metadata["vector_retrieval"]["original_candidate_id"] == "pgvector-row-9"
     assert candidate.retrieval_pass == "vector_db"
+
+
+def test_prepare_vector_candidates_preserves_raw_evidence_context_on_hydration():
+    result = prepare_vector_candidates(
+        [
+            {
+                "candidate_id": "pgvector-row-context",
+                "chunk_id": "chunk-context",
+                "score": 0.91,
+                "metadata": {
+                    "evidence_context": {
+                        "breadcrumb": "Synthetic Tafseer > 1:5",
+                        "layout_summary": "text; page=1",
+                        "page": 1,
+                        "reference": "1:5",
+                    }
+                },
+            }
+        ],
+        baseline_gate={"passed": True},
+        canonical_chunks={
+            "chunk-context": {
+                "id": "chunk-context",
+                "document_id": "doc-context",
+                "text": "Canonical chunk text",
+                "source_location": {"page": 1},
+                "metadata_json": {"chunk_identity": "doc-context|page-1|chunk-context"},
+            }
+        },
+    )
+
+    assert result.candidates[0].metadata["evidence_context"] == {
+        "breadcrumb": "Synthetic Tafseer > 1:5",
+        "layout_summary": "text; page=1",
+        "page": 1,
+        "reference": "1:5",
+    }
 
 
 def test_prepare_vector_candidates_reports_failed_hydration():

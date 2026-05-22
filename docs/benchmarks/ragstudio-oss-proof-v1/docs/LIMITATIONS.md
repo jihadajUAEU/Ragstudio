@@ -37,3 +37,16 @@ unless `screenshots/signoff.json` marks it safe to publish.
 
 The Arabic and English content is artificial. It demonstrates trace and warning
 shape, not rights-cleared coverage of a real corpus.
+
+## Retrieval Architecture Limitations
+
+- Domain-specific lexical expansion is registry-based, but only adapters present
+  in the public fixture are proven by this packet.
+- Native RAG-Anything is a secondary runtime lane. Public proof claims are made
+  from canonical Ragstudio evidence and hydrated bridge metadata, not from opaque
+  runtime snippets alone.
+- Layout-aware retrieval uses canonical page, reference, content type, and
+  provenance metadata. Query-time visual reinspection is not part of the V1
+  static proof path.
+- Context assembly includes safe breadcrumbs and dropped-evidence reasons, but
+  does not claim full document summarization or unbounded sliding-window recall.

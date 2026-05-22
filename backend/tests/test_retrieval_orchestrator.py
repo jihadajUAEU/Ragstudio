@@ -2,7 +2,10 @@ import asyncio
 
 import httpx
 import pytest
+from ragstudio.db.engine import init_db, make_engine, make_session_factory
+from ragstudio.db.models import Chunk, Document
 from ragstudio.schemas.chunks import ChunkOut
+from ragstudio.services.context_assembly_service import ContextAssemblyService
 from ragstudio.services.domain_query_expansion_service import DomainQueryExpansionService
 from ragstudio.services.query_hypothesis_service import (
     ProbableAnswer,
@@ -16,8 +19,17 @@ from ragstudio.services.retrieval_evidence import (
     plan_for_query,
 )
 from ragstudio.services.retrieval_fusion import RetrievalFusion
-from ragstudio.services.retrieval_orchestrator import RetrievalOrchestrator
+from ragstudio.services.retrieval_orchestrator import (
+    RetrievalOrchestrator,
+    _evidence_from_context,
+    _graph_seed_candidates,
+)
 from ragstudio.services.runtime_types import RuntimeQueryResult
+
+
+class _ChunkServiceWithSession:
+    def __init__(self, session):
+        self.session = session
 
 
 def test_plan_for_count_query_prefers_metadata_and_native():
@@ -29,6 +41,125 @@ def test_plan_for_count_query_prefers_metadata_and_native():
     assert plan.use_relationships is True
     assert plan.candidate_limit == 20
     assert plan.document_ids == ["doc-1"]
+
+
+def test_graph_seed_candidates_accept_hydrated_vector_hits():
+    vector = EvidenceCandidate(
+        candidate_id="vector:chunk-1",
+        text="Hydrated canonical text",
+        document_id="doc-1",
+        chunk_id="chunk-1",
+        source_location={"page": 1},
+        metadata={
+            "vector_retrieval": {"hydrated_to_canonical": True},
+            "quality_action_policy": {"project_graph": True},
+        },
+        tool="pgvector",
+        tool_rank=1,
+        base_score=0.9,
+        retrieval_pass="vector_db",
+    )
+
+    seeds = _graph_seed_candidates([vector], document_ids=["doc-1"], max_seeds=5)
+
+    assert [seed.chunk_id for seed in seeds] == ["chunk-1"]
+
+
+def test_evidence_from_context_applies_assembled_context_text():
+    candidate = EvidenceCandidate(
+        candidate_id="metadata:chunk-1",
+        text="Guide us to the straight path.",
+        document_id="doc-1",
+        chunk_id="chunk-1",
+        source_location={"page": 1},
+        metadata={"evidence_context": {"breadcrumb": "Synthetic Tafseer > 1:5"}},
+        tool="metadata",
+        tool_rank=1,
+        base_score=10,
+    )
+    assembled_context = ContextAssemblyService(max_context_tokens=200).assemble([candidate])
+
+    evidence = _evidence_from_context([candidate], assembled_context)
+
+    assert evidence[0].text.startswith("[Synthetic Tafseer > 1:5]")
+    assert evidence[0].metadata["assembled_context"]["context_text_applied"] is True
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_expands_layout_neighbors_from_seed_candidates(
+    database_url, tmp_path
+):
+    engine = make_engine(database_url)
+    await init_db(engine)
+    factory = make_session_factory(engine)
+
+    async with factory() as session:
+        session.add(
+            Document(
+                id="doc-layout-neighbor-orchestrator",
+                filename="layout.pdf",
+                content_type="application/pdf",
+                sha256="layout-orchestrator-sha",
+                artifact_path=str(tmp_path / "layout.pdf"),
+            )
+        )
+        session.add_all(
+            [
+                Chunk(
+                    id="seed-layout-orchestrator",
+                    document_id="doc-layout-neighbor-orchestrator",
+                    text="Figure caption.",
+                    source_location={"page": 2, "reference": "fig:2"},
+                    metadata_json={"layout": {"role": "caption"}},
+                ),
+                Chunk(
+                    id="neighbor-layout-orchestrator",
+                    document_id="doc-layout-neighbor-orchestrator",
+                    text="Figure body details.",
+                    source_location={"page": 2, "reference": "fig:2"},
+                    metadata_json={"layout": {"role": "body"}},
+                ),
+            ]
+        )
+        await session.commit()
+
+        orchestrator = RetrievalOrchestrator(
+            chunk_service=_ChunkServiceWithSession(session)
+        )
+        candidates, traces = await orchestrator._safe_layout_neighbors(
+            [
+                EvidenceCandidate(
+                    candidate_id="pgvector:seed-layout-orchestrator",
+                    text="Figure caption.",
+                    document_id="doc-layout-neighbor-orchestrator",
+                    chunk_id="seed-layout-orchestrator",
+                    source_location={"page": 2, "reference": "fig:2"},
+                    metadata={},
+                    tool="pgvector",
+                    tool_rank=1,
+                    base_score=10.0,
+                    final_score=10.0,
+                )
+            ],
+            document_ids=["doc-layout-neighbor-orchestrator"],
+            limit=5,
+            timings={},
+        )
+
+    await engine.dispose()
+
+    assert [candidate.chunk_id for candidate in candidates] == [
+        "neighbor-layout-orchestrator"
+    ]
+    assert traces == [
+        {
+            "stage": "layout_neighbor_expansion",
+            "status": "ran",
+            "reason": "same_page_or_reference_neighbors",
+            "candidate_count": 1,
+            "candidate_ids": ["layout-neighbor:neighbor-layout-orchestrator"],
+        }
+    ]
 
 
 def test_plan_for_reference_query_marks_reference_intent():
@@ -822,6 +953,17 @@ class QuranDomainMetadataChunkSearchService:
         )()
 
 
+class EmptyMetadataChunkSearchService:
+    async def domain_metadata_for_documents(self, document_ids):
+        return []
+
+    async def search(self, search_in):
+        return type("SearchResult", (), {"items": [], "total": 0})()
+
+    async def chunks_by_id(self, chunk_ids):
+        return []
+
+
 class PolicyBlockedDomainChunkSearchService(FakeChunkSearchService):
     async def domain_metadata_for_documents(self, document_ids):
         return [
@@ -1324,6 +1466,7 @@ async def test_orchestrator_fuses_native_metadata_and_graph_before_answering():
     assert result.timings["graph_hydration_ms"] >= 0
     assert any(trace.get("stage") == "planner" for trace in result.chunk_traces)
     assert any(trace.get("stage") == "final_fusion" for trace in result.chunk_traces)
+    assert any(trace.get("stage") == "candidate_diversity" for trace in result.chunk_traces)
     context_trace = next(
         trace for trace in result.chunk_traces if trace.get("stage") == "context_assembly"
     )
@@ -1505,6 +1648,53 @@ async def test_orchestrator_route_plan_applies_document_quality_and_materializat
         trace.get("stage") == "retrieval_lane_result"
         and trace.get("lane") == "vector"
         and trace.get("status") == "skipped"
+        for trace in result.chunk_traces
+    )
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_runs_quality_gated_vector_lane_when_baseline_passes():
+    class VectorRepo:
+        async def candidate_rows(self, *, query, document_ids, limit):
+            return [
+                {
+                    "candidate_id": "vector-row:chunk-v1",
+                    "chunk_id": "chunk-v1",
+                    "document_id": document_ids[0],
+                    "text": "vector alpha evidence",
+                    "source_location": {"page": 1},
+                    "metadata": {"quality_action_policy": {"index_vector": True}},
+                    "score": 0.8,
+                    "rank": 1,
+                }
+            ]
+
+    orchestrator = RetrievalOrchestrator(
+        chunk_service=EmptyMetadataChunkSearchService(),
+        answer_service=FakeAnswerService(),
+        reranker_service=FakeRerankerService(),
+        graph_expansion_service=FakeGraphExpansionService(),
+        vector_candidate_repository=VectorRepo(),
+    )
+
+    result = await orchestrator.query(
+        "alpha",
+        runtime=NativeSearchShouldNotRun(),
+        profile=type("Profile", (), {"enable_rerank": False, "reranker_provider": "disabled"})(),
+        document_ids=["doc-vector"],
+        variant_id="variant-1",
+        query_config={
+            "limit": 3,
+            "vector_baseline_gate": {"passed": True},
+            "runtime_readiness": {"state": "disabled", "reason": "test_vector_lane_only"},
+            "graph_expansion_enabled": False,
+        },
+    )
+
+    assert result.error is None
+    assert any(source["chunk_id"] == "chunk-v1" for source in result.sources)
+    assert any(
+        trace.get("stage") == "vector_retrieval" and trace.get("status") == "ran"
         for trace in result.chunk_traces
     )
 

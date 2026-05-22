@@ -339,3 +339,53 @@ def test_mineru_parse_options_ignore_hidden_domain_metadata_overrides(tmp_path):
         },
         "maxConcurrentFiles": 2,
     }
+
+
+@pytest.mark.asyncio
+async def test_mineru_parse_allows_missing_arabic_for_downstream_recovery(tmp_path):
+    from ragstudio.services.mineru_extraction_validator import MinerUExtractionValidator
+
+    session = EventSession()
+
+    class EnglishOnlyMinerUClient(EventMinerUClient):
+        def normalize_artifact_zip(self, **kwargs):
+            self.events.append("normalize")
+            return [
+                AdapterChunk(
+                    text="[2:28]\nHow can you disbelieve in Allah?",
+                    source_location={"page": 1},
+                    metadata={"parser_metadata": {"backend": "mineru"}},
+                )
+            ]
+
+    def mineru_client_factory(base_url, timeout_ms, poll_interval_ms):
+        return EnglishOnlyMinerUClient(
+            base_url,
+            timeout_ms,
+            poll_interval_ms,
+            events=session.events,
+        )
+
+    document = SimpleNamespace(
+        id="doc-1",
+        artifact_path=str(tmp_path / "document.pdf"),
+        content_type="application/pdf",
+        sha256="sha",
+    )
+
+    chunks = await DocumentParserService(
+        session,
+        tmp_path,
+        mineru_client_factory=mineru_client_factory,
+        extraction_validator=MinerUExtractionValidator(min_text_chars=8),
+    ).mineru_parse(
+        document,
+        IndexDocumentIn(
+            parser_mode="mineru_strict",
+            domain_metadata=DomainMetadata(domain="quran", script="arabic"),
+        ),
+    )
+
+    assert [chunk.text for chunk in chunks] == [
+        "[2:28]\nHow can you disbelieve in Allah?"
+    ]

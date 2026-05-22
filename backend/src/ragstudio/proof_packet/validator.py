@@ -12,6 +12,7 @@ from referencing import Registry, Resource
 from ragstudio.proof_packet.errors import (
     CLAIM_COUNTS_MISMATCH,
     CLAIM_EVIDENCE_INVALID,
+    CLAIM_SOURCE_INVALID,
     HASH_MISMATCH,
     MANIFEST_PATH_MISSING,
     PACKET_NOT_FOUND,
@@ -22,6 +23,7 @@ from ragstudio.proof_packet.errors import (
 )
 from ragstudio.proof_packet.manifest import (
     git_commit_exists,
+    git_path_exists_at_commit,
     packet_text_files,
     read_json,
     resolve_packet_path,
@@ -66,7 +68,7 @@ def validate_packet(
     _validate_core_documents(root, manifest, schemas, result)
     _validate_manifest_paths(root, manifest, result)
     _validate_artifact_hashes(root, manifest, result)
-    _validate_claims(root, manifest, result)
+    _validate_claims(root, manifest, result, repo_root=repo_root)
     _validate_screenshots(root, manifest, result)
     _validate_source_commit(manifest, result, repo_root=repo_root)
     _validate_redaction(root, result)
@@ -81,7 +83,8 @@ def validate_packet(
         finding.code == "REDACTION_LEAK" for finding in result.errors
     )
     result.summary.claims_valid = not any(
-        finding.code in {CLAIM_COUNTS_MISMATCH, CLAIM_EVIDENCE_INVALID}
+        finding.code
+        in {CLAIM_COUNTS_MISMATCH, CLAIM_EVIDENCE_INVALID, CLAIM_SOURCE_INVALID}
         for finding in result.errors
     )
     return result.finalize(strict=strict)
@@ -287,7 +290,13 @@ def _validate_artifact_hashes(
             )
 
 
-def _validate_claims(packet_root: Path, manifest: dict[str, Any], result: ValidationResult) -> None:
+def _validate_claims(
+    packet_root: Path,
+    manifest: dict[str, Any],
+    result: ValidationResult,
+    *,
+    repo_root: Path | None,
+) -> None:
     registry_path = manifest.get("claims", {}).get("registry")
     if not isinstance(registry_path, str):
         return
@@ -299,6 +308,7 @@ def _validate_claims(packet_root: Path, manifest: dict[str, Any], result: Valida
     counts = {"proven": 0, "roadmap": 0, "disabled": 0, "total": len(claims)}
     artifact_paths = set(manifest.get("artifacts", []))
     for claim in claims:
+        _validate_claim_source(claim, registry_path, result, repo_root=repo_root)
         status = claim.get("status")
         if status in {"proven", "roadmap", "disabled"}:
             counts[status] += 1
@@ -345,6 +355,53 @@ def _validate_claims(packet_root: Path, manifest: dict[str, Any], result: Valida
                 recovery=RECOVERY_GUIDANCE[CLAIM_COUNTS_MISMATCH],
             )
         )
+
+
+def _validate_claim_source(
+    claim: dict[str, Any],
+    registry_path: str,
+    result: ValidationResult,
+    *,
+    repo_root: Path | None,
+) -> None:
+    source = claim.get("source")
+    if not isinstance(source, dict):
+        return
+    source_commit = source.get("source_commit")
+    if not isinstance(source_commit, str) or len(source_commit) != 40:
+        return
+    if not git_commit_exists(source_commit, repo_root=repo_root):
+        result.add_error(
+            Finding(
+                code=CLAIM_SOURCE_INVALID,
+                path=registry_path,
+                message=(
+                    f"Claim {claim.get('claim_id', '<unknown>')} source_commit "
+                    "is not present in repository history."
+                ),
+                recovery=RECOVERY_GUIDANCE[CLAIM_SOURCE_INVALID],
+            )
+        )
+        return
+
+    code_paths = source.get("code_paths")
+    if not isinstance(code_paths, list):
+        return
+    for code_path in code_paths:
+        if not isinstance(code_path, str) or not code_path:
+            continue
+        if not git_path_exists_at_commit(source_commit, code_path, repo_root=repo_root):
+            result.add_error(
+                Finding(
+                    code=CLAIM_SOURCE_INVALID,
+                    path=registry_path,
+                    message=(
+                        f"Claim {claim.get('claim_id', '<unknown>')} source path "
+                        f"{code_path} is not present at source_commit."
+                    ),
+                    recovery=RECOVERY_GUIDANCE[CLAIM_SOURCE_INVALID],
+                )
+            )
 
 
 def _claim_error(result: ValidationResult, path: str, message: str) -> None:
