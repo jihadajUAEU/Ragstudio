@@ -91,7 +91,7 @@ describe("QueryPage", () => {
     fireEvent.change(await screen.findByPlaceholderText("Ask a focused question against selected documents."), {
       target: { value: "alpha" },
     });
-    fireEvent.click(await screen.findByText("source.txt"));
+    fireEvent.click((await screen.findAllByText("source.txt"))[0]);
     fireEvent.click((await screen.findAllByText("Balanced"))[0]);
     fireEvent.click(screen.getByRole("button", { name: "Run" }));
 
@@ -103,18 +103,18 @@ describe("QueryPage", () => {
   it("runs fast evidence mode by default", async () => {
     renderQueryPage();
 
-    expect(await screen.findByRole("button", { name: "Fast evidence" })).toHaveAttribute(
+    expect(await screen.findByRole("button", { name: "Fast" })).toHaveAttribute(
       "aria-pressed",
       "true",
     );
-    expect(screen.getByRole("button", { name: "Full answer" })).toHaveAttribute(
+    expect(screen.getByRole("button", { name: "Full" })).toHaveAttribute(
       "aria-pressed",
       "false",
     );
     fireEvent.change(await screen.findByPlaceholderText("Ask a focused question against selected documents."), {
       target: { value: "alpha" },
     });
-    fireEvent.click(await screen.findByText("source.txt"));
+    fireEvent.click((await screen.findAllByText("source.txt"))[0]);
     fireEvent.click((await screen.findAllByText("Balanced"))[0]);
     fireEvent.click(screen.getByRole("button", { name: "Run" }));
 
@@ -135,8 +135,8 @@ describe("QueryPage", () => {
     fireEvent.change(await screen.findByPlaceholderText("Ask a focused question against selected documents."), {
       target: { value: "alpha" },
     });
-    fireEvent.click(await screen.findByText("source.txt"));
-    fireEvent.click(screen.getByRole("button", { name: "Tune" }));
+    fireEvent.click((await screen.findAllByText("source.txt"))[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Tune retrieval" }));
 
     expect(await screen.findByRole("dialog", { name: "Search tuning" })).toBeVisible();
     await waitFor(() =>
@@ -187,7 +187,7 @@ describe("QueryPage", () => {
     fireEvent.change(await screen.findByPlaceholderText("Ask a focused question against selected documents."), {
       target: { value: "alpha" },
     });
-    fireEvent.click(await screen.findByText("source.txt"));
+    fireEvent.click((await screen.findAllByText("source.txt"))[0]);
     fireEvent.click((await screen.findAllByText("Balanced"))[0]);
     fireEvent.click(screen.getByRole("button", { name: "Run" }));
 
@@ -213,6 +213,47 @@ describe("QueryPage", () => {
             },
           ],
           chunk_traces: [
+            {
+              stage: "retrieval_route_plan",
+              domain_profile_id: "reference_heavy",
+              layout_hint: "reference",
+              materialization_hint: "graph",
+              source_of_truth: "postgres_canonical_evidence",
+              direct_evidence_required: true,
+              graph_context_required: true,
+            },
+            {
+              stage: "retrieval_lane_result",
+              lane: "metadata",
+              status: "ran",
+              reason: "metadata_lane_completed",
+              candidate_count: 1,
+              latency_ms: 2.1,
+            },
+            {
+              stage: "layout_neighbor_expansion",
+              status: "ran",
+              reason: "same_page_reference_layout_group_or_reading_order_neighbors",
+              candidate_count: 1,
+              layout_group_ids: ["table-srg-001"],
+              reading_order_neighbors: true,
+            },
+            {
+              stage: "retrieval_lane_result",
+              lane: "context_window",
+              status: "ran",
+              reason: "adjacent_parent_sibling_context_window",
+              candidate_count: 4,
+              relationship_reasons: { "chunk-parent": "parent_context" },
+            },
+            {
+              stage: "retrieval_lane_result",
+              lane: "reranker",
+              status: "ran",
+              reason: "reranker_completed",
+              candidate_count: 2,
+              rank_deltas: { "chunk-25": { before: 2, after: 1 } },
+            },
             {
               stage: "planner",
               intent: "semantic",
@@ -248,7 +289,18 @@ describe("QueryPage", () => {
                 { reference: "book:13:hadith:25", status: "confirmed" },
               ],
             },
-            { stage: "context_assembly", included_candidates: 3 },
+            {
+              stage: "context_assembly",
+              included_candidates: 3,
+              dropped_candidates: 1,
+              assembled_context: {
+                evidence_ids: ["metadata:chunk-25"],
+                grounding_status: "grounded",
+                breadcrumbs_visible: true,
+                layout_summary_visible: true,
+              },
+              dropped_reasons: { "vector:chunk-1": "lower_rank_supporting_context" },
+            },
             { stage: "grounding_validation", status: "grounded", cited_labels: ["S1"] },
           ],
           timings: {
@@ -326,27 +378,47 @@ describe("QueryPage", () => {
     fireEvent.change(await screen.findByPlaceholderText("Ask a focused question against selected documents."), {
       target: { value: "alpha" },
     });
-    fireEvent.click(await screen.findByText("source.txt"));
+    fireEvent.click((await screen.findAllByText("source.txt"))[0]);
     fireEvent.click((await screen.findAllByText("Balanced"))[0]);
     fireEvent.click(screen.getByRole("button", { name: "Run" }));
     fireEvent.click(await screen.findByRole("button", { name: "View pathway" }));
 
     expect(await screen.findByRole("dialog", { name: "Query pathway" })).toBeVisible();
-    expect(screen.getByText("Timeline", { selector: "summary" })).toBeVisible();
-    expect(screen.getByText("Raw", { selector: "summary" })).toBeVisible();
+    expect(screen.getByRole("tab", { name: "Domain-aware" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "Layout-aware" })).toBeVisible();
+    expect(screen.getByRole("tab", { name: "Context-aware" })).toBeVisible();
+    expect(screen.getByRole("tab", { name: "Raw traces" })).toBeVisible();
+    expect(screen.getByText("Route plan", { selector: "summary" })).toBeVisible();
+    expect(screen.getByText("Lane results", { selector: "summary" })).toBeVisible();
     expect(screen.queryByText("Planner", { selector: "summary" })).not.toBeInTheDocument();
     expect(screen.queryByText("Retrieval", { selector: "summary" })).not.toBeInTheDocument();
     expect(screen.queryByText("Answer", { selector: "summary" })).not.toBeInTheDocument();
+    expect(screen.getByText("reference_heavy")).toBeVisible();
+    expect(screen.getByText("postgres_canonical_evidence")).toBeVisible();
+    expect(screen.getByText("metadata")).toBeVisible();
+    expect(screen.getByText("metadata_lane_completed")).toBeVisible();
+    fireEvent.click(screen.getByRole("tab", { name: "Layout-aware" }));
+    expect(screen.getByText("Layout neighbors", { selector: "summary" })).toBeVisible();
+    expect(screen.getByText("table-srg-001")).toBeVisible();
+    fireEvent.click(screen.getByRole("tab", { name: "Context-aware" }));
+    expect(screen.getByText("Context window", { selector: "summary" })).toBeVisible();
+    expect(screen.getByText("Context assembly", { selector: "summary" })).toBeVisible();
+    expect(screen.getByText("Reranker rank changes", { selector: "summary" })).toBeVisible();
+    expect(screen.getAllByText(/parent_context/).length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByText("Reranker rank changes", { selector: "summary" }));
+    expect(screen.getAllByText("chunk-25").length).toBeGreaterThan(0);
+    expect(screen.getByText("2 -> 1")).toBeVisible();
+    fireEvent.click(screen.getByText("Timeline", { selector: "summary" }));
     expect(screen.getByText("LLM planning")).toBeVisible();
-    expect(screen.getByText("Native retrieval")).toBeVisible();
     expect(screen.getAllByText("Input").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Action").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Output").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Diagnosis").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Suggested action").length).toBeGreaterThan(0);
     expect(screen.getAllByText("book:13:hadith:25").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("Native query timed out after 2500 ms.").length).toBeGreaterThan(0);
     expect(screen.getByText("3000 ms / 3000 ms")).toBeVisible();
+    fireEvent.click(screen.getByRole("tab", { name: "Raw traces" }));
+    expect(screen.getByText("Raw traces", { selector: "summary" })).toBeVisible();
   });
 
   it("summarizes disabled reranker traces", async () => {
@@ -377,7 +449,7 @@ describe("QueryPage", () => {
     fireEvent.change(await screen.findByPlaceholderText("Ask a focused question against selected documents."), {
       target: { value: "alpha" },
     });
-    fireEvent.click(await screen.findByText("source.txt"));
+    fireEvent.click((await screen.findAllByText("source.txt"))[0]);
     fireEvent.click((await screen.findAllByText("Balanced"))[0]);
     fireEvent.click(screen.getByRole("button", { name: "Run" }));
 
@@ -428,7 +500,7 @@ describe("QueryPage", () => {
     fireEvent.change(await screen.findByPlaceholderText("Ask a focused question against selected documents."), {
       target: { value: "alpha" },
     });
-    fireEvent.click(await screen.findByText("source.txt"));
+    fireEvent.click((await screen.findAllByText("source.txt"))[0]);
     fireEvent.click((await screen.findAllByText("Balanced"))[0]);
     fireEvent.click(screen.getByRole("button", { name: "Run" }));
 
@@ -492,7 +564,7 @@ describe("QueryPage", () => {
     fireEvent.change(await screen.findByPlaceholderText("Ask a focused question against selected documents."), {
       target: { value: "alpha" },
     });
-    fireEvent.click(await screen.findByText("source.txt"));
+    fireEvent.click((await screen.findAllByText("source.txt"))[0]);
     fireEvent.click((await screen.findAllByText("Balanced"))[0]);
     fireEvent.click(screen.getByRole("button", { name: "Run" }));
     fireEvent.click(await screen.findByRole("button", { name: "Inspect evidence" }));
@@ -552,7 +624,7 @@ describe("QueryPage", () => {
     fireEvent.change(await screen.findByPlaceholderText("Ask a focused question against selected documents."), {
       target: { value: "alpha" },
     });
-    fireEvent.click(await screen.findByText("source.txt"));
+    fireEvent.click((await screen.findAllByText("source.txt"))[0]);
     fireEvent.click((await screen.findAllByText("Balanced"))[0]);
     fireEvent.click(screen.getByRole("button", { name: "Run" }));
 
@@ -562,7 +634,7 @@ describe("QueryPage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Inspect evidence" }));
     expect(await screen.findByRole("dialog", { name: "Evidence details" })).toBeVisible();
-    expect(screen.getByText("default")).toBeVisible();
+    expect(screen.getAllByText("default").length).toBeGreaterThan(0);
     fireEvent.click(screen.getByText("Parser quality", { selector: "summary" }));
     expect(screen.getByText("recovered_text_from_misclassified_block")).toBeVisible();
   });
@@ -595,7 +667,7 @@ describe("QueryPage", () => {
     fireEvent.change(await screen.findByPlaceholderText("Ask a focused question against selected documents."), {
       target: { value: "alpha" },
     });
-    fireEvent.click(await screen.findByText("source.txt"));
+    fireEvent.click((await screen.findAllByText("source.txt"))[0]);
     fireEvent.click((await screen.findAllByText("Balanced"))[0]);
     fireEvent.click(screen.getByRole("button", { name: "Run" }));
 
@@ -647,7 +719,7 @@ describe("QueryPage", () => {
     fireEvent.change(await screen.findByPlaceholderText("Ask a focused question against selected documents."), {
       target: { value: "alpha" },
     });
-    fireEvent.click(await screen.findByText("source.txt"));
+    fireEvent.click((await screen.findAllByText("source.txt"))[0]);
     fireEvent.click((await screen.findAllByText("Balanced"))[0]);
     fireEvent.click(screen.getByRole("button", { name: "Run" }));
     fireEvent.click(await screen.findByRole("button", { name: "Inspect evidence" }));

@@ -1,12 +1,14 @@
 import { X } from "lucide-react";
-import { useMemo, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 
 import type { PathwayDiagnosticOut, RunOut } from "../../api/generated";
 import { FocusTrapDialog } from "../../components/focus-trap-dialog";
 import { Button } from "../../components/ui/button";
 import { cn } from "../../lib/utils";
+import { buildThreePillarTrace, type ThreePillarTraceSummary } from "./three-pillar-trace";
 
 type StepStatus = "success" | "warning" | "failed" | "skipped" | "unknown";
+type PathwayTab = "domain" | "layout" | "context" | "raw";
 
 interface PathwayStep {
   step: string;
@@ -23,6 +25,7 @@ export function QueryPathwayViewer({
   onClose: () => void;
 }) {
   const isOpen = open && run !== null;
+  const [activeTab, setActiveTab] = useState<PathwayTab>("domain");
   const pathway = useMemo(() => (run ? buildPathway(run) : null), [run]);
 
   return (
@@ -56,18 +59,24 @@ export function QueryPathwayViewer({
             <PathwaySection title="Summary" defaultOpen>
               <SummaryGrid run={run} pathway={pathway} />
             </PathwaySection>
-            <PathwaySection title="Timeline" defaultOpen>
-              <Timeline steps={pathway.steps} />
-            </PathwaySection>
-            <PathwaySection title="Raw">
-              <JsonBlock
-                value={{
-                  timings: run.timings,
-                  chunk_traces: run.chunk_traces,
-                  token_metadata: run.token_metadata,
-                }}
-              />
-            </PathwaySection>
+            <TabList activeTab={activeTab} onChange={setActiveTab} />
+            {activeTab === "domain" ? <DomainAwareTab architecture={pathway.architecture} /> : null}
+            {activeTab === "layout" ? <LayoutAwareTab architecture={pathway.architecture} /> : null}
+            {activeTab === "context" ? (
+              <ContextAwareTab architecture={pathway.architecture} steps={pathway.steps} />
+            ) : null}
+            {activeTab === "raw" ? (
+              <PathwaySection title="Raw traces" defaultOpen>
+                <JsonBlock
+                  value={{
+                    timings: run.timings,
+                    chunk_traces: run.chunk_traces,
+                    token_metadata: run.token_metadata,
+                    pathway_diagnostics: run.pathway_diagnostics,
+                  }}
+                />
+              </PathwaySection>
+            ) : null}
           </div>
         </>
       ) : null}
@@ -124,6 +133,216 @@ function Timeline({ steps }: { steps: PathwayStep[] }) {
       ))}
     </ol>
   );
+}
+
+function TabList({
+  activeTab,
+  onChange,
+}: {
+  activeTab: PathwayTab;
+  onChange: (tab: PathwayTab) => void;
+}) {
+  const tabs: Array<{ id: PathwayTab; label: string }> = [
+    { id: "domain", label: "Domain-aware" },
+    { id: "layout", label: "Layout-aware" },
+    { id: "context", label: "Context-aware" },
+    { id: "raw", label: "Raw traces" },
+  ];
+  return (
+    <div
+      className="grid grid-cols-2 gap-1 rounded-md border border-[#d6dde1] bg-[#f8fafb] p-1 sm:grid-cols-4"
+      role="tablist"
+      aria-label="Three-pillar pathway tabs"
+    >
+      {tabs.map((tab) => (
+        <button
+          key={tab.id}
+          type="button"
+          role="tab"
+          aria-selected={activeTab === tab.id}
+          className={cn(
+            "min-h-9 rounded px-2 text-sm font-medium",
+            activeTab === tab.id
+              ? "bg-white text-[#174657] shadow-sm"
+              : "text-[#62717a] hover:text-[#174657]",
+          )}
+          onClick={() => onChange(tab.id)}
+        >
+          {tab.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function DomainAwareTab({ architecture }: { architecture: ThreePillarTraceSummary }) {
+  return (
+    <>
+      <PathwaySection title="Route plan" defaultOpen>
+        <ArchitectureRoute route={architecture.route} />
+      </PathwaySection>
+      <PathwaySection title="Lane results" defaultOpen>
+        <LaneResults lanes={architecture.lanes} />
+      </PathwaySection>
+    </>
+  );
+}
+
+function LayoutAwareTab({ architecture }: { architecture: ThreePillarTraceSummary }) {
+  return (
+    <>
+      <PathwaySection title="Layout neighbors" defaultOpen>
+        <LayoutNeighbors layout={architecture.layout} />
+      </PathwaySection>
+      <PathwaySection title="Layout summaries">
+        <ListValue
+          label="Summaries"
+          values={architecture.layout.layoutSummaries.map((item) => `${item.chunkId}: ${item.summary}`)}
+        />
+      </PathwaySection>
+    </>
+  );
+}
+
+function ContextAwareTab({
+  architecture,
+  steps,
+}: {
+  architecture: ThreePillarTraceSummary;
+  steps: PathwayStep[];
+}) {
+  return (
+    <>
+      <PathwaySection title="Context window" defaultOpen>
+        <ContextWindowDetails context={architecture.context} />
+      </PathwaySection>
+      <PathwaySection title="Context assembly" defaultOpen>
+        <ContextAssemblyDetails assembly={architecture.assembly} />
+      </PathwaySection>
+      <PathwaySection title="Reranker rank changes">
+        <RerankerRankChanges reranker={architecture.reranker} />
+      </PathwaySection>
+      <PathwaySection title="Timeline">
+        <Timeline steps={steps} />
+      </PathwaySection>
+    </>
+  );
+}
+
+function ArchitectureRoute({ route }: { route: ThreePillarTraceSummary["route"] }) {
+  return (
+    <>
+      <KeyValue label="Domain profile" value={route.domainProfileId} />
+      <KeyValue label="Layout hint" value={route.layoutHint} />
+      <KeyValue label="Materialization" value={route.materializationHint} />
+      <KeyValue label="Source of truth" value={route.sourceOfTruth} />
+      <KeyValue label="Direct evidence" value={route.directEvidenceRequired ? "required" : "not required"} />
+      <KeyValue label="Graph context" value={route.graphContextRequired ? "required" : "not required"} />
+    </>
+  );
+}
+
+function LaneResults({ lanes }: { lanes: ThreePillarTraceSummary["lanes"] }) {
+  if (!lanes.length) {
+    return <MissingValue>No lane traces recorded</MissingValue>;
+  }
+  return (
+    <div className="grid gap-2 sm:col-span-2">
+      {lanes.map((lane) => (
+        <div key={`${lane.lane}-${lane.reason}`} className="rounded-md border border-[#e1e7ea] bg-[#f8fafb] p-3">
+          <div className="grid gap-2 sm:grid-cols-4">
+            <KeyValue label="Lane" value={lane.lane} />
+            <KeyValue label="Status" value={lane.status} />
+            <KeyValue label="Candidates" value={lane.candidateCount === null ? "not recorded" : String(lane.candidateCount)} />
+            <KeyValue label="Latency" value={formatMs(lane.latencyMs ?? undefined)} />
+          </div>
+          <p className="mt-2 break-words text-xs text-[#62717a]">{lane.reason}</p>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {lane.timedOut ? <StatusPill status="timeout" kind="warning" /> : null}
+            {lane.partial ? <StatusPill status="partial" kind="warning" /> : null}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function LayoutNeighbors({ layout }: { layout: ThreePillarTraceSummary["layout"] }) {
+  return (
+    <>
+      <KeyValue label="Status" value={layout.status} />
+      <KeyValue label="Reason" value={layout.reason} />
+      <KeyValue label="Candidates" value={layout.candidateCount === null ? "not recorded" : String(layout.candidateCount)} />
+      <KeyValue label="Reading order" value={layout.readingOrderNeighbors ? "yes" : "no"} />
+      <ListValue label="Layout groups" values={layout.layoutGroupIds} />
+      <ListValue label="Canonical chunks" values={layout.canonicalChunkIds} />
+    </>
+  );
+}
+
+function ContextWindowDetails({ context }: { context: ThreePillarTraceSummary["context"] }) {
+  return (
+    <>
+      <KeyValue label="Status" value={context.status} />
+      <KeyValue label="Reason" value={context.reason} />
+      <KeyValue label="Candidates" value={context.candidateCount === null ? "not recorded" : String(context.candidateCount)} />
+      <ListValue
+        label="Relationship reasons"
+        values={context.relationshipReasons.map((item) => `${item.chunkId}: ${item.reason}`)}
+      />
+    </>
+  );
+}
+
+function ContextAssemblyDetails({ assembly }: { assembly: ThreePillarTraceSummary["assembly"] }) {
+  return (
+    <>
+      <KeyValue label="Included" value={assembly.includedCandidates === null ? "not recorded" : String(assembly.includedCandidates)} />
+      <KeyValue label="Dropped" value={assembly.droppedCandidates === null ? "not recorded" : String(assembly.droppedCandidates)} />
+      <KeyValue label="Grounding" value={assembly.groundingStatus} />
+      <KeyValue label="Breadcrumbs" value={assembly.breadcrumbsVisible ? "visible" : "not recorded"} />
+      <ListValue label="Evidence ids" values={assembly.evidenceIds} />
+      <ListValue
+        label="Dropped reasons"
+        values={assembly.droppedReasons.map((item) => `${item.candidateId}: ${item.reason}`)}
+      />
+    </>
+  );
+}
+
+function RerankerRankChanges({ reranker }: { reranker: ThreePillarTraceSummary["reranker"] }) {
+  if (!reranker.rankDeltas.length) {
+    return <MissingValue>No rank deltas recorded</MissingValue>;
+  }
+  return (
+    <div className="grid gap-2 sm:col-span-2">
+      <div className="grid gap-2 sm:grid-cols-3">
+        <KeyValue label="Status" value={reranker.status} />
+        <KeyValue label="Provider" value={reranker.provider} />
+        <KeyValue label="Model" value={reranker.model} />
+      </div>
+      {reranker.rankDeltas.map((delta) => (
+        <div key={delta.candidateId} className="grid gap-2 rounded-md bg-[#f8fafb] px-3 py-2 sm:grid-cols-3">
+          <KeyValue label="Candidate" value={delta.candidateId} />
+          <KeyValue label="Rank" value={`${delta.before} -> ${delta.after}`} />
+          <KeyValue label="Delta" value={String(delta.delta)} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ListValue({ label, values }: { label: string; values: string[] }) {
+  return (
+    <div className="min-w-0 rounded-md bg-[#f8fafb] px-3 py-2 sm:col-span-2">
+      <p className="text-xs font-semibold text-[#62717a]">{label}</p>
+      <p className="mt-1 break-words text-sm text-[#24313a]">{values.length ? values.join(", ") : "not recorded"}</p>
+    </div>
+  );
+}
+
+function MissingValue({ children }: { children: ReactNode }) {
+  return <p className="text-sm text-[#62717a] sm:col-span-2">{children}</p>;
 }
 
 function PathwaySection({
@@ -247,6 +466,7 @@ function buildPathway(run: RunOut) {
     steps,
     topReference,
     topSource: textValue(topSource?.chunk_id) ?? textValue(topSource?.id) ?? "not recorded",
+    architecture: buildThreePillarTrace(run),
   };
 }
 
