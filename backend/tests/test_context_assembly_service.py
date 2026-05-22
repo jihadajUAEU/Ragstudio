@@ -206,3 +206,22 @@ def test_context_assembly_truncates_direct_evidence_at_hard_model_limit():
 def test_context_assembly_tokenizer_offload_helper_flags_large_payloads():
     assert _should_offload_tokenization("word " * 10_001) is True
     assert _should_offload_tokenization("word " * 10_000) is False
+
+
+def test_context_assembly_injects_breadcrumb_text_from_evidence_context():
+    candidate = EvidenceCandidate(
+        candidate_id="metadata:chunk-1",
+        text="Guide us to the straight path.",
+        document_id="doc-1",
+        chunk_id="chunk-1",
+        source_location={"page": 1},
+        metadata={"evidence_context": {"breadcrumb": "Synthetic Tafseer > 1:5"}},
+        tool="metadata",
+        tool_rank=1,
+        base_score=10,
+    )
+
+    context = ContextAssemblyService(max_context_tokens=200).assemble([candidate])
+
+    assert context.evidence[0].breadcrumb == "Synthetic Tafseer > 1:5"
+    assert context.evidence[0].context_text.startswith("[Synthetic Tafseer > 1:5]")

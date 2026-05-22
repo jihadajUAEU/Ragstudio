@@ -60,10 +60,19 @@ class RuntimeAnswerService:
                 and all(isinstance(code, str) for code in warning_codes)
                 else ""
             )
+            evidence_context = candidate.metadata.get("evidence_context")
+            evidence_context = evidence_context if isinstance(evidence_context, dict) else {}
+            breadcrumb = evidence_context.get("breadcrumb")
+            context_label = (
+                f" context={breadcrumb}"
+                if isinstance(breadcrumb, str) and breadcrumb.strip()
+                else ""
+            )
             header = (
                 f"[{label}] tool={candidate.tool} rank={candidate.tool_rank} "
                 f"document={candidate.document_id or 'unknown'} "
                 f"chunk={candidate.chunk_id or 'unknown'}"
+                f"{context_label}"
                 f"{f' reasons={reasons}' if reasons else ''}"
                 f"{f' parser_quality_warnings={warnings}' if warnings else ''}"
             )

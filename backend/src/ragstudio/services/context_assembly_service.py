@@ -15,6 +15,9 @@ class ContextEvidence:
     reference: str | None
     original_text: str
     normalized_text: None = None
+    breadcrumb: str | None = None
+    layout_summary: str | None = None
+    context_text: str | None = None
     included_reason: str = "retrieval_fusion"
     retrieval_passes: list[str] = field(default_factory=list)
 
@@ -106,6 +109,16 @@ class ContextAssemblyService:
                     detail="required_evidence_truncated_to_hard_context_limit",
                 )
 
+            evidence_context = candidate.metadata.get("evidence_context")
+            evidence_context = evidence_context if isinstance(evidence_context, dict) else {}
+            breadcrumb = evidence_context.get("breadcrumb")
+            breadcrumb = breadcrumb if isinstance(breadcrumb, str) and breadcrumb else None
+            layout_summary = evidence_context.get("layout_summary")
+            layout_summary = (
+                layout_summary
+                if isinstance(layout_summary, str) and layout_summary
+                else None
+            )
             item = ContextEvidence(
                 candidate_id=candidate.candidate_id,
                 chunk_id=candidate.chunk_id,
@@ -113,6 +126,13 @@ class ContextAssemblyService:
                 page=_page(candidate.source_location),
                 reference=_first_reference(candidate),
                 original_text=text,
+                breadcrumb=breadcrumb,
+                layout_summary=layout_summary,
+                context_text=_context_text(
+                    text,
+                    breadcrumb=breadcrumb,
+                    layout_summary=layout_summary,
+                ),
                 included_reason=_included_reason(candidate),
                 retrieval_passes=passes,
             )
@@ -229,6 +249,18 @@ def _merge_passes(left: list[str], right: list[str]) -> list[str]:
         if item not in merged:
             merged.append(item)
     return merged
+
+
+def _context_text(
+    text: str,
+    *,
+    breadcrumb: str | None,
+    layout_summary: str | None,
+) -> str:
+    labels = [value for value in (breadcrumb, layout_summary) if value]
+    if not labels:
+        return text
+    return f"[{' | '.join(labels)}]\n{text}"
 
 
 def _estimate_tokens(text: str) -> int:
