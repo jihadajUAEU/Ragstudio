@@ -10,7 +10,6 @@ from ragstudio.services.retrieval_evidence import (
     _merge_duplicate_candidate,
 )
 
-
 RRF_K = 60
 
 

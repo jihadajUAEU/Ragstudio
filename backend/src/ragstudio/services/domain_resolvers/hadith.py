@@ -64,7 +64,10 @@ class HadithResolver:
                         header=block,
                         match=match,
                         context=context,
-                        reason="Reference anchor did not have Arabic body evidence in the visual window.",
+                        reason=(
+                            "Reference anchor did not have Arabic body evidence in the "
+                            "visual window."
+                        ),
                     )
                 )
                 continue
@@ -94,7 +97,10 @@ class HadithResolver:
                         header=block,
                         match=match,
                         context=context,
-                        reason="Reference anchor was separated from candidate body by a competing anchor.",
+                        reason=(
+                            "Reference anchor was separated from candidate body by a "
+                            "competing anchor."
+                        ),
                     )
                 )
                 continue
@@ -119,7 +125,11 @@ class HadithResolver:
             return False
         text = block.text.strip()
         pattern = HADITH_HEADER_RE
-        if context and context.reference_semantics and context.reference_semantics.primary_anchor_pattern:
+        if (
+            context
+            and context.reference_semantics
+            and context.reference_semantics.primary_anchor_pattern
+        ):
             try:
                 pattern = re.compile(
                     context.reference_semantics.primary_anchor_pattern,
@@ -131,7 +141,7 @@ class HadithResolver:
         if match is None or match.start() != 0:
             return False
         remainder = text[match.end() :].strip()
-        return not remainder or remainder[0] in {":", "-", "–", "—"}
+        return not remainder or remainder[0] in {":", "-", "\u2013", "\u2014"}
 
     def _is_late_header(self, block: EvidenceBlockView) -> bool:
         return block.block_type in {"header", "footer", "page_footnote", "page_header"}
@@ -238,7 +248,9 @@ class HadithResolver:
         answerable: bool = True,
         body_status: str = "assembled",
         decision_code: str = "late_header_body_reassociated",
-        decision_reason: str = "Reference header appeared after nearby body blocks in parser order.",
+        decision_reason: str = (
+            "Reference header appeared after nearby body blocks in parser order."
+        ),
     ) -> CanonicalUnit:
         book = int(match.group("book"))
         hadith = int(match.group("hadith"))

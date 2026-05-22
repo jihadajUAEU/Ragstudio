@@ -1048,8 +1048,8 @@ class PolicyBlockedDomainChunkSearchService(FakeChunkSearchService):
     async def domain_metadata_for_documents(self, document_ids):
         return [
             {
-                "domain": "finance",
-                "layout_types": ["table"],
+                "domain": "medical",
+                "layout_types": ["figure"],
                 "quality_action_policy": {
                     "index_vector": False,
                     "project_graph": False,

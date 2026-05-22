@@ -9,9 +9,15 @@ from ragstudio.schemas.parsing import DomainMetadata, IndexDocumentIn
 from ragstudio.services.adapter import AdapterChunk
 from ragstudio.services.chunk_service import ChunkService
 
-
-ARABIC_SAMPLE = "\u0648\u064e\u062d\u064e\u0646\u064e\u0627\u0646\u064b\u0627 \u0645\u0651\u0650\u0646 \u0644\u0651\u064e\u062f\u064f\u0646\u0651\u064e\u0627 \u0648\u064e\u0632\u064e\u0643\u064e\u0627\u0629\u064b\u0627"
-ARABIC_SAMPLE_LONG = f"{ARABIC_SAMPLE} \u0648\u064e\u0643\u064e\u0627\u0646\u064e \u062a\u064e\u0642\u0650\u064a\u0651\u064b\u0627"
+ARABIC_SAMPLE = (
+    "\u0648\u064e\u062d\u064e\u0646\u064e\u0627\u0646\u064b\u0627 "
+    "\u0645\u0651\u0650\u0646 \u0644\u0651\u064e\u062f\u064f\u0646\u0651\u064e\u0627 "
+    "\u0648\u064e\u0632\u064e\u0643\u064e\u0627\u0629\u064b\u0627"
+)
+ARABIC_SAMPLE_LONG = (
+    f"{ARABIC_SAMPLE} "
+    "\u0648\u064e\u0643\u064e\u0627\u0646\u064e \u062a\u064e\u0642\u0650\u064a\u0651\u064b\u0627"
+)
 
 
 @pytest_asyncio.fixture
@@ -74,7 +80,10 @@ async def test_chunk_persistence_materializes_arabic_search_fields(database_url,
     await engine.dispose()
 
     assert chunk is not None
-    assert chunk.text_search_ar == "\u0648\u062d\u0646\u0627\u0646\u0627 \u0645\u0646 \u0644\u062f\u0646\u0627 \u0648\u0632\u0643\u0627\u0629\u0627"
+    assert chunk.text_search_ar == (
+        "\u0648\u062d\u0646\u0627\u0646\u0627 \u0645\u0646 "
+        "\u0644\u062f\u0646\u0627 \u0648\u0632\u0643\u0627\u0629\u0627"
+    )
     assert "\u0648\u062d\u0646\u0627\u0646\u0627" in chunk.tokens_ar
     assert "\u062d\u0646\u0627\u0646\u0627" in chunk.tokens_ar
     assert chunk.extraction_quality == {"validated": True}
@@ -116,7 +125,11 @@ async def test_chunk_search_matches_direct_legacy_chunk_with_generated_arabic_ma
         await session.commit()
 
         result = await ChunkService(session, tmp_path).search(
-            ChunkSearchIn(query="\u0648\u062d\u0646\u0627\u0646\u0627", document_ids=["doc-quran"], limit=5)
+            ChunkSearchIn(
+                query="\u0648\u062d\u0646\u0627\u0646\u0627",
+                document_ids=["doc-quran"],
+                limit=5,
+            )
         )
 
     await engine.dispose()

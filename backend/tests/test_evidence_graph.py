@@ -22,7 +22,11 @@ def block(
 def test_graph_can_find_prior_arabic_blocks_for_late_hadith_header():
     blocks = [
         block(
-            "\u0642\u0627\u0644 \u0631\u0633\u0648\u0644 \u0627\u0644\u0644\u0647 \u0635\u0644\u0649 \u0627\u0644\u0644\u0647 \u0639\u0644\u064a\u0647 \u0648\u0633\u0644\u0645",
+            (
+                "\u0642\u0627\u0644 \u0631\u0633\u0648\u0644 \u0627\u0644\u0644\u0647 "
+                "\u0635\u0644\u0649 \u0627\u0644\u0644\u0647 \u0639\u0644\u064a\u0647 "
+                "\u0648\u0633\u0644\u0645"
+            ),
             0,
             scripts={"arabic"},
         ),

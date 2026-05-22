@@ -147,7 +147,9 @@ class EvidenceGraph:
         if max_page_gap is None:
             return True
         anchor_page = anchor.page_start
-        candidate_page = candidate.page_end if candidate.page_end is not None else candidate.page_start
+        candidate_page = (
+            candidate.page_end if candidate.page_end is not None else candidate.page_start
+        )
         if anchor_page is None or candidate_page is None:
             return True
         return abs(candidate_page - anchor_page) <= max_page_gap

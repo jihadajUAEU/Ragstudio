@@ -4,6 +4,12 @@ from ragstudio.services.domain_resolvers.base import ResolverContext
 from ragstudio.services.domain_resolvers.hadith import HadithResolver
 from ragstudio.services.evidence_graph import EvidenceGraph
 
+ARABIC_BODY = (
+    "\u0642\u0627\u0644 \u0631\u0633\u0648\u0644 \u0627\u0644\u0644\u0647 "
+    "\u0635\u0644\u0649 \u0627\u0644\u0644\u0647 \u0639\u0644\u064a\u0647 "
+    "\u0648\u0633\u0644\u0645"
+)
+
 
 def block(
     text: str,
@@ -36,7 +42,7 @@ def context(domain: str = "hadith") -> ResolverContext:
 def test_hadith_resolver_attaches_body_that_unambiguously_precedes_late_header():
     blocks = [
         block(
-            "\u0642\u0627\u0644 \u0631\u0633\u0648\u0644 \u0627\u0644\u0644\u0647 \u0635\u0644\u0649 \u0627\u0644\u0644\u0647 \u0639\u0644\u064a\u0647 \u0648\u0633\u0644\u0645",
+            ARABIC_BODY,
             0,
             scripts={"arabic"},
         ),
@@ -81,7 +87,7 @@ def test_hadith_resolver_retains_translation_unit_when_required_arabic_evidence_
 def test_hadith_resolver_retains_ambiguous_headers_without_stealing_body():
     blocks = [
         block(
-            "\u0642\u0627\u0644 \u0631\u0633\u0648\u0644 \u0627\u0644\u0644\u0647 \u0635\u0644\u0649 \u0627\u0644\u0644\u0647 \u0639\u0644\u064a\u0647 \u0648\u0633\u0644\u0645",
+            ARABIC_BODY,
             0,
             scripts={"arabic"},
         ),
@@ -121,7 +127,10 @@ def test_hadith_resolver_keeps_partial_success_from_dropping_later_header():
     by_ref = {unit.preview_ref: unit for unit in units}
     assert by_ref["book:2:hadith:29"].metadata["canonical_reference_unit"]["answerable"] is True
     assert by_ref["book:2:hadith:30"].metadata["canonical_reference_unit"]["answerable"] is False
-    assert by_ref["book:2:hadith:30"].metadata["canonical_reference_unit"]["body_status"] == "header_only"
+    assert (
+        by_ref["book:2:hadith:30"].metadata["canonical_reference_unit"]["body_status"]
+        == "header_only"
+    )
 
 
 def test_hadith_resolver_ignores_inline_cross_reference_as_anchor_boundary():
@@ -174,7 +183,7 @@ def test_hadith_resolver_reverse_window_is_not_limited_to_three_blocks():
 def test_hadith_resolver_ignores_non_hadith_domains():
     blocks = [
         block(
-            "\u0642\u0627\u0644 \u0631\u0633\u0648\u0644 \u0627\u0644\u0644\u0647 \u0635\u0644\u0649 \u0627\u0644\u0644\u0647 \u0639\u0644\u064a\u0647 \u0648\u0633\u0644\u0645",
+            ARABIC_BODY,
             0,
             scripts={"arabic"},
         ),

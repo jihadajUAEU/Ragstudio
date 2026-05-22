@@ -7,7 +7,7 @@ parser_quality_intelligent_gate.py, and mineru_client.py.
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 
 TEXT_BLOCK_TYPES = frozenset(
     {
@@ -30,7 +30,7 @@ EQUATION_BLOCK_TYPES = frozenset({"equation", "equation_interline", "interline_e
 VISION_TARGET_BLOCK_TYPES = IMAGE_BLOCK_TYPES | EQUATION_BLOCK_TYPES
 
 
-class BlockModality(str, Enum):
+class BlockModality(StrEnum):
     """Modality classification for a content-list block."""
 
     TEXT = "text"

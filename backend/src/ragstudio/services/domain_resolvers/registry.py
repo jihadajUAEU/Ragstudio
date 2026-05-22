@@ -9,7 +9,6 @@ _RESOLVERS: tuple[DomainResolver, ...] = (HadithResolver(),)
 
 
 def resolvers_for_context(context: ResolverContext) -> Iterable[DomainResolver]:
-    key = resolver_key(context)
     for resolver in _RESOLVERS:
         if resolver.can_resolve(context):
             yield resolver

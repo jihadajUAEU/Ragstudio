@@ -5,7 +5,7 @@ from ragstudio.services.canonical_assembly import (
     block_views_from_normalized,
 )
 from ragstudio.services.domain_resolvers.base import ResolverContext, resolver_key
-from ragstudio.services.parser_normalization import NormalizedBlock, NormalizationWarning
+from ragstudio.services.parser_normalization import NormalizationWarning, NormalizedBlock
 
 
 def test_block_views_from_normalized_preserves_source_refs_warnings_and_scripts():
@@ -17,7 +17,11 @@ def test_block_views_from_normalized_preserves_source_refs_warnings_and_scripts(
             source_item={"bbox": [10, 20, 300, 40]},
         ),
         NormalizedBlock(
-            text="\u0642\u0627\u0644 \u0631\u0633\u0648\u0644 \u0627\u0644\u0644\u0647 \u0635\u0644\u0649 \u0627\u0644\u0644\u0647 \u0639\u0644\u064a\u0647 \u0648\u0633\u0644\u0645",
+            text=(
+                "\u0642\u0627\u0644 \u0631\u0633\u0648\u0644 \u0627\u0644\u0644\u0647 "
+                "\u0635\u0644\u0649 \u0627\u0644\u0644\u0647 \u0639\u0644\u064a\u0647 "
+                "\u0648\u0633\u0644\u0645"
+            ),
             page=127,
             block_type="text",
             source_item={"bbox": [10, 50, 300, 90]},

@@ -54,7 +54,9 @@ def block_views_from_normalized(
 ) -> list[EvidenceBlockView]:
     views: list[EvidenceBlockView] = []
     for index, block in enumerate(blocks):
-        source_index = block_indices[index] if block_indices and index < len(block_indices) else index
+        source_index = (
+            block_indices[index] if block_indices and index < len(block_indices) else index
+        )
         text = block.text.replace("\x00", "").strip()
         page_start = _page_value(block.source_item.get("page_start")) or block.page
         page_end = _page_value(block.source_item.get("page_end")) or block.page

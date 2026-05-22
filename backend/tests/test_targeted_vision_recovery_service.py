@@ -6,7 +6,6 @@ from ragstudio.services.adapter import AdapterChunk
 from ragstudio.services.parser_normalization import VisionRecoveryConfig
 from ragstudio.services.targeted_vision_recovery_service import TargetedVisionRecoveryService
 
-
 pytestmark = pytest.mark.asyncio
 
 

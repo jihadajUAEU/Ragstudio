@@ -249,7 +249,12 @@ class RecordingTargetedVisionRecovery:
         object.__setattr__(
             chunks[0],
             "text",
-            f"{chunks[0].text}\n\nوحنانا من لدنا وزكاة وكان تقيا",
+            (
+                f"{chunks[0].text}\n\n"
+                "\u0648\u062d\u0646\u0627\u0646\u0627 \u0645\u0646 "
+                "\u0644\u062f\u0646\u0627 \u0648\u0632\u0643\u0627\u0629 "
+                "\u0648\u0643\u0627\u0646 \u062a\u0642\u064a\u0627"
+            ),
         )
         warning = chunks[0].metadata["extraction_quality"]["parser_warnings"][0]
         warning["severity"] = "info"

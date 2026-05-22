@@ -13,6 +13,8 @@ from ragstudio.services.parser_quality_intelligent_gate import ParserQualityInte
 from ragstudio.services.parser_warning_utils import (
     dedupe_parser_warnings,
     is_counted_parser_warning,
+)
+from ragstudio.services.parser_warning_utils import (
     merge_parser_warnings as _shared_merge_parser_warnings,
 )
 from ragstudio.services.quality_repair_service import QualityRepairPass

@@ -8,6 +8,8 @@ from typing import Any
 
 from ragstudio.services.parser_warning_utils import (
     merge_parser_warnings as _shared_merge_parser_warnings,
+)
+from ragstudio.services.parser_warning_utils import (
     page_range as _shared_page_range,
 )
 from ragstudio.services.reference_metadata import ReferenceSemantics

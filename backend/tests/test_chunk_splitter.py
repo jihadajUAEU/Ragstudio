@@ -1061,7 +1061,11 @@ def test_chunk_splitter_builds_canonical_hadith_units_from_header_body_blocks(
 def test_chunk_splitter_uses_layout_aware_hadith_strategy_for_late_header(
     tmp_path: Path,
 ):
-    arabic_body = "\u0642\u0627\u0644 \u0631\u0633\u0648\u0644 \u0627\u0644\u0644\u0647 \u0635\u0644\u0649 \u0627\u0644\u0644\u0647 \u0639\u0644\u064a\u0647 \u0648\u0633\u0644\u0645"
+    arabic_body = (
+        "\u0642\u0627\u0644 \u0631\u0633\u0648\u0644 \u0627\u0644\u0644\u0647 "
+        "\u0635\u0644\u0649 \u0627\u0644\u0644\u0647 \u0639\u0644\u064a\u0647 "
+        "\u0648\u0633\u0644\u0645"
+    )
     content_list = tmp_path / "source_content_list.json"
     content_list.write_text(
         json.dumps(

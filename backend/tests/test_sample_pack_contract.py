@@ -83,11 +83,21 @@ def test_expected_artifacts_cover_parser_chunks_retrieval_graph_and_reranker():
 
     chunk_document_ids = {chunk["document_id"] for chunk in chunks["chunks"]}
     assert chunk_document_ids == set(EXPECTED_DOCUMENTS)
-    assert any(chunk["quality_action_policy"]["vector_index"] == "blocked" for chunk in chunks["chunks"])
+    assert any(
+        chunk["quality_action_policy"]["vector_index"] == "blocked"
+        for chunk in chunks["chunks"]
+    )
 
-    assert any(trace["expected_behavior"] == "answer_with_evidence" for trace in retrieval["traces"])
+    assert any(
+        trace["expected_behavior"] == "answer_with_evidence"
+        for trace in retrieval["traces"]
+    )
     assert any(trace["expected_behavior"] == "should_not_answer" for trace in retrieval["traces"])
-    assert any(stage["stage"] == "rerank" for trace in retrieval["traces"] for stage in trace["stages"])
+    assert any(
+        stage["stage"] == "rerank"
+        for trace in retrieval["traces"]
+        for stage in trace["stages"]
+    )
 
     assert graph_reranker["graph_projection_state"]["status"] in {"ready", "synthetic_ready"}
     assert graph_reranker["reranker_traces"]
