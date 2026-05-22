@@ -84,6 +84,43 @@ def test_prepare_vector_candidates_hydrates_to_canonical_chunk_identity():
     assert candidate.retrieval_pass == "vector_db"
 
 
+def test_prepare_vector_candidates_preserves_raw_evidence_context_on_hydration():
+    result = prepare_vector_candidates(
+        [
+            {
+                "candidate_id": "pgvector-row-context",
+                "chunk_id": "chunk-context",
+                "score": 0.91,
+                "metadata": {
+                    "evidence_context": {
+                        "breadcrumb": "Synthetic Tafseer > 1:5",
+                        "layout_summary": "text; page=1",
+                        "page": 1,
+                        "reference": "1:5",
+                    }
+                },
+            }
+        ],
+        baseline_gate={"passed": True},
+        canonical_chunks={
+            "chunk-context": {
+                "id": "chunk-context",
+                "document_id": "doc-context",
+                "text": "Canonical chunk text",
+                "source_location": {"page": 1},
+                "metadata_json": {"chunk_identity": "doc-context|page-1|chunk-context"},
+            }
+        },
+    )
+
+    assert result.candidates[0].metadata["evidence_context"] == {
+        "breadcrumb": "Synthetic Tafseer > 1:5",
+        "layout_summary": "text; page=1",
+        "page": 1,
+        "reference": "1:5",
+    }
+
+
 def test_prepare_vector_candidates_reports_failed_hydration():
     result = prepare_vector_candidates(
         [{"candidate_id": "pgvector-row-9", "chunk_id": "missing", "score": 0.6}],

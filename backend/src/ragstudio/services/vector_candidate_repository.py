@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from ragstudio.db.models import Chunk
+from ragstudio.services.evidence_context import evidence_context_from_metadata
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -31,10 +32,17 @@ class VectorCandidateRepository:
         )
         rows = []
         for rank, chunk in enumerate(result.scalars().all(), start=1):
-            metadata = chunk.metadata_json if isinstance(chunk.metadata_json, dict) else {}
+            metadata = dict(chunk.metadata_json) if isinstance(chunk.metadata_json, dict) else {}
             policy = metadata.get("quality_action_policy")
             if isinstance(policy, dict) and policy.get("index_vector") is False:
                 continue
+            evidence_context = evidence_context_from_metadata(
+                metadata,
+                source_location=chunk.source_location,
+                content_type=chunk.content_type,
+            )
+            if evidence_context:
+                metadata["evidence_context"] = evidence_context
             rows.append(
                 {
                     "candidate_id": f"vector-row:{chunk.id}",

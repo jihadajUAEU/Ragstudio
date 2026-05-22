@@ -266,6 +266,32 @@ def test_metadata_candidate_preserves_layout_context_match_feature():
     }
 
 
+def test_metadata_candidate_attaches_evidence_context_from_chunk_metadata():
+    service = MetadataRetrievalService(FakeChunkService())
+    candidate = service._candidate_from_chunk(
+        ChunkOut(
+            id="chunk-context",
+            document_id="doc-context",
+            text="Guide us to the straight path.",
+            source_location={"page": 1},
+            content_type="text",
+            metadata={
+                "document_metadata": {"title": "Synthetic Tafseer"},
+                "reference_metadata": {"references": ["1:5"]},
+            },
+        ),
+        1,
+        RetrievalPass("semantic_metadata", "straight path"),
+    )
+
+    assert candidate.metadata["evidence_context"] == {
+        "breadcrumb": "Synthetic Tafseer > 1:5",
+        "layout_summary": "text; page=1",
+        "page": 1,
+        "reference": "1:5",
+    }
+
+
 @pytest.mark.asyncio
 async def test_metadata_service_runs_non_blocking_passes_concurrently():
     chunk_service = SlowMetadataPassChunkService()

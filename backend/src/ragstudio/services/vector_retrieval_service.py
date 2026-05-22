@@ -212,7 +212,10 @@ def _hydrate_candidate(
 
     metadata = _metadata(source)
     raw_metadata = _metadata(raw_candidate)
+    raw_evidence_context = raw_metadata.get("evidence_context")
     metadata.update(raw_metadata)
+    if isinstance(raw_evidence_context, Mapping):
+        metadata["evidence_context"] = dict(raw_evidence_context)
     metadata["canonical_chunk_id"] = chunk_id
 
     score = _score(raw_candidate)
