@@ -886,7 +886,7 @@ class DomainMetadataQualityGate:
                 }
             ]
         if semantics.has_primary_unit_anchor:
-            return []
+            return self._contract_reference_units(text, semantics)
 
         label_units = self._labelled_reference_units(text)
         if label_units:
@@ -935,6 +935,54 @@ class DomainMetadataQualityGate:
                 }
             )
         return units
+
+    def _contract_reference_units(
+        self,
+        text: str,
+        semantics: ReferenceSemantics,
+    ) -> list[dict[str, Any]]:
+        anchor_units = self._primary_anchor_reference_units(text, semantics)
+        if anchor_units:
+            return anchor_units
+
+        references = semantics.extract_primary_anchor_references(text)
+        if not references:
+            return []
+
+        split_units = semantics.split_primary_anchor_units(text)
+        if split_units and len(split_units) == len(references):
+            units: list[dict[str, Any]] = []
+            cursor = 0
+            for reference, unit_text in zip(references, split_units, strict=False):
+                start = text.find(unit_text, cursor)
+                if start < 0:
+                    start = cursor
+                    end = start + len(unit_text)
+                else:
+                    end = start + len(unit_text)
+                    cursor = end
+                units.append(
+                    {
+                        "reference": str(reference["ref"]),
+                        "text": unit_text,
+                        "start": start,
+                        "end": min(end, len(text)),
+                        "unit_role": semantics.chunk_unit,
+                    }
+                )
+            return units
+
+        if len(references) == 1:
+            return [
+                {
+                    "reference": str(references[0]["ref"]),
+                    "text": text,
+                    "start": 0,
+                    "end": len(text),
+                    "unit_role": semantics.chunk_unit,
+                }
+            ]
+        return []
 
     def _labelled_reference_units(self, text: str) -> list[dict[str, Any]]:
         matches = list(CHAPTER_VERSE_PATTERN.finditer(text))

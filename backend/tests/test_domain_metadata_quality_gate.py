@@ -705,6 +705,51 @@ def test_domain_quality_gate_does_not_use_builtin_reference_fallback_for_context
     } == set()
 
 
+def test_domain_quality_gate_uses_valid_contextual_contract_units():
+    metadata = DomainMetadata(
+        domain="quran",
+        custom_json={
+            "reference_schema": {
+                "type": "chapter_verse",
+                "fields": {"chapter": "chapter", "verse": "verse"},
+                "canonical_ref_template": "{chapter}:{verse}",
+            },
+            "domain_structure": {
+                "context_anchor": {
+                    "regex": r"\bSurah\s+(?P<chapter>\d{1,4})\b",
+                    "unit": "chapter",
+                    "verified": True,
+                },
+                "unit_anchor": {
+                    "regex": r"\bAyah\s+(?P<verse>\d{1,4})\b",
+                    "unit": "verse",
+                    "context_source": "context_anchor",
+                    "verified": True,
+                },
+            },
+            "quality_policy": {
+                "optional_scripts": ["arabic"],
+                "missing_optional_script_action": "warn",
+            },
+        },
+    )
+    chunk = AdapterChunk(
+        text="Surah 7\nAyah 104 Moses said...",
+        source_location={"page": 4},
+        metadata={},
+    )
+
+    report = DomainMetadataQualityGate().validate_adapter_chunks(
+        [chunk],
+        domain_metadata=metadata,
+    )
+
+    records = report["index_quality_report"]["references"]
+    assert [record["reference"] for record in records] == ["7:104"]
+    assert records[0]["unit_role"] == "verse"
+    assert records[0]["status"] == "missing_optional_script"
+
+
 def test_domain_quality_gate_annotates_extraction_chunks_for_retrieval_time():
     chunks = [
         AdapterChunk(

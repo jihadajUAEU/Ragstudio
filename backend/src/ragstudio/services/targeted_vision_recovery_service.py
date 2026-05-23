@@ -82,8 +82,8 @@ class TargetedVisionRecoveryService:
         total_attempts = 0
         per_page_attempts: dict[int, int] = {}
         for chunk, request in requests:
-            trigger = self._request_trigger(request)
-            if trigger and trigger not in config.triggers:
+            trigger = self._request_trigger(request) or "missing_required_script"
+            if trigger not in config.triggers:
                 self._mark_request(
                     request,
                     status="not_configured",
@@ -133,7 +133,7 @@ class TargetedVisionRecoveryService:
                         image_data_url=data_url,
                         block_type=block_type,
                         page=page,
-                        triggers=[trigger or "missing_required_script"],
+                        triggers=[trigger],
                         existing_text=chunk.text,
                         config=config,
                     )
