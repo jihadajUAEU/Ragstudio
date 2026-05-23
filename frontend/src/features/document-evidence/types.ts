@@ -99,8 +99,13 @@ export interface ProofEvidence {
   redaction_summary: string[];
 }
 
+export interface EvidenceTotals {
+  chunks: number;
+}
+
 export interface DocumentParseEvidence {
   document: DocumentEvidenceSummary;
+  totals?: EvidenceTotals;
   source_artifacts: SourceArtifactEvidence[];
   parser_blocks: ParserBlockEvidence[];
   normalization_decisions: NormalizationDecisionEvidence[];

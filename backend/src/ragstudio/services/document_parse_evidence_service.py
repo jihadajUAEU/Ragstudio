@@ -4,7 +4,7 @@ import os
 import re
 from ipaddress import ip_address
 from pathlib import Path, PurePosixPath, PureWindowsPath
-from typing import Any
+from typing import Any, Iterable
 from urllib.parse import parse_qsl, unquote, urlencode, urlsplit, urlunsplit
 
 from ragstudio.db.models import Chunk, Document, GraphProjectionRecord, Job
@@ -12,13 +12,14 @@ from ragstudio.schemas.document_parse_evidence import (
     ChunkEvidence,
     DocumentEvidenceSummary,
     DocumentParseEvidence,
+    EvidenceTotals,
     NormalizationDecisionEvidence,
     ParserBlockEvidence,
     ProofEvidence,
     SourceArtifactEvidence,
     WarningEvidence,
 )
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 TEXT_PREVIEW_LIMIT = 600
@@ -47,20 +48,45 @@ class DocumentParseEvidenceService:
         if document is None:
             raise DocumentParseEvidenceNotFoundError(document_id)
 
-        all_chunks = list(
+        total_chunk_count = await self.session.scalar(
+            select(func.count()).select_from(Chunk).where(Chunk.document_id == document_id)
+        )
+        chunks = list(
             (
                 await self.session.execute(
                     select(Chunk)
                     .where(Chunk.document_id == document_id)
                     .order_by(Chunk.created_at.asc(), Chunk.id.asc())
-                    .limit(MAX_EVIDENCE_CHUNKS + 1)
+                    .limit(MAX_EVIDENCE_CHUNKS)
                 )
             )
             .scalars()
             .all()
         )
-        chunks = all_chunks[:MAX_EVIDENCE_CHUNKS]
-        omitted_chunk_count = max(len(all_chunks) - MAX_EVIDENCE_CHUNKS, 0)
+        total_chunk_count = int(total_chunk_count or 0)
+        omitted_chunk_count = max(total_chunk_count - len(chunks), 0)
+        warnings = self._build_warnings(chunks)
+        if omitted_chunk_count:
+            warning_records = (
+                (
+                    await self.session.execute(
+                        select(Chunk.id, Chunk.extraction_quality, Chunk.source_location)
+                        .where(Chunk.document_id == document_id)
+                        .order_by(Chunk.created_at.asc(), Chunk.id.asc())
+                    )
+                )
+                .all()
+            )
+            warnings = self._build_warnings_from_records(
+                (
+                    (
+                        str(chunk_id),
+                        self._dict_value(extraction_quality),
+                        self._dict_value(source_location),
+                    )
+                    for chunk_id, extraction_quality, source_location in warning_records
+                )
+            )
         jobs = list(
             (
                 await self.session.execute(
@@ -86,7 +112,6 @@ class DocumentParseEvidenceService:
             .all()
         )
 
-        warnings = self._build_warnings(chunks)
         warning_ids_by_chunk = self._warning_ids_by_chunk(warnings)
         parser_blocks = self._build_parser_blocks(chunks)
         block_ids_by_chunk = self._parser_block_ids_by_chunk(chunks, parser_blocks)
@@ -111,6 +136,7 @@ class DocumentParseEvidenceService:
                 page_count=self._page_count(chunks),
                 parser_mode=self._parser_mode(jobs, chunks),
             ),
+            totals=EvidenceTotals(chunks=total_chunk_count),
             source_artifacts=source_artifacts,
             parser_blocks=parser_blocks,
             normalization_decisions=decisions,
@@ -128,9 +154,19 @@ class DocumentParseEvidenceService:
         )
 
     def _build_warnings(self, chunks: list[Chunk]) -> list[WarningEvidence]:
+        return self._build_warnings_from_records(
+            (
+                (chunk.id, self._chunk_extraction_quality(chunk), self._dict_value(chunk.source_location))
+                for chunk in chunks
+            )
+        )
+
+    def _build_warnings_from_records(
+        self,
+        records: Iterable[tuple[str, dict[str, Any], dict[str, Any]]],
+    ) -> list[WarningEvidence]:
         warnings: list[WarningEvidence] = []
-        for chunk in chunks:
-            extraction_quality = self._chunk_extraction_quality(chunk)
+        for chunk_id, extraction_quality, source_location in records:
             parser_warnings = extraction_quality.get("parser_warnings")
             if not isinstance(parser_warnings, list):
                 continue
@@ -152,19 +188,19 @@ class DocumentParseEvidenceService:
                 )
                 warnings.append(
                     WarningEvidence(
-                        id=f"warning-{chunk.id}-{index}",
+                        id=f"warning-{chunk_id}-{index}",
                         code=code,
                         message=self._sanitize_string(
-                            message, context=f"warning:{chunk.id}:{code}"
+                            message, context=f"warning:{chunk_id}:{code}"
                         ),
                         severity=self._coerce_string(item.get("severity")) or "warning",
                         page=self._page_value(item.get("page"))
-                        or self._page_value(chunk.source_location.get("page")),
+                        or self._page_value(source_location.get("page")),
                         block_id=self._coerce_string(item.get("block_id")),
                         block_type=block_type,
                         quality_gate_action=quality_gate_action,
                         suppressed_from_counts=suppressed_from_counts,
-                        affected_chunk_ids=[chunk.id],
+                        affected_chunk_ids=[chunk_id],
                     )
                 )
         return warnings
@@ -324,7 +360,7 @@ class DocumentParseEvidenceService:
         }
         updated: list[WarningEvidence] = []
         for warning in warnings:
-            block_id = self._warning_block_id(warning, block_ids_by_chunk, block_by_id)
+            block_id = self._warning_block_id(warning, block_ids_by_chunk, block_by_id) or warning.block_id
             decision_id = next(
                 (
                     quality_decisions.get(chunk_id)

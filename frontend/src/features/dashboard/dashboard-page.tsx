@@ -37,22 +37,22 @@ export function DashboardPage() {
   const healthQuery = useQuery({ queryKey: queryKeys.health, queryFn: apiClient.health });
   const jobsQuery = useQuery({
     queryKey: queryKeys.jobs,
-    queryFn: apiClient.jobs,
+    queryFn: () => apiClient.jobs(),
     refetchInterval: (query) => (hasActiveJobs(query.state.data?.items ?? []) ? 2000 : false),
   });
   const activeJobs = hasActiveJobs(jobsQuery.data?.items ?? []);
   const documentsQuery = useQuery({
     queryKey: queryKeys.documents,
-    queryFn: apiClient.documents,
+    queryFn: () => apiClient.documents(),
     refetchInterval: activeJobs ? 2000 : false,
   });
-  const variantsQuery = useQuery({ queryKey: queryKeys.variants, queryFn: apiClient.variants });
-  const runsQuery = useQuery({ queryKey: queryKeys.runs, queryFn: apiClient.runs });
+  const variantsQuery = useQuery({ queryKey: queryKeys.variants, queryFn: () => apiClient.variants() });
+  const runsQuery = useQuery({ queryKey: queryKeys.runs, queryFn: () => apiClient.runs() });
   const diagnosticsQuery = useQuery({
     queryKey: queryKeys.diagnostics,
     queryFn: apiClient.diagnostics,
   });
-  const graphQuery = useQuery({ queryKey: queryKeys.graph, queryFn: apiClient.graph });
+  const graphQuery = useQuery({ queryKey: queryKeys.graph, queryFn: () => apiClient.graph() });
 
   const refetchDocuments = documentsQuery.refetch;
 

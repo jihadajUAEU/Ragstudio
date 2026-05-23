@@ -17,8 +17,8 @@ const queryKeys = {
 } as const;
 
 export function ComparisonPage() {
-  const runsQuery = useQuery({ queryKey: queryKeys.runs, queryFn: apiClient.runs });
-  const variantsQuery = useQuery({ queryKey: queryKeys.variants, queryFn: apiClient.variants });
+  const runsQuery = useQuery({ queryKey: queryKeys.runs, queryFn: () => apiClient.runs() });
+  const variantsQuery = useQuery({ queryKey: queryKeys.variants, queryFn: () => apiClient.variants() });
   const [selectedRunIds, setSelectedRunIds] = useState<string[]>([]);
   const [hasEditedSelection, setHasEditedSelection] = useState(false);
 

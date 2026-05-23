@@ -21,9 +21,10 @@ from ragstudio.services.document_service import DocumentService
 from ragstudio.services.domain_metadata_contract_compiler import compile_index_options
 from ragstudio.services.graph_materialization_service import GraphMaterializationResult
 from ragstudio.services.graph_projection_runner import GraphProjectionCleanupError
+from ragstudio.services.pdf_preflight_service import PdfPreflightIssue, PdfPreflightResult
 from ragstudio.services.runtime_profile_service import RuntimeProfileService
 from ragstudio.services.runtime_types import RuntimeChunk
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 
 class FakeRuntime:
@@ -276,6 +277,104 @@ async def test_upload_uses_default_parser_mode_when_omitted(client, monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_pdf_preprocessing_rejects_when_sample_cleanup_still_fails(
+    client,
+    monkeypatch,
+):
+    app = client._transport.app
+    settings = app.state.settings
+
+    failed_preflight = PdfPreflightResult(
+        status="failed",
+        inspected_pages=1,
+        extracted_text_chars=48,
+        arabic_unit_count=0,
+        missing_arabic_unit_count=1,
+        issues=[
+            PdfPreflightIssue(
+                code="reference_unit_missing_expected_script",
+                message="Reference-bearing unit is expected to contain Arabic script.",
+                page=1,
+                reference="[1:4]",
+            )
+        ],
+    )
+
+    class AlwaysFailingPreflight:
+        def inspect(self, *_args, **_kwargs):
+            return failed_preflight
+
+    async def fake_clean_sample_pages(self, _source_path, _page_numbers, output_path):
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(b"%PDF-1.7 sample")
+        return output_path
+
+    async def fail_if_full_cleanup_runs(self, *_args, **_kwargs):
+        raise AssertionError("full cleanup should not run when sample validation fails")
+
+    monkeypatch.setattr(
+        "ragstudio.services.document_service.PdfPreflightService",
+        AlwaysFailingPreflight,
+    )
+    monkeypatch.setattr(
+        "ragstudio.services.document_service.PdfOcrCleanupService.clean_sample_pages",
+        fake_clean_sample_pages,
+    )
+    monkeypatch.setattr(
+        "ragstudio.services.document_service.PdfOcrCleanupService.clean",
+        fail_if_full_cleanup_runs,
+    )
+
+    options = IndexDocumentIn(
+        domain_metadata=DomainMetadata(
+            domain="quran",
+            custom_json={
+                "vision_analysis": {
+                    "sample_pages": [1],
+                    "expected_scripts": ["arabic", "latin"],
+                    "observed_unit_pattern": "reference_units_with_parallel_arabic_and_english",
+                },
+                "preprocessing": {
+                    "strict_pdf_text_preflight": True,
+                    "expected_scripts": ["arabic", "latin"],
+                    "reject_if_cleanup_fails": True,
+                },
+            },
+        )
+    )
+
+    async with app.state.session_factory() as session:
+        document = await DocumentService(
+            session,
+            settings.data_dir,
+            settings=settings,
+        ).upload(
+            filename="quran.pdf",
+            content_type="application/pdf",
+            content=b"%PDF-1.7 broken text layer",
+            options=options,
+            index_immediately=True,
+        )
+        job = await session.scalar(
+            select(Job)
+            .where(Job.type == "index_document", Job.target_id == document.id)
+            .order_by(Job.created_at.desc())
+            .limit(1)
+        )
+        chunk_count = await session.scalar(
+            select(func.count()).select_from(Chunk).where(Chunk.document_id == document.id)
+        )
+
+    assert document.status == StageStatus.FAILED
+    assert job is not None
+    assert job.status == StageStatus.FAILED.value
+    assert job.result["error_type"] == "pdf_sample_cleanup_contract_failed"
+    assert job.result["preprocessing"]["status"] == "rejected"
+    assert chunk_count == 0
+    assert not (settings.data_dir / "preprocessed" / document.id).exists()
+
+
+@pytest.mark.asyncio
 async def test_documents_list_includes_latest_index_options(client, tmp_path):
     session_factory = client._transport.app.state.session_factory
     artifact = tmp_path / "uploads" / "indexed-sha"
@@ -323,6 +422,55 @@ async def test_documents_list_includes_latest_index_options(client, tmp_path):
     assert document["latest_index_options"]["domain_metadata"]["custom_json"] == {
         "reference_schema": {"type": "chapter_verse"},
     }
+
+
+@pytest.mark.asyncio
+async def test_documents_list_uses_latest_job_options_when_no_chunks(client, tmp_path):
+    session_factory = client._transport.app.state.session_factory
+    artifact = tmp_path / "uploads" / "failed-preflight-sha"
+    artifact.parent.mkdir(parents=True)
+    artifact.write_bytes(b"%PDF-1.7 failed preflight")
+    async with session_factory() as session:
+        document = Document(
+            filename="failed-preflight.pdf",
+            content_type="application/pdf",
+            sha256="failed-preflight-sha",
+            artifact_path=str(artifact),
+            status=StageStatus.FAILED.value,
+        )
+        session.add(document)
+        await session.flush()
+        session.add(
+            Job(
+                type="index_document",
+                target_id=document.id,
+                status=StageStatus.FAILED.value,
+                job_options={
+                    "parser_mode": "mineru_strict",
+                    "domain_metadata": {
+                        "domain": "quran",
+                        "custom_json": {
+                            "vision_analysis": {
+                                "sample_pages": [1],
+                                "expected_scripts": ["arabic", "latin"],
+                            },
+                            "preprocessing": {
+                                "strict_pdf_text_preflight": True,
+                                "expected_scripts": ["arabic", "latin"],
+                            },
+                        },
+                    },
+                },
+            )
+        )
+        await session.commit()
+
+    response = await client.get("/api/documents")
+
+    assert response.status_code == 200
+    document_payload = response.json()["items"][0]
+    assert document_payload["latest_index_options"]["parser_mode"] == "mineru_strict"
+    assert document_payload["latest_index_options"]["domain_metadata"]["domain"] == "quran"
 
 
 @pytest.mark.asyncio

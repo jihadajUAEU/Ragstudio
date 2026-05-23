@@ -40,6 +40,7 @@ class DocumentParserService:
         document: Document,
         options: IndexDocumentIn,
         *,
+        artifact_path: str | Path | None = None,
         on_mineru_status: MinerUStatusCallback | None = None,
     ) -> list[AdapterChunk]:
         if options.parser_mode != "mineru_strict":
@@ -49,11 +50,17 @@ class DocumentParserService:
         return await self.mineru_parse(
             document,
             options,
+            artifact_path=artifact_path,
             on_mineru_status=on_mineru_status,
         )
 
-    async def local_parse(self, document: Document) -> list[AdapterChunk]:
-        return await self.local_parser.index_document(document.artifact_path)
+    async def local_parse(
+        self,
+        document: Document,
+        *,
+        artifact_path: str | Path | None = None,
+    ) -> list[AdapterChunk]:
+        return await self.local_parser.index_document(artifact_path or document.artifact_path)
 
     async def local_parse_with_mineru_failure(
         self,
@@ -94,6 +101,7 @@ class DocumentParserService:
         document: Document,
         options: IndexDocumentIn,
         *,
+        artifact_path: str | Path | None = None,
         on_mineru_status: MinerUStatusCallback | None = None,
     ) -> list[AdapterChunk]:
         settings, client = await self.validated_mineru_client()
@@ -101,7 +109,7 @@ class DocumentParserService:
         if self.commit_before_remote_parse:
             await self.session.commit()
         job_result = await client.parse_document(
-            artifact_path=document.artifact_path,
+            artifact_path=artifact_path or document.artifact_path,
             document_id=document.id,
             artifact_dir=artifact_dir,
             content_type=document.content_type,

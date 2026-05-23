@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from pathlib import Path
+from shutil import rmtree
 from typing import Any, Literal
 
 from pydantic import ValidationError
@@ -16,12 +17,12 @@ from ragstudio.services.chunk_service import ChunkService
 from ragstudio.services.document_contract import build_document_index_contract
 from ragstudio.services.domain_metadata_quality_gate import DomainMetadataQualityGate
 from ragstudio.services.graph_projection_runner import GraphProjectionRunner
+from ragstudio.services.http_client_provider import HttpClientProviderProtocol
 from ragstudio.services.index_artifact_cleanup import cleanup_document_index_artifacts
 from ragstudio.services.index_lifecycle_service import (
     IndexLifecycleService,
     RuntimeHealthBlockedError,
 )
-from ragstudio.services.http_client_provider import HttpClientProviderProtocol
 from ragstudio.services.index_progress import (
     IndexStage,
     index_shape_compatible,
@@ -29,6 +30,8 @@ from ragstudio.services.index_progress import (
 )
 from ragstudio.services.job_queue_service import JobLeaseLostError
 from ragstudio.services.job_worker import JobWorker
+from ragstudio.services.pdf_ocr_cleanup_service import PdfOcrCleanupError, PdfOcrCleanupService
+from ragstudio.services.pdf_preflight_service import PdfPreflightResult, PdfPreflightService
 from ragstudio.services.runtime_factory import RuntimeUnavailableError
 from ragstudio.services.runtime_profile_service import (
     RuntimeProfileNotConfiguredError,
@@ -43,6 +46,12 @@ DeleteDocumentResult = Literal["deleted", "not_found"]
 
 class ActiveIndexJobError(RuntimeError):
     pass
+
+
+class PdfPreprocessingRejectedError(RuntimeError):
+    def __init__(self, code: str, message: str) -> None:
+        self.code = code
+        super().__init__(message)
 
 
 class DocumentService:
@@ -199,6 +208,7 @@ class DocumentService:
                 delete(IndexRecord).where(IndexRecord.document_id == document.id)
             )
             artifact_path.unlink(missing_ok=True)
+            self._delete_pdf_preprocessing_artifacts(document.id)
             await self.session.delete(document)
             await self.session.commit()
         except Exception:
@@ -306,6 +316,47 @@ class DocumentService:
             latest = self._index_options_from_metadata(metadata)
             if latest is not None:
                 options[document_id] = latest
+        missing_document_ids = [
+            document_id for document_id in document_ids if document_id not in options
+        ]
+        if missing_document_ids:
+            options.update(await self._latest_job_options_by_document(missing_document_ids))
+        return options
+
+    async def _latest_job_options_by_document(
+        self,
+        document_ids: list[str],
+    ) -> dict[str, IndexDocumentIn]:
+        ranked_jobs = (
+            select(
+                Job.target_id.label("document_id"),
+                Job.job_options.label("job_options"),
+                func.row_number()
+                .over(
+                    partition_by=Job.target_id,
+                    order_by=(Job.created_at.desc(), Job.id.desc()),
+                )
+                .label("rank"),
+            )
+            .where(
+                Job.type == "index_document",
+                Job.target_id.in_(document_ids),
+            )
+            .subquery()
+        )
+        result = await self.session.execute(
+            select(ranked_jobs.c.document_id, ranked_jobs.c.job_options).where(
+                ranked_jobs.c.rank == 1
+            )
+        )
+        options: dict[str, IndexDocumentIn] = {}
+        for document_id, payload in result.all():
+            if not isinstance(document_id, str) or not isinstance(payload, dict):
+                continue
+            try:
+                options[document_id] = IndexDocumentIn.model_validate(payload)
+            except ValidationError:
+                continue
         return options
 
     def _index_options_from_metadata(self, metadata: Any) -> IndexDocumentIn | None:
@@ -443,6 +494,12 @@ class DocumentService:
         job.status = StageStatus.RUNNING.value
         job.progress = 50
         job.logs = [*job.logs, "Indexing document chunks."]
+        index_options = options or IndexDocumentIn()
+        active_artifact_path = await self._prepare_pdf_preprocessing(
+            document,
+            job,
+            index_options,
+        )
         profile = await self._active_runtime_profile()
         graph_materialization: dict[str, Any] = {}
         if profile is not None and profile.runtime_mode != "fallback":
@@ -471,7 +528,8 @@ class DocumentService:
                 http_client_provider=self.http_client_provider,
             ).reindex_document(
                 document.id,
-                options=options,
+                options=index_options,
+                artifact_path=active_artifact_path,
                 on_mineru_status=on_mineru_status,
                 on_stage=on_stage,
             )
@@ -486,7 +544,8 @@ class DocumentService:
                 http_client_provider=self.http_client_provider,
             ).index_document(
                 document.id,
-                options=options,
+                options=index_options,
+                artifact_path=active_artifact_path,
                 commit=False,
                 on_mineru_status=on_mineru_status,
             )
@@ -569,6 +628,212 @@ class DocumentService:
             result["warnings"] = warning_entries
         job.result = result
 
+    async def _prepare_pdf_preprocessing(
+        self,
+        document: Document,
+        job: Job,
+        options: IndexDocumentIn,
+    ) -> str:
+        contract = build_document_index_contract(options)
+        self._apply_pdf_preprocessing_settings(contract)
+        document.index_contract = contract
+        if not self._should_run_pdf_preflight(document, contract):
+            return document.artifact_path
+
+        preflight_service = PdfPreflightService()
+        original_path = Path(document.artifact_path)
+        before = preflight_service.inspect(original_path, contract, mode="sample")
+        before_payload = self._pdf_preflight_payload(before)
+        if before.status == "passed":
+            self._record_pdf_preprocessing(
+                job,
+                {
+                    "status": "preflight_passed",
+                    "active_artifact": "original",
+                    "preflight_before": before_payload,
+                },
+            )
+            job.logs = [*(job.logs or []), "PDF preflight passed."]
+            return document.artifact_path
+
+        self._record_pdf_preprocessing(
+            job,
+            {
+                "status": "sample_cleanup_running",
+                "active_artifact": "original",
+                "preflight_before": before_payload,
+            },
+        )
+        if not self.settings or not self.settings.pdf_ocr_cleanup_enabled:
+            if not self._reject_if_pdf_cleanup_fails(contract):
+                self._record_pdf_preprocessing(
+                    job,
+                    {
+                        "status": "cleanup_failed_continue_original",
+                        "active_artifact": "original",
+                        "preflight_before": before_payload,
+                    },
+                )
+                return document.artifact_path
+            raise PdfPreprocessingRejectedError(
+                "pdf_cleanup_unavailable",
+                "PDF text preflight failed and OCR cleanup is disabled.",
+            )
+
+        cleanup_service = PdfOcrCleanupService(
+            docker_image=self.settings.pdf_ocr_docker_image,
+            languages=self.settings.pdf_ocr_languages,
+            timeout_seconds=self.settings.pdf_ocr_timeout_seconds,
+        )
+        preprocessing_dir = self.store.root / "preprocessed" / document.id
+        self._delete_pdf_preprocessing_artifacts(document.id)
+        preprocessing_dir.mkdir(parents=True, exist_ok=True)
+        sample_pages = self._pdf_sample_pages(contract, before.inspected_pages)
+        sample_path = preprocessing_dir / "sample.cleaned.pdf"
+        try:
+            await cleanup_service.clean_sample_pages(original_path, sample_pages, sample_path)
+        except PdfOcrCleanupError as exc:
+            raise PdfPreprocessingRejectedError(exc.code, str(exc)) from exc
+
+        sample_after = preflight_service.inspect(sample_path, contract, mode="full_validation")
+        sample_after_payload = self._pdf_preflight_payload(sample_after)
+        if sample_after.status != "passed":
+            self._record_pdf_preprocessing(
+                job,
+                {
+                    "status": "sample_cleanup_failed",
+                    "active_artifact": "original",
+                    "preflight_before": before_payload,
+                    "sample_cleanup": sample_after_payload,
+                },
+            )
+            if not self._reject_if_pdf_cleanup_fails(contract):
+                return document.artifact_path
+            raise PdfPreprocessingRejectedError(
+                "pdf_sample_cleanup_contract_failed",
+                "Cleaned PDF sample still fails expected script checks.",
+            )
+
+        cleaned_path = preprocessing_dir / "cleaned.pdf"
+        try:
+            await cleanup_service.clean(original_path, cleaned_path)
+        except PdfOcrCleanupError as exc:
+            raise PdfPreprocessingRejectedError(exc.code, str(exc)) from exc
+
+        after = preflight_service.inspect(cleaned_path, contract, mode="full_validation")
+        after_payload = self._pdf_preflight_payload(after)
+        if after.status != "passed":
+            self._record_pdf_preprocessing(
+                job,
+                {
+                    "status": "full_cleanup_failed",
+                    "active_artifact": "cleaned",
+                    "preflight_before": before_payload,
+                    "sample_cleanup": sample_after_payload,
+                    "preflight_after": after_payload,
+                },
+            )
+            if not self._reject_if_pdf_cleanup_fails(contract):
+                return document.artifact_path
+            raise PdfPreprocessingRejectedError(
+                "pdf_cleanup_contract_failed",
+                "Cleaned PDF still fails expected script checks.",
+            )
+
+        self._record_pdf_preprocessing(
+            job,
+            {
+                "status": "cleaned",
+                "active_artifact": "cleaned",
+                "preflight_before": before_payload,
+                "sample_cleanup": sample_after_payload,
+                "preflight_after": after_payload,
+            },
+        )
+        job.logs = [*(job.logs or []), "Cleaned PDF indexed."]
+        return str(cleaned_path)
+
+    def _should_run_pdf_preflight(
+        self,
+        document: Document,
+        contract: dict[str, Any],
+    ) -> bool:
+        if self.settings is not None and not self.settings.pdf_preflight_enabled:
+            return False
+        if document.content_type != "application/pdf" and not document.filename.lower().endswith(
+            ".pdf"
+        ):
+            return False
+        preprocessing = contract.get("preprocessing")
+        return (
+            isinstance(preprocessing, dict)
+            and preprocessing.get("strict_pdf_text_preflight") is True
+        )
+
+    def _apply_pdf_preprocessing_settings(self, contract: dict[str, Any]) -> None:
+        preprocessing = contract.get("preprocessing")
+        if not isinstance(preprocessing, dict):
+            return
+        if self.settings is not None:
+            if preprocessing.get("min_reference_script_pass_ratio") is None:
+                preprocessing["min_reference_script_pass_ratio"] = (
+                    self.settings.pdf_ocr_min_reference_script_pass_ratio
+                )
+            if preprocessing.get("reject_if_cleanup_fails") is None:
+                preprocessing["reject_if_cleanup_fails"] = self.settings.pdf_ocr_reject_on_failure
+        contract["preprocessing"] = preprocessing
+
+    def _reject_if_pdf_cleanup_fails(self, contract: dict[str, Any]) -> bool:
+        preprocessing = contract.get("preprocessing")
+        if (
+            isinstance(preprocessing, dict)
+            and preprocessing.get("reject_if_cleanup_fails") is False
+        ):
+            return False
+        if self.settings is not None:
+            return self.settings.pdf_ocr_reject_on_failure
+        return True
+
+    def _record_pdf_preprocessing(self, job: Job, payload: dict[str, Any]) -> None:
+        job.result = {**(job.result or {}), "preprocessing": payload}
+
+    def _pdf_preflight_payload(self, result: PdfPreflightResult) -> dict[str, Any]:
+        return {
+            "status": result.status,
+            "inspected_pages": result.inspected_pages,
+            "extracted_text_chars": result.extracted_text_chars,
+            "arabic_unit_count": result.arabic_unit_count,
+            "missing_arabic_unit_count": result.missing_arabic_unit_count,
+            "reference_unit_count": result.reference_unit_count,
+            "passed_reference_script_ratio": result.passed_reference_script_ratio,
+            "issues": [
+                {
+                    "code": issue.code,
+                    "message": issue.message,
+                    "page": issue.page,
+                    "reference": issue.reference,
+                }
+                for issue in result.issues[:20]
+            ],
+        }
+
+    def _pdf_sample_pages(self, contract: dict[str, Any], fallback_count: int) -> list[int]:
+        for section_name in ("preprocessing", "vision_analysis"):
+            section = contract.get(section_name)
+            if not isinstance(section, dict):
+                continue
+            pages = section.get("sample_pages")
+            if isinstance(pages, list):
+                normalized = [
+                    page for page in pages if isinstance(page, int) and page > 0
+                ]
+                if normalized:
+                    return list(dict.fromkeys(normalized))
+        return list(range(1, max(fallback_count, 1) + 1))
+
+    def _delete_pdf_preprocessing_artifacts(self, document_id: str) -> None:
+        rmtree(self.store.root / "preprocessed" / document_id, ignore_errors=True)
+
     def _parser_quality_summary(self, chunks: list[Any]) -> dict[str, Any]:
         return DomainMetadataQualityGate().parser_quality_summary(chunks)
 
@@ -647,6 +912,7 @@ class DocumentService:
 
     async def _mark_index_failed(self, document: Document, job: Job, exc: Exception) -> None:
         await cleanup_document_index_artifacts(self.session, document.id)
+        self._delete_pdf_preprocessing_artifacts(document.id)
         document.status = StageStatus.FAILED.value
         job.status = StageStatus.FAILED.value
         job.progress = 100
@@ -660,7 +926,7 @@ class DocumentService:
         exc: Exception,
     ) -> dict[str, Any]:
         detail = str(exc)
-        return {
+        result = {
             **(job.result or {}),
             "document_id": document.id,
             "error": detail,
@@ -671,6 +937,18 @@ class DocumentService:
                 "progress": 100,
             },
         }
+        if isinstance(exc, PdfPreprocessingRejectedError):
+            preprocessing = dict(result.get("preprocessing") or {})
+            preprocessing.update(
+                {
+                    "status": "rejected",
+                    "error_type": exc.code,
+                    "message": detail,
+                }
+            )
+            result["error_type"] = exc.code
+            result["preprocessing"] = preprocessing
+        return result
 
     async def run_index_job(
         self,
@@ -769,6 +1047,7 @@ class DocumentService:
                 await self.session.rollback()
                 raise
             await cleanup_document_index_artifacts(self.session, document.id)
+            self._delete_pdf_preprocessing_artifacts(document.id)
             document.status = StageStatus.FAILED.value
             job.status = StageStatus.FAILED.value
             job.progress = 100

@@ -38,7 +38,7 @@ function presetParametersText(preset: VariantPreset) {
 
 export function VariantsPage() {
   const queryClient = useQueryClient();
-  const variantsQuery = useQuery({ queryKey: queryKeys.variants, queryFn: apiClient.variants });
+  const variantsQuery = useQuery({ queryKey: queryKeys.variants, queryFn: () => apiClient.variants() });
   const [name, setName] = useState("");
   const [preset, setPreset] = useState<VariantPreset>(defaultPreset);
   const [parametersText, setParametersText] = useState(presetParametersText(defaultPreset));

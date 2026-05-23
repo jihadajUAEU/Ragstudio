@@ -30,6 +30,13 @@ class AppSettings(BaseSettings):
             "api.cohere.ai",
         ]
     )
+    pdf_preflight_enabled: bool = True
+    pdf_ocr_cleanup_enabled: bool = True
+    pdf_ocr_docker_image: str = "ragstudio-ocrmypdf:ara-eng"
+    pdf_ocr_languages: str = "ara+eng"
+    pdf_ocr_timeout_seconds: int = 900
+    pdf_ocr_reject_on_failure: bool = True
+    pdf_ocr_min_reference_script_pass_ratio: float = 0.98
 
     @field_validator("data_dir", "runtime_working_dir", mode="before")
     @classmethod

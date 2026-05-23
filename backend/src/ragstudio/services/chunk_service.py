@@ -14,8 +14,8 @@ from ragstudio.services.chunk_sanitizer import sanitize_db_value
 from ragstudio.services.chunk_splitter import ChunkSplitter
 from ragstudio.services.document_parser_service import DocumentParserService
 from ragstudio.services.domain_metadata_quality_gate import DomainMetadataQualityGate
-from ragstudio.services.hybrid_chunk_search import ChunkScore, HybridChunkSearch
 from ragstudio.services.http_client_provider import HttpClientProviderProtocol
+from ragstudio.services.hybrid_chunk_search import ChunkScore, HybridChunkSearch
 from ragstudio.services.index_quality_gate import IndexQualityGate
 from ragstudio.services.mineru_client import MinerUClient
 from ragstudio.services.mineru_relationship_builder import MinerURelationshipBuilder
@@ -67,6 +67,7 @@ class ChunkService:
         document_id: str,
         *,
         options: IndexDocumentIn | None = None,
+        artifact_path: str | Path | None = None,
         commit: bool = True,
         on_mineru_status: MinerUStatusCallback | None = None,
     ) -> list[ChunkOut] | None:
@@ -78,6 +79,7 @@ class ChunkService:
         adapter_chunks = await self._adapter_chunks(
             document,
             options,
+            artifact_path=artifact_path,
             on_mineru_status=on_mineru_status,
         )
         adapter_chunks = [
@@ -118,11 +120,13 @@ class ChunkService:
         document: Document,
         options: IndexDocumentIn,
         *,
+        artifact_path: str | Path | None = None,
         on_mineru_status: MinerUStatusCallback | None = None,
     ) -> list[AdapterChunk]:
         return await self.document_parser.parse(
             document,
             options,
+            artifact_path=artifact_path,
             on_mineru_status=on_mineru_status,
         )
 

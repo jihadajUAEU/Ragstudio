@@ -35,7 +35,7 @@ export function ExperimentsPage() {
     queryKey: queryKeys.documents,
     queryFn: () => apiClient.documents(FIRST_LIST_PAGE),
   });
-  const variantsQuery = useQuery({ queryKey: queryKeys.variants, queryFn: apiClient.variants });
+  const variantsQuery = useQuery({ queryKey: queryKeys.variants, queryFn: () => apiClient.variants() });
   const evaluationSetsQuery = useQuery({
     queryKey: queryKeys.evaluationSets,
     queryFn: apiClient.evaluationSets,

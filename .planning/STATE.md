@@ -89,6 +89,15 @@ None yet.
 
 | Date | Quick ID | Task | Status |
 |------|----------|------|--------|
+| 2026-05-22 | 260522-wmt | Group duplicate selected decision warnings | Complete |
+| 2026-05-22 | 260522-wh1 | Fix counted warning tab mismatch | Complete |
+| 2026-05-22 | 260522-wch | Fix document evidence page count mismatch labels | Complete |
+| 2026-05-22 | 260522-w2j | Show all document parse evidence warnings with pagination | Complete |
+| 2026-05-22 | 260522-vwb | Fix document parse evidence 200 row cap totals | Complete |
+| 2026-05-22 | 260522-vu2 | Replace document evidence info and warn badges with icons | Complete |
+| 2026-05-22 | 260522-vp6 | Fix all frontend TypeScript build errors | Complete |
+| 2026-05-22 | 260522-v92 | Redesign document parse evidence page | Complete |
+| 2026-05-22 | 260522-uyf | Fix inflated parser warning count in document job summary | Complete |
 | 2026-05-22 | 260522-qdf | Implement Jobs and Warnings tab redesign | Complete |
 | 2026-05-22 | 260522-ouk | Add shared DataTable pagination components for all tables | Complete |
 | 2026-05-22 | 260522-o6u | Redesign document page at /documents | Complete |

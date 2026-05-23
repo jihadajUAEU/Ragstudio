@@ -93,6 +93,7 @@ class IndexLifecycleService:
         )
         self.modal_preprocessor = modal_preprocessor or ModalPreprocessor()
         self.layout_auto_repair = layout_auto_repair or LayoutAutoRepairService()
+        self.http_client_provider = http_client_provider
         self.targeted_vision_recovery = targeted_vision_recovery or TargetedVisionRecoveryService(
             http_client_provider=http_client_provider
         )
@@ -102,6 +103,7 @@ class IndexLifecycleService:
         document_id: str,
         *,
         options: IndexDocumentIn | None = None,
+        artifact_path: str | None = None,
         on_mineru_status: MinerUStatusCallback | None = None,
         on_stage: Callable[..., Awaitable[None]] | None = None,
     ) -> IndexLifecycleResult | None:
@@ -125,7 +127,7 @@ class IndexLifecycleService:
         # Native LightRAG storage may run schema DDL such as CREATE INDEX CONCURRENTLY.
         # Do not hold the Studio session's transaction open while runtime storage works,
         # or Postgres can block the runtime on our own idle transaction.
-        artifact_path = document.artifact_path
+        artifact_path = artifact_path or document.artifact_path
         await cleanup_document_index_artifacts(self.session, document.id)
         await self.session.commit()
 
@@ -133,6 +135,7 @@ class IndexLifecycleService:
             runtime,
             document,
             options,
+            artifact_path=artifact_path,
             on_mineru_status=on_mineru_status,
         )
         async def cleanup_runtime_index_best_effort() -> None:
@@ -173,7 +176,7 @@ class IndexLifecycleService:
             adapter_chunks = await self._run_cpu_bound(
                 ChunkSplitter(
                     vision_recovery_config=vision_recovery_config,
-                    http_client_provider=http_client_provider,
+                    http_client_provider=self.http_client_provider,
                 ).split,
                 normalized_chunks,
                 domain_metadata=options.domain_metadata,
@@ -427,6 +430,7 @@ class IndexLifecycleService:
         document: Document,
         options: IndexDocumentIn,
         *,
+        artifact_path: str | None = None,
         on_mineru_status: MinerUStatusCallback | None = None,
     ) -> list[AdapterChunk] | None:
         if options.parser_mode == "local_fallback":
@@ -436,6 +440,7 @@ class IndexLifecycleService:
         return await self.document_parser.parse(
             document,
             options,
+            artifact_path=artifact_path,
             on_mineru_status=on_mineru_status,
         )
 

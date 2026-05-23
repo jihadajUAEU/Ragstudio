@@ -17,8 +17,8 @@ const queryKeys = {
 } as const;
 
 export function OptimizerPage() {
-  const runsQuery = useQuery({ queryKey: queryKeys.runs, queryFn: apiClient.runs });
-  const variantsQuery = useQuery({ queryKey: queryKeys.variants, queryFn: apiClient.variants });
+  const runsQuery = useQuery({ queryKey: queryKeys.runs, queryFn: () => apiClient.runs() });
+  const variantsQuery = useQuery({ queryKey: queryKeys.variants, queryFn: () => apiClient.variants() });
   const [experimentId, setExperimentId] = useState("");
   const [hasEditedExperimentId, setHasEditedExperimentId] = useState(false);
   const [objectiveText, setObjectiveText] = useState("{\n  \"metric\": \"total\"\n}");

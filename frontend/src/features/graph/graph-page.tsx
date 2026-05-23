@@ -66,7 +66,7 @@ const emptyFilters: GraphFilters = {
 
 export function GraphPage() {
   const [filters, setFilters] = useState<GraphFilters>(emptyFilters);
-  const graphQuery = useQuery({ queryKey: queryKeys.graph, queryFn: apiClient.graph });
+  const graphQuery = useQuery({ queryKey: queryKeys.graph, queryFn: () => apiClient.graph() });
   const diagnosticsQuery = useQuery({ queryKey: queryKeys.diagnostics, queryFn: apiClient.diagnostics });
   const nodes = graphQuery.data?.nodes ?? emptyGraphItems;
   const edges = graphQuery.data?.edges ?? emptyGraphItems;

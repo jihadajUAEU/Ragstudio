@@ -338,6 +338,78 @@ describe("DocumentsPage", () => {
     expect(screen.queryByText("sha-hidden-from-documents-table")).not.toBeInTheDocument();
   });
 
+  it("shows rejected PDF cleanup status without local paths", async () => {
+    vi.mocked(apiClient.documents).mockResolvedValue({
+      items: [
+        {
+          id: "doc-rejected",
+          filename: "quran-arabic-english.pdf",
+          content_type: "application/pdf",
+          status: "failed",
+          sha256: "sha-rejected",
+          latest_job: {
+            result: {
+              preprocessing: {
+                status: "rejected",
+                error_type: "pdf_cleanup_contract_failed",
+                message: "Cleaned PDF still fails expected Arabic script checks.",
+                original_artifact_path: "C:\\Users\\jihad\\uploads\\quran-arabic-english.pdf",
+                active_artifact_path:
+                  "C:\\Users\\jihad\\uploads\\quran-arabic-english.cleaned.pdf",
+              },
+            },
+          },
+        },
+      ],
+      total: 1,
+    } as unknown as Awaited<ReturnType<typeof apiClient.documents>>);
+
+    renderDocumentsPage();
+
+    expect(await screen.findByText("Rejected: PDF cleanup failed contract")).toBeVisible();
+    expect(screen.queryByText(/C:\\Users\\jihad\\/i)).not.toBeInTheDocument();
+  });
+
+  it("falls back to related job preprocessing status while document fields lag", async () => {
+    vi.mocked(apiClient.documents).mockResolvedValue({
+      items: [
+        {
+          id: "doc-cleanup",
+          filename: "cleanup-pending.pdf",
+          content_type: "application/pdf",
+          status: "running",
+          sha256: "sha-cleanup",
+        },
+      ],
+      total: 1,
+    });
+    vi.mocked(apiClient.jobs).mockResolvedValue({
+      items: [
+        {
+          ...jobDefaults,
+          id: "job-cleanup",
+          type: "index_document",
+          status: "running",
+          target_id: "doc-cleanup",
+          progress: 38,
+          logs: ["OCR cleanup started"],
+          result: {
+            preprocessing: {
+              status: "sample_cleanup_running",
+              original_artifact_path: "C:\\Users\\jihad\\uploads\\cleanup-pending.pdf",
+            },
+          },
+        },
+      ],
+      total: 1,
+    });
+
+    renderDocumentsPage();
+
+    expect(await screen.findByText("OCR cleanup running")).toBeVisible();
+    expect(screen.queryByText(/C:\\Users\\jihad\\/i)).not.toBeInTheDocument();
+  });
+
   it("opens document parse evidence from a document row action", async () => {
     vi.mocked(apiClient.documents).mockResolvedValue({
       items: [
@@ -613,9 +685,13 @@ describe("DocumentsPage", () => {
               chunk_count: 1754,
             },
             warnings: [
+              "Parser quality warnings: reference_unit_missing_expected_script=2847",
               "Graph extraction skipped because Neo4j is unavailable",
-              "Some chunk metadata could not be normalized",
             ],
+            parser_quality: {
+              warning_counts: { reference_unit_missing_expected_script: 2847 },
+              affected_chunks: 2847,
+            },
             parser_quality_details: {
               version: 1,
               sample_limit: 5,
@@ -662,11 +738,15 @@ describe("DocumentsPage", () => {
 
     const jobsTable = await screen.findByRole("table", { name: "Jobs table" });
     expect(within(jobsTable).getByText("Index quran.pdf")).toBeVisible();
+    expect(within(jobsTable).getByText("2847")).toBeVisible();
+    expect(within(jobsTable).queryByText("5696")).not.toBeInTheDocument();
     expect(
       screen.getByText("Ready with warnings · Vector index ready; graph skipped · 1754 chunks"),
     ).toBeVisible();
+    expect(
+      screen.getByText("Parser quality warnings: reference_unit_missing_expected_script=2847"),
+    ).toBeVisible();
     expect(screen.getByText("Graph extraction skipped because Neo4j is unavailable")).toBeVisible();
-    expect(screen.getByText("Some chunk metadata could not be normalized")).toBeVisible();
     const parserDetails = screen.getByText("Parser warning details · 1 types · 2847 counted warnings");
     expect(parserDetails).toBeVisible();
     fireEvent.click(parserDetails);
@@ -752,9 +832,6 @@ describe("DocumentsPage", () => {
           content_type: "application/pdf",
           status: "running",
           sha256: "sha-1",
-          artifact_path: "/tmp/polling.pdf",
-          metadata: {},
-          created_at: "2026-01-01T00:00:00Z",
         },
       ],
       total: 1,

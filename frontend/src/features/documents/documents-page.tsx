@@ -82,6 +82,21 @@ interface LiveMinerUStatus {
   detail: string | null;
 }
 
+type DocumentRow = DocumentOut & {
+  index_contract?: Record<string, unknown> | null;
+  latest_job?: Record<string, unknown> | null;
+  latestJob?: Record<string, unknown> | null;
+  latest_result?: Record<string, unknown> | null;
+  latestResult?: Record<string, unknown> | null;
+  latest_job_result?: Record<string, unknown> | null;
+  latestJobResult?: Record<string, unknown> | null;
+};
+
+interface DocumentPreprocessingStatus {
+  label: string;
+  tone: "neutral" | "active" | "success" | "danger";
+}
+
 export function DocumentsPage() {
   const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -125,7 +140,7 @@ export function DocumentsPage() {
     refetchInterval: activeJobs ? 2000 : false,
   });
   const documents = useMemo(
-    () => documentsQuery.data?.items ?? [],
+    () => (documentsQuery.data?.items ?? []) as DocumentRow[],
     [documentsQuery.data?.items],
   );
   const uploadDocument = useMutation({
@@ -251,6 +266,19 @@ export function DocumentsPage() {
     () => new Map(documents.map((document) => [document.id, document])),
     [documents],
   );
+  const latestJobsByDocumentId = useMemo(() => {
+    const map = new Map<string, JobOut>();
+    jobs.forEach((job) => {
+      if (!job.target_id) {
+        return;
+      }
+      const current = map.get(job.target_id);
+      if (!current || shouldPreferDocumentJob(job, current)) {
+        map.set(job.target_id, job);
+      }
+    });
+    return map;
+  }, [jobs]);
   const filteredDocuments = useMemo(
     () => filterDocuments(documents, documentSearch),
     [documentSearch, documents],
@@ -292,7 +320,7 @@ export function DocumentsPage() {
     [currentJobsPage, filteredJobs, jobsPageSize],
   );
   const selectedWarningJob = useMemo(
-    () => jobs.find((job) => job.id === selectedWarningJobId) ?? null,
+    () => jobs.find((job) => job.id === selectedWarningJobId),
     [jobs, selectedWarningJobId],
   );
   const selectedWarningDocument = selectedWarningJob?.target_id
@@ -380,17 +408,35 @@ export function DocumentsPage() {
     };
   }, [activeJobIdsKey, queryClient]);
 
-  const documentColumns = useMemo<ColumnDef<DocumentOut>[]>(
+  const documentColumns = useMemo<ColumnDef<DocumentRow>[]>(
     () => [
       {
         accessorKey: "filename",
         header: "Document",
-        cell: ({ row }) => (
-          <div className="min-w-0">
-            <p className="truncate font-medium">{row.original.filename}</p>
-            <p className="truncate text-xs text-[#6f7f87]">{row.original.content_type}</p>
-          </div>
-        ),
+        cell: ({ row }) => {
+          const preprocessingStatus = getDocumentPreprocessingStatus(
+            row.original,
+            latestJobsByDocumentId.get(row.original.id),
+          );
+
+          return (
+            <div className="min-w-0">
+              <p className="truncate font-medium">{row.original.filename}</p>
+              <p className="truncate text-xs text-[#6f7f87]">{row.original.content_type}</p>
+              {preprocessingStatus ? (
+                <p
+                  className={`mt-1 inline-flex max-w-full rounded-md border px-2 py-0.5 text-xs font-medium leading-4 ${documentPreprocessingToneClass(
+                    preprocessingStatus.tone,
+                  )}`}
+                >
+                  <span className="max-w-full whitespace-normal break-words">
+                    {preprocessingStatus.label}
+                  </span>
+                </p>
+              ) : null}
+            </div>
+          );
+        },
       },
       {
         accessorKey: "status",
@@ -457,6 +503,7 @@ export function DocumentsPage() {
       confirmAndDeleteDocument,
       deleteDocument.isPending,
       deleteDocument.variables,
+      latestJobsByDocumentId,
       openDocumentEvidence,
       reindexDocument.isPending,
       reindexDocument.variables,
@@ -1084,7 +1131,7 @@ function jobWarningCount(job: JobOut, liveEvent?: LiveJobEventSnapshot): number 
     (total, [, count]) => total + count,
     0,
   );
-  return Math.max(liveWarningCount, jobWarningTotal + parserWarningTotal + parserCountTotal);
+  return Math.max(liveWarningCount, jobWarningTotal, parserWarningTotal, parserCountTotal);
 }
 
 function summarizeJobs(jobs: JobOut[]) {
@@ -1095,6 +1142,160 @@ function summarizeJobs(jobs: JobOut[]) {
     failed: jobs.filter((job) => job.status === "failed").length,
     warnings: jobs.filter(hasInspectableQualityWarnings).length,
   };
+}
+
+function shouldPreferDocumentJob(candidate: JobOut, current: JobOut): boolean {
+  if (isActiveJob(candidate) !== isActiveJob(current)) {
+    return isActiveJob(candidate);
+  }
+  if (candidate.type === "index_document" && current.type !== "index_document") {
+    return true;
+  }
+  return false;
+}
+
+function getDocumentPreprocessingStatus(
+  document: DocumentRow,
+  relatedJob?: JobOut,
+): DocumentPreprocessingStatus | null {
+  const documentRecord = document as unknown as Record<string, unknown>;
+  const latestJob =
+    recordValue(documentRecord.latest_job) ?? recordValue(documentRecord.latestJob);
+  const latestResult =
+    recordValue(documentRecord.latest_result) ??
+    recordValue(documentRecord.latestResult) ??
+    recordValue(documentRecord.latest_job_result) ??
+    recordValue(documentRecord.latestJobResult);
+  const candidates = [
+    preprocessingSnapshotFromValue(latestResult),
+    preprocessingSnapshotFromValue(latestJob),
+    preprocessingSnapshotFromValue(document.index_contract),
+    preprocessingSnapshotFromValue(relatedJob?.result),
+  ];
+
+  for (const snapshot of candidates) {
+    const display = mapPreprocessingStatus(snapshot, document.status, relatedJob?.status);
+    if (display) {
+      return display;
+    }
+  }
+  return null;
+}
+
+function preprocessingSnapshotFromValue(value: unknown): Record<string, unknown> | null {
+  const record = recordValue(value);
+  if (!record) {
+    return null;
+  }
+  const nestedResult = recordValue(record.result);
+  const candidates = [
+    recordValue(record.preprocessing),
+    nestedResult ? recordValue(nestedResult.preprocessing) : null,
+  ];
+  for (const candidate of candidates) {
+    if (candidate) {
+      return candidate;
+    }
+  }
+
+  const status = stringValue(record.status);
+  if (
+    status &&
+    (recordValue(record.preflight_before) ||
+      recordValue(record.preflight_after) ||
+      stringValue(record.error_type) ||
+      stringValue(record.original_artifact_path) ||
+      stringValue(record.active_artifact_path) ||
+      stringValue(record.cleanup_status))
+  ) {
+    return record;
+  }
+  return null;
+}
+
+function mapPreprocessingStatus(
+  snapshot: Record<string, unknown> | null,
+  documentStatus: DocumentOut["status"],
+  jobStatus?: JobOut["status"],
+): DocumentPreprocessingStatus | null {
+  if (!snapshot) {
+    return null;
+  }
+
+  const status = stringValue(snapshot.status)?.toLowerCase();
+  const cleanupStatus = stringValue(snapshot.cleanup_status)?.toLowerCase();
+  const errorType = stringValue(snapshot.error_type)?.toLowerCase();
+  const preflightBeforeStatus = stringValue(recordValue(snapshot.preflight_before)?.status)?.toLowerCase();
+  const preflightAfterStatus = stringValue(recordValue(snapshot.preflight_after)?.status)?.toLowerCase();
+  const originalArtifactPath = stringValue(snapshot.original_artifact_path);
+  const activeArtifactPath = stringValue(snapshot.active_artifact_path);
+  const indexed = documentStatus === "succeeded" || jobStatus === "succeeded";
+
+  if (
+    errorType === "pdf_cleanup_contract_failed" ||
+    (status === "rejected" && errorType?.includes("contract"))
+  ) {
+    return { label: "Rejected: PDF cleanup failed contract", tone: "danger" };
+  }
+
+  if (
+    matchesPreprocessingState(status, [
+      "running",
+      "pending_cleanup",
+      "cleanup_running",
+      "sample_cleanup_running",
+    ]) ||
+    matchesPreprocessingState(cleanupStatus, [
+      "running",
+      "pending_cleanup",
+      "cleanup_running",
+      "sample_cleanup_running",
+    ])
+  ) {
+    return { label: "OCR cleanup running", tone: "active" };
+  }
+
+  if (
+    indexed &&
+    (matchesPreprocessingState(status, ["cleaned", "cleaned_indexed", "indexed_cleaned"]) ||
+      (preflightAfterStatus === "passed" &&
+        Boolean(originalArtifactPath) &&
+        Boolean(activeArtifactPath) &&
+        activeArtifactPath !== originalArtifactPath))
+  ) {
+    return { label: "Cleaned PDF indexed", tone: "success" };
+  }
+
+  if (
+    matchesPreprocessingState(status, ["passed", "preflight_passed"]) ||
+    preflightBeforeStatus === "passed"
+  ) {
+    return { label: "PDF preflight passed", tone: "neutral" };
+  }
+
+  return null;
+}
+
+function matchesPreprocessingState(
+  value: string | undefined,
+  acceptedStates: string[],
+): boolean {
+  return Boolean(value && acceptedStates.includes(value));
+}
+
+function documentPreprocessingToneClass(
+  tone: DocumentPreprocessingStatus["tone"],
+): string {
+  switch (tone) {
+    case "active":
+      return "border-[var(--rs-accent-soft)] bg-[var(--rs-accent-soft)] text-[var(--rs-accent-deep)]";
+    case "success":
+      return "border-[#cfe3d5] bg-[#f6fbf7] text-[#235c2f]";
+    case "danger":
+      return "border-[#f2c6cb] bg-[#fff5f6] text-[#b42318]";
+    default:
+      return "border-[var(--rs-line)] bg-[var(--rs-field)] text-[var(--rs-text)]";
+  }
 }
 
 function clampedTablePage(page: number, totalItems: number, pageSize: number): number {
@@ -2049,7 +2250,8 @@ function QualityWarningsPanel({
   );
   const hiddenWarningCount = Math.max(filteredWarningItems.length - visibleWarningItems.length, 0);
   const selectedProgress = job ? getJobProgress(job, liveEvent) : 0;
-  const selectedStage = jobStageText(job, liveEvent) ?? formatMinerUResult(job, liveEvent) ?? "No stage reported";
+  const selectedStage =
+    jobStageText(job, liveEvent) ?? (job ? formatMinerUResult(job, liveEvent) : null) ?? "No stage reported";
   const latestLog = liveEvent?.logs.at(-1) ?? job?.logs.at(-1) ?? "No logs";
   const selectedWarnings = job ? jobWarningCount(job, liveEvent) : countEntries.reduce((total, [, count]) => total + count, 0);
   const parserGroups = jobParserQualityGroups(job);

@@ -90,8 +90,13 @@ class ProofEvidence(StudioModel):
     redaction_summary: list[str] = Field(default_factory=list)
 
 
+class EvidenceTotals(StudioModel):
+    chunks: int = 0
+
+
 class DocumentParseEvidence(StudioModel):
     document: DocumentEvidenceSummary
+    totals: EvidenceTotals = Field(default_factory=EvidenceTotals)
     source_artifacts: list[SourceArtifactEvidence] = Field(default_factory=list)
     parser_blocks: list[ParserBlockEvidence] = Field(default_factory=list)
     normalization_decisions: list[NormalizationDecisionEvidence] = Field(default_factory=list)

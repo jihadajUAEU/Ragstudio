@@ -56,9 +56,63 @@ async def test_parse_evidence_caps_large_documents(client, tmp_path: Path):
             source_commit="test-commit",
         ).get_document_evidence("doc-large")
 
+    assert evidence.totals.chunks == 205
     assert len(evidence.chunks) == 200
     assert len(evidence.parser_blocks) == 200
     assert any("capped at 200 chunks" in limitation for limitation in evidence.proof.limitations)
+    assert any("5 additional chunks" in limitation for limitation in evidence.proof.limitations)
+
+
+@pytest.mark.asyncio
+async def test_parse_evidence_includes_warning_rows_beyond_chunk_preview(client, tmp_path: Path):
+    artifact = tmp_path / "large-warnings.pdf"
+    artifact.write_bytes(b"%PDF synthetic")
+    async with client._transport.app.state.session_factory() as session:
+        session.add(
+            Document(
+                id="doc-large-warnings",
+                filename="large-warnings.pdf",
+                content_type="application/pdf",
+                sha256="sha-large-warnings",
+                artifact_path=str(artifact),
+                status=StageStatus.SUCCEEDED.value,
+            )
+        )
+        session.add_all(
+            [
+                Chunk(
+                    id=f"chunk-warning-{index:03d}",
+                    document_id="doc-large-warnings",
+                    text=f"Chunk {index}",
+                    source_location={"page": index + 1},
+                    metadata_json={},
+                    extraction_quality={
+                        "parser_warnings": [
+                            {
+                                "code": "late_warning",
+                                "message": "Warning beyond preview.",
+                                "severity": "warning",
+                                "page": index + 1,
+                            }
+                        ]
+                    }
+                    if index == 204
+                    else {},
+                )
+                for index in range(205)
+            ]
+        )
+        await session.commit()
+
+        evidence = await DocumentParseEvidenceService(session).get_document_evidence(
+            "doc-large-warnings"
+        )
+
+    assert evidence.totals.chunks == 205
+    assert len(evidence.chunks) == 200
+    assert [warning.code for warning in evidence.warnings] == ["late_warning"]
+    assert evidence.warnings[0].affected_chunk_ids == ["chunk-warning-204"]
+    assert evidence.warnings[0].page == 205
 
 
 @pytest.mark.asyncio

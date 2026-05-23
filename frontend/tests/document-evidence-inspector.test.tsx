@@ -92,6 +92,14 @@ const evidence: DocumentParseEvidence = {
 };
 
 describe("EvidenceInspector", () => {
+  it("shows full document chunk totals when evidence rows are a capped preview", () => {
+    render(<EvidenceInspector evidence={{ ...evidence, totals: { chunks: 205 } }} mode="public" />);
+
+    const summary = screen.getByRole("region", { name: "Evidence summary" });
+    expect(within(summary).getByText("205")).toBeVisible();
+    expect(within(summary).getByText("Total chunks")).toBeVisible();
+  });
+
   it("renders selected decision source blocks, chunk output, proof metadata, and public links", () => {
     render(<EvidenceInspector evidence={evidence} mode="public" />);
 
@@ -152,6 +160,150 @@ describe("EvidenceInspector", () => {
     expect(reindexButton).toBeVisible();
     fireEvent.click(reindexButton);
     expect(onReindex).toHaveBeenCalledTimes(1);
+  });
+
+  it("paginates and searches evidence decisions", () => {
+    const manyDecisions = Array.from({ length: 30 }, (_, index) => ({
+      ...evidence.normalization_decisions[0],
+      id: `decision-${index + 1}`,
+      title: index === 29 ? "Needle parser warning" : `Decision ${index + 1}`,
+      summary: index === 29 ? "Find this decision by search." : `Decision ${index + 1} summary.`,
+    }));
+
+    render(<EvidenceInspector evidence={{ ...evidence, normalization_decisions: manyDecisions }} />);
+
+    const evidenceDecisions = screen.getByRole("complementary", { name: "Evidence decisions" });
+    expect(within(evidenceDecisions).getByText("Showing 1-25 of 30")).toBeVisible();
+    expect(screen.queryByRole("button", { name: /Needle parser warning/i })).not.toBeInTheDocument();
+
+    const nextButtons = within(evidenceDecisions).getAllByRole("button", { name: /Next/i });
+    fireEvent.click(nextButtons.find((button) => !button.hasAttribute("disabled"))!);
+
+    expect(within(evidenceDecisions).getByText("Showing 26-30 of 30")).toBeVisible();
+    expect(screen.getByRole("button", { name: /Needle parser warning/i })).toBeVisible();
+
+    fireEvent.change(screen.getByLabelText("Search evidence"), {
+      target: { value: "needle" },
+    });
+
+    expect(within(evidenceDecisions).getByText("Showing 1-1 of 1")).toBeVisible();
+    expect(screen.getByRole("button", { name: /Needle parser warning/i })).toBeVisible();
+  });
+
+  it("paginates and filters all warning rows separately from decisions", () => {
+    const manyWarnings = Array.from({ length: 30 }, (_, index) => ({
+      ...evidence.warnings[0],
+      id: `warning-${index + 1}`,
+      code: index === 29 ? "needle_warning" : "missing_required_script",
+      message: index === 29 ? "Needle warning row." : `Warning row ${index + 1}.`,
+      affected_chunk_ids: [`chunk-${index + 1}`],
+    }));
+
+    render(<EvidenceInspector evidence={{ ...evidence, warnings: manyWarnings }} />);
+
+    const allWarnings = screen.getByRole("region", { name: "All warning rows" });
+    expect(within(allWarnings).getByText("Showing 1-25 of 30")).toBeVisible();
+    expect(within(allWarnings).queryByText("needle_warning")).not.toBeInTheDocument();
+
+    const nextButtons = within(allWarnings).getAllByRole("button", { name: /Next/i });
+    fireEvent.click(nextButtons.find((button) => !button.hasAttribute("disabled"))!);
+
+    expect(within(allWarnings).getByText("Showing 26-30 of 30")).toBeVisible();
+    expect(within(allWarnings).getByText("needle_warning")).toBeVisible();
+
+    fireEvent.change(within(allWarnings).getByLabelText("Search all warnings"), {
+      target: { value: "needle" },
+    });
+
+    expect(within(allWarnings).getByText("Showing 1-1 of 1")).toBeVisible();
+    expect(within(allWarnings).getByText("Needle warning row.")).toBeVisible();
+  });
+
+  it("keeps preview decision tab counts separate from full counted warning rows", () => {
+    const warningRows = [
+      ...Array.from({ length: 3 }, (_, index) => ({
+        ...evidence.warnings[0],
+        id: `counted-warning-${index + 1}`,
+        code: "missing_required_script",
+        message: `Counted warning row ${index + 1}.`,
+        severity: "warning",
+        decision_id: "decision-1",
+        affected_chunk_ids: ["chunk-1"],
+      })),
+      {
+        ...evidence.warnings[0],
+        id: "audit-warning-1",
+        code: "recovered_text_from_disallowed_block",
+        message: "Audit recovery row.",
+        severity: "info",
+        suppressed_from_counts: true,
+        decision_id: "decision-1",
+        affected_chunk_ids: ["chunk-1"],
+      },
+    ];
+
+    render(<EvidenceInspector evidence={{ ...evidence, warnings: warningRows }} />);
+
+    expect(screen.getByRole("button", { name: "Preview counted decisions 1" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Preview audit decisions 1" })).toBeVisible();
+
+    const allWarnings = screen.getByRole("region", { name: "All warning rows" });
+    fireEvent.change(within(allWarnings).getByLabelText("Warning row scope"), {
+      target: { value: "counted" },
+    });
+
+    expect(within(allWarnings).getByText("Showing 1-3 of 3")).toBeVisible();
+    expect(within(allWarnings).queryByText("Audit recovery row.")).not.toBeInTheDocument();
+  });
+
+  it("groups repeated selected decision warnings in the summary", () => {
+    const repeatedWarnings = [
+      {
+        ...evidence.warnings[0],
+        id: "warning-repeat-1",
+        code: "reference_unit_missing_expected_script",
+        message: "Reference unit is expected to contain Arabic script.",
+        severity: "warn",
+        decision_id: "decision-1",
+      },
+      {
+        ...evidence.warnings[0],
+        id: "warning-repeat-2",
+        code: "reference_unit_missing_expected_script",
+        message: "Reference unit is expected to contain Arabic script.",
+        severity: "warning",
+        decision_id: "decision-1",
+      },
+      {
+        ...evidence.warnings[0],
+        id: "warning-repeat-3",
+        code: "reference_unit_missing_expected_script",
+        message: "Reference-bearing chunk is expected to contain Arabic script.",
+        severity: "warning",
+        decision_id: "decision-1",
+      },
+    ];
+
+    render(
+      <EvidenceInspector
+        evidence={{
+          ...evidence,
+          normalization_decisions: [
+            {
+              ...evidence.normalization_decisions[0],
+              warning_ids: repeatedWarnings.map((warning) => warning.id),
+            },
+          ],
+          warnings: repeatedWarnings,
+        }}
+      />,
+    );
+
+    expect(screen.getByText("3 rows")).toBeVisible();
+    const summary = screen.getByRole("region", {
+      name: /Page 1 -> 2 stitch evidence detail/i,
+    });
+    expect(within(summary).getByText("3 rows")).toBeVisible();
   });
 
   it("supports keyboard navigation across rail decisions", () => {
@@ -232,7 +384,7 @@ describe("EvidenceInspector", () => {
     const normalizedUnit = screen.getByRole("region", { name: "Normalized unit" });
     expect(within(normalizedUnit).getByText("Removed")).toBeVisible();
     expect(within(normalizedUnit).getByText("Blocked")).toBeVisible();
-    expect(within(normalizedUnit).getByText("Capped preview · 120 hidden characters")).toBeVisible();
+    expect(within(normalizedUnit).getByText("Capped preview - 120 hidden characters")).toBeVisible();
   });
 
   it("highlights accepted recovered text in source blocks", () => {
