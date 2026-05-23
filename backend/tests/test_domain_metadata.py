@@ -1045,13 +1045,10 @@ async def test_ai_domain_metadata_suggester_prunes_invalid_custom_json_shapes(mo
 
     custom_json = result.domain_metadata.custom_json
     assert custom_json["reference_schema"]["type"] == "chapter_verse"
-    assert custom_json["reference_schema"]["fields"] == {
-        "chapter": "chapter",
-        "verse": "verse",
-    }
+    assert "fields" not in custom_json["reference_schema"]
     assert custom_json["relationships"] == {"next": ["same_chapter"]}
     assert custom_json["chunking"]["unit"] == "verse"
-    assert custom_json["chunking"]["include_neighbors"] == 1
+    assert "include_neighbors" not in custom_json["chunking"]
     assert custom_json["chunking"]["preserve_parallel_text"] is True
     assert custom_json["retrieval"] == {"exact_reference_top1": True}
 
