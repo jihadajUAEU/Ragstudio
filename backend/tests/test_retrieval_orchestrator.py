@@ -10,6 +10,7 @@ from ragstudio.services.domain_query_expansion_service import DomainQueryExpansi
 from ragstudio.services.query_hypothesis_service import (
     ProbableAnswer,
     QueryHypothesis,
+    QueryHypothesisService,
     QueryTargetTerm,
 )
 from ragstudio.services.retrieval_evidence import (
@@ -1213,6 +1214,64 @@ class HadithReferenceChunkSearchService:
         return type("SearchResult", (), {"items": items, "total": len(items)})()
 
 
+class ArticleClauseReferenceChunkSearchService:
+    def __init__(self):
+        self.search_queries = []
+        self.domain_metadata_document_calls = []
+
+    async def domain_metadata_for_documents(self, document_ids):
+        self.domain_metadata_document_calls.append(list(document_ids))
+        return [
+            {
+                "domain": "policy_manual",
+                "document_type": "policy",
+                "custom_json": {
+                    "reference_schema": {
+                        "type": "article_clause",
+                        "canonical_ref_template": "article:{article}:clause:{clause}",
+                        "fields": {
+                            "article": "article_number",
+                            "clause": "clause_number",
+                        },
+                    },
+                    "reference_resolution": {
+                        "build_canonical_units": True,
+                    },
+                    "domain_structure": {
+                        "primary_anchor": {
+                            "type": "article_clause",
+                            "regex": r"Article\s+(?P<article>\d+)\.(?P<clause>\d+)",
+                            "unit": "clause",
+                            "verified": True,
+                        }
+                    },
+                },
+            }
+        ]
+
+    async def search(self, search_in):
+        self.search_queries.append(search_in.query)
+        items = []
+        if search_in.query == "article:12:clause:7":
+            items.append(
+                ChunkOut(
+                    id="article-12-clause-7",
+                    document_id="doc-policy",
+                    text="Article 12.7 requires annual evidence review.",
+                    source_location={"reference": "article:12:clause:7"},
+                    metadata={
+                        "domain_metadata": {"domain": "policy_manual"},
+                        "reference_metadata": {
+                            "references": ["article:12:clause:7"],
+                        },
+                        "score": 20.0,
+                        "score_breakdown": {"reference_exact": 100.0},
+                    },
+                )
+            )
+        return type("SearchResult", (), {"items": items, "total": len(items)})()
+
+
 class HananHypothesisService:
     async def hypothesize(self, query, *, profile, domain_metadata, timeout_ms):
         return QueryHypothesis(
@@ -1270,6 +1329,38 @@ class CorrectHadithReferenceHypothesisService:
             confidence=0.86,
             valid=True,
             source="llm",
+        )
+
+
+class ArticleClauseReferenceHypothesisService:
+    async def hypothesize(self, query, *, profile, domain_metadata, timeout_ms):
+        return QueryHypothesisService.parse_hypothesis(
+            {
+                "intent": "reference_lookup",
+                "possible_references": ["Article 12.7"],
+                "domain_hint": "reference",
+                "answer_shape": "reference",
+            },
+            original_query=query,
+            reference_contracts=[
+                {
+                    "reference_contract": {
+                        "schema_type": "article_clause",
+                        "canonical_ref_template": "article:{article}:clause:{clause}",
+                        "required_groups": ["article", "clause"],
+                        "verified": True,
+                        "anchors": [
+                            {
+                                "kind": "primary_anchor",
+                                "regex": (
+                                    r"Article\s+(?P<article>\d+)\.(?P<clause>\d+)"
+                                ),
+                                "verified": True,
+                            }
+                        ],
+                    }
+                }
+            ],
         )
 
 
@@ -2349,6 +2440,41 @@ async def test_orchestrator_tries_confirmed_hadith_reference_hypothesis_first():
     assert verification_trace["status"] == "confirmed"
     assert verification_trace["possible_reference_results"][0]["status"] == "confirmed"
     assert verification_trace["reference"] == "book:13:hadith:25"
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_uses_custom_reference_contract_hypothesis():
+    chunk_service = ArticleClauseReferenceChunkSearchService()
+    orchestrator = RetrievalOrchestrator(
+        chunk_service=chunk_service,
+        answer_service=FakeAnswerService(),
+        reranker_service=FakeRerankerService(),
+        graph_expansion_service=FakeGraphExpansionService(),
+        query_hypothesis_service=ArticleClauseReferenceHypothesisService(),
+    )
+
+    result = await orchestrator.query(
+        "Show Article 12.7",
+        runtime=NativeSearchShouldNotRun(),
+        profile=type("Profile", (), {"enable_rerank": False, "reranker_provider": "disabled"})(),
+        document_ids=["doc-policy"],
+        variant_id="variant-1",
+        query_config={
+            "limit": 8,
+            "retrieval_mode": "metadata",
+            "graph_expansion_enabled": False,
+        },
+    )
+
+    assert result.error is None
+    assert chunk_service.search_queries[0] == "article:12:clause:7"
+    assert result.sources[0]["metadata"]["canonical_reference"] == "article:12:clause:7"
+    verification_trace = next(
+        trace for trace in result.chunk_traces if trace["stage"] == "hypothesis_verification"
+    )
+    assert verification_trace["status"] == "confirmed"
+    assert verification_trace["possible_reference_results"][0]["status"] == "confirmed"
+    assert verification_trace["reference"] == "article:12:clause:7"
 
 
 @pytest.mark.asyncio
