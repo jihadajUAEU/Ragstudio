@@ -27,7 +27,18 @@ def test_route_input_preserves_scope_domain_readiness_and_budgets():
         query_intent="reference",
         retrieval_strategy="reference_first_hybrid",
         query_understanding=understanding,
-        domain_metadata=[{"domain": "hadith", "tags": ["hadith"]}],
+        domain_metadata=[
+            {
+                "domain": "hadith",
+                "tags": ["hadith"],
+                "custom_json": {
+                    "reference_schema": {
+                        "type": "book_hadith",
+                        "fields": {"book": "book_number", "hadith": "hadith_number"},
+                    }
+                },
+            }
+        ],
         query_config={
             "limit": 5,
             "response_budget_ms": 9000,

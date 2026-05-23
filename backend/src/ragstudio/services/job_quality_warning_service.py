@@ -580,7 +580,7 @@ class JobQualityWarningService:
                 },
             },
             "expected_effect": (
-                "Real Arabic/Hadith text misclassified as another block type can be indexed as "
+                "Real reference text misclassified as another block type can be indexed as "
                 "prose, while textless headers, footers, and page markers are retained only as "
                 "low-noise provenance."
             ),
@@ -815,47 +815,8 @@ class JobQualityWarningService:
         domain_metadata: dict[str, Any],
         custom_json: dict[str, Any],
     ) -> dict[str, Any]:
-        if isinstance(custom_json.get("reference_schema"), dict):
-            return custom_json
-
-        tokens = self._domain_metadata_tokens(domain_metadata)
-        schema: dict[str, Any] | None = None
-        if (
-            "book_hadith" in tokens
-            or "hadith" in tokens
-            or any("hadith" in token and "book" in token for token in tokens)
-        ):
-            schema = {
-                "type": "book_hadith",
-                "display": "Book {book}, Hadith {hadith}",
-                "canonical_ref_template": "book:{book}:hadith:{hadith}",
-                "fields": {
-                    "book": "book_number",
-                    "hadith": "hadith_number",
-                    "chapter": "chapter_title",
-                },
-            }
-        elif (
-            "surah_ayah" in tokens
-            or "chapter_verse" in tokens
-            or "quran" in tokens
-            or any("quran" in token for token in tokens)
-        ):
-            schema = {
-                "type": "chapter_verse",
-                "display": "{chapter}:{verse}",
-                "canonical_ref_template": "{chapter}:{verse}",
-                "fields": {
-                    "chapter": "surah_number",
-                    "verse": "ayah_number",
-                    "page": "page_number",
-                },
-            }
-        if schema is None:
-            return custom_json
-        repaired = dict(custom_json)
-        repaired["reference_schema"] = schema
-        return repaired
+        _ = domain_metadata
+        return custom_json
 
     def _domain_metadata_tokens(self, domain_metadata: dict[str, Any]) -> set[str]:
         values: list[Any] = [
@@ -928,7 +889,12 @@ class JobQualityWarningService:
         try:
             if self.http_client_provider is not None:
                 client = self.http_client_provider.client("job-quality-repair", timeout=timeout)
-                response = await self._post_completion(client, profile.llm_base_url, headers, payload)
+                response = await self._post_completion(
+                    client,
+                    profile.llm_base_url,
+                    headers,
+                    payload,
+                )
             else:
                 async with httpx.AsyncClient(timeout=timeout) as client:
                     response = await self._post_completion(

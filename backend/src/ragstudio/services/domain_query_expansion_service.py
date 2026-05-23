@@ -38,7 +38,7 @@ class DomainQueryExpansionService:
 
         self.registry = selected_registry
         if selected_arabic_adapter is not None:
-            self.registry.replace("arabic_religious", selected_arabic_adapter)
+            self.registry.replace("reference_heavy", selected_arabic_adapter)
 
     def expand(
         self,
@@ -161,7 +161,7 @@ def _expand_with_adapters(
 def _use_expansion(domain_family: str, expansion: LexicalExpansion) -> bool:
     if not expansion.terms:
         return False
-    if domain_family == "arabic_religious":
+    if domain_family == "reference_heavy":
         return expansion.match_type in {"exact_script", "transliteration"}
     return True
 

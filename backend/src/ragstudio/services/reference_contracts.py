@@ -190,6 +190,52 @@ def canonical_reference_from_groups(groups: dict[str, str], template: str | None
     return rendered or None
 
 
+def metadata_declares_reference_contract(metadata: dict[str, Any]) -> bool:
+    custom_json = _dict_value(metadata.get("custom_json"))
+    if isinstance(custom_json.get("reference_schema"), dict):
+        return True
+    if isinstance(metadata.get("reference_contract"), dict):
+        return True
+    index_contract = _dict_value(metadata.get("index_contract"))
+    return isinstance(index_contract.get("reference_contract"), dict)
+
+
+def metadata_list_declares_reference_contract(
+    domain_metadata: list[dict[str, Any]],
+) -> bool:
+    return any(
+        metadata_declares_reference_contract(metadata)
+        for metadata in domain_metadata
+        if isinstance(metadata, dict)
+    )
+
+
+def metadata_declared_scripts(metadata: dict[str, Any]) -> frozenset[str]:
+    custom_json = _dict_value(metadata.get("custom_json"))
+    contract = build_executable_reference_contract(custom_json)
+    scripts: set[str] = set(contract.required_scripts)
+    scripts.update(contract.optional_scripts)
+    for role_scripts in contract.required_scripts_by_unit_role.values():
+        scripts.update(role_scripts)
+    for role_scripts in contract.optional_scripts_by_unit_role.values():
+        scripts.update(role_scripts)
+    for key in ("script", "language"):
+        value = metadata.get(key)
+        if isinstance(value, str) and value.strip():
+            scripts.add(value.strip().casefold())
+    return frozenset(scripts)
+
+
+def metadata_list_declared_scripts(
+    domain_metadata: list[dict[str, Any]],
+) -> frozenset[str]:
+    scripts: set[str] = set()
+    for metadata in domain_metadata:
+        if isinstance(metadata, dict):
+            scripts.update(metadata_declared_scripts(metadata))
+    return frozenset(scripts)
+
+
 def _declared_anchors(domain_structure: dict[str, Any]) -> list[ReferenceAnchor]:
     anchors: list[ReferenceAnchor] = []
     for key, value in domain_structure.items():

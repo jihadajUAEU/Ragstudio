@@ -7,6 +7,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
 from ragstudio.services.query_understanding import QueryUnderstanding, understand_query
+from ragstudio.services.reference_contracts import metadata_declares_reference_contract
 
 QueryIntent = Literal["count", "title", "reference", "comparison", "summary", "semantic"]
 
@@ -272,19 +273,19 @@ def _score_candidate(
 
     if (
         domain_reference_allowed
-        and domain_family in {"tafseer_reference", "hadith_reference", "legal_reference"}
+        and domain_family in {"reference_heavy", "legal_reference"}
         and candidate.retrieval_pass == "reference_exact"
     ):
         boost += 10.0
         reasons.append(f"{domain_family}_exact")
 
     if (
-        domain_family == "tafseer_reference"
+        domain_family == "reference_heavy"
         and plan.graph_context_required
         and candidate.tool == "graph"
     ):
         boost += 5.0
-        reasons.append("tafseer_graph_context")
+        reasons.append("reference_graph_context")
 
     if domain_family == "research_semantic" and candidate.tool == "native":
         boost += 2.0
@@ -360,10 +361,8 @@ def _domain_family(metadata: dict[str, Any]) -> str:
         *tags,
     }
 
-    if {"quran_tafseer", "tafseer", "quran"} & tokens:
-        return "tafseer_reference"
-    if "hadith" in tokens:
-        return "hadith_reference"
+    if metadata_declares_reference_contract(domain_metadata):
+        return "reference_heavy"
     if {"legal", "law", "statute", "policy"} & tokens:
         return "legal_reference"
     if {"research", "paper", "report", "scientific"} & tokens:

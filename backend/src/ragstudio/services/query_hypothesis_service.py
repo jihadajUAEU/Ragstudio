@@ -8,6 +8,7 @@ from typing import Any
 import httpx
 from ragstudio.services.http_client_provider import HttpClientProviderProtocol
 from ragstudio.services.http_retry import raise_for_transient_status, retry_async_http
+from ragstudio.services.reference_contracts import metadata_list_declared_scripts
 from ragstudio.services.reference_query_parser import parse_legacy_reference_query
 
 _ALLOWED_INTENTS = {
@@ -207,7 +208,7 @@ class QueryHypothesisService:
         *,
         domain_metadata: list[dict[str, Any]],
     ) -> QueryHypothesis:
-        if _domain_family(domain_metadata) != "arabic_religious":
+        if not _domain_supports_arabic_terms(domain_metadata):
             return QueryHypothesis.empty(query, reason="domain_not_supported")
 
         terms: list[QueryTargetTerm] = []
@@ -586,16 +587,9 @@ def _dedupe_terms(terms: list[QueryTargetTerm]) -> list[QueryTargetTerm]:
     return deduped
 
 
-def _domain_family(domain_metadata: list[dict[str, Any]]) -> str:
-    signals = {
-        str(value).strip().casefold()
-        for metadata in domain_metadata
-        for value in _metadata_values(metadata)
-        if str(value).strip()
-    }
-    if signals & {"quran", "tafseer", "quran_tafseer", "hadith", "islamic_text"}:
-        return "arabic_religious"
-    return "generic"
+def _domain_supports_arabic_terms(domain_metadata: list[dict[str, Any]]) -> bool:
+    scripts = metadata_list_declared_scripts(domain_metadata)
+    return bool({"arabic", "ar", "arab"} & scripts)
 
 
 def _metadata_values(metadata: dict[str, Any]) -> list[Any]:

@@ -26,6 +26,16 @@ from ragstudio.services.retrieval_orchestrator import (
 )
 from ragstudio.services.runtime_types import RuntimeQueryResult
 
+QURAN_REFERENCE_CUSTOM_JSON = {
+    "reference_schema": {
+        "type": "chapter_verse",
+        "fields": {"chapter": "chapter_number", "verse": "verse_number"},
+    },
+    "quality_policy": {
+        "required_scripts_by_unit_role": {"verse": ["arabic"]},
+    },
+}
+
 
 class _ChunkServiceWithSession:
     def __init__(self, session):
@@ -351,12 +361,13 @@ def test_plan_for_query_carries_domain_expansion_reference_intent():
         domain_metadata=[
             {
                 "domain": "quran_tafseer",
-                "document_type": "commentary",
-                "language": "mixed",
-                "tags": ["quran", "arabic"],
-            }
-        ],
-    )
+                    "document_type": "commentary",
+                    "language": "mixed",
+                    "tags": ["quran", "arabic"],
+                    "custom_json": QURAN_REFERENCE_CUSTOM_JSON,
+                }
+            ],
+        )
 
     plan = plan_for_query(
         "hanan",
@@ -508,6 +519,7 @@ def test_fusion_boosts_lexical_expanded_metadata_above_semantic_candidate():
                 "document_type": "commentary",
                 "language": "mixed",
                 "tags": ["quran", "arabic"],
+                "custom_json": QURAN_REFERENCE_CUSTOM_JSON,
             }
         ],
     )
@@ -523,7 +535,12 @@ def test_fusion_boosts_lexical_expanded_metadata_above_semantic_candidate():
         document_id="doc-quran",
         chunk_id="chunk-semantic",
         source_location={},
-        metadata={"domain_metadata": {"domain": "quran_tafseer"}},
+        metadata={
+            "domain_metadata": {
+                "domain": "quran_tafseer",
+                "custom_json": QURAN_REFERENCE_CUSTOM_JSON,
+            }
+        },
         tool="native",
         tool_rank=1,
         base_score=42.0,
@@ -535,7 +552,12 @@ def test_fusion_boosts_lexical_expanded_metadata_above_semantic_candidate():
         document_id="doc-quran",
         chunk_id="chunk-19-13",
         source_location={"reference": "19:13"},
-        metadata={"domain_metadata": {"domain": "quran_tafseer"}},
+        metadata={
+            "domain_metadata": {
+                "domain": "quran_tafseer",
+                "custom_json": QURAN_REFERENCE_CUSTOM_JSON,
+            }
+        },
         tool="metadata",
         tool_rank=2,
         base_score=18.0,
@@ -610,6 +632,7 @@ def test_domain_aware_fusion_boosts_tafseer_exact_reference():
                 "domain": "quran_tafseer",
                 "tags": ["quran"],
                 "script": "arabic",
+                "custom_json": QURAN_REFERENCE_CUSTOM_JSON,
             },
             "reference_metadata": {"references": ["1:5"]},
             "quality_action_policy": {
@@ -637,7 +660,7 @@ def test_domain_aware_fusion_boosts_tafseer_exact_reference():
     fused = fuse_candidates(plan, [generic_native, tafseer_exact])
 
     assert fused[0].chunk_id == "chunk-tafseer-1-5"
-    assert "tafseer_reference_exact" in fused[0].reasons
+    assert "reference_heavy_exact" in fused[0].reasons
 
 
 def test_domain_aware_fusion_does_not_apply_tafseer_boost_to_research_paper():
@@ -662,8 +685,7 @@ def test_domain_aware_fusion_does_not_apply_tafseer_boost_to_research_paper():
 
     fused = fuse_candidates(plan, [paper_candidate])
 
-    assert "tafseer_reference_exact" not in fused[0].reasons
-    assert "hadith_reference_exact" not in fused[0].reasons
+    assert "reference_heavy_exact" not in fused[0].reasons
 
 
 def test_multi_document_reference_query_keeps_exact_hits_from_each_tafseer_document():
@@ -1073,6 +1095,7 @@ class QuranDomainMetadataChunkSearchService:
                 "content_role": "quran",
                 "language": "mixed",
                 "tags": ["quran", "tafseer", "arabic"],
+                "custom_json": QURAN_REFERENCE_CUSTOM_JSON,
             }
         ]
 
@@ -1090,7 +1113,10 @@ class QuranDomainMetadataChunkSearchService:
                         text=f"[19:13] وَحَنَانًا مِّن لَّدُنَّا matched {search_in.query}",
                         source_location={"page": 312, "reference": "19:13"},
                         metadata={
-                            "domain_metadata": {"domain": "quran_tafseer"},
+                            "domain_metadata": {
+                                "domain": "quran_tafseer",
+                                "custom_json": QURAN_REFERENCE_CUSTOM_JSON,
+                            },
                             "reference_metadata": {"references": ["19:13"]},
                             "score": 10.0,
                         },

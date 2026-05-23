@@ -15,6 +15,15 @@ def quran_domain_metadata() -> list[dict[str, object]]:
             "document_type": "tafseer",
             "content_role": "quran",
             "tags": ["quran", "tafseer", "arabic"],
+            "custom_json": {
+                "reference_schema": {
+                    "type": "chapter_verse",
+                    "fields": {"chapter": "chapter_number", "verse": "verse_number"},
+                },
+                "quality_policy": {
+                    "required_scripts_by_unit_role": {"verse": ["arabic"]},
+                },
+            },
         }
     ]
 

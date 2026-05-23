@@ -669,21 +669,21 @@ if a page has a chapter heading such as "Surah 7" and local verse numbers such
 as "104" and "105", put the chapter heading regex in context_anchor and the
 local verse regex in unit_anchor. Do not invent chapter:verse anchors unless
 the sampled pages visibly contain chapter:verse text.
-For hadith collections, Book N, Hadith N usually starts the primary answerable
-hadith unit. Quran-style parenthetical references such as (6:83), (31:13), or
-(3:64) inside a hadith explanation are cross-references/provenance only unless
-the page visibly uses them as the primary heading pattern.
+For collections with a book-level heading and item-level numbers, keep the
+book/item heading as the primary answerable unit. Parenthetical references inside
+explanatory text are cross-references/provenance only unless the page visibly uses
+them as the primary heading pattern.
 For custom_json.quality_policy, identify which scripts are visible, which scripts
 are required for answerable chunks, which scripts are optional enrichment, whether
 missing optional script should warn, and page-level evidence for each decision.
-If sampled pages show English-only translations alongside Arabic-bearing hadith
-records, do not require Arabic for every English-only translation unit; make Arabic
-optional or role-scoped instead of globally required.
+If sampled pages show translation-only units alongside source-script records, do
+not require the source script for every translation-only unit; make the source
+script optional or role-scoped instead of globally required.
 For custom_json.layout_quality_policy, identify expected layout/block roles and
 whether recovered text from blocks misclassified as equations or disallowed block
-types is acceptable recovery, degraded quality, or a true blocker. For Arabic
-religious prose, stylized Arabic verse images may be misclassified as equations;
-classify that as info only when the visible page evidence supports it.
+types is acceptable recovery, degraded quality, or a true blocker. For stylized
+source-script text rendered as images, parser blocks may be misclassified as
+equations; classify that as info only when the visible page evidence supports it.
 For custom_json.vision_recovery_policy, enable it only when sampled page images show
 important visible text that the extracted page text may miss or distort. Use it to
 describe which block types should later be cropped and sent to a vision OCR model

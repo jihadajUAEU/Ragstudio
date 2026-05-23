@@ -934,7 +934,7 @@ async def test_ai_domain_metadata_suggester_preserves_reference_custom_json(monk
     assert "custom_json.retrieval" in prompt
     assert "primary answerable units" in prompt
     assert "inline cross-references" in prompt
-    assert "Quran-style parenthetical references" in prompt
+    assert "Parenthetical references inside" in prompt
     assert "vision OCR model" in prompt
     assert "missing optional script" in prompt
     assert "misclassified as equations" in prompt

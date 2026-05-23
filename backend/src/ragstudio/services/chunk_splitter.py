@@ -711,7 +711,7 @@ class ChunkSplitter:
             *domain_metadata.tags,
         ]
         normalized = {str(value).casefold() for value in values if value}
-        return bool({"arabic", "ar", "quran", "quran_tafseer"} & normalized)
+        return bool({"arabic", "ar", "arab"} & normalized)
 
     def _visual_order_key(
         self,

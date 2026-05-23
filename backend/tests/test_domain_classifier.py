@@ -10,22 +10,41 @@ def test_domain_classifier_maps_quran_tafseer_reference_documents():
                 "content_role": "quran",
                 "language": "mixed",
                 "tags": ["quran", "tafseer", "arabic"],
+                "custom_json": {
+                    "reference_schema": {
+                        "type": "chapter_verse",
+                        "fields": {"chapter": "chapter_number", "verse": "verse_number"},
+                    }
+                },
             }
         ]
     )
 
     assert result.domain_profile_id == "reference_heavy"
-    assert result.domain_family == "arabic_religious"
+    assert result.domain_family == "reference_heavy"
     assert result.materialization_hint == "graph"
     assert result.reference_heavy is True
     assert result.layout_hint == "reference"
 
 
-def test_domain_classifier_maps_hadith_to_arabic_reference_family():
-    result = DomainClassifier().classify([{"domain": "hadith", "tags": ["hadith"]}])
+def test_domain_classifier_maps_hadith_contract_to_reference_family():
+    result = DomainClassifier().classify(
+        [
+            {
+                "domain": "hadith",
+                "tags": ["hadith"],
+                "custom_json": {
+                    "reference_schema": {
+                        "type": "book_hadith",
+                        "fields": {"book": "book_number", "hadith": "hadith_number"},
+                    }
+                },
+            }
+        ]
+    )
 
     assert result.domain_profile_id == "reference_heavy"
-    assert result.domain_family == "arabic_religious"
+    assert result.domain_family == "reference_heavy"
     assert result.layout_hint == "reference"
     assert result.materialization_hint == "graph"
     assert result.reference_heavy is True
@@ -173,11 +192,11 @@ def test_domain_classifier_maps_specialized_non_arabic_profiles():
     assert code.materialization_hint == "vector"
 
 
-def test_domain_classifier_uses_adapter_family_for_arabic_reference_domains():
+def test_domain_classifier_does_not_infer_reference_family_without_contract():
     result = DomainClassifier().classify(
         [{"domain": "quran_tafseer", "tags": ["quran", "tafseer"]}]
     )
 
-    assert result.domain_family == "arabic_religious"
-    assert result.domain_profile_id == "reference_heavy"
-    assert result.materialization_hint == "graph"
+    assert result.domain_family == "generic"
+    assert result.domain_profile_id == "general"
+    assert result.materialization_hint == "vector"

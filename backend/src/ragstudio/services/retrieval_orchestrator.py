@@ -29,6 +29,10 @@ from ragstudio.services.query_hypothesis_verifier import (
     QueryHypothesisVerification,
     QueryHypothesisVerifier,
 )
+from ragstudio.services.reference_contracts import (
+    metadata_list_declared_scripts,
+    metadata_list_declares_reference_contract,
+)
 from ragstudio.services.reranker_service import RerankerService
 from ragstudio.services.retrieval_evidence import (
     EvidenceCandidate,
@@ -2076,42 +2080,16 @@ def _query_hypothesis_required(
         return True
     if normalized in {"false", "optional", "never"}:
         return False
-    return _domain_metadata_family(domain_metadata) == "arabic_religious"
+    return _domain_metadata_supports_arabic_terms(domain_metadata)
 
 
-def _domain_metadata_family(domain_metadata: list[dict[str, Any]]) -> str:
-    signals: set[str] = set()
-    for metadata in domain_metadata:
-        if not isinstance(metadata, dict):
-            continue
-        raw_tags = metadata.get("tags")
-        tags = raw_tags if isinstance(raw_tags, list | tuple | set) else []
-        for value in [
-            metadata.get("domain"),
-            metadata.get("document_type"),
-            metadata.get("content_role"),
-            *tags,
-        ]:
-            if isinstance(value, str) and value.strip():
-                signals.add(value.strip().casefold())
-    if signals & {
-        "quran",
-        "tafseer",
-        "quran_tafseer",
-        "hadith",
-        "islamic_text",
-        "religious_text",
-        "fiqh",
-        "fatwa",
-        "islamic_law",
-    }:
-        return "arabic_religious"
-    return "generic"
+def _domain_metadata_supports_arabic_terms(domain_metadata: list[dict[str, Any]]) -> bool:
+    scripts = metadata_list_declared_scripts(domain_metadata)
+    return bool({"arabic", "ar", "arab"} & scripts)
 
 
 def _route_domain_id(domain_metadata: list[dict[str, Any]]) -> str | None:
-    family = _domain_metadata_family(domain_metadata)
-    if family == "arabic_religious":
+    if metadata_list_declares_reference_contract(domain_metadata):
         return "reference_heavy"
     for metadata in domain_metadata:
         if not isinstance(metadata, dict):
@@ -2202,7 +2180,7 @@ def _confirmed_hypothesis_answer_allowed(
         and bool(verification.reference)
         and hypothesis.intent == "find_word_occurrence"
         and hypothesis.answer_shape in {"surah_and_verse", "reference"}
-        and getattr(domain_expansion, "domain_family", None) == "arabic_religious"
+        and getattr(domain_expansion, "domain_family", None) == "reference_heavy"
     )
 
 

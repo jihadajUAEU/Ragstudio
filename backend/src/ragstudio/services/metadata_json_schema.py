@@ -22,39 +22,39 @@ VISION_RECOVERY_FAILURE_ACTIONS = {"info", "warn", "block"}
 
 REFERENCE_CUSTOM_JSON_EXAMPLE: dict[str, Any] = {
     "reference_schema": {
-        "type": "chapter_verse",
-        "display": "{chapter}:{verse}",
-        "canonical_ref_template": "{chapter}:{verse}",
+        "type": "folio_line",
+        "display": "Folio {folio}, line {line}",
+        "canonical_ref_template": "folio:{folio}:line:{line}",
         "fields": {
-            "chapter": "chapter_number",
-            "verse": "verse_number",
+            "folio": "folio_number",
+            "line": "line_number",
             "page": "page_number",
         },
     },
     "relationships": {
-        "previous": ["same_chapter", "verse - 1"],
-        "next": ["same_chapter", "verse + 1"],
-        "chapter": ["same_chapter"],
+        "previous": ["same_folio", "line - 1"],
+        "next": ["same_folio", "line + 1"],
+        "folio": ["same_folio"],
         "page": ["same_page"],
     },
     "chunking": {
-        "unit": "verse",
+        "unit": "folio_line",
         "include_neighbors": 1,
         "preserve_parallel_text": True,
         "merge_reference_header_with_body": True,
     },
     "domain_structure": {
             "primary_anchor": {
-                "type": "chapter_verse",
+                "type": "folio_line",
                 "regex": (
-                    r"(\bVerse\s+|\[)(?P<chapter>\d{1,4})\s*:"
-                    r"\s*(?P<verse>\d{1,4})\]?"
+                    r"\bFolio\s+(?P<folio>\d{1,4})\s+Line\s+"
+                    r"(?P<line>\d{1,4})\b"
                 ),
-                "unit": "verse_section",
+                "unit": "folio_line",
             },
         "inline_references": {
-            "type": "chapter_verse",
-            "regex": r"(?P<chapter>\d{1,4})\s*:\s*(?P<verse>\d{1,4})",
+            "type": "folio_line",
+            "regex": r"folio:(?P<folio>\d{1,4}):line:(?P<line>\d{1,4})",
             "policy": "cross_reference_only",
         },
     },
@@ -82,7 +82,7 @@ REFERENCE_CUSTOM_JSON_EXAMPLE: dict[str, Any] = {
         "parse_method": "ocr",
         "backend": "pipeline",
         "device": "cuda:0",
-        "lang": "arabic",
+        "lang": "auto",
         "formula": False,
         "table": False,
         "max_concurrent_files": 1,

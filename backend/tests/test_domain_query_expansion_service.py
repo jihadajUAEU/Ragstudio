@@ -49,22 +49,23 @@ def test_domain_query_expansion_uses_registered_non_arabic_adapter():
     assert any(item.query == "impossibility" for item in expansion.retrieval_passes)
 
 
-def test_domain_query_expansion_preserves_arabic_religious_family():
+def test_domain_query_expansion_uses_reference_contract_family():
     service = DomainQueryExpansionService()
 
     expansion = service.expand(
         "quran 1:5",
         domain_metadata=[
             {
-                "domain": "quran_tafseer",
-                "document_type": "commentary",
-                "tags": ["quran", "arabic"],
-            }
-        ],
-    )
+                    "domain": "quran_tafseer",
+                    "document_type": "commentary",
+                    "tags": ["quran", "arabic"],
+                    "custom_json": quran_domain_metadata()["custom_json"],
+                }
+            ],
+        )
 
-    assert expansion.domain_family == "arabic_religious"
-    assert expansion.trace["domain_family"] == "arabic_religious"
+    assert expansion.domain_family == "reference_heavy"
+    assert expansion.trace["domain_family"] == "reference_heavy"
 
 
 def test_domain_query_expansion_legacy_arabic_adapter_does_not_duplicate_passes():
@@ -164,6 +165,15 @@ def quran_domain_metadata() -> dict[str, object]:
         "language": "mixed",
         "tags": ["quran", "tafseer", "arabic"],
         "script": "mixed",
+        "custom_json": {
+            "reference_schema": {
+                "type": "chapter_verse",
+                "fields": {"chapter": "chapter_number", "verse": "verse_number"},
+            },
+            "quality_policy": {
+                "required_scripts_by_unit_role": {"verse": ["arabic"]},
+            },
+        },
     }
 
 
@@ -202,7 +212,7 @@ def test_domain_query_expansion_prefers_arabic_for_quran_transliteration():
     result = service.expand("hanan", domain_metadata=[quran_domain_metadata()])
 
     assert result.original_query == "hanan"
-    assert result.domain_family == "arabic_religious"
+    assert result.domain_family == "reference_heavy"
     assert result.expansions[0].terms == ["حنانا", "وحنانا"]
     assert result.retrieval_passes[0].name == "lexical_expanded_token"
     assert result.retrieval_passes[0].query == "حنانا"

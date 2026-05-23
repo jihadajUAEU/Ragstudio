@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from ragstudio.services.reference_contracts import metadata_list_declares_reference_contract
+
 
 @dataclass(frozen=True, slots=True)
 class DomainClassification:
@@ -38,24 +40,12 @@ class DomainClassifier:
         signals = _signals(domain_metadata)
         layout_hint = _layout_hint(signals)
 
-        if _has_reference_contract(domain_metadata):
+        if metadata_list_declares_reference_contract(domain_metadata):
             return self._remember(
                 cache_key,
                 DomainClassification(
                     domain_profile_id="reference_heavy",
                     domain_family="reference_heavy",
-                    layout_hint=layout_hint or "reference",
-                    materialization_hint="graph",
-                    reference_heavy=True,
-                    signals=tuple(sorted(signals)),
-                ),
-            )
-        if {"quran_tafseer", "tafseer", "quran", "hadith"} & signals:
-            return self._remember(
-                cache_key,
-                DomainClassification(
-                    domain_profile_id="reference_heavy",
-                    domain_family="arabic_religious",
                     layout_hint=layout_hint or "reference",
                     materialization_hint="graph",
                     reference_heavy=True,
@@ -181,25 +171,6 @@ def _signals(domain_metadata: list[dict[str, Any]]) -> set[str]:
                 for item in raw_values:
                     _add_value(values, item)
     return values
-
-
-def _has_reference_contract(domain_metadata: list[dict[str, Any]]) -> bool:
-    for metadata in domain_metadata:
-        if not isinstance(metadata, dict):
-            continue
-        custom_json = metadata.get("custom_json")
-        if isinstance(custom_json, dict) and isinstance(custom_json.get("reference_schema"), dict):
-            return True
-        reference_contract = metadata.get("reference_contract")
-        if isinstance(reference_contract, dict):
-            return True
-        index_contract = metadata.get("index_contract")
-        if isinstance(index_contract, dict) and isinstance(
-            index_contract.get("reference_contract"),
-            dict,
-        ):
-            return True
-    return False
 
 
 def _cache_key(domain_metadata: list[dict[str, Any]]) -> str:
