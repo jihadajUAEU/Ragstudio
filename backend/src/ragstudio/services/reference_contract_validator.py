@@ -124,18 +124,21 @@ class ReferenceContractValidator:
         matched_units = 0
         for page in pages:
             page_text = page.text or ""
-            page_matches = list(pattern.finditer(page_text))
-            if page_matches:
-                matched_pages.append(page.page_number)
-            matched_units += len(page_matches)
-            for match in page_matches:
-                if len(examples) >= 6:
-                    break
+            page_matched = False
+            for match in pattern.finditer(page_text):
                 groups = self._match_groups(match)
+                if not self._has_groups(groups, required_groups):
+                    continue
                 reference = canonical_reference_from_groups(
                     groups,
                     candidate.canonical_ref_template,
                 )
+                if candidate.canonical_ref_template is not None and reference is None:
+                    continue
+                matched_units += 1
+                page_matched = True
+                if len(examples) >= 6:
+                    continue
                 examples.append(
                     {
                         "page": page.page_number,
@@ -145,6 +148,8 @@ class ReferenceContractValidator:
                         "start": match.start(),
                     }
                 )
+            if page_matched:
+                matched_pages.append(page.page_number)
 
         return ReferenceContractCandidateResult(
             source=candidate.source,
@@ -194,9 +199,13 @@ class ReferenceContractValidator:
 
         context_required_groups = candidate.context_required_groups
         unit_required_groups = candidate.unit_required_groups
+        required_groups = candidate.required_groups
+        declared_group_names = set(context_pattern.groupindex) | set(unit_pattern.groupindex)
         required_groups_present = context_required_groups.issubset(
             set(context_pattern.groupindex)
-        ) and unit_required_groups.issubset(set(unit_pattern.groupindex))
+        ) and unit_required_groups.issubset(
+            set(unit_pattern.groupindex)
+        ) and required_groups.issubset(declared_group_names)
         matched_pages: list[int] = []
         examples: list[dict[str, object]] = []
         matched_units = 0
@@ -221,13 +230,17 @@ class ReferenceContractValidator:
                 ):
                     continue
                 merged_groups = {**current_context_groups, **groups}
+                if not self._has_groups(merged_groups, required_groups):
+                    continue
+                reference = canonical_reference_from_groups(
+                    merged_groups,
+                    candidate.canonical_ref_template,
+                )
+                if candidate.canonical_ref_template is not None and reference is None:
+                    continue
                 matched_units += 1
                 page_matched = True
                 if len(examples) < 6:
-                    reference = canonical_reference_from_groups(
-                        merged_groups,
-                        candidate.canonical_ref_template,
-                    )
                     examples.append(
                         {
                             "page": page.page_number,

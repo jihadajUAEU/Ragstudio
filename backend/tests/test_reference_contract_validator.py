@@ -177,3 +177,60 @@ def test_validator_rejects_nonmatching_custom_single_anchor_contract():
     assert result.candidates[0].required_groups_present is True
     assert result.candidates[0].matched_units == 0
     assert result.candidates[0].rejection_reason == "no_sample_matches"
+
+
+def test_validator_rejects_contextual_candidate_missing_declared_required_field():
+    pages = [
+        SampledPage(
+            page_number=1,
+            text="Article 12\nClause 7 The procedure starts here.",
+            image_data_url=None,
+        )
+    ]
+    candidate = ReferenceContractCandidate(
+        source="ai_observed",
+        schema_type="article_clause_item",
+        context_anchor_regex=r"Article\s+(?P<article>\d+)",
+        unit_anchor_regex=r"Clause\s+(?P<clause>\d+)",
+        required_groups=frozenset({"article", "clause", "item"}),
+        context_required_groups=frozenset({"article"}),
+        unit_required_groups=frozenset({"clause"}),
+        canonical_ref_template="article:{article}:clause:{clause}:item:{item}",
+        unit="clause",
+    )
+
+    result = ReferenceContractValidator().validate(pages, [candidate])
+
+    assert result.status == "unverified"
+    assert result.selected is None
+    assert result.candidates[0].required_groups_present is False
+    assert result.candidates[0].matched_units == 0
+    assert result.candidates[0].examples == []
+    assert result.candidates[0].rejection_reason == "no_sample_matches"
+
+
+def test_validator_rejects_single_anchor_empty_required_capture():
+    pages = [
+        SampledPage(
+            page_number=1,
+            text="Article 12.",
+            image_data_url=None,
+        )
+    ]
+    candidate = ReferenceContractCandidate(
+        source="ai_observed",
+        schema_type="article_clause",
+        primary_anchor_regex=r"Article\s+(?P<article>\d+)\.(?P<clause>\d*)",
+        required_groups=frozenset({"article", "clause"}),
+        canonical_ref_template="article:{article}:clause:{clause}",
+        unit="article_clause",
+    )
+
+    result = ReferenceContractValidator().validate(pages, [candidate])
+
+    assert result.status == "unverified"
+    assert result.selected is None
+    assert result.candidates[0].required_groups_present is True
+    assert result.candidates[0].matched_units == 0
+    assert result.candidates[0].examples == []
+    assert result.candidates[0].rejection_reason == "no_sample_matches"
