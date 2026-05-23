@@ -28,6 +28,7 @@ class ReferenceAnchor:
 class ExecutableReferenceContract:
     schema_type: str | None
     canonical_ref_template: str | None
+    canonical_ref_template_valid: bool
     required_groups: frozenset[str]
     anchors: tuple[ReferenceAnchor, ...]
     required_scripts: frozenset[str] = field(default_factory=frozenset)
@@ -38,8 +39,11 @@ class ExecutableReferenceContract:
     @property
     def verified(self) -> bool:
         return (
-            self._verified_primary_anchor_satisfies_required_groups()
-            or self._verified_context_unit_anchors_satisfy_required_groups()
+            self.canonical_ref_template_valid
+            and (
+                self._verified_primary_anchor_satisfies_required_groups()
+                or self._verified_context_unit_anchors_satisfy_required_groups()
+            )
         )
 
     @property
@@ -132,10 +136,12 @@ def build_executable_reference_contract(custom_json: dict[str, Any]) -> Executab
     reference_schema = _dict_value(custom_json.get("reference_schema"))
     domain_structure = _dict_value(custom_json.get("domain_structure"))
     quality_policy = _dict_value(custom_json.get("quality_policy"))
+    canonical_ref_template = _string_value(reference_schema.get("canonical_ref_template"))
 
     return ExecutableReferenceContract(
         schema_type=_string_value(reference_schema.get("type")),
-        canonical_ref_template=_string_value(reference_schema.get("canonical_ref_template")),
+        canonical_ref_template=canonical_ref_template,
+        canonical_ref_template_valid=_template_is_valid(canonical_ref_template),
         required_groups=frozenset(declared_required_groups(custom_json)),
         anchors=tuple(_declared_anchors(domain_structure)),
         required_scripts=_script_set(quality_policy.get("required_scripts")),
@@ -154,7 +160,9 @@ def declared_required_groups(custom_json: dict[str, Any]) -> set[str]:
 
     template = _string_value(reference_schema.get("canonical_ref_template"))
     if template:
-        return _template_fields(template)
+        template_groups = _safe_template_fields(template)
+        if template_groups is not None:
+            return template_groups
 
     for key in ("identity_fields", "required_fields"):
         groups = _string_list(reference_schema.get(key))
@@ -208,6 +216,19 @@ def _template_fields(template: str) -> set[str]:
         for _, field_name, _, _ in Formatter().parse(template)
         if field_name
     }
+
+
+def _safe_template_fields(template: str) -> set[str] | None:
+    try:
+        return _template_fields(template)
+    except ValueError:
+        return None
+
+
+def _template_is_valid(template: str | None) -> bool:
+    if template is None:
+        return True
+    return _safe_template_fields(template) is not None
 
 
 def _scripts_for_role(

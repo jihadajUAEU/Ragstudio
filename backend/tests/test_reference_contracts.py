@@ -95,6 +95,29 @@ def test_declared_groups_fall_back_to_fields_without_template_or_identity_list()
     assert declared_required_groups(metadata) == {"volume", "notice"}
 
 
+def test_malformed_template_does_not_make_verified_contract_executable():
+    metadata = {
+        "reference_schema": {
+            "type": "folio_line",
+            "canonical_ref_template": "folio:{folio:line:{line}",
+            "fields": {"folio": "folio_number", "line": "line_number"},
+        },
+        "domain_structure": {
+            "primary_anchor": {
+                "regex": r"Folio\s+(?P<folio>\d+)\s+Line\s+(?P<line>\d+)",
+                "unit": "folio_line",
+                "verified": True,
+            }
+        },
+    }
+
+    contract = build_executable_reference_contract(metadata)
+
+    assert declared_required_groups(metadata) == {"folio", "line"}
+    assert contract.canonical_ref_template_valid is False
+    assert contract.verified is False
+
+
 def test_canonical_reference_uses_declared_template():
     assert (
         canonical_reference_from_groups(

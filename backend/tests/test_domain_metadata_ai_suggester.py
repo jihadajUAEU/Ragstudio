@@ -1,8 +1,10 @@
+import pytest
+from ragstudio.db.models import SettingsProfile
 from ragstudio.schemas.parsing import DomainMetadata
 from ragstudio.services.domain_metadata_ai_suggester import DomainMetadataAiSuggester
 from ragstudio.services.page_sampler import SampledPage
-from ragstudio.services.reference_contracts import build_executable_reference_contract
 from ragstudio.services.reference_contract_validator import ReferenceContractValidator
+from ragstudio.services.reference_contracts import build_executable_reference_contract
 
 
 def test_reference_contract_candidates_include_declared_groups_and_template():
@@ -86,6 +88,126 @@ def test_quran_like_candidate_uses_template_identity_not_page_field():
         "1:1",
         "1:2",
     ]
+
+
+@pytest.mark.asyncio
+async def test_suggest_preserves_template_identity_through_validation(monkeypatch):
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": """
+                            {
+                              "domain_metadata": {
+                                "domain": "quran_tafseer",
+                                "custom_json": {
+                                  "reference_schema": {
+                                    "type": "quran_tafseer",
+                                    "fields": {
+                                      "chapter": "chapter_number",
+                                      "verse": "verse_number",
+                                      "page": "page_number"
+                                    },
+                                    "canonical_ref_template": "{chapter}:{verse}"
+                                  },
+                                  "domain_structure": {
+                                    "primary_anchor": {
+                                      "regex": "\\\\[(?P<chapter>\\\\d+):(?P<verse>\\\\d+)\\\\]",
+                                      "unit": "verse"
+                                    }
+                                  }
+                                }
+                              },
+                              "confidence": 0.9,
+                              "evidence_pages": [1],
+                              "rationale": "The sampled page shows bracketed references.",
+                              "warnings": []
+                            }
+                            """
+                        }
+                    }
+                ]
+            }
+
+    class FakeClient:
+        def __init__(self, timeout):
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def post(self, url, headers, json):
+            return FakeResponse()
+
+    monkeypatch.setattr(
+        "ragstudio.services.domain_metadata_ai_suggester.httpx.AsyncClient",
+        FakeClient,
+    )
+
+    result = await DomainMetadataAiSuggester().suggest(
+        settings_profile=SettingsProfile(
+            id="default",
+            provider="openai-compatible",
+            llm_model="text-model",
+            llm_base_url="http://llm.test/v1",
+            embedding_model="embedding-model",
+            storage_backend="postgres",
+            vision_model="vision-model",
+            vision_base_url="http://vision.test/v1",
+        ),
+        filename="quran.pdf",
+        content_type="application/pdf",
+        pages=[SampledPage(page_number=1, text="[1:1] [1:2]")],
+        sampler_warnings=[],
+    )
+
+    custom_json = result.domain_metadata.custom_json
+    reference_schema = custom_json["reference_schema"]
+    contract = build_executable_reference_contract(custom_json)
+
+    assert reference_schema["canonical_ref_template"] == "{chapter}:{verse}"
+    assert custom_json["reference_contract_validation"]["status"] == "verified"
+    assert contract.required_groups == frozenset({"chapter", "verse"})
+    assert contract.verified is True
+
+
+def test_malformed_template_candidate_fails_without_throwing():
+    metadata = DomainMetadata(
+        custom_json={
+            "reference_schema": {
+                "type": "folio_line",
+                "fields": {"folio": "folio_number", "line": "line_number"},
+                "canonical_ref_template": "folio:{folio:line:{line}",
+            },
+            "domain_structure": {
+                "primary_anchor": {
+                    "regex": r"Folio\s+(?P<folio>\d+)\s+Line\s+(?P<line>\d+)",
+                    "unit": "folio_line",
+                }
+            },
+        }
+    )
+
+    candidates = DomainMetadataAiSuggester()._reference_contract_candidates(
+        metadata,
+        source="ai_observed",
+    )
+    result = ReferenceContractValidator().validate(
+        [SampledPage(page_number=1, text="Folio 12 Line 7")],
+        candidates,
+    )
+
+    assert candidates[0].required_groups == frozenset({"folio", "line"})
+    assert result.status == "unverified"
+    assert result.selected is None
+    assert result.candidates[0].matched_units == 0
 
 
 def test_production_candidate_rejects_empty_required_capture():

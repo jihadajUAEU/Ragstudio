@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from copy import deepcopy
 from dataclasses import dataclass
 from itertools import islice
+from string import Formatter
 from typing import Any
 
 import httpx
@@ -18,13 +19,13 @@ from ragstudio.services.http_client_provider import HttpClientProviderProtocol
 from ragstudio.services.http_retry import raise_for_transient_status, retry_async_http
 from ragstudio.services.metadata_json_schema import validate_custom_json
 from ragstudio.services.page_sampler import SampledPage
-from ragstudio.services.reference_contracts import declared_required_groups
 from ragstudio.services.reference_contract_validator import (
     ReferenceContractCandidate,
     ReferenceContractCandidateResult,
     ReferenceContractValidationResult,
     ReferenceContractValidator,
 )
+from ragstudio.services.reference_contracts import declared_required_groups
 
 AUTOSUGGEST_MIN_TIMEOUT_MS = 60_000
 AUTOSUGGEST_INITIAL_MAX_TOKENS = 4_096
@@ -981,6 +982,16 @@ Content type: {content_type}
                 item = reference_schema.get(key)
                 if isinstance(item, str):
                     schema[key] = item
+            canonical_ref_template = reference_schema.get("canonical_ref_template")
+            if (
+                isinstance(canonical_ref_template, str)
+                and self._is_valid_canonical_ref_template(canonical_ref_template)
+            ):
+                schema["canonical_ref_template"] = canonical_ref_template
+            for key in ("identity_fields", "required_fields"):
+                items = self._string_list(reference_schema.get(key))
+                if items:
+                    schema[key] = items
             for key in ("pattern", "regex"):
                 item = reference_schema.get(key)
                 if isinstance(item, str) and self._is_valid_reference_pattern(key, item):
@@ -1421,6 +1432,22 @@ Content type: {content_type}
             return frozenset(re.compile(regex).groupindex)
         except re.error:
             return frozenset()
+
+    def _is_valid_canonical_ref_template(self, value: str) -> bool:
+        try:
+            list(Formatter().parse(value))
+        except ValueError:
+            return False
+        return True
+
+    def _string_list(self, value: object) -> list[str]:
+        if not isinstance(value, list):
+            return []
+        return [
+            item.strip()
+            for item in value
+            if isinstance(item, str) and item.strip()
+        ]
 
     def _string_value(self, value: object) -> str | None:
         return value.strip() if isinstance(value, str) and value.strip() else None
