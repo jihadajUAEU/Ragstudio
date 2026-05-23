@@ -14,6 +14,10 @@ def _quran_metadata() -> DomainMetadata:
         custom_json={
             "reference_schema": {"type": "chapter_verse", "display": "{chapter}:{verse}"},
             "chunking": {"unit": "verse", "preserve_parallel_text": True},
+            "quality_policy": {
+                "required_scripts": ["arabic"],
+                "missing_required_script_action": "warn",
+            },
         },
         reference_pattern="surah_number:verse_number",
         script="mixed",
@@ -516,6 +520,38 @@ def test_domain_quality_gate_blocks_optional_only_policy_without_required_script
     assert policy["index_vector"] is False
     assert policy["project_graph"] is False
     assert policy["graph_confidence"] == "blocked"
+
+
+def test_quality_gate_does_not_require_global_arabic_when_role_marks_it_optional():
+    metadata = DomainMetadata(
+        domain="translation",
+        custom_json={
+            "reference_schema": {
+                "type": "chapter_verse",
+                "fields": {"chapter": "chapter", "verse": "verse"},
+                "canonical_ref_template": "{chapter}:{verse}",
+            },
+            "chunking": {"unit": "verse_translation"},
+            "quality_policy": {
+                "required_scripts": [],
+                "optional_scripts_by_unit_role": {"verse_translation": ["arabic"]},
+                "missing_optional_script_action": "no_warning",
+            },
+        },
+    )
+    chunk = AdapterChunk(
+        text="[1:4]\nIt is You we worship and You we ask for help.",
+        source_location={"page": 2, "reference": "1:4"},
+        metadata={"canonical_reference_unit": {"unit_role": "verse_translation"}},
+    )
+
+    DomainMetadataQualityGate().annotate_chunk(chunk, domain_metadata=metadata)
+
+    warnings = chunk.metadata.get("extraction_quality", {}).get("parser_warnings", [])
+    assert all(
+        warning["code"] != "reference_unit_missing_expected_script"
+        for warning in warnings
+    )
 
 
 def test_domain_quality_gate_consumes_role_scoped_script_policies():

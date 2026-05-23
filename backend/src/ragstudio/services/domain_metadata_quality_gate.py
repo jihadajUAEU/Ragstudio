@@ -105,17 +105,18 @@ class DomainMetadataQualityGate:
             quality_policy.get("optional_scripts_by_unit_role")
         )
         required_scripts_configured = isinstance(quality_policy.get("required_scripts"), list)
-        if not required_scripts and not required_scripts_configured:
-            required_scripts = expected_scripts
+        if not required_scripts_configured:
+            required_scripts = frozenset()
         all_policy_scripts = (
             required_scripts
             | optional_scripts
             | _script_map_values(required_scripts_by_unit_role)
             | _script_map_values(optional_scripts_by_unit_role)
         )
+        observed_policy_scripts = all_policy_scripts or expected_scripts
         return MetadataQualityProfile(
             domain=str(domain_metadata.domain or "generic").strip().casefold(),
-            expected_scripts=frozenset(sorted(all_policy_scripts)),
+            expected_scripts=frozenset(sorted(observed_policy_scripts)),
             required_scripts=frozenset(sorted(required_scripts)),
             optional_scripts=frozenset(sorted(optional_scripts)),
             required_scripts_by_unit_role=required_scripts_by_unit_role,
@@ -149,13 +150,24 @@ class DomainMetadataQualityGate:
         metadata: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         profile = self.profile_for(domain_metadata, expected_profile=expected_profile)
-        if not profile.required_scripts and not profile.optional_scripts:
+        unit_role = self._unit_role({}, metadata)
+        required_scripts = self._scripts_for_unit_role(
+            profile.required_scripts,
+            profile.required_scripts_by_unit_role,
+            unit_role,
+        )
+        optional_scripts = self._scripts_for_unit_role(
+            profile.optional_scripts,
+            profile.optional_scripts_by_unit_role,
+            unit_role,
+        )
+        if not required_scripts and not optional_scripts:
             return []
         if not self._has_reference(text, metadata, profile):
             return []
 
         warnings: list[dict[str, Any]] = []
-        for script in sorted(profile.required_scripts):
+        for script in sorted(required_scripts):
             pattern = SCRIPT_PATTERNS.get(script)
             if pattern is None or pattern.search(text):
                 continue
@@ -171,7 +183,7 @@ class DomainMetadataQualityGate:
                 }
             )
         if profile.missing_optional_script_action != "no_warning":
-            for script in sorted(profile.optional_scripts):
+            for script in sorted(optional_scripts):
                 pattern = SCRIPT_PATTERNS.get(script)
                 if pattern is None or pattern.search(text):
                     continue
@@ -1362,9 +1374,7 @@ class DomainMetadataQualityGate:
             return True
         if not chunk.text.strip():
             return False
-        return bool(
-            profile.reference_unit in {"verse", "verse_section", "reference", "hadith", "section"}
-        )
+        return bool(profile.structured_references and profile.reference_unit)
 
     def _is_provenance_only_chunk(self, chunk: AdapterChunk) -> bool:
         if chunk.content_type == "reference_provenance":
@@ -1379,7 +1389,6 @@ class DomainMetadataQualityGate:
         return bool(
             profile.structured_references
             and profile.reference_unit
-            in {"verse", "verse_section", "reference", "hadith", "section"}
             and (
                 profile.required_scripts
                 or profile.required_scripts_by_unit_role
