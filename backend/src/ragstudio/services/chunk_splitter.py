@@ -772,13 +772,7 @@ class ChunkSplitter:
     ) -> list[SplitPiece]:
         del domain_metadata
 
-        if profile.semantics is None or profile.semantics.chunk_unit not in {
-            "hadith",
-            "verse",
-            "verse_section",
-            "reference",
-            "section",
-        }:
+        if profile.semantics is None or not profile.semantics.canonical_units_enabled:
             return []
 
         units = self._reference_text_units(chunk.text, profile)
@@ -801,13 +795,7 @@ class ChunkSplitter:
     ) -> list[SplitPiece]:
         del domain_metadata
 
-        if profile.semantics is None or profile.semantics.chunk_unit not in {
-            "hadith",
-            "verse",
-            "verse_section",
-            "reference",
-            "section",
-        }:
+        if profile.semantics is None or not profile.semantics.canonical_units_enabled:
             return []
 
         units = self._reference_text_units(chunk.text, profile)

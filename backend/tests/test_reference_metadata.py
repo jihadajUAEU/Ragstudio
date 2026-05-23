@@ -98,6 +98,94 @@ def test_reference_semantics_supports_generic_chapter_verse_schema():
     assert semantics.exact_reference_top1 is False
 
 
+def test_reference_semantics_extracts_custom_anchor_references():
+    metadata = DomainMetadata(
+        domain="archive",
+        custom_json={
+            "reference_schema": {
+                "type": "folio_line",
+                "fields": {"folio": "folio", "line": "line"},
+                "canonical_ref_template": "folio:{folio}:line:{line}",
+            },
+            "domain_structure": {
+                "primary_anchor": {
+                    "regex": r"Folio\s+(?P<folio>\d+)\s+Line\s+(?P<line>\d+)",
+                    "unit": "folio_line",
+                    "verified": True,
+                }
+            },
+            "reference_resolution": {"enabled": True, "build_canonical_units": True},
+        },
+    )
+
+    refs = ReferenceSemantics.from_metadata(metadata).extract_chunk_references(
+        "Folio 12 Line 7 The record begins."
+    )
+
+    assert refs[0]["ref"] == "folio:12:line:7"
+
+
+def test_reference_metadata_extracts_contextual_surah_verse_units():
+    metadata = DomainMetadata(
+        domain="quran",
+        custom_json={
+            "reference_schema": {
+                "type": "chapter_verse",
+                "display": "{chapter}:{verse}",
+                "canonical_ref_template": "{chapter}:{verse}",
+            },
+            "domain_structure": {
+                "context_anchor": {
+                    "type": "chapter_verse",
+                    "regex": r"\bSurah\s+(?P<chapter>\d{1,4})\b",
+                    "unit": "chapter",
+                    "verified": True,
+                },
+                "unit_anchor": {
+                    "type": "chapter_verse",
+                    "regex": r"\b(?P<verse>10[45])\b",
+                    "unit": "verse",
+                    "context_source": "context_anchor",
+                    "verified": True,
+                },
+            },
+        },
+    )
+    semantics = ReferenceSemantics.from_metadata(metadata)
+
+    refs = semantics.extract_primary_anchor_references(
+        "Surah 7\nThe Elevations\n104 Moses said...\n105 It is only proper..."
+    )
+
+    assert [ref["canonical"] for ref in refs] == ["7:104", "7:105"]
+
+
+def test_unverified_primary_anchor_does_not_enable_canonical_units():
+    metadata = DomainMetadata(
+        domain="quran",
+        custom_json={
+            "reference_schema": {"type": "chapter_verse"},
+            "domain_structure": {
+                "primary_anchor": {
+                    "type": "chapter_verse",
+                    "regex": r"\[(?P<chapter>\d+):(?P<verse>\d+)\]",
+                    "unit": "verse",
+                    "verified": False,
+                },
+            },
+            "reference_resolution": {
+                "enabled": True,
+                "build_canonical_units": True,
+            },
+        },
+    )
+
+    semantics = ReferenceSemantics.from_metadata(metadata)
+
+    assert semantics.primary_anchor_pattern is None
+    assert semantics.canonical_units_enabled is False
+
+
 def test_reference_semantics_supports_book_hadith_schema():
     semantics = ReferenceSemantics.from_metadata(
         DomainMetadata(
@@ -111,6 +199,17 @@ def test_reference_semantics_supports_book_hadith_schema():
                     "fields": {"book": "book_number", "hadith": "hadith_number"},
                 },
                 "chunking": {"unit": "hadith", "include_neighbors": 1},
+                "domain_structure": {
+                    "primary_anchor": {
+                        "type": "book_hadith",
+                        "regex": (
+                            r"\bBook\s+(?P<book>\d+)\s*,?\s*Hadith\s+"
+                            r"(?P<hadith>\d+)\b"
+                        ),
+                        "unit": "hadith",
+                        "verified": True,
+                    },
+                },
                 "reference_resolution": {
                     "enabled": True,
                     "build_canonical_units": True,
@@ -273,6 +372,7 @@ def test_derive_reference_metadata_keeps_cross_reference_only_mentions_non_prima
                     "primary_anchor": {
                         "regex": r"\bVerse\s+(?P<chapter>\d{1,4})\s*:\s*(?P<verse>\d{1,4})\b",
                         "unit": "verse_section",
+                        "verified": True,
                     },
                     "inline_references": {
                         "regex": r"(?P<chapter>\d{1,4})\s*:\s*(?P<verse>\d{1,4})",

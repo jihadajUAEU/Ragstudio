@@ -5,6 +5,10 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ragstudio.schemas.parsing import DomainMetadata
+from ragstudio.services.reference_contracts import (
+    ReferenceAnchor,
+    build_executable_reference_contract,
+)
 
 REFERENCE_PATTERN = re.compile(
     r"(?P<prefix>\bQuran\s+)?(?P<bracket>\[)?"
@@ -28,14 +32,6 @@ BOOK_HADITH_PATTERN = re.compile(
     r"\bBook\s+(?P<book>\d+)\s*,?\s*Hadith\s+(?P<hadith>\d+)\b",
     flags=re.IGNORECASE,
 )
-TAFSEER_PRIMARY_ANCHOR_PATTERN = (
-    r"(\bVerse\s+|\[)(?P<chapter>\d{1,4})\s*:\s*(?P<verse>\d{1,4})\]?"
-)
-CHAPTER_VERSE_INLINE_REFERENCE_PATTERN = (
-    r"(?P<chapter>\d{1,4})\s*:\s*(?P<verse>\d{1,4})"
-)
-
-
 @dataclass(frozen=True)
 class ReferenceSemantics:
     profile_name: str = "generic"
@@ -60,8 +56,11 @@ class ReferenceSemantics:
     store_text_hash: bool = False
     primary_anchor_pattern: str | None = None
     primary_anchor_unit: str | None = None
+    context_anchor_pattern: str | None = None
+    unit_anchor_pattern: str | None = None
     inline_reference_pattern: str | None = None
     inline_reference_policy: str = "starts_unit"
+    required_reference_groups: frozenset[str] = field(default_factory=frozenset)
 
     @classmethod
     def from_metadata(cls, metadata: DomainMetadata) -> ReferenceSemantics:
@@ -87,45 +86,86 @@ class ReferenceSemantics:
         )
         primary_anchor = domain_structure.get("primary_anchor")
         primary_anchor = primary_anchor if isinstance(primary_anchor, dict) else {}
+        context_anchor = domain_structure.get("context_anchor")
+        context_anchor = context_anchor if isinstance(context_anchor, dict) else {}
+        unit_anchor = domain_structure.get("unit_anchor")
+        unit_anchor = unit_anchor if isinstance(unit_anchor, dict) else {}
         inline_references = domain_structure.get("inline_references")
         inline_references = inline_references if isinstance(inline_references, dict) else {}
+        contract = build_executable_reference_contract(custom)
         schema_pattern = cls._schema_pattern(reference_schema)
-        canonical_ref_template = cls._canonical_ref_template(reference_schema)
+        canonical_ref_template = contract.canonical_ref_template or cls._canonical_ref_template(
+            reference_schema
+        )
 
         has_reference_schema = isinstance(reference_schema, dict)
         structured_reference = has_reference_schema or cls._has_structured_reference_fields(
             metadata
         )
         profile_name = "scripture_reference" if structured_reference else "generic"
-        reference_type = cls._reference_type(metadata, reference_schema)
+        reference_type = contract.schema_type or cls._reference_type(metadata, reference_schema)
 
-        primary_anchor_unit = cls._string_value(primary_anchor.get("unit"), default=None)
+        primary_contract_anchor = cls._verified_anchor_for_groups(
+            contract.anchors,
+            "primary_anchor",
+            contract.required_groups,
+        )
+        context_contract_anchor = cls._verified_context_anchor_for_groups(
+            contract.anchors,
+            contract.required_groups,
+        )
+        unit_contract_anchor = cls._verified_unit_anchor_for_groups(
+            contract.anchors,
+            contract.required_groups,
+        )
+        inline_contract_anchor = cls._anchor_by_kind(contract.anchors, "inline_references")
+        first_anchor_unit = next(
+            (anchor.unit_role for anchor in contract.anchors if anchor.unit_role),
+            None,
+        )
+        primary_anchor_unit = (
+            primary_contract_anchor.unit_role
+            if primary_contract_anchor is not None
+            else cls._string_value(primary_anchor.get("unit"), default=None)
+        )
         chunk_unit = cls._string_value(
             chunking.get("unit"),
-            default=primary_anchor_unit or "section",
+            default=first_anchor_unit or primary_anchor_unit or "section",
         ) or "section"
-        if chunk_unit == "section" and structured_reference:
+        if chunk_unit == "section" and structured_reference and not contract.anchors:
             chunk_unit = "verse"
-        default_primary_anchor = cls._default_primary_anchor_pattern(
-            metadata,
-            reference_type=reference_type,
-            primary_anchor=primary_anchor,
+        verified_primary_anchor_pattern = (
+            primary_contract_anchor.regex if primary_contract_anchor is not None else None
         )
-        primary_anchor_pattern = cls._string_value(
-            primary_anchor.get("regex"),
-            default=default_primary_anchor,
+        contextual_anchor_verified = (
+            context_contract_anchor is not None and unit_contract_anchor is not None
         )
         inline_reference_policy = cls._string_value(
-            inline_references.get("policy"),
-            default="cross_reference_only" if default_primary_anchor else "starts_unit",
+            inline_references.get("policy")
+            or (inline_contract_anchor.policy if inline_contract_anchor else None),
+            default="cross_reference_only"
+            if verified_primary_anchor_pattern or contextual_anchor_verified
+            else "starts_unit",
         )
         inline_reference_pattern = cls._string_value(
-            inline_references.get("regex"),
-            default=(
-                CHAPTER_VERSE_INLINE_REFERENCE_PATTERN
-                if default_primary_anchor
-                else None
-            ),
+            inline_contract_anchor.regex
+            if inline_contract_anchor
+            else inline_references.get("regex"),
+            default=None,
+        )
+        context_anchor_pattern = (
+            context_contract_anchor.regex if context_contract_anchor is not None else None
+        )
+        unit_anchor_pattern = (
+            unit_contract_anchor.regex if unit_contract_anchor is not None else None
+        )
+        has_verified_anchor = (
+            verified_primary_anchor_pattern is not None
+            or (
+                contextual_anchor_verified
+                and context_anchor_pattern is not None
+                and unit_anchor_pattern is not None
+            )
         )
 
         return cls(
@@ -163,6 +203,7 @@ class ReferenceSemantics:
             canonical_ref_template=canonical_ref_template,
             canonical_units_enabled=bool(
                 structured_reference
+                and has_verified_anchor
                 and cls._bool_value(reference_resolution.get("enabled"), default=False)
                 and cls._bool_value(
                     reference_resolution.get("build_canonical_units"),
@@ -206,13 +247,13 @@ class ReferenceSemantics:
                 provenance.get("store_text_hash"),
                 default=False,
             ),
-            primary_anchor_pattern=primary_anchor_pattern,
-            primary_anchor_unit=cls._string_value(
-                primary_anchor.get("unit"),
-                default="verse_section" if default_primary_anchor else None,
-            ),
+            primary_anchor_pattern=verified_primary_anchor_pattern,
+            primary_anchor_unit=primary_anchor_unit,
+            context_anchor_pattern=context_anchor_pattern if contextual_anchor_verified else None,
+            unit_anchor_pattern=unit_anchor_pattern if contextual_anchor_verified else None,
             inline_reference_pattern=inline_reference_pattern,
             inline_reference_policy=inline_reference_policy or "starts_unit",
+            required_reference_groups=contract.required_groups,
         )
 
     def extract_query_reference(self, query: str) -> dict[str, int | str] | None:
@@ -235,6 +276,9 @@ class ReferenceSemantics:
         return references
 
     def extract_primary_anchor_references(self, text: str) -> list[dict[str, int | str]]:
+        contextual_references = self._extract_contextual_unit_references(text)
+        if contextual_references:
+            return contextual_references
         pattern = self._primary_anchor_regex()
         if pattern is None:
             return self.extract_chunk_references(text)
@@ -270,6 +314,9 @@ class ReferenceSemantics:
         return units
 
     def split_primary_anchor_units(self, text: str) -> list[str]:
+        contextual_units = self._split_contextual_unit_units(text)
+        if contextual_units:
+            return contextual_units
         pattern = self._primary_anchor_regex()
         if pattern is None:
             return self.split_reference_units(text)
@@ -294,6 +341,12 @@ class ReferenceSemantics:
         text: str,
         source_location: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        contextual_references = self._extract_contextual_unit_references(text)
+        if contextual_references:
+            return self._reference_metadata_from_references(
+                contextual_references,
+                source_location,
+            )
         all_references = self.extract_chunk_references(text)
         if (
             self.inline_reference_policy == "cross_reference_only"
@@ -439,9 +492,17 @@ class ReferenceSemantics:
         include_chapter_only: bool = False,
     ) -> list[re.Pattern[str]]:
         patterns: list[re.Pattern[str]] = []
-        if self.reference_pattern:
+        seen: set[str] = set()
+        for pattern_text in (
+            self.primary_anchor_pattern,
+            self.inline_reference_pattern,
+            self.reference_pattern,
+        ):
+            if not pattern_text or pattern_text in seen:
+                continue
+            seen.add(pattern_text)
             try:
-                patterns.append(re.compile(self.reference_pattern, flags=re.IGNORECASE))
+                patterns.append(re.compile(pattern_text, flags=re.IGNORECASE))
             except re.error:
                 pass
         reference_type = (self.reference_type or "").casefold()
@@ -466,6 +527,111 @@ class ReferenceSemantics:
             return re.compile(self.primary_anchor_pattern, flags=re.IGNORECASE)
         except re.error:
             return None
+
+    def _context_anchor_regex(self) -> re.Pattern[str] | None:
+        if not self.context_anchor_pattern:
+            return None
+        try:
+            return re.compile(self.context_anchor_pattern, flags=re.IGNORECASE)
+        except re.error:
+            return None
+
+    def _unit_anchor_regex(self) -> re.Pattern[str] | None:
+        if not self.unit_anchor_pattern:
+            return None
+        try:
+            return re.compile(self.unit_anchor_pattern, flags=re.IGNORECASE)
+        except re.error:
+            return None
+
+    def _extract_contextual_unit_references(self, text: str) -> list[dict[str, int | str]]:
+        context_pattern = self._context_anchor_regex()
+        unit_pattern = self._unit_anchor_regex()
+        if context_pattern is None or unit_pattern is None:
+            return []
+        references: list[dict[str, int | str]] = []
+        seen: set[str] = set()
+        current_context: dict[str, str] = {}
+        events = [("context", match) for match in context_pattern.finditer(text)]
+        events.extend(("unit", match) for match in unit_pattern.finditer(text))
+        events.sort(key=lambda item: item[1].start())
+        for event_type, match in events:
+            groups = {key: value for key, value in match.groupdict().items() if value}
+            if event_type == "context":
+                current_context.update(groups)
+                continue
+            merged = {**current_context, **groups}
+            if self.required_reference_groups:
+                if not self.required_reference_groups.issubset(merged):
+                    continue
+            elif not merged:
+                continue
+            reference = self._reference_from_groups(match.group(0), merged)
+            key = str(reference["ref"])
+            if key in seen:
+                continue
+            seen.add(key)
+            references.append(reference)
+        return references
+
+    def _split_contextual_unit_units(self, text: str) -> list[str]:
+        context_pattern = self._context_anchor_regex()
+        unit_pattern = self._unit_anchor_regex()
+        if context_pattern is None or unit_pattern is None:
+            return []
+        context_matches = list(context_pattern.finditer(text))
+        unit_matches = list(unit_pattern.finditer(text))
+        if not context_matches or not unit_matches:
+            return []
+        units: list[str] = []
+        leading = text[: unit_matches[0].start()].strip()
+        for index, match in enumerate(unit_matches):
+            start = match.start()
+            end = (
+                unit_matches[index + 1].start()
+                if index + 1 < len(unit_matches)
+                else len(text)
+            )
+            unit = text[start:end].strip()
+            if index == 0 and leading and context_pattern.search(leading):
+                unit = f"{leading}\n\n{unit}".strip()
+            elif not context_pattern.search(unit):
+                context_match = self._nearest_context_match(context_matches, start)
+                if context_match is not None:
+                    unit = f"{context_match.group(0)}\n{unit}".strip()
+            if unit:
+                units.append(unit)
+        return units
+
+    def _nearest_context_match(
+        self,
+        matches: list[re.Match[str]],
+        position: int,
+    ) -> re.Match[str] | None:
+        current: re.Match[str] | None = None
+        for match in matches:
+            if match.start() > position:
+                break
+            current = match
+        return current
+
+    def _reference_from_groups(
+        self,
+        raw: str,
+        groups: dict[str, str],
+    ) -> dict[str, int | str]:
+        ref: dict[str, int | str] = {"raw": raw}
+        for key, value in groups.items():
+            ref[key] = int(value) if value.isdigit() else value
+        templated_ref = self._render_canonical_ref(ref)
+        if templated_ref:
+            ref["ref"] = templated_ref
+        elif isinstance(ref.get("chapter"), int) and isinstance(ref.get("verse"), int):
+            ref["ref"] = f"{ref['chapter']}:{ref['verse']}"
+        else:
+            ref["ref"] = raw.strip()
+        ref["canonical"] = str(ref["ref"])
+        return ref
 
     def _match_to_reference(self, match: re.Match[str]) -> dict[str, int | str]:
         groups = match.groupdict()
@@ -584,33 +750,6 @@ class ReferenceSemantics:
             return "book_hadith"
         return None
 
-    @classmethod
-    def _default_primary_anchor_pattern(
-        cls,
-        metadata: DomainMetadata,
-        *,
-        reference_type: str | None,
-        primary_anchor: dict[str, Any],
-    ) -> str | None:
-        if cls._string_value(primary_anchor.get("regex"), default=None):
-            return None
-        if (reference_type or "").casefold() not in {"surah_ayah", "chapter_verse"}:
-            return None
-        role_tokens = {
-            value.casefold()
-            for value in (
-                metadata.domain if metadata.domain in {"tafseer", "tafsir"} else None,
-                metadata.document_type,
-                metadata.expected_structure,
-                metadata.content_role,
-                *metadata.tags,
-            )
-            if isinstance(value, str)
-        }
-        if any(cls._token_mentions(value, "tafseer", "tafsir") for value in role_tokens):
-            return TAFSEER_PRIMARY_ANCHOR_PATTERN
-        return None
-
     @staticmethod
     def _schema_pattern(reference_schema: Any) -> str | None:
         if not isinstance(reference_schema, dict):
@@ -641,6 +780,74 @@ class ReferenceSemantics:
         has_chapter = bool({"chapter", "surah", "sura"} & tokens)
         has_verse = bool({"verse", "ayah", "aya"} & tokens)
         return has_chapter and has_verse
+
+    @classmethod
+    def _anchor_by_kind(
+        cls,
+        anchors: tuple[ReferenceAnchor, ...],
+        kind: str,
+    ) -> ReferenceAnchor | None:
+        normalized_kind = kind.casefold()
+        return next(
+            (
+                anchor
+                for anchor in anchors
+                if anchor.kind.casefold() == normalized_kind
+            ),
+            None,
+        )
+
+    @classmethod
+    def _verified_anchor_for_groups(
+        cls,
+        anchors: tuple[ReferenceAnchor, ...],
+        kind: str,
+        required_groups: frozenset[str],
+    ) -> ReferenceAnchor | None:
+        normalized_kind = kind.casefold()
+        for anchor in anchors:
+            if anchor.kind.casefold() != normalized_kind or not anchor.verified:
+                continue
+            if required_groups and not required_groups.issubset(anchor.group_names):
+                continue
+            return anchor
+        return None
+
+    @classmethod
+    def _verified_context_anchor_for_groups(
+        cls,
+        anchors: tuple[ReferenceAnchor, ...],
+        required_groups: frozenset[str],
+    ) -> ReferenceAnchor | None:
+        anchor = cls._verified_anchor_for_groups(anchors, "context_anchor", frozenset())
+        if anchor is None:
+            return None
+        unit_anchor = cls._verified_anchor_for_groups(anchors, "unit_anchor", frozenset())
+        if unit_anchor is None:
+            return None
+        groups = anchor.group_names | unit_anchor.group_names
+        if required_groups and not required_groups.issubset(groups):
+            return None
+        return anchor
+
+    @classmethod
+    def _verified_unit_anchor_for_groups(
+        cls,
+        anchors: tuple[ReferenceAnchor, ...],
+        required_groups: frozenset[str],
+    ) -> ReferenceAnchor | None:
+        context_anchor = cls._verified_anchor_for_groups(
+            anchors,
+            "context_anchor",
+            frozenset(),
+        )
+        anchor = cls._verified_anchor_for_groups(anchors, "unit_anchor", frozenset())
+        if context_anchor is None or anchor is None:
+            return None
+        groups = context_anchor.group_names | anchor.group_names
+        if required_groups and not required_groups.issubset(groups):
+            return None
+        return anchor
 
     @staticmethod
     def _relationships(value: Any) -> dict[str, list[str]]:

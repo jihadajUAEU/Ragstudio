@@ -8,6 +8,11 @@ from ragstudio.services.chunk_splitter import ChunkSplitter
 from ragstudio.services.domain_metadata_quality_gate import DomainMetadataQualityGate
 from ragstudio.services.domain_metadata_service import DomainMetadataService
 from ragstudio.services.modal_preprocessor import MODAL_ROUTER_PROCESSED_FLAG
+from ragstudio.services.reference_metadata import ReferenceSemantics
+from ragstudio.services.reference_unit_assembler import (
+    ReferenceSourceBlock,
+    ReferenceUnitAssembler,
+)
 
 
 def words(count: int, prefix: str = "word") -> str:
@@ -23,11 +28,96 @@ def parser_warnings(chunk: AdapterChunk) -> list[dict[str, str]]:
     return chunk.metadata.get("extraction_quality", {}).get("parser_warnings", [])
 
 
+def book_hadith_domain_structure() -> dict[str, object]:
+    return {
+        "primary_anchor": {
+            "type": "book_hadith",
+            "regex": (
+                r"\bBook\s+(?P<book>\d+)\s*,?\s*Hadith\s+"
+                r"(?P<hadith>\d+)\b"
+            ),
+            "unit": "hadith",
+            "verified": True,
+        }
+    }
+
+
+def quran_primary_anchor_domain_structure() -> dict[str, object]:
+    return {
+        "primary_anchor": {
+            "type": "surah_ayah",
+            "regex": r"\[(?P<chapter>\d+):(?P<verse>\d+)\]",
+            "unit": "verse",
+            "verified": True,
+        }
+    }
+
+
+def build_canonical_reference_units() -> dict[str, object]:
+    return {"enabled": True, "build_canonical_units": True}
+
+
 def test_chunk_splitter_threads_http_client_provider_to_content_normalizer():
     provider = object()
     splitter = ChunkSplitter(http_client_provider=provider)
 
     assert splitter.content_normalizer.vision_recovery_client.http_client_provider is provider
+
+
+def test_reference_unit_assembler_assembles_contextual_quran_verse_units():
+    metadata = DomainMetadata(
+        domain="quran",
+        custom_json={
+            "reference_schema": {
+                "type": "chapter_verse",
+                "display": "{chapter}:{verse}",
+                "canonical_ref_template": "{chapter}:{verse}",
+            },
+            "domain_structure": {
+                "context_anchor": {
+                    "type": "chapter_verse",
+                    "regex": r"\bSurah\s+(?P<chapter>\d{1,4})\b",
+                    "unit": "chapter",
+                    "verified": True,
+                },
+                "unit_anchor": {
+                    "type": "chapter_verse",
+                    "regex": r"\b(?P<verse>10[45])\b",
+                    "unit": "verse",
+                    "context_source": "context_anchor",
+                    "verified": True,
+                },
+            },
+            "reference_resolution": {
+                "enabled": True,
+                "build_canonical_units": True,
+            },
+        },
+    )
+    semantics = ReferenceSemantics.from_metadata(metadata)
+    blocks = [
+        ReferenceSourceBlock(
+            text="Surah 7\nThe Elevations\n104 Moses said...\n105 It is only proper...",
+            page_start=168,
+            page_end=168,
+        )
+    ]
+
+    units = ReferenceUnitAssembler().assemble(
+        blocks,
+        semantics=semantics,
+        parent_metadata={},
+        parent_source_location={"page": 168},
+        runtime_source_id=None,
+        content_type="text",
+        preview_ref=None,
+    )
+
+    references = [
+        unit.metadata["reference_metadata"]["references"][0]
+        for unit in units
+    ]
+    assert references == ["7:104", "7:105"]
 
 
 def tafseer_cross_reference_metadata() -> DomainMetadata:
@@ -49,6 +139,7 @@ def tafseer_cross_reference_metadata() -> DomainMetadata:
                     "type": "chapter_verse",
                     "regex": r"\bVerse\s+(?P<chapter>\d{1,4})\s*:\s*(?P<verse>\d{1,4})\b",
                     "unit": "verse_section",
+                    "verified": True,
                 },
                 "inline_references": {
                     "type": "chapter_verse",
@@ -81,6 +172,7 @@ def bukhari_hadith_metadata() -> DomainMetadata:
                 "canonical_ref_template": "book:{book}:hadith:{hadith}",
             },
             "chunking": {"unit": "hadith", "preserve_parallel_text": True},
+            "domain_structure": book_hadith_domain_structure(),
             "reference_resolution": {
                 "enabled": True,
                 "build_canonical_units": True,
@@ -158,6 +250,48 @@ def test_chunk_splitter_hard_splits_single_oversized_paragraph():
     assert split[2].metadata["parser_metadata"]["split_index"] == 2
     assert split[2].metadata["parser_metadata"]["split_count"] == 3
     assert split[2].metadata["parser_metadata"]["split_profile"] == "generic"
+
+
+def test_chunk_splitter_splits_custom_contract_reference_units():
+    chunk = AdapterChunk(
+        text=(
+            "Folio 12 Line 7 The record begins.\n\n"
+            "Folio 12 Line 8 The record continues."
+        ),
+        source_location={"artifact": "archive.md", "page": 4},
+        metadata={"parser_metadata": {"backend": "mineru", "chunk_index": 0}},
+    )
+
+    split = ChunkSplitter(max_words=1500).split(
+        [chunk],
+        domain_metadata=DomainMetadata(
+            domain="archive",
+            custom_json={
+                "reference_schema": {
+                    "type": "folio_line",
+                    "fields": {"folio": "folio", "line": "line"},
+                    "canonical_ref_template": "folio:{folio}:line:{line}",
+                },
+                "domain_structure": {
+                    "primary_anchor": {
+                        "regex": r"Folio\s+(?P<folio>\d+)\s+Line\s+(?P<line>\d+)",
+                        "unit": "folio_line",
+                        "verified": True,
+                    }
+                },
+                "reference_resolution": {
+                    "enabled": True,
+                    "build_canonical_units": True,
+                },
+            },
+        ),
+        parser_mode="mineru_strict",
+    )
+
+    assert [item.metadata["reference_metadata"]["references"] for item in split] == [
+        ["folio:12:line:7"],
+        ["folio:12:line:8"],
+    ]
 
 
 def test_chunk_splitter_splits_long_sentence_at_nearest_semantic_boundary():
@@ -439,6 +573,8 @@ async def test_chunk_splitter_preserves_page_provenance_for_split_content_list_r
             custom_json={
                 "reference_schema": {"type": "surah_ayah"},
                 "chunking": {"unit": "verse"},
+                "domain_structure": quran_primary_anchor_domain_structure(),
+                "reference_resolution": build_canonical_reference_units(),
             },
         ),
         parser_mode="mineru_strict",
@@ -493,6 +629,8 @@ async def test_chunk_splitter_scopes_hard_split_stitched_reference_warnings(
             custom_json={
                 "reference_schema": {"type": "surah_ayah"},
                 "chunking": {"unit": "verse"},
+                "domain_structure": quran_primary_anchor_domain_structure(),
+                "reference_resolution": build_canonical_reference_units(),
                 "parser_normalization": {"recover_text_bearing_blocks_as_prose": True},
             },
         ),
@@ -553,6 +691,8 @@ def test_chunk_splitter_uses_scripture_profile_from_editable_metadata_json():
         custom_json={
             "reference_schema": {"type": "surah_ayah"},
             "chunking": {"unit": "verse", "include_neighbors": 1, "preserve_parallel_text": True},
+            "domain_structure": quran_primary_anchor_domain_structure(),
+            "reference_resolution": build_canonical_reference_units(),
             "retrieval": {"exact_reference_top1": True},
         },
     )
@@ -678,6 +818,8 @@ def test_chunk_splitter_splits_reference_units_when_metadata_requests_verse_chun
             custom_json={
                 "reference_schema": {"type": "surah_ayah"},
                 "chunking": {"unit": "verse", "include_neighbors": 1},
+                "domain_structure": quran_primary_anchor_domain_structure(),
+                "reference_resolution": build_canonical_reference_units(),
             },
         ),
         parser_mode="mineru_strict",
@@ -1013,6 +1155,7 @@ def test_chunk_splitter_builds_canonical_hadith_units_from_header_body_blocks(
                 "canonical_ref_template": "book:{book}:hadith:{hadith}",
             },
             "chunking": {"unit": "hadith", "preserve_parallel_text": True},
+            "domain_structure": book_hadith_domain_structure(),
             "reference_resolution": {
                 "enabled": True,
                 "build_canonical_units": True,
@@ -1116,6 +1259,7 @@ def test_chunk_splitter_uses_layout_aware_hadith_strategy_for_late_header(
                 "canonical_ref_template": "book:{book}:hadith:{hadith}",
             },
             "chunking": {"unit": "hadith", "preserve_parallel_text": True},
+            "domain_structure": book_hadith_domain_structure(),
             "reference_resolution": {
                 "enabled": True,
                 "build_canonical_units": True,
@@ -1676,6 +1820,7 @@ def test_chunk_splitter_preserves_unassigned_canonical_blocks_as_provenance(
                 "canonical_ref_template": "book:{book}:hadith:{hadith}",
             },
             "chunking": {"unit": "hadith", "preserve_parallel_text": True},
+            "domain_structure": book_hadith_domain_structure(),
             "reference_resolution": {
                 "enabled": True,
                 "build_canonical_units": True,

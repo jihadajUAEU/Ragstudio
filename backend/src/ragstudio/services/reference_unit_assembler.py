@@ -105,6 +105,18 @@ class ReferenceUnitAssembler:
             if not semantics.carry_forward_body_blocks:
                 if self._should_emit_provenance(block):
                     units.append(
+                        self._finish_unit(
+                            current,
+                            semantics=semantics,
+                            parent_metadata=parent_metadata,
+                            parent_source_location=parent_source_location,
+                            runtime_source_id=runtime_source_id,
+                            content_type=content_type,
+                            preview_ref=preview_ref,
+                        )
+                    )
+                    current = None
+                    units.append(
                         self._provenance_unit(
                             [replace(block, role="unassigned")],
                             semantics=semantics,
@@ -375,6 +387,8 @@ class ReferenceUnitAssembler:
             source_location["page_start"] = min(page_starts)
         if page_ends:
             source_location["page_end"] = max(page_ends)
+        if page_starts or page_ends:
+            source_location.pop("page", None)
         return source_location
 
     def _page_range(self, source_location: dict[str, Any]) -> dict[str, Any]:
