@@ -298,6 +298,14 @@ def _validate_domain_structure(value: Any) -> None:
     if primary_anchor is not None:
         _validate_anchor_policy(primary_anchor, "domain_structure.primary_anchor")
 
+    context_anchor = value.get("context_anchor")
+    if context_anchor is not None:
+        _validate_anchor_policy(context_anchor, "domain_structure.context_anchor")
+
+    unit_anchor = value.get("unit_anchor")
+    if unit_anchor is not None:
+        _validate_anchor_policy(unit_anchor, "domain_structure.unit_anchor")
+
     inline_references = value.get("inline_references")
     if inline_references is not None:
         _validate_anchor_policy(inline_references, "domain_structure.inline_references")
@@ -312,10 +320,13 @@ def _validate_domain_structure(value: Any) -> None:
 def _validate_anchor_policy(value: Any, path: str) -> None:
     if not isinstance(value, dict):
         raise ValueError(f"custom_json.{path} must be an object.")
-    for key in ("type", "unit", "pattern", "display"):
+    for key in ("type", "unit", "pattern", "display", "context_source"):
         item = value.get(key)
         if item is not None and not isinstance(item, str):
             raise ValueError(f"custom_json.{path}.{key} must be a string.")
+    verified = value.get("verified")
+    if verified is not None and not isinstance(verified, bool):
+        raise ValueError(f"custom_json.{path}.verified must be a boolean.")
     regex = value.get("regex")
     if regex is not None:
         _validate_reference_pattern(regex, f"{path}.regex")
