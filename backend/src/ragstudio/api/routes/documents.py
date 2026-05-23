@@ -172,10 +172,18 @@ async def rematerialize_document_graph(
 @router.get("/{document_id}/parse-evidence", response_model=DocumentParseEvidence)
 async def get_document_parse_evidence(
     document_id: str,
+    chunk_preview_limit: int = Query(default=200, ge=1, le=1000),
+    warning_limit: int = Query(default=5000, ge=1, le=20000),
+    warning_offset: int = Query(default=0, ge=0),
     session: AsyncSession = Depends(get_session),
 ) -> DocumentParseEvidence:
     try:
-        return await DocumentParseEvidenceService(session).get_document_evidence(document_id)
+        return await DocumentParseEvidenceService(session).get_document_evidence(
+            document_id,
+            chunk_preview_limit=chunk_preview_limit,
+            warning_limit=warning_limit,
+            warning_offset=warning_offset,
+        )
     except DocumentParseEvidenceNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Document not found") from exc
 

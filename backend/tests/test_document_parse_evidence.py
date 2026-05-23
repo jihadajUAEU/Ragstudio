@@ -116,6 +116,66 @@ async def test_parse_evidence_includes_warning_rows_beyond_chunk_preview(client,
 
 
 @pytest.mark.asyncio
+async def test_parse_evidence_paginates_warning_rows_independently(client, tmp_path: Path):
+    artifact = tmp_path / "warning-page.pdf"
+    artifact.write_bytes(b"%PDF synthetic")
+    async with client._transport.app.state.session_factory() as session:
+        session.add(
+            Document(
+                id="doc-warning-page",
+                filename="warning-page.pdf",
+                content_type="application/pdf",
+                sha256="sha-warning-page",
+                artifact_path=str(artifact),
+                status=StageStatus.SUCCEEDED.value,
+            )
+        )
+        session.add_all(
+            [
+                Chunk(
+                    id=f"chunk-warning-page-{index:03d}",
+                    document_id="doc-warning-page",
+                    text=f"Chunk {index}",
+                    source_location={"page": index + 1},
+                    metadata_json={},
+                    extraction_quality={
+                        "parser_warnings": [
+                            {
+                                "code": f"warning_{index:03d}",
+                                "message": f"Warning row {index}.",
+                                "severity": "warning",
+                                "page": index + 1,
+                            }
+                        ]
+                    },
+                )
+                for index in range(12)
+            ]
+        )
+        await session.commit()
+
+        evidence = await DocumentParseEvidenceService(session).get_document_evidence(
+            "doc-warning-page",
+            chunk_preview_limit=4,
+            warning_limit=3,
+            warning_offset=5,
+        )
+
+    assert evidence.totals.chunks == 12
+    assert len(evidence.chunks) == 4
+    assert [warning.code for warning in evidence.warnings] == [
+        "warning_005",
+        "warning_006",
+        "warning_007",
+    ]
+    assert [warning.affected_chunk_ids[0] for warning in evidence.warnings] == [
+        "chunk-warning-page-005",
+        "chunk-warning-page-006",
+        "chunk-warning-page-007",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_parse_evidence_groups_page_stitch_decision(client, tmp_path: Path):
     artifact = tmp_path / "source.pdf"
     artifact.write_bytes(b"%PDF synthetic")
@@ -877,6 +937,59 @@ async def test_parse_evidence_route_returns_contract(
     assert body["chunks"][0]["id"] == "chunk-route"
     assert body["proof"]["proof_packet_id"] == "local-document-parse-evidence"
     assert body["proof"]["source_commit"] == "env-commit"
+
+
+@pytest.mark.asyncio
+async def test_parse_evidence_route_accepts_warning_pagination(client, tmp_path: Path):
+    app = client._transport.app
+    artifact = tmp_path / "route-warning-page.pdf"
+    artifact.write_bytes(b"%PDF synthetic")
+    async with app.state.session_factory() as session:
+        session.add(
+            Document(
+                id="doc-route-warning-page",
+                filename="route-warning-page.pdf",
+                content_type="application/pdf",
+                sha256="sha-route-warning-page",
+                artifact_path=str(artifact),
+                status=StageStatus.SUCCEEDED.value,
+            )
+        )
+        session.add_all(
+            [
+                Chunk(
+                    id=f"chunk-route-warning-page-{index:03d}",
+                    document_id="doc-route-warning-page",
+                    text=f"Route warning chunk {index}",
+                    source_location={"page": index + 1},
+                    metadata_json={},
+                    extraction_quality={
+                        "parser_warnings": [
+                            {
+                                "code": f"route_warning_{index:03d}",
+                                "message": f"Route warning row {index}.",
+                                "severity": "warning",
+                            }
+                        ]
+                    },
+                )
+                for index in range(4)
+            ]
+        )
+        await session.commit()
+
+    response = await client.get(
+        "/api/documents/doc-route-warning-page/parse-evidence"
+        "?chunk_preview_limit=2&warning_limit=1&warning_offset=2"
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert [chunk["id"] for chunk in body["chunks"]] == [
+        "chunk-route-warning-page-000",
+        "chunk-route-warning-page-001",
+    ]
+    assert [warning["code"] for warning in body["warnings"]] == ["route_warning_002"]
 
 
 def test_document_parse_evidence_exporter_writes_static_artifact(tmp_path: Path):

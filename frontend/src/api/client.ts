@@ -63,6 +63,10 @@ export interface ReindexDocumentOut {
 export type ApiQueryOptions = Record<string, string | number | boolean | null | undefined>;
 export type PageQueryOptions = Pick<ApiQueryOptions, "limit" | "offset">;
 export const FIRST_LIST_PAGE: PageQueryOptions = { limit: 500, offset: 0 };
+export const DOCUMENT_EVIDENCE_QUERY: ApiQueryOptions = {
+  warning_limit: 20000,
+  warning_offset: 0,
+};
 
 export function jobEventsUrl(jobId: string): string {
   return `${API_BASE_URL}/api/jobs/${encodeURIComponent(jobId)}/events`;
@@ -139,8 +143,10 @@ export const apiClient = {
   health: () => request<HealthOut>("/api/health"),
   documents: (options: PageQueryOptions = FIRST_LIST_PAGE) =>
     request<Page<DocumentOut>>(withQuery("/api/documents", options)),
-  documentParseEvidence: (documentId: string) =>
-    request<DocumentParseEvidence>(`/api/documents/${encodeURIComponent(documentId)}/parse-evidence`),
+  documentParseEvidence: (documentId: string, options: ApiQueryOptions = DOCUMENT_EVIDENCE_QUERY) =>
+    request<DocumentParseEvidence>(
+      withQuery(`/api/documents/${encodeURIComponent(documentId)}/parse-evidence`, options),
+    ),
   uploadDocument: ({ file, options }: { file: File; options: IndexDocumentIn }) => {
     const formData = new FormData();
     formData.set("file", file);

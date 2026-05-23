@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import os
 import re
+from collections.abc import Iterable
 from ipaddress import ip_address
 from pathlib import Path, PurePosixPath, PureWindowsPath
-from typing import Any, Iterable
+from typing import Any
 from urllib.parse import parse_qsl, unquote, urlencode, urlsplit, urlunsplit
 
 from ragstudio.db.models import Chunk, Document, GraphProjectionRecord, Job
@@ -23,7 +24,9 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 TEXT_PREVIEW_LIMIT = 600
-MAX_EVIDENCE_CHUNKS = 200
+DEFAULT_CHUNK_PREVIEW_LIMIT = 200
+DEFAULT_WARNING_LIMIT = 5000
+MAX_WARNING_LIMIT = 20000
 SECRET_KEY_PATTERN = re.compile(r"(api[_-]?key|token|secret|password|authorization)", re.IGNORECASE)
 OPENAI_KEY_VALUE_PATTERN = re.compile(r"sk-[A-Za-z0-9_-]+")
 BEARER_VALUE_PATTERN = re.compile(r"bearer\s+[A-Za-z0-9._=-]{12,}", re.IGNORECASE)
@@ -43,11 +46,21 @@ class DocumentParseEvidenceService:
         self._redactions: set[str] = set()
         self._source_commit = self._normalized_source_commit(source_commit)
 
-    async def get_document_evidence(self, document_id: str) -> DocumentParseEvidence:
+    async def get_document_evidence(
+        self,
+        document_id: str,
+        *,
+        chunk_preview_limit: int = DEFAULT_CHUNK_PREVIEW_LIMIT,
+        warning_limit: int = DEFAULT_WARNING_LIMIT,
+        warning_offset: int = 0,
+    ) -> DocumentParseEvidence:
         document = await self.session.get(Document, document_id)
         if document is None:
             raise DocumentParseEvidenceNotFoundError(document_id)
 
+        chunk_preview_limit = max(1, chunk_preview_limit)
+        warning_limit = max(1, min(warning_limit, MAX_WARNING_LIMIT))
+        warning_offset = max(0, warning_offset)
         total_chunk_count = await self.session.scalar(
             select(func.count()).select_from(Chunk).where(Chunk.document_id == document_id)
         )
@@ -57,7 +70,7 @@ class DocumentParseEvidenceService:
                     select(Chunk)
                     .where(Chunk.document_id == document_id)
                     .order_by(Chunk.created_at.asc(), Chunk.id.asc())
-                    .limit(MAX_EVIDENCE_CHUNKS)
+                    .limit(chunk_preview_limit)
                 )
             )
             .scalars()
@@ -65,28 +78,11 @@ class DocumentParseEvidenceService:
         )
         total_chunk_count = int(total_chunk_count or 0)
         omitted_chunk_count = max(total_chunk_count - len(chunks), 0)
-        warnings = self._build_warnings(chunks)
-        if omitted_chunk_count:
-            warning_records = (
-                (
-                    await self.session.execute(
-                        select(Chunk.id, Chunk.extraction_quality, Chunk.source_location)
-                        .where(Chunk.document_id == document_id)
-                        .order_by(Chunk.created_at.asc(), Chunk.id.asc())
-                    )
-                )
-                .all()
-            )
-            warnings = self._build_warnings_from_records(
-                (
-                    (
-                        str(chunk_id),
-                        self._dict_value(extraction_quality),
-                        self._dict_value(source_location),
-                    )
-                    for chunk_id, extraction_quality, source_location in warning_records
-                )
-            )
+        warnings = self._paginated_warnings(
+            await self._warning_records(document_id),
+            limit=warning_limit,
+            offset=warning_offset,
+        )
         jobs = list(
             (
                 await self.session.execute(
@@ -124,7 +120,12 @@ class DocumentParseEvidenceService:
         parser_blocks = self._attach_block_warning_ids(parser_blocks, warnings)
         chunk_evidence = self._build_chunks(chunks, warning_ids_by_chunk)
         source_artifacts = self._build_source_artifacts(document, chunks)
-        limitations = self._proof_limitations(chunks, graph_records, omitted_chunk_count)
+        limitations = self._proof_limitations(
+            chunks,
+            graph_records,
+            omitted_chunk_count,
+            chunk_preview_limit=chunk_preview_limit,
+        )
         missing_sections = self._missing_sections(chunks, parser_blocks, decisions)
 
         return DocumentParseEvidence(
@@ -153,13 +154,38 @@ class DocumentParseEvidenceService:
             missing_sections=missing_sections,
         )
 
-    def _build_warnings(self, chunks: list[Chunk]) -> list[WarningEvidence]:
-        return self._build_warnings_from_records(
+    async def _warning_records(
+        self,
+        document_id: str,
+    ) -> list[tuple[str, dict[str, Any], dict[str, Any]]]:
+        records = (
             (
-                (chunk.id, self._chunk_extraction_quality(chunk), self._dict_value(chunk.source_location))
-                for chunk in chunks
+                await self.session.execute(
+                    select(Chunk.id, Chunk.extraction_quality, Chunk.source_location)
+                    .where(Chunk.document_id == document_id)
+                    .order_by(Chunk.created_at.asc(), Chunk.id.asc())
+                )
             )
+            .all()
         )
+        return [
+            (
+                str(chunk_id),
+                self._dict_value(extraction_quality),
+                self._dict_value(source_location),
+            )
+            for chunk_id, extraction_quality, source_location in records
+        ]
+
+    def _paginated_warnings(
+        self,
+        records: list[tuple[str, dict[str, Any], dict[str, Any]]],
+        *,
+        limit: int,
+        offset: int,
+    ) -> list[WarningEvidence]:
+        warnings = self._build_warnings_from_records(records)
+        return warnings[offset : offset + limit]
 
     def _build_warnings_from_records(
         self,
@@ -360,7 +386,10 @@ class DocumentParseEvidenceService:
         }
         updated: list[WarningEvidence] = []
         for warning in warnings:
-            block_id = self._warning_block_id(warning, block_ids_by_chunk, block_by_id) or warning.block_id
+            block_id = (
+                self._warning_block_id(warning, block_ids_by_chunk, block_by_id)
+                or warning.block_id
+            )
             decision_id = next(
                 (
                     quality_decisions.get(chunk_id)
@@ -460,6 +489,8 @@ class DocumentParseEvidenceService:
         chunks: list[Chunk],
         graph_records: list[GraphProjectionRecord],
         omitted_chunk_count: int = 0,
+        *,
+        chunk_preview_limit: int = DEFAULT_CHUNK_PREVIEW_LIMIT,
     ) -> list[str]:
         limitations: list[str] = []
         if not chunks:
@@ -467,7 +498,7 @@ class DocumentParseEvidenceService:
         if omitted_chunk_count:
             limitations.append(
                 "Evidence preview is capped at "
-                f"{MAX_EVIDENCE_CHUNKS} chunks; at least {omitted_chunk_count} "
+                f"{chunk_preview_limit} chunks; at least {omitted_chunk_count} "
                 "additional chunks are omitted from this response."
             )
         if not graph_records:
