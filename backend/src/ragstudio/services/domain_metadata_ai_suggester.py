@@ -21,6 +21,7 @@ from ragstudio.services.page_sampler import SampledPage
 from ragstudio.services.reference_contracts import declared_required_groups
 from ragstudio.services.reference_contract_validator import (
     ReferenceContractCandidate,
+    ReferenceContractCandidateResult,
     ReferenceContractValidationResult,
     ReferenceContractValidator,
 )
@@ -264,14 +265,22 @@ class DomainMetadataAiSuggester:
             domain_structure["primary_anchor"] = primary_anchor
         elif selected.strategy == "contextual_unit":
             context_anchor = dict(domain_structure.get("context_anchor") or {})
+            context_unit = self._validated_context_anchor_unit(
+                context_anchor,
+                selected,
+                reference_schema,
+            )
+            if context_unit is None:
+                context_anchor.pop("unit", None)
             context_anchor.update(
                 {
                     "type": selected.schema_type,
                     "regex": selected.context_anchor_regex,
-                    "unit": context_anchor.get("unit") or "chapter",
                     "verified": True,
                 }
             )
+            if context_unit is not None:
+                context_anchor["unit"] = context_unit
             unit_anchor = dict(domain_structure.get("unit_anchor") or {})
             unit_anchor.update(
                 {
@@ -296,6 +305,25 @@ class DomainMetadataAiSuggester:
             domain_structure["inline_references"] = inline_references
         custom_json["domain_structure"] = domain_structure
         return metadata.model_copy(update={"custom_json": custom_json}, deep=True)
+
+    def _validated_context_anchor_unit(
+        self,
+        context_anchor: dict[str, object],
+        selected: ReferenceContractCandidateResult,
+        reference_schema: dict[str, object],
+    ) -> str | None:
+        existing_unit = self._string_value(context_anchor.get("unit"))
+        if existing_unit:
+            return existing_unit
+        if not selected.context_anchor_regex:
+            return None
+        group_names = self._regex_group_names(selected.context_anchor_regex)
+        declared_groups = declared_required_groups({"reference_schema": reference_schema})
+        if len(group_names) == 1:
+            group_name = next(iter(group_names))
+            if group_name in declared_groups:
+                return group_name
+        return None
 
     def _demote_reference_anchor_verification(
         self,

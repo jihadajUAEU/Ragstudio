@@ -130,3 +130,47 @@ def test_contextual_production_candidate_missing_declared_field_does_not_verify(
     assert result.selected is None
     assert result.candidates[0].required_groups_present is False
     assert result.candidates[0].matched_units == 0
+
+
+def test_contextual_contract_validation_uses_generic_declared_context_unit():
+    metadata = DomainMetadata(
+        custom_json={
+            "reference_schema": {
+                "type": "folio_line",
+                "fields": {"folio": "folio_number", "line": "line_number"},
+                "canonical_ref_template": "folio:{folio}:line:{line}",
+            },
+            "domain_structure": {
+                "context_anchor": {
+                    "regex": r"Folio\s+(?P<folio>\d+)",
+                },
+                "unit_anchor": {
+                    "regex": r"Line\s+(?P<line>\d+)",
+                    "unit": "line",
+                },
+            },
+        }
+    )
+    suggester = DomainMetadataAiSuggester()
+    candidates = suggester._reference_contract_candidates(
+        metadata,
+        source="ai_observed",
+    )
+    validation = ReferenceContractValidator().validate(
+        [
+            SampledPage(
+                page_number=1,
+                text="Folio 12\nLine 7 The note starts here.",
+            )
+        ],
+        candidates,
+    )
+
+    result = suggester._apply_reference_contract_validation(metadata, validation)
+
+    domain_structure = result.custom_json["domain_structure"]
+    context_anchor = domain_structure["context_anchor"]
+    assert validation.status == "verified"
+    assert context_anchor["verified"] is True
+    assert context_anchor["unit"] == "folio"
+    assert context_anchor["unit"] != "chapter"
