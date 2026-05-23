@@ -12,7 +12,8 @@ def test_build_document_index_contract_marks_reference_contract_ready():
                 "chunking": {"unit": "verse"},
                 "domain_structure": {
                     "primary_anchor": {
-                        "regex": r"(?P<chapter>\d{1,4}):(?P<verse>\d{1,4})"
+                        "regex": r"(?P<chapter>\d{1,4}):(?P<verse>\d{1,4})",
+                        "verified": True,
                     }
                 },
                 "reference_resolution": {
@@ -30,11 +31,72 @@ def test_build_document_index_contract_marks_reference_contract_ready():
     assert contract["domain_metadata"]["domain"] == "quran_tafseer"
     assert contract["reference_contract"]["schema_type"] == "chapter_verse"
     assert contract["reference_contract"]["canonical_units"] is True
+    assert contract["reference_contract"]["verified"] is True
     assert contract["parser_contract"]["required_text_validation_stage"] == (
         "post_recovery_quality_gate"
     )
     assert contract["layout_context"]["vision_recovery_enabled"] is True
     assert contract["retrieval_contract"]["source_of_truth"] == "postgres_canonical_evidence"
+
+
+def test_index_contract_enables_preflight_for_verified_custom_contract():
+    options = IndexDocumentIn(
+        domain_metadata=DomainMetadata(
+            domain="archive",
+            custom_json={
+                "reference_schema": {
+                    "type": "folio_line",
+                    "fields": {"folio": "folio", "line": "line"},
+                    "canonical_ref_template": "folio:{folio}:line:{line}",
+                },
+                "domain_structure": {
+                    "primary_anchor": {
+                        "regex": r"Folio\s+(?P<folio>\d+)\s+Line\s+(?P<line>\d+)",
+                        "unit": "folio_line",
+                        "verified": True,
+                    }
+                },
+                "reference_resolution": {
+                    "enabled": True,
+                    "build_canonical_units": True,
+                },
+                "quality_policy": {
+                    "required_scripts_by_unit_role": {"folio_line": ["latin"]},
+                },
+                "preprocessing_policy": {"strict_pdf_text_preflight": True},
+                "reference_contract_validation": {
+                    "status": "verified",
+                    "selected_strategy": "single_anchor",
+                    "selected_primary_anchor_regex": (
+                        r"Folio\s+(?P<folio>\d+)\s+Line\s+(?P<line>\d+)"
+                    ),
+                    "matched_units": 2,
+                    "matched_pages": [1],
+                },
+            },
+        )
+    )
+
+    contract = build_document_index_contract(options)
+
+    assert contract["contract_status"] == "compiled_reference_contract"
+    assert contract["reference_contract"]["verified"] is True
+    assert contract["reference_contract"]["schema_type"] == "folio_line"
+    assert contract["reference_contract"]["canonical_ref_template"] == (
+        "folio:{folio}:line:{line}"
+    )
+    assert contract["reference_contract"]["required_groups"] == ["folio", "line"]
+    assert contract["reference_contract"]["anchors"] == [
+        {
+            "kind": "primary_anchor",
+            "regex": r"Folio\s+(?P<folio>\d+)\s+Line\s+(?P<line>\d+)",
+            "unit_role": "folio_line",
+            "context_source": None,
+            "policy": None,
+            "verified": True,
+        }
+    ]
+    assert contract["preprocessing"]["strict_pdf_text_preflight"] is True
 
 
 def test_build_document_index_contract_marks_generic_metadata():
@@ -57,7 +119,8 @@ def test_build_document_index_contract_persists_parser_layout_hints():
                 "chunking": {"unit": "verse"},
                 "domain_structure": {
                     "primary_anchor": {
-                        "regex": r"(?P<chapter>\d{1,4}):(?P<verse>\d{1,4})"
+                        "regex": r"(?P<chapter>\d{1,4}):(?P<verse>\d{1,4})",
+                        "verified": True,
                     }
                 },
                 "reference_resolution": {
@@ -86,3 +149,145 @@ def test_build_document_index_contract_persists_parser_layout_hints():
     assert contract["layout_context"]["expected_tables"] is False
     assert contract["layout_context"]["expected_equations"] is False
     assert contract["layout_context"]["image_blocks_are_recovery_candidates"] is True
+
+
+def test_build_document_index_contract_derives_preflight_from_quality_policy():
+    options = IndexDocumentIn(
+        domain_metadata=DomainMetadata(
+            domain="quran",
+            script="arabic, english",
+            custom_json={
+                "reference_schema": {"type": "chapter_verse"},
+                "chunking": {"unit": "verse"},
+                "domain_structure": {
+                    "primary_anchor": {
+                        "regex": r"\[(?P<chapter>\d{1,4}):(?P<verse>\d{1,4})\]",
+                        "verified": True,
+                    }
+                },
+                "reference_resolution": {
+                    "enabled": True,
+                    "build_canonical_units": True,
+                },
+                "quality_policy": {
+                    "evidence": [
+                        {"page": 2, "observation": "Arabic and English text"},
+                        {"page": 3, "observation": "Arabic and English text"},
+                    ],
+                    "required_scripts": ["arabic", "latin"],
+                    "missing_required_script_action": "block",
+                },
+            },
+        )
+    )
+
+    contract = build_document_index_contract(options)
+
+    assert contract["vision_analysis"]["sample_pages"] == [2, 3]
+    assert contract["vision_analysis"]["expected_scripts"] == ["arabic", "latin"]
+    assert contract["vision_analysis"]["observed_unit_pattern"] == (
+        "reference_units_with_verse_content"
+    )
+    assert contract["preprocessing"]["strict_pdf_text_preflight"] is True
+    assert contract["preprocessing"]["expected_scripts"] == ["arabic", "latin"]
+    assert contract["preprocessing"]["sample_pages"] == [2, 3]
+    assert contract["preprocessing"]["cleanup_recommended"] is True
+    assert contract["preprocessing"]["reject_if_cleanup_fails"] is True
+
+
+def test_build_document_index_contract_treats_unverified_reference_as_metadata_only():
+    options = IndexDocumentIn(
+        domain_metadata=DomainMetadata(
+            domain="quran",
+            custom_json={
+                "reference_schema": {"type": "chapter_verse"},
+                "chunking": {"unit": "verse"},
+                "domain_structure": {
+                    "primary_anchor": {
+                        "regex": r"\[(?P<chapter>\d{1,4}):(?P<verse>\d{1,4})\]",
+                        "verified": False,
+                    }
+                },
+                "reference_resolution": {
+                    "enabled": True,
+                    "build_canonical_units": True,
+                },
+                "quality_policy": {
+                    "required_scripts": ["arabic", "latin"],
+                    "missing_required_script_action": "block",
+                },
+            },
+        )
+    )
+
+    contract = build_document_index_contract(options)
+
+    assert contract["contract_status"] == "metadata_only"
+    assert contract["reference_contract"]["verified"] is False
+    assert contract["preprocessing"]["strict_pdf_text_preflight"] is False
+    assert contract["preprocessing"]["cleanup_recommended"] is False
+
+
+def test_build_document_index_contract_rejects_fake_verified_validation_status():
+    options = IndexDocumentIn(
+        domain_metadata=DomainMetadata(
+            domain="quran",
+            custom_json={
+                "reference_schema": {"type": "chapter_verse"},
+                "reference_contract_validation": {
+                    "status": "verified",
+                    "selected_strategy": "single_anchor",
+                    "selected_primary_anchor_regex": r"\[(?P<chapter>\d+):(?P<verse>\d+)\]",
+                },
+                "reference_resolution": {
+                    "enabled": True,
+                    "build_canonical_units": True,
+                },
+                "quality_policy": {
+                    "required_scripts": ["arabic", "latin"],
+                    "missing_required_script_action": "block",
+                },
+            },
+        )
+    )
+
+    contract = build_document_index_contract(options)
+
+    assert contract["contract_status"] == "metadata_only"
+    assert contract["reference_contract"]["verified"] is False
+    assert contract["reference_contract"]["primary_anchor_regex"] is None
+    assert contract["preprocessing"]["strict_pdf_text_preflight"] is False
+    assert contract["preprocessing"]["cleanup_recommended"] is False
+
+
+def test_build_document_index_contract_uses_sibling_layout_quality_failure_policy():
+    options = IndexDocumentIn(
+        domain_metadata=DomainMetadata(
+            domain="quran",
+            custom_json={
+                "reference_schema": {"type": "chapter_verse"},
+                "chunking": {"unit": "verse"},
+                "domain_structure": {
+                    "primary_anchor": {
+                        "regex": r"\[(?P<chapter>\d{1,4}):(?P<verse>\d{1,4})\]",
+                    },
+                },
+                "reference_resolution": {
+                    "enabled": True,
+                    "build_canonical_units": True,
+                },
+                "quality_policy": {
+                    "required_scripts": ["arabic", "latin"],
+                },
+                "layout_quality_policy": {
+                    "failure_policy": {
+                        "missing_required_script": "block",
+                    },
+                },
+            },
+        )
+    )
+
+    contract = build_document_index_contract(options)
+
+    assert contract["preprocessing"]["reject_if_cleanup_fails"] is True

@@ -7,8 +7,6 @@ from typing import Any, Literal
 
 from ragstudio.services.script_detection import SCRIPT_PATTERNS
 
-REFERENCE_PATTERN = re.compile(r"\[(\d+):(\d+)\]")
-
 
 @dataclass(frozen=True)
 class PdfPreflightIssue:
@@ -22,6 +20,7 @@ class PdfPreflightIssue:
 class PdfPreflightResult:
     status: str
     inspected_pages: int
+    inspected_page_numbers: list[int]
     extracted_text_chars: int
     arabic_unit_count: int
     missing_arabic_unit_count: int
@@ -59,7 +58,7 @@ class PdfPreflightService:
                 page = document[page_number - 1]
                 page_text = _page_text(page)
                 extracted_text_chars += len(page_text)
-                reference_units = _reference_units(page_text)
+                reference_units = _reference_units(page_text, contract)
 
                 if strict_preflight and not page_text.strip():
                     issues.append(
@@ -121,6 +120,7 @@ class PdfPreflightService:
         return PdfPreflightResult(
             status=status,
             inspected_pages=len(page_numbers),
+            inspected_page_numbers=page_numbers,
             extracted_text_chars=extracted_text_chars,
             arabic_unit_count=arabic_unit_count,
             missing_arabic_unit_count=missing_arabic_unit_count,
@@ -167,6 +167,12 @@ def _strict_preflight_enabled(contract: dict[str, Any] | None) -> bool:
 def _expects_reference_units(contract: dict[str, Any] | None) -> bool:
     if not isinstance(contract, dict):
         return False
+    reference_contract = contract.get("reference_contract")
+    if not (
+        isinstance(reference_contract, dict)
+        and reference_contract.get("verified") is True
+    ):
+        return False
     vision_analysis = contract.get("vision_analysis")
     if isinstance(vision_analysis, dict):
         observed_pattern = str(
@@ -176,11 +182,7 @@ def _expects_reference_units(contract: dict[str, Any] | None) -> bool:
         ).casefold()
         if "reference" in observed_pattern:
             return True
-    reference_contract = contract.get("reference_contract")
-    return (
-        isinstance(reference_contract, dict)
-        and bool(reference_contract.get("schema_type"))
-    )
+    return bool(reference_contract.get("schema_type"))
 
 
 def _min_reference_script_pass_ratio(contract: dict[str, Any] | None) -> float:
@@ -216,7 +218,9 @@ def _has_blocking_issues(
     min_reference_script_pass_ratio: float,
 ) -> bool:
     for issue in issues:
-        if issue.code in {"pdf_text_extraction_empty", "reference_unit_missing"}:
+        if issue.code == "pdf_text_extraction_empty":
+            return True
+        if issue.code == "reference_unit_missing" and passed_reference_script_ratio is None:
             return True
     if passed_reference_script_ratio is None:
         return bool(issues)
@@ -242,22 +246,30 @@ def _page_numbers_for_mode(
                     for page in raw_pages
                     if isinstance(page, int) and 1 <= page <= page_count
                 ]
-        if sample_pages:
-            return list(dict.fromkeys(sample_pages))
         vision_analysis = contract.get("vision_analysis")
-        if isinstance(vision_analysis, dict):
+        if not sample_pages and isinstance(vision_analysis, dict):
             raw_pages = vision_analysis.get("sample_pages")
             if isinstance(raw_pages, list):
-                sample_pages = [
+                sample_pages.extend(
                     page
                     for page in raw_pages
                     if isinstance(page, int) and 1 <= page <= page_count
-                ]
+                )
     if sample_pages:
-        return list(dict.fromkeys(sample_pages))
+        representative_pages = _representative_page_numbers(page_count) if page_count > 20 else []
+        return list(dict.fromkeys([*sample_pages, *representative_pages]))
     if page_count == 0:
         return []
-    return list(range(1, min(page_count, 3) + 1))
+    return _representative_page_numbers(page_count)
+
+
+def _representative_page_numbers(page_count: int) -> list[int]:
+    if page_count == 0:
+        return []
+    if page_count <= 3:
+        return list(range(1, page_count + 1))
+    representative_pages = [1, max(1, (page_count + 1) // 2), page_count]
+    return list(dict.fromkeys(representative_pages))
 
 
 def _page_text(page: Any) -> str:
@@ -274,10 +286,12 @@ def _page_text(page: Any) -> str:
     return "\n".join(text for _, _, text in ordered_blocks)
 
 
-def _reference_units(page_text: str) -> list[tuple[str, str]]:
-    matches = list(REFERENCE_PATTERN.finditer(page_text))
-    if not matches:
-        return []
+def _reference_units(
+    page_text: str,
+    contract: dict[str, Any] | None = None,
+) -> list[tuple[str, str]]:
+    matches = _reference_matches_from_contract(page_text, contract)
+    matches.sort(key=lambda item: item.start())
 
     units: list[tuple[str, str]] = []
     for index, match in enumerate(matches):
@@ -285,6 +299,172 @@ def _reference_units(page_text: str) -> list[tuple[str, str]]:
         end = matches[index + 1].start() if index + 1 < len(matches) else len(page_text)
         units.append((match.group(0), page_text[start:end].strip()))
     return units
+
+
+def _overlaps_existing_span(
+    span: tuple[int, int],
+    occupied_spans: list[tuple[int, int]],
+) -> bool:
+    start, end = span
+    return any(
+        start < existing_end and end > existing_start
+        for existing_start, existing_end in occupied_spans
+    )
+
+
+def _reference_matches_from_contract(
+    page_text: str,
+    contract: dict[str, Any] | None,
+) -> list[re.Match[str]]:
+    if not isinstance(contract, dict):
+        return []
+    reference_contract = contract.get("reference_contract")
+    if not (
+        isinstance(reference_contract, dict)
+        and reference_contract.get("verified") is True
+    ):
+        return []
+
+    matches: list[re.Match[str]] = []
+    occupied_spans: list[tuple[int, int]] = []
+    for pattern in _reference_patterns_from_contract(reference_contract):
+        for match in pattern.finditer(page_text):
+            span = match.span()
+            if _overlaps_existing_span(span, occupied_spans):
+                continue
+            matches.append(match)
+            occupied_spans.append(span)
+
+    for match in _contextual_unit_matches(page_text, reference_contract):
+        span = match.span()
+        if _overlaps_existing_span(span, occupied_spans):
+            continue
+        matches.append(match)
+        occupied_spans.append(span)
+    return matches
+
+
+def _reference_patterns_from_contract(
+    reference_contract: dict[str, Any],
+) -> list[re.Pattern[str]]:
+    patterns: list[re.Pattern[str]] = []
+    anchors = _anchor_list(reference_contract)
+    strategy = _string_value(reference_contract.get("strategy"))
+    has_context_anchor = _anchor_by_kind(reference_contract, "context_anchor") is not None
+    for anchor in anchors:
+        kind = _string_value(anchor.get("kind"))
+        if kind == "context_anchor":
+            continue
+        if kind == "unit_anchor" and strategy == "contextual_unit" and has_context_anchor:
+            continue
+        pattern = _compiled_reference_pattern(anchor.get("regex"))
+        if pattern is not None:
+            patterns.append(pattern)
+
+    if not patterns:
+        for key in ("primary_anchor_regex", "unit_anchor_regex", "inline_reference_regex"):
+            if (
+                key == "unit_anchor_regex"
+                and strategy == "contextual_unit"
+                and reference_contract.get("context_anchor_regex")
+            ):
+                continue
+            pattern = _compiled_reference_pattern(reference_contract.get(key))
+            if pattern is not None:
+                patterns.append(pattern)
+    return _dedupe_patterns(patterns)
+
+
+def _contextual_unit_matches(
+    page_text: str,
+    reference_contract: dict[str, Any],
+) -> list[re.Match[str]]:
+    context_anchor = _anchor_by_kind(reference_contract, "context_anchor")
+    unit_anchor = _anchor_by_kind(reference_contract, "unit_anchor")
+    if (
+        reference_contract.get("strategy") != "contextual_unit"
+        and (context_anchor is None or unit_anchor is None)
+    ):
+        return []
+    context_regex = (
+        context_anchor.get("regex")
+        if context_anchor
+        else reference_contract.get("context_anchor_regex")
+    )
+    unit_regex = (
+        unit_anchor.get("regex")
+        if unit_anchor
+        else reference_contract.get("unit_anchor_regex")
+    )
+    context_pattern = _compiled_reference_pattern(
+        context_regex
+    )
+    unit_pattern = _compiled_reference_pattern(unit_regex)
+    if context_pattern is None or unit_pattern is None:
+        return []
+
+    context_matches = list(context_pattern.finditer(page_text))
+    if not context_matches:
+        return []
+
+    matches: list[re.Match[str]] = []
+    context_index = -1
+    for unit_match in unit_pattern.finditer(page_text):
+        while (
+            context_index + 1 < len(context_matches)
+            and context_matches[context_index + 1].start() <= unit_match.start()
+        ):
+            context_index += 1
+        if context_index < 0:
+            continue
+        if context_matches[context_index].end() <= unit_match.start():
+            matches.append(unit_match)
+    return matches
+
+
+def _anchor_list(reference_contract: dict[str, Any]) -> list[dict[str, Any]]:
+    anchors = reference_contract.get("anchors")
+    if not isinstance(anchors, list):
+        return []
+    return [anchor for anchor in anchors if isinstance(anchor, dict)]
+
+
+def _anchor_by_kind(
+    reference_contract: dict[str, Any],
+    kind: str,
+) -> dict[str, Any] | None:
+    for anchor in _anchor_list(reference_contract):
+        if anchor.get("kind") == kind:
+            return anchor
+    return None
+
+
+def _dedupe_patterns(patterns: list[re.Pattern[str]]) -> list[re.Pattern[str]]:
+    deduped: list[re.Pattern[str]] = []
+    seen: set[tuple[str, int]] = set()
+    for pattern in patterns:
+        key = (pattern.pattern, pattern.flags)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(pattern)
+    return deduped
+
+
+def _compiled_reference_pattern(value: Any) -> re.Pattern[str] | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        return re.compile(value, flags=re.IGNORECASE)
+    except re.error:
+        return None
+
+
+def _string_value(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    stripped = value.strip()
+    return stripped or None
 
 
 def _missing_expected_scripts(text: str, expected_scripts: set[str]) -> set[str]:
