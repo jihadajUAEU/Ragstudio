@@ -190,22 +190,52 @@ def _validate_canonical_ref_template(reference_schema: dict[str, Any], fields: A
             "custom_json.reference_schema.canonical_ref_template must be a valid "
             f"Python format template: {exc}"
         ) from exc
-    if isinstance(fields, dict) and template_fields:
-        field_keys = {key for key in fields if isinstance(key, str)}
-        if not template_fields.issubset(field_keys):
-            missing = sorted(template_fields - field_keys)
-            raise ValueError(
-                "custom_json.reference_schema.canonical_ref_template uses undeclared "
-                f"fields: {', '.join(missing)}"
-            )
+    if not template_fields:
+        return
+
+    declared_fields = _declared_reference_template_fields(reference_schema, fields)
+    if not template_fields.issubset(declared_fields):
+        missing = sorted(template_fields - declared_fields)
+        raise ValueError(
+            "custom_json.reference_schema.canonical_ref_template uses undeclared "
+            f"fields: {', '.join(missing)}"
+        )
 
 
 def _template_fields(template: str) -> set[str]:
-    return {
-        field_name.split(".", 1)[0].split("[", 1)[0]
-        for _, field_name, _, _ in Formatter().parse(template)
-        if field_name
-    }
+    fields: set[str] = set()
+    for _, field_name, format_spec, conversion in Formatter().parse(template):
+        if field_name is None:
+            continue
+        if not field_name:
+            raise ValueError("positional placeholders are not supported")
+        if (
+            "." in field_name
+            or "[" in field_name
+            or "]" in field_name
+            or format_spec
+            or conversion
+            or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", field_name)
+        ):
+            raise ValueError(
+                "only direct named placeholders such as {folio} are supported"
+            )
+        fields.add(field_name)
+    return fields
+
+
+def _declared_reference_template_fields(
+    reference_schema: dict[str, Any],
+    fields: Any,
+) -> set[str]:
+    declared: set[str] = set()
+    if isinstance(fields, dict):
+        declared.update(key for key in fields if isinstance(key, str))
+    for key in ("identity_fields", "required_fields"):
+        values = reference_schema.get(key)
+        if isinstance(values, list):
+            declared.update(item for item in values if isinstance(item, str))
+    return declared
 
 
 def _validate_reference_pattern(pattern: Any, key: str) -> None:
