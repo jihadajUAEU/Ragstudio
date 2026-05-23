@@ -60,6 +60,10 @@ class ExecutableReferenceContract:
 
     @property
     def missing_required_groups(self) -> frozenset[str]:
+        return self.required_groups - self.executable_anchor_group_names
+
+    @property
+    def missing_declared_executable_anchor_groups(self) -> frozenset[str]:
         return self.required_groups - self.declared_executable_anchor_group_names
 
     def anchor_group_names(

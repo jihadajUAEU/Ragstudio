@@ -113,8 +113,38 @@ def test_verified_primary_anchor_missing_required_template_field_is_not_executab
 
     assert contract.declared_executable_anchor_group_names == frozenset({"folio"})
     assert contract.executable_anchor_group_names == frozenset()
-    assert contract.missing_required_groups == frozenset({"line"})
+    assert contract.missing_required_groups == frozenset({"folio", "line"})
+    assert contract.missing_declared_executable_anchor_groups == frozenset({"line"})
     assert contract.verified is False
+
+
+def test_unverified_primary_and_verified_unit_do_not_satisfy_executable_path():
+    metadata = {
+        "reference_schema": {
+            "type": "folio_line",
+            "canonical_ref_template": "folio:{folio}:line:{line}",
+            "fields": {"folio": "folio_number", "line": "line_number"},
+        },
+        "domain_structure": {
+            "primary_anchor": {
+                "regex": r"Folio\s+(?P<folio>\d+)",
+                "unit": "folio",
+                "verified": False,
+            },
+            "unit_anchor": {
+                "regex": r"Line\s+(?P<line>\d+)",
+                "unit": "line",
+                "verified": True,
+            },
+        },
+    }
+
+    contract = build_executable_reference_contract(metadata)
+
+    assert contract.verified is False
+    assert contract.executable_anchor_group_names == frozenset()
+    assert contract.missing_required_groups == frozenset({"folio", "line"})
+    assert contract.missing_declared_executable_anchor_groups == frozenset()
 
 
 def test_verified_context_and_unit_anchors_satisfy_declared_required_groups():
