@@ -228,6 +228,56 @@ def test_build_document_index_contract_treats_unverified_reference_as_metadata_o
     assert contract["preprocessing"]["cleanup_recommended"] is False
 
 
+def test_build_document_index_contract_uses_contextual_strategy_when_primary_incomplete():
+    options = IndexDocumentIn(
+        domain_metadata=DomainMetadata(
+            domain="archive",
+            custom_json={
+                "reference_schema": {
+                    "type": "folio_line",
+                    "fields": {"folio": "folio", "line": "line"},
+                    "canonical_ref_template": "folio:{folio}:line:{line}",
+                },
+                "domain_structure": {
+                    "primary_anchor": {
+                        "regex": r"Folio\s+(?P<folio>\d+)",
+                        "unit": "folio_line",
+                        "verified": True,
+                    },
+                    "context_anchor": {
+                        "regex": r"Folio\s+(?P<folio>\d+)",
+                        "unit": "folio",
+                        "verified": True,
+                    },
+                    "unit_anchor": {
+                        "regex": r"Line\s+(?P<line>\d+)",
+                        "unit": "line",
+                        "verified": True,
+                    },
+                },
+                "reference_resolution": {
+                    "enabled": True,
+                    "build_canonical_units": True,
+                },
+                "preprocessing_policy": {"strict_pdf_text_preflight": True},
+            },
+        )
+    )
+
+    contract = build_document_index_contract(options)
+
+    assert contract["contract_status"] == "compiled_reference_contract"
+    assert contract["reference_contract"]["verified"] is True
+    assert contract["reference_contract"]["strategy"] == "contextual_unit"
+    assert contract["reference_contract"]["primary_anchor_regex"] is None
+    assert contract["reference_contract"]["context_anchor_regex"] == (
+        r"Folio\s+(?P<folio>\d+)"
+    )
+    assert contract["reference_contract"]["unit_anchor_regex"] == (
+        r"Line\s+(?P<line>\d+)"
+    )
+
+
 def test_build_document_index_contract_rejects_fake_verified_validation_status():
     options = IndexDocumentIn(
         domain_metadata=DomainMetadata(

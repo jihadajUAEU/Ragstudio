@@ -352,8 +352,12 @@ def _reference_patterns_from_contract(
     strategy = _string_value(reference_contract.get("strategy"))
     has_context_anchor = _anchor_by_kind(reference_contract, "context_anchor") is not None
     for anchor in anchors:
+        if anchor.get("verified") is not True:
+            continue
         kind = _string_value(anchor.get("kind"))
         if kind == "context_anchor":
+            continue
+        if kind == "primary_anchor" and strategy == "contextual_unit":
             continue
         if kind == "unit_anchor" and strategy == "contextual_unit" and has_context_anchor:
             continue
@@ -379,13 +383,10 @@ def _contextual_unit_matches(
     page_text: str,
     reference_contract: dict[str, Any],
 ) -> list[re.Match[str]]:
+    if reference_contract.get("strategy") != "contextual_unit":
+        return []
     context_anchor = _anchor_by_kind(reference_contract, "context_anchor")
     unit_anchor = _anchor_by_kind(reference_contract, "unit_anchor")
-    if (
-        reference_contract.get("strategy") != "contextual_unit"
-        and (context_anchor is None or unit_anchor is None)
-    ):
-        return []
     context_regex = (
         context_anchor.get("regex")
         if context_anchor
@@ -434,7 +435,7 @@ def _anchor_by_kind(
     kind: str,
 ) -> dict[str, Any] | None:
     for anchor in _anchor_list(reference_contract):
-        if anchor.get("kind") == kind:
+        if anchor.get("kind") == kind and anchor.get("verified") is True:
             return anchor
     return None
 

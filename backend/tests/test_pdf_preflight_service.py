@@ -554,6 +554,116 @@ def test_preflight_contextual_contract_uses_generic_anchors_without_legacy_field
     assert result.issues == []
 
 
+def test_preflight_contextual_strategy_does_not_count_units_without_context(
+    tmp_path,
+    monkeypatch,
+):
+    pdf_path = tmp_path / "contextual-lines-without-context.pdf"
+    _install_fake_fitz(
+        monkeypatch,
+        {
+            pdf_path: [
+                [
+                    _text_block(
+                        "Line 7 The record begins.\n"
+                        "Line 8 The record continues."
+                    )
+                ],
+            ]
+        },
+    )
+    contract = {
+        "reference_contract": {
+            "schema_type": "folio_line",
+            "canonical_units": True,
+            "strategy": "contextual_unit",
+            "verified": True,
+            "anchors": [
+                {
+                    "kind": "context_anchor",
+                    "regex": r"Folio\s+(?P<folio>\d+)",
+                    "unit_role": "folio",
+                    "verified": True,
+                },
+                {
+                    "kind": "unit_anchor",
+                    "regex": r"Line\s+(?P<line>[78])",
+                    "unit_role": "folio_line",
+                    "verified": True,
+                },
+            ],
+        },
+        "preprocessing": {
+            "strict_pdf_text_preflight": True,
+            "expected_scripts": ["latin"],
+        },
+        "vision_analysis": {
+            "observed_unit_pattern": "reference_units_with_folio_line_content",
+        },
+    }
+
+    result = PdfPreflightService().inspect(pdf_path, contract, mode="full_validation")
+
+    assert result.status == "failed"
+    assert result.reference_unit_count == 0
+    assert [issue.code for issue in result.issues] == ["reference_unit_missing"]
+
+
+def test_preflight_ignores_unverified_anchor_inside_verified_contract(
+    tmp_path,
+    monkeypatch,
+):
+    pdf_path = tmp_path / "unverified-inline-anchor.pdf"
+    _install_fake_fitz(
+        monkeypatch,
+        {
+            pdf_path: [
+                [
+                    _text_block(
+                        "[1:1] \u0627\u0644\u062d\u0645\u062f English.\n"
+                        "1:8 Cross reference should not start a unit."
+                    )
+                ],
+            ]
+        },
+    )
+    contract = {
+        "reference_contract": {
+            "schema_type": "chapter_verse",
+            "canonical_units": True,
+            "strategy": "single_anchor",
+            "verified": True,
+            "anchors": [
+                {
+                    "kind": "primary_anchor",
+                    "regex": r"\[(?P<chapter>\d+):(?P<verse>\d+)\]",
+                    "unit_role": "verse",
+                    "verified": True,
+                },
+                {
+                    "kind": "inline_references",
+                    "regex": r"(?P<chapter>\d+):(?P<verse>\d+)",
+                    "policy": "cross_reference_only",
+                    "verified": False,
+                },
+            ],
+        },
+        "preprocessing": {
+            "strict_pdf_text_preflight": True,
+            "expected_scripts": ["arabic", "latin"],
+        },
+        "vision_analysis": {
+            "observed_unit_pattern": "reference_units_with_verse_content",
+        },
+    }
+
+    result = PdfPreflightService().inspect(pdf_path, contract, mode="full_validation")
+
+    assert result.status == "passed"
+    assert result.reference_unit_count == 1
+    assert result.issues == []
+
+
 def _verified_reference_contract(values: dict[str, object]) -> dict[str, object]:
     contract = dict(values)
     contract["reference_contract"] = {

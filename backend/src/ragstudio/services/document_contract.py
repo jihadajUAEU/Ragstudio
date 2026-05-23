@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from ragstudio.schemas.parsing import IndexDocumentIn
@@ -153,8 +154,12 @@ def _reference_contract_payload(custom_json: dict[str, Any]) -> dict[str, Any]:
         }
         for anchor in executable.anchors
     ]
-    verified = executable.verified and _validation_matches_executable(validation, anchors)
-    strategy = _string_value(validation.get("selected_strategy")) or _executable_strategy(anchors)
+    strategy = _verified_strategy(
+        anchors,
+        required_groups=executable.required_groups,
+        validation=validation,
+    )
+    verified = executable.verified and strategy is not None
     payload = {
         "schema_type": executable.schema_type,
         "canonical_ref_template": executable.canonical_ref_template,
@@ -164,13 +169,15 @@ def _reference_contract_payload(custom_json: dict[str, Any]) -> dict[str, Any]:
         "strategy": strategy,
         "anchors": anchors,
     }
-    payload.update(_legacy_anchor_fields(anchors, only_verified=verified))
+    payload.update(_legacy_anchor_fields(anchors, only_verified=verified, strategy=strategy))
     return payload
 
 
 def _validation_matches_executable(
     validation: dict[str, Any],
     anchors: list[dict[str, Any]],
+    *,
+    required_groups: frozenset[str],
 ) -> bool:
     if not validation:
         return True
@@ -179,56 +186,115 @@ def _validation_matches_executable(
     strategy = _string_value(validation.get("selected_strategy"))
     if strategy == "single_anchor":
         selected_regex = _string_value(validation.get("selected_primary_anchor_regex"))
-        return _has_verified_anchor_regex(anchors, "primary_anchor", selected_regex)
+        anchor = _verified_anchor_by_regex(anchors, "primary_anchor", selected_regex)
+        return anchor is not None and _anchor_satisfies_required_groups(
+            anchor,
+            required_groups,
+        )
     if strategy == "contextual_unit":
         selected_context_regex = _string_value(
             validation.get("selected_context_anchor_regex")
         )
         selected_unit_regex = _string_value(validation.get("selected_unit_anchor_regex"))
-        return _has_verified_anchor_regex(
-            anchors, "context_anchor", selected_context_regex
-        ) and _has_verified_anchor_regex(anchors, "unit_anchor", selected_unit_regex)
+        context_anchor = _verified_anchor_by_regex(
+            anchors,
+            "context_anchor",
+            selected_context_regex,
+        )
+        unit_anchor = _verified_anchor_by_regex(anchors, "unit_anchor", selected_unit_regex)
+        return _anchor_pair_satisfies_required_groups(
+            context_anchor,
+            unit_anchor,
+            required_groups,
+        )
     return False
 
 
-def _has_verified_anchor_regex(
+def _verified_strategy(
+    anchors: list[dict[str, Any]],
+    *,
+    required_groups: frozenset[str],
+    validation: dict[str, Any],
+) -> str | None:
+    selected_strategy = _string_value(validation.get("selected_strategy"))
+    if selected_strategy and _validation_matches_executable(
+        validation,
+        anchors,
+        required_groups=required_groups,
+    ):
+        return selected_strategy
+    for anchor in _verified_anchors_by_kind(anchors, "primary_anchor"):
+        if _anchor_satisfies_required_groups(anchor, required_groups):
+            return "single_anchor"
+    for context_anchor in _verified_anchors_by_kind(anchors, "context_anchor"):
+        for unit_anchor in _verified_anchors_by_kind(anchors, "unit_anchor"):
+            if _anchor_pair_satisfies_required_groups(
+                context_anchor,
+                unit_anchor,
+                required_groups,
+            ):
+                return "contextual_unit"
+    return None
+
+
+def _verified_anchor_by_regex(
     anchors: list[dict[str, Any]],
     kind: str,
     regex: str | None,
-) -> bool:
+) -> dict[str, Any] | None:
     if regex is None:
-        return False
-    return any(
-        anchor.get("kind") == kind
-        and anchor.get("verified") is True
-        and anchor.get("regex") == regex
-        for anchor in anchors
-    )
-
-
-def _executable_strategy(anchors: list[dict[str, Any]]) -> str | None:
-    if any(
-        anchor.get("kind") == "primary_anchor" and anchor.get("verified") is True
-        for anchor in anchors
-    ):
-        return "single_anchor"
-    has_context = any(
-        anchor.get("kind") == "context_anchor" and anchor.get("verified") is True
-        for anchor in anchors
-    )
-    has_unit = any(
-        anchor.get("kind") == "unit_anchor" and anchor.get("verified") is True
-        for anchor in anchors
-    )
-    if has_context and has_unit:
-        return "contextual_unit"
+        return None
+    for anchor in _verified_anchors_by_kind(anchors, kind):
+        if anchor.get("regex") == regex:
+            return anchor
     return None
+
+
+def _verified_anchors_by_kind(
+    anchors: list[dict[str, Any]],
+    kind: str,
+) -> list[dict[str, Any]]:
+    return [
+        anchor
+        for anchor in anchors
+        if anchor.get("kind") == kind and anchor.get("verified") is True
+    ]
+
+
+def _anchor_satisfies_required_groups(
+    anchor: dict[str, Any],
+    required_groups: frozenset[str],
+) -> bool:
+    return required_groups.issubset(_regex_group_names(anchor.get("regex")))
+
+
+def _anchor_pair_satisfies_required_groups(
+    first_anchor: dict[str, Any] | None,
+    second_anchor: dict[str, Any] | None,
+    required_groups: frozenset[str],
+) -> bool:
+    if first_anchor is None or second_anchor is None:
+        return False
+    groups = _regex_group_names(first_anchor.get("regex")) | _regex_group_names(
+        second_anchor.get("regex")
+    )
+    return required_groups.issubset(groups)
+
+
+def _regex_group_names(regex: Any) -> frozenset[str]:
+    if not isinstance(regex, str) or not regex.strip():
+        return frozenset()
+    try:
+        return frozenset(re.compile(regex).groupindex)
+    except re.error:
+        return frozenset()
 
 
 def _legacy_anchor_fields(
     anchors: list[dict[str, Any]],
     *,
     only_verified: bool,
+    strategy: str | None,
 ) -> dict[str, str | None]:
     if not only_verified:
         return {
@@ -237,10 +303,17 @@ def _legacy_anchor_fields(
             "unit_anchor_regex": None,
             "inline_reference_regex": None,
         }
+    if strategy == "contextual_unit":
+        return {
+            "primary_anchor_regex": None,
+            "context_anchor_regex": _anchor_regex(anchors, "context_anchor"),
+            "unit_anchor_regex": _anchor_regex(anchors, "unit_anchor"),
+            "inline_reference_regex": None,
+        }
     return {
         "primary_anchor_regex": _anchor_regex(anchors, "primary_anchor"),
-        "context_anchor_regex": _anchor_regex(anchors, "context_anchor"),
-        "unit_anchor_regex": _anchor_regex(anchors, "unit_anchor"),
+        "context_anchor_regex": None,
+        "unit_anchor_regex": None,
         "inline_reference_regex": _anchor_regex(anchors, "inline_references"),
     }
 
