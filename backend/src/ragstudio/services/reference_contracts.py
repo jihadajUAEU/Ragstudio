@@ -37,13 +37,91 @@ class ExecutableReferenceContract:
 
     @property
     def verified(self) -> bool:
-        return any(anchor.verified for anchor in self.anchors)
+        return (
+            self._verified_primary_anchor_satisfies_required_groups()
+            or self._verified_context_unit_anchors_satisfy_required_groups()
+        )
+
+    @property
+    def declared_executable_anchor_group_names(self) -> frozenset[str]:
+        return self.anchor_group_names(
+            "primary_anchor",
+            "context_anchor",
+            "unit_anchor",
+        )
+
+    @property
+    def executable_anchor_group_names(self) -> frozenset[str]:
+        primary_groups = self._verified_primary_anchor_group_names()
+        if primary_groups is not None:
+            return primary_groups
+        context_unit_groups = self._verified_context_unit_anchor_group_names()
+        return context_unit_groups or frozenset()
+
+    @property
+    def missing_required_groups(self) -> frozenset[str]:
+        return self.required_groups - self.declared_executable_anchor_group_names
+
+    def anchor_group_names(
+        self,
+        *kinds: str,
+        require_verified: bool = False,
+    ) -> frozenset[str]:
+        kind_set = {_normalized_key(kind) for kind in kinds if kind}
+        groups: set[str] = set()
+        for anchor in self.anchors:
+            if kind_set and _normalized_key(anchor.kind) not in kind_set:
+                continue
+            if require_verified and not anchor.verified:
+                continue
+            groups.update(anchor.group_names)
+        return frozenset(groups)
 
     def required_scripts_for_role(self, role: str | None) -> frozenset[str]:
         return _scripts_for_role(self.required_scripts, self.required_scripts_by_unit_role, role)
 
     def optional_scripts_for_role(self, role: str | None) -> frozenset[str]:
         return _scripts_for_role(self.optional_scripts, self.optional_scripts_by_unit_role, role)
+
+    def _verified_primary_anchor_satisfies_required_groups(self) -> bool:
+        return self._verified_primary_anchor_group_names() is not None
+
+    def _verified_context_unit_anchors_satisfy_required_groups(self) -> bool:
+        return self._verified_context_unit_anchor_group_names() is not None
+
+    def _verified_primary_anchor_group_names(self) -> frozenset[str] | None:
+        for anchor in self._anchors_by_kind("primary_anchor", require_verified=True):
+            if self.required_groups.issubset(anchor.group_names):
+                return anchor.group_names
+        return None
+
+    def _verified_context_unit_anchor_group_names(self) -> frozenset[str] | None:
+        context_anchors = self._anchors_by_kind("context_anchor", require_verified=True)
+        unit_anchors = self._anchors_by_kind("unit_anchor", require_verified=True)
+        if not context_anchors or not unit_anchors:
+            return None
+        groups = self.anchor_group_names(
+            "context_anchor",
+            "unit_anchor",
+            require_verified=True,
+        )
+        if self.required_groups.issubset(groups):
+            return groups
+        return None
+
+    def _anchors_by_kind(
+        self,
+        kind: str,
+        *,
+        require_verified: bool = False,
+    ) -> tuple[ReferenceAnchor, ...]:
+        normalized_kind = _normalized_key(kind)
+        return tuple(
+            anchor
+            for anchor in self.anchors
+            if _normalized_key(anchor.kind) == normalized_kind
+            and (not require_verified or anchor.verified)
+        )
 
 
 def build_executable_reference_contract(custom_json: dict[str, Any]) -> ExecutableReferenceContract:
@@ -165,3 +243,7 @@ def _string_value(value: Any) -> str | None:
         return None
     stripped = value.strip()
     return stripped or None
+
+
+def _normalized_key(value: str) -> str:
+    return value.strip().casefold()

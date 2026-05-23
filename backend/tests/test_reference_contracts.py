@@ -65,3 +65,81 @@ def test_executable_contract_preserves_custom_strategy_and_anchors():
     assert contract.required_scripts_for_role("article_clause") == frozenset(
         {"latin"}
     )
+
+
+def test_verified_inline_anchor_alone_is_not_executable():
+    metadata = {
+        "reference_schema": {
+            "type": "folio_note",
+            "canonical_ref_template": "folio:{folio}",
+            "fields": {"folio": "folio_number"},
+        },
+        "domain_structure": {
+            "inline_references": {
+                "regex": r"folio\s+(?P<folio>\d+)",
+                "unit": "folio_note",
+                "verified": True,
+            }
+        },
+    }
+
+    contract = build_executable_reference_contract(metadata)
+
+    assert contract.anchor_group_names("inline_references", require_verified=True) == frozenset(
+        {"folio"}
+    )
+    assert contract.executable_anchor_group_names == frozenset()
+    assert contract.missing_required_groups == frozenset({"folio"})
+    assert contract.verified is False
+
+
+def test_verified_primary_anchor_missing_required_template_field_is_not_executable():
+    metadata = {
+        "reference_schema": {
+            "type": "folio_line",
+            "canonical_ref_template": "folio:{folio}:line:{line}",
+            "fields": {"folio": "folio_number", "line": "line_number"},
+        },
+        "domain_structure": {
+            "primary_anchor": {
+                "regex": r"Folio\s+(?P<folio>\d+)",
+                "unit": "folio_line",
+                "verified": True,
+            }
+        },
+    }
+
+    contract = build_executable_reference_contract(metadata)
+
+    assert contract.declared_executable_anchor_group_names == frozenset({"folio"})
+    assert contract.executable_anchor_group_names == frozenset()
+    assert contract.missing_required_groups == frozenset({"line"})
+    assert contract.verified is False
+
+
+def test_verified_context_and_unit_anchors_satisfy_declared_required_groups():
+    metadata = {
+        "reference_schema": {
+            "type": "folio_line",
+            "canonical_ref_template": "folio:{folio}:line:{line}",
+            "fields": {"folio": "folio_number", "line": "line_number"},
+        },
+        "domain_structure": {
+            "context_anchor": {
+                "regex": r"Folio\s+(?P<folio>\d+)",
+                "unit": "folio",
+                "verified": True,
+            },
+            "unit_anchor": {
+                "regex": r"Line\s+(?P<line>\d+)",
+                "unit": "line",
+                "verified": True,
+            },
+        },
+    }
+
+    contract = build_executable_reference_contract(metadata)
+
+    assert contract.executable_anchor_group_names == frozenset({"folio", "line"})
+    assert contract.missing_required_groups == frozenset()
+    assert contract.verified is True
