@@ -5,9 +5,10 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ragstudio.services.domain_lexical_registry import DomainLexicalAdapter, DomainLexicalRegistry
-from ragstudio.services.lexical_language_adapters import LexicalExpansion
+from ragstudio.services.lexical_language_adapters import ArabicLexicalAdapter, LexicalExpansion
 from ragstudio.services.query_hypothesis_service import QueryHypothesis
 from ragstudio.services.query_understanding import RetrievalPass
+from ragstudio.services.reference_contracts import metadata_list_declared_scripts
 
 
 @dataclass(frozen=True)
@@ -37,8 +38,7 @@ class DomainQueryExpansionService:
             selected_arabic_adapter = registry
 
         self.registry = selected_registry
-        if selected_arabic_adapter is not None:
-            self.registry.replace("reference_heavy", selected_arabic_adapter)
+        self.arabic_adapter = selected_arabic_adapter or ArabicLexicalAdapter()
 
     def expand(
         self,
@@ -58,6 +58,8 @@ class DomainQueryExpansionService:
             else []
         )
         adapters = self.registry.adapters_for(domain_family)
+        if domain_family == "reference_heavy" and _declares_arabic_script(domain_metadata):
+            adapters.append(self.arabic_adapter)
 
         retrieval_passes.extend(
             RetrievalPass(
@@ -164,6 +166,11 @@ def _use_expansion(domain_family: str, expansion: LexicalExpansion) -> bool:
     if domain_family == "reference_heavy":
         return expansion.match_type in {"exact_script", "transliteration"}
     return True
+
+
+def _declares_arabic_script(domain_metadata: list[dict[str, Any]]) -> bool:
+    scripts = metadata_list_declared_scripts(domain_metadata)
+    return bool({"arabic", "ar", "arab"} & scripts)
 
 
 def _dedupe(values: Iterable[str]) -> list[str]:

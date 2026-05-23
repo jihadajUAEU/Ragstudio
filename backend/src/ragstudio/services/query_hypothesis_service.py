@@ -3,13 +3,21 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import asdict, dataclass, field, replace
+from string import Formatter
 from typing import Any
 
 import httpx
 from ragstudio.services.http_client_provider import HttpClientProviderProtocol
 from ragstudio.services.http_retry import raise_for_transient_status, retry_async_http
-from ragstudio.services.reference_contracts import metadata_list_declared_scripts
-from ragstudio.services.reference_query_parser import parse_legacy_reference_query
+from ragstudio.services.reference_contracts import (
+    build_executable_reference_contract,
+    canonical_reference_from_groups,
+    metadata_list_declared_scripts,
+)
+from ragstudio.services.reference_query_parser import (
+    parse_legacy_reference_query,
+    parse_query_references,
+)
 
 _ALLOWED_INTENTS = {
     "find_word_occurrence",
@@ -24,6 +32,7 @@ _ALLOWED_DOMAIN_HINTS = {
     "quran",
     "tafseer",
     "hadith",
+    "reference",
     "research",
     "legal",
     "generic",
@@ -185,7 +194,11 @@ class QueryHypothesisService:
                 reason=f"llm_{exc.__class__.__name__}",
             )
 
-        hypothesis = self.parse_hypothesis(raw, original_query=query)
+        hypothesis = self.parse_hypothesis(
+            raw,
+            original_query=query,
+            reference_contracts=_reference_contracts_from_metadata(domain_metadata),
+        )
         if hypothesis.valid:
             return replace(hypothesis, source="llm", reason=None)
         return hypothesis
@@ -239,21 +252,33 @@ class QueryHypothesisService:
             original_query=query,
             intent="find_word_occurrence",
             target_terms=terms[:5],
-            domain_hint="quran",
-            answer_shape="surah_and_verse",
+            domain_hint="reference",
+            answer_shape="reference",
             confidence=0.74,
             valid=True,
             source="deterministic",
         )
 
     @staticmethod
-    def parse_hypothesis(raw: Any, *, original_query: str) -> QueryHypothesis:
+    def parse_hypothesis(
+        raw: Any,
+        *,
+        original_query: str,
+        reference_contracts: list[dict[str, Any]] | None = None,
+    ) -> QueryHypothesis:
         if not isinstance(raw, dict):
             return QueryHypothesis.empty(original_query, reason="invalid_hypothesis_shape")
 
+        active_contracts = reference_contracts or []
         target_terms = _target_terms(raw.get("target_terms"))
-        possible_references = _possible_references(raw.get("possible_references"))
-        probable_answer = _probable_answer(raw.get("probable_answer"))
+        possible_references = _possible_references(
+            raw.get("possible_references"),
+            reference_contracts=active_contracts,
+        )
+        probable_answer = _probable_answer(
+            raw.get("probable_answer"),
+            reference_contracts=active_contracts,
+        )
         intent = _allowed_alias(
             raw.get("intent"),
             _ALLOWED_INTENTS,
@@ -294,6 +319,7 @@ class QueryHypothesisService:
         domain_metadata: list[dict[str, Any]],
         profile: Any,
     ) -> dict[str, Any]:
+        reference_contracts = _reference_contracts_from_metadata(domain_metadata)
         domain_tokens = sorted(
             {
                 str(value).strip().casefold()
@@ -330,14 +356,15 @@ class QueryHypothesisService:
                         "probable_answer, confidence, needs_clarification.\n"
                         "Use canonical values when possible: intent semantic_question, "
                         "reference_lookup, find_word_occurrence, or explain_reference; "
-                        "answer_shape reference, short_answer, explanation, or "
-                        "surah_and_verse.\n"
-                        "Example: query 'Which hadith says about offering sacrifice for "
-                        "eid from hadith_bukhari' should include target_terms such as "
-                        "offering, sacrifice, eid, may include possible_references such "
-                        "as book:13:hadith:25 only if plausible, and must set "
-                        "needs_clarification false.\n"
+                        "answer_shape reference, short_answer, explanation, or unknown.\n"
+                        "Use supplied reference contracts as the only source for structured "
+                        "possible_references. For example, if the contract says Article "
+                        "and Clause identify units, a query about Article 12.7 may include "
+                        "those fields or the matching canonical reference only when the "
+                        "contract supports it.\n"
                         f"Domain tokens: {domain_tokens}\n"
+                        "Reference contracts: "
+                        f"{_reference_contract_summaries(reference_contracts)}\n"
                         f"Query: {query.strip()}"
                     ),
                 },
@@ -381,28 +408,45 @@ def _target_terms(raw: Any) -> list[QueryTargetTerm]:
     return _dedupe_terms(terms)[:5]
 
 
-def _possible_references(raw: Any) -> list[str]:
+def _possible_references(
+    raw: Any,
+    *,
+    reference_contracts: list[dict[str, Any]],
+) -> list[str]:
     if isinstance(raw, str | dict):
         raw = [raw]
     if not isinstance(raw, list):
         return []
     references: list[str] = []
     for item in raw:
-        reference = _reference_from_item(item)
+        reference = _reference_from_item(item, reference_contracts=reference_contracts)
         if reference is not None:
             references.append(reference)
     return list(dict.fromkeys(references))[:3]
 
 
-def _reference_from_item(item: Any) -> str | None:
+def _reference_from_item(
+    item: Any,
+    *,
+    reference_contracts: list[dict[str, Any]],
+) -> str | None:
     if isinstance(item, str):
-        return normalize_reference_hypothesis(item)
+        return normalize_reference_hypothesis(item, reference_contracts=reference_contracts)
     if not isinstance(item, dict):
         return None
     for key in ("reference", "ref", "citation"):
-        reference = normalize_reference_hypothesis(item.get(key))
+        reference = normalize_reference_hypothesis(
+            item.get(key),
+            reference_contracts=reference_contracts,
+        )
         if reference is not None:
             return reference
+    contract_reference = _reference_from_contract_groups(
+        item,
+        reference_contracts=reference_contracts,
+    )
+    if contract_reference is not None:
+        return contract_reference
     book = _positive_int(item.get("book"), max_value=9999)
     hadith = _positive_int(item.get("hadith"), max_value=999999)
     if book is not None and hadith is not None:
@@ -410,7 +454,11 @@ def _reference_from_item(item: Any) -> str | None:
     return None
 
 
-def _probable_answer(raw: Any) -> ProbableAnswer | None:
+def _probable_answer(
+    raw: Any,
+    *,
+    reference_contracts: list[dict[str, Any]],
+) -> ProbableAnswer | None:
     if not isinstance(raw, dict):
         return None
     surah_number = _positive_int(raw.get("surah_number"))
@@ -419,7 +467,7 @@ def _probable_answer(raw: Any) -> ProbableAnswer | None:
         return None
     if raw.get("ayah") is not None and ayah is None:
         return None
-    reference = _safe_reference(raw.get("reference"))
+    reference = _safe_reference(raw.get("reference"), reference_contracts=reference_contracts)
     return ProbableAnswer(
         surah=_safe_short_text(raw.get("surah"), max_length=80),
         surah_number=surah_number,
@@ -481,16 +529,211 @@ def _safe_short_text(value: Any, *, max_length: int) -> str | None:
     return normalized
 
 
-def _safe_reference(value: Any) -> str | None:
-    return normalize_reference_hypothesis(value)
+def _safe_reference(
+    value: Any,
+    *,
+    reference_contracts: list[dict[str, Any]],
+) -> str | None:
+    return normalize_reference_hypothesis(value, reference_contracts=reference_contracts)
 
 
-def normalize_reference_hypothesis(value: Any) -> str | None:
+def normalize_reference_hypothesis(
+    value: Any,
+    *,
+    reference_contracts: list[dict[str, Any]] | None = None,
+) -> str | None:
     reference = _safe_short_text(value, max_length=80)
     if reference is None:
         return None
+    active_contracts = reference_contracts or []
+    if active_contracts:
+        references = parse_query_references(reference, active_contracts)
+        if references:
+            return references[0]
+        canonical_reference = _canonical_reference_from_string(reference, active_contracts)
+        if canonical_reference is not None:
+            return canonical_reference
     references = parse_legacy_reference_query(reference)
     return references[0] if references else None
+
+
+def _reference_contracts_from_metadata(
+    domain_metadata: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    contracts: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for metadata in domain_metadata:
+        if not isinstance(metadata, dict):
+            continue
+        for contract in _metadata_reference_contracts(metadata):
+            key = json.dumps(contract, sort_keys=True, default=str)
+            if key in seen:
+                continue
+            seen.add(key)
+            contracts.append(contract)
+    return contracts
+
+
+def _metadata_reference_contracts(metadata: dict[str, Any]) -> list[dict[str, Any]]:
+    contracts: list[dict[str, Any]] = []
+    index_contract = _dict_value(metadata.get("index_contract"))
+    index_reference_contract = _dict_value(index_contract.get("reference_contract"))
+    if index_reference_contract:
+        contracts.append({"reference_contract": index_reference_contract})
+
+    reference_contract = _dict_value(metadata.get("reference_contract"))
+    if reference_contract:
+        contracts.append({"reference_contract": reference_contract})
+
+    custom_json = _dict_value(metadata.get("custom_json"))
+    if isinstance(custom_json.get("reference_schema"), dict):
+        executable = build_executable_reference_contract(custom_json)
+        contracts.append(
+            {
+                "reference_contract": {
+                    "schema_type": executable.schema_type,
+                    "canonical_ref_template": executable.canonical_ref_template,
+                    "required_groups": sorted(executable.required_groups),
+                    "verified": executable.verified,
+                    "anchors": [
+                        {
+                            "kind": anchor.kind,
+                            "regex": anchor.regex,
+                            "verified": anchor.verified,
+                        }
+                        for anchor in executable.anchors
+                    ],
+                }
+            }
+        )
+    return contracts
+
+
+def _reference_contract_summaries(contracts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    summaries: list[dict[str, Any]] = []
+    for contract in contracts[:5]:
+        reference_contract = _reference_contract_payload(contract)
+        if not reference_contract:
+            continue
+        summaries.append(
+            {
+                "schema_type": reference_contract.get("schema_type"),
+                "canonical_ref_template": reference_contract.get("canonical_ref_template"),
+                "required_groups": _string_list(reference_contract.get("required_groups")),
+                "anchor_kinds": [
+                    anchor.get("kind")
+                    for anchor in _anchor_list(reference_contract)
+                    if isinstance(anchor.get("kind"), str)
+                ],
+            }
+        )
+    return summaries
+
+
+def _reference_from_contract_groups(
+    item: dict[str, Any],
+    *,
+    reference_contracts: list[dict[str, Any]],
+) -> str | None:
+    for contract in reference_contracts:
+        reference_contract = _reference_contract_payload(contract)
+        if reference_contract.get("verified") is False:
+            continue
+        template = _string_value(reference_contract.get("canonical_ref_template"))
+        if not template:
+            continue
+        fields = _template_fields(template) or set(
+            _string_list(reference_contract.get("required_groups"))
+        )
+        if not fields:
+            continue
+        groups: dict[str, str] = {}
+        for group_name in fields:
+            group_value = _safe_reference_group(item.get(group_name))
+            if group_value is None:
+                break
+            groups[group_name] = group_value
+        if len(groups) != len(fields):
+            continue
+        reference = canonical_reference_from_groups(groups, template)
+        if reference is not None:
+            return reference
+    return None
+
+
+def _canonical_reference_from_string(
+    reference: str,
+    reference_contracts: list[dict[str, Any]],
+) -> str | None:
+    for contract in reference_contracts:
+        reference_contract = _reference_contract_payload(contract)
+        if reference_contract.get("verified") is False:
+            continue
+        template = _string_value(reference_contract.get("canonical_ref_template"))
+        if not template:
+            continue
+        pattern = _canonical_template_pattern(template)
+        if pattern is None:
+            continue
+        match = pattern.fullmatch(reference)
+        if not match:
+            continue
+        canonical = canonical_reference_from_groups(
+            {key: value for key, value in match.groupdict().items() if value},
+            template,
+        )
+        if canonical is not None:
+            return canonical
+    return None
+
+
+def _canonical_template_pattern(template: str) -> re.Pattern[str] | None:
+    parts: list[str] = [r"\s*"]
+    try:
+        parsed = list(Formatter().parse(template))
+    except ValueError:
+        return None
+    for literal, field_name, _format_spec, _conversion in parsed:
+        parts.append(re.escape(literal))
+        if not field_name:
+            continue
+        group_name = field_name.split(".", 1)[0].split("[", 1)[0]
+        if not re.fullmatch(r"[A-Za-z]\w*", group_name):
+            return None
+        parts.append(rf"(?P<{group_name}>[\w.-]+)")
+    parts.append(r"\s*")
+    try:
+        return re.compile("".join(parts), flags=re.IGNORECASE)
+    except re.error:
+        return None
+
+
+def _reference_contract_payload(contract: dict[str, Any]) -> dict[str, Any]:
+    reference_contract = _dict_value(contract.get("reference_contract"))
+    return reference_contract or contract
+
+
+def _anchor_list(reference_contract: dict[str, Any]) -> list[dict[str, Any]]:
+    anchors = reference_contract.get("anchors")
+    if isinstance(anchors, list):
+        return [anchor for anchor in anchors if isinstance(anchor, dict)]
+    return []
+
+
+def _safe_reference_group(value: Any) -> str | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return str(value)
+    if not isinstance(value, str):
+        return None
+    normalized = _CONTROL_RE.sub(" ", value)
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    if not normalized or len(normalized) > 40:
+        return None
+    if "://" in normalized or _PATH_LIKE_RE.search(normalized):
+        return None
+    return normalized
 
 
 def _allowed(value: Any, allowed: set[str], *, default: str) -> str:
@@ -543,6 +786,38 @@ def _str_or_none(value: Any) -> str | None:
         return None
     stripped = value.strip()
     return stripped or None
+
+
+def _string_value(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    stripped = value.strip()
+    return stripped or None
+
+
+def _string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [
+        item.strip()
+        for item in value
+        if isinstance(item, str) and item.strip()
+    ]
+
+
+def _dict_value(value: Any) -> dict[str, Any]:
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _template_fields(template: str) -> set[str]:
+    try:
+        return {
+            field_name.split(".", 1)[0].split("[", 1)[0]
+            for _, field_name, _, _ in Formatter().parse(template)
+            if field_name
+        }
+    except ValueError:
+        return set()
 
 
 def _script_for_term(value: str) -> str:

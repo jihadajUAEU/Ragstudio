@@ -56,16 +56,41 @@ def test_domain_query_expansion_uses_reference_contract_family():
         "quran 1:5",
         domain_metadata=[
             {
-                    "domain": "quran_tafseer",
-                    "document_type": "commentary",
-                    "tags": ["quran", "arabic"],
-                    "custom_json": quran_domain_metadata()["custom_json"],
-                }
-            ],
-        )
+                "domain": "quran_tafseer",
+                "document_type": "commentary",
+                "tags": ["quran", "arabic"],
+                "custom_json": quran_domain_metadata()["custom_json"],
+            }
+        ],
+    )
 
     assert expansion.domain_family == "reference_heavy"
     assert expansion.trace["domain_family"] == "reference_heavy"
+
+
+def test_domain_query_expansion_does_not_use_arabic_adapter_without_script_contract():
+    service = DomainQueryExpansionService()
+
+    expansion = service.expand(
+        "hanan",
+        domain_metadata=[
+            {
+                "domain": "archival_text",
+                "document_type": "register",
+                "custom_json": {
+                    "reference_schema": {
+                        "type": "folio_line",
+                        "fields": {"folio": "folio_number", "line": "line_number"},
+                    }
+                },
+            }
+        ],
+    )
+
+    assert expansion.domain_family == "reference_heavy"
+    assert expansion.expansions == []
+    assert expansion.retrieval_passes == []
+    assert expansion.trace["adapter_sources"] == []
 
 
 def test_domain_query_expansion_legacy_arabic_adapter_does_not_duplicate_passes():

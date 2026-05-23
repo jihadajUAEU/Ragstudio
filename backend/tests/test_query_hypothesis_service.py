@@ -232,6 +232,59 @@ def test_parse_hypothesis_accepts_single_possible_reference_shapes(
     assert hypothesis.possible_references == expected
 
 
+def test_parse_hypothesis_uses_reference_contract_for_string_reference():
+    hypothesis = QueryHypothesisService.parse_hypothesis(
+        {
+            "intent": "reference_lookup",
+            "possible_references": ["Article 12.7"],
+            "domain_hint": "reference",
+            "answer_shape": "reference",
+        },
+        original_query="show Article 12.7",
+        reference_contracts=[article_clause_contract()],
+    )
+
+    assert hypothesis.valid is True
+    assert hypothesis.possible_references == ["article:12:clause:7"]
+
+
+def test_parse_hypothesis_uses_reference_contract_for_structured_reference():
+    hypothesis = QueryHypothesisService.parse_hypothesis(
+        {
+            "intent": "reference_lookup",
+            "possible_references": [{"article": "12", "clause": "7"}],
+            "probable_answer": {"reference": "article:12:clause:7"},
+            "domain_hint": "reference",
+            "answer_shape": "reference",
+        },
+        original_query="show Article 12.7",
+        reference_contracts=[article_clause_contract()],
+    )
+
+    assert hypothesis.valid is True
+    assert hypothesis.possible_references == ["article:12:clause:7"]
+    assert hypothesis.probable_answer == ProbableAnswer(reference="article:12:clause:7")
+
+
+def test_parse_hypothesis_rejects_unverified_reference_contract_groups():
+    contract = article_clause_contract()
+    contract["reference_contract"]["verified"] = False
+
+    hypothesis = QueryHypothesisService.parse_hypothesis(
+        {
+            "intent": "reference_lookup",
+            "possible_references": [{"article": "12", "clause": "7"}],
+            "domain_hint": "reference",
+            "answer_shape": "reference",
+        },
+        original_query="show Article 12.7",
+        reference_contracts=[contract],
+    )
+
+    assert hypothesis.valid is False
+    assert hypothesis.possible_references == []
+
+
 def test_parse_hypothesis_returns_invalid_for_non_dict():
     hypothesis = QueryHypothesisService.parse_hypothesis(["bad"], original_query="hello")
 
@@ -330,6 +383,24 @@ def profile():
             "llm_model": "test-model",
         },
     )()
+
+
+def article_clause_contract() -> dict[str, object]:
+    return {
+        "reference_contract": {
+            "schema_type": "article_clause",
+            "canonical_ref_template": "article:{article}:clause:{clause}",
+            "required_groups": ["article", "clause"],
+            "verified": True,
+            "anchors": [
+                {
+                    "kind": "primary_anchor",
+                    "regex": r"Article\s+(?P<article>\d+)\.(?P<clause>\d+)",
+                    "verified": True,
+                }
+            ],
+        }
+    }
 
 
 @pytest.mark.asyncio

@@ -7,7 +7,7 @@ from ragstudio.services.domain_lexical_adapters import (
     LEGAL_LEXICAL_ADAPTER,
     MEDICAL_LEXICAL_ADAPTER,
 )
-from ragstudio.services.lexical_language_adapters import ArabicLexicalAdapter, LexicalExpansion
+from ragstudio.services.lexical_language_adapters import LexicalExpansion
 
 
 class DomainLexicalAdapter(Protocol):
@@ -21,7 +21,6 @@ class DomainLexicalAdapter(Protocol):
 class DomainLexicalRegistry:
     def __init__(self) -> None:
         self._adapters: dict[str, list[DomainLexicalAdapter]] = {}
-        self.register("reference_heavy", ArabicLexicalAdapter())
         self.register("legal_reference", LEGAL_LEXICAL_ADAPTER)
         self.register("medical_reference", MEDICAL_LEXICAL_ADAPTER)
         self.register("financial_reference", FINANCIAL_LEXICAL_ADAPTER)

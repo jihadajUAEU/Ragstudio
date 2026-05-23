@@ -29,10 +29,7 @@ from ragstudio.services.query_hypothesis_verifier import (
     QueryHypothesisVerification,
     QueryHypothesisVerifier,
 )
-from ragstudio.services.reference_contracts import (
-    metadata_list_declared_scripts,
-    metadata_list_declares_reference_contract,
-)
+from ragstudio.services.reference_contracts import metadata_list_declared_scripts
 from ragstudio.services.reranker_service import RerankerService
 from ragstudio.services.retrieval_evidence import (
     EvidenceCandidate,
@@ -2086,66 +2083,6 @@ def _query_hypothesis_required(
 def _domain_metadata_supports_arabic_terms(domain_metadata: list[dict[str, Any]]) -> bool:
     scripts = metadata_list_declared_scripts(domain_metadata)
     return bool({"arabic", "ar", "arab"} & scripts)
-
-
-def _route_domain_id(domain_metadata: list[dict[str, Any]]) -> str | None:
-    if metadata_list_declares_reference_contract(domain_metadata):
-        return "reference_heavy"
-    for metadata in domain_metadata:
-        if not isinstance(metadata, dict):
-            continue
-        values = _metadata_signal_values(metadata)
-        if values & {"reference", "policy", "legal", "contract", "statute"}:
-            return "reference_heavy"
-        if values & {"table", "figure", "equation", "multimodal_layout"}:
-            return "multimodal_layout"
-    return None
-
-
-def _route_layout_hint(domain_metadata: list[dict[str, Any]]) -> str | None:
-    for metadata in domain_metadata:
-        if not isinstance(metadata, dict):
-            continue
-        values = _metadata_signal_values(metadata)
-        for layout_hint in ("table", "figure", "equation", "reference"):
-            if layout_hint in values:
-                return layout_hint
-        layout = metadata.get("layout")
-        if isinstance(layout, dict):
-            role = layout.get("role")
-            if isinstance(role, str) and role.casefold() in {
-                "table",
-                "figure",
-                "equation",
-                "reference",
-            }:
-                return role.casefold()
-    return None
-
-
-def _route_materialization_hint(query_config: dict[str, Any]) -> str | None:
-    retrieval_mode = str(query_config.get("retrieval_mode") or "").casefold()
-    if retrieval_mode == "metadata":
-        return "canonical_only"
-    if query_config.get("graph_expansion_enabled") is False:
-        return "vector"
-    return None
-
-
-def _metadata_signal_values(metadata: dict[str, Any]) -> set[str]:
-    signals: set[str] = set()
-    raw_tags = metadata.get("tags")
-    tags = raw_tags if isinstance(raw_tags, list | tuple | set) else []
-    for value in [
-        metadata.get("domain"),
-        metadata.get("document_type"),
-        metadata.get("content_role"),
-        metadata.get("collection"),
-        *tags,
-    ]:
-        if isinstance(value, str) and value.strip():
-            signals.add(value.strip().casefold())
-    return signals
 
 
 def _expected_references(
