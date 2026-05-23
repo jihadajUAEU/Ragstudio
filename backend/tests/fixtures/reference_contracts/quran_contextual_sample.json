@@ -1,0 +1,42 @@
+{
+  "pages": [
+    {
+      "page_number": 1,
+      "text": "Surah 1 [1:1] Arabic and English text. [1:2] Continued parallel text."
+    }
+  ],
+  "domain_metadata": {
+    "domain": "scripture",
+    "custom_json": {
+      "reference_schema": {
+        "type": "chapter_verse",
+        "fields": {
+          "chapter": "chapter_number",
+          "verse": "verse_number"
+        },
+        "canonical_ref_template": "{chapter}:{verse}"
+      },
+      "domain_structure": {
+        "context_anchor": {
+          "regex": "\\bSurah\\s+(?P<chapter>\\d{1,4})\\b",
+          "unit": "chapter",
+          "verified": false
+        },
+        "unit_anchor": {
+          "regex": "\\[(?P<chapter>\\d{1,4}):(?P<verse>\\d{1,4})\\]",
+          "unit": "verse",
+          "verified": false
+        }
+      },
+      "quality_policy": {
+        "required_scripts_by_unit_role": {
+          "verse": ["arabic"]
+        },
+        "optional_scripts_by_unit_role": {
+          "verse": ["latin"]
+        },
+        "missing_required_script_action": "warn"
+      }
+    }
+  }
+}

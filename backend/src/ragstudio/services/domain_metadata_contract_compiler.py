@@ -32,6 +32,7 @@ def compile_index_options(options: IndexDocumentIn) -> IndexDocumentIn:
 
 def compile_domain_metadata(metadata: DomainMetadata) -> DomainMetadata:
     custom_json = deepcopy(metadata.custom_json) if isinstance(metadata.custom_json, dict) else {}
+    _apply_reference_contract_validation(custom_json)
     contract = build_executable_reference_contract(custom_json)
     if not _has_declared_executable_reference_contract(contract):
         return metadata.model_copy(update={"custom_json": custom_json}, deep=True)
@@ -168,6 +169,90 @@ def _compile_mineru_parse_options(metadata: DomainMetadata) -> MinerUParseOption
     if values:
         return MinerUParseOptionsIn(**values)
     return None
+
+
+def _apply_reference_contract_validation(custom_json: dict[str, Any]) -> None:
+    validation = _dict_value(custom_json.get("reference_contract_validation"))
+    if validation.get("status") != "verified":
+        return
+    strategy = _string_value(validation.get("selected_strategy"))
+    if strategy not in {"single_anchor", "contextual_unit"}:
+        return
+    domain_structure = _dict_value(custom_json.get("domain_structure"))
+    if not domain_structure:
+        return
+
+    selected = _selected_validation_candidate(validation, strategy)
+    schema_type = _string_value(selected.get("schema_type")) or _string_value(
+        _dict_value(custom_json.get("reference_schema")).get("type")
+    )
+    _demote_reference_anchor_verification(domain_structure)
+    if strategy == "single_anchor":
+        selected_regex = _string_value(validation.get("selected_primary_anchor_regex"))
+        primary_anchor = _dict_value(domain_structure.get("primary_anchor"))
+        if selected_regex and _string_value(primary_anchor.get("regex")) == selected_regex:
+            primary_anchor["verified"] = True
+            if schema_type:
+                primary_anchor["type"] = schema_type
+            domain_structure["primary_anchor"] = primary_anchor
+    else:
+        selected_context_regex = _string_value(
+            validation.get("selected_context_anchor_regex")
+        )
+        selected_unit_regex = _string_value(validation.get("selected_unit_anchor_regex"))
+        context_anchor = _dict_value(domain_structure.get("context_anchor"))
+        unit_anchor = _dict_value(domain_structure.get("unit_anchor"))
+        if (
+            selected_context_regex
+            and selected_unit_regex
+            and _string_value(context_anchor.get("regex")) == selected_context_regex
+            and _string_value(unit_anchor.get("regex")) == selected_unit_regex
+        ):
+            context_anchor["verified"] = True
+            unit_anchor["verified"] = True
+            if schema_type:
+                context_anchor["type"] = schema_type
+                unit_anchor["type"] = schema_type
+            if not _string_value(unit_anchor.get("context_source")):
+                unit_anchor["context_source"] = "context_anchor"
+            domain_structure["context_anchor"] = context_anchor
+            domain_structure["unit_anchor"] = unit_anchor
+    custom_json["domain_structure"] = domain_structure
+
+
+def _selected_validation_candidate(
+    validation: dict[str, Any],
+    strategy: str,
+) -> dict[str, Any]:
+    candidates = validation.get("candidates")
+    if not isinstance(candidates, list):
+        return {}
+    primary_regex = _string_value(validation.get("selected_primary_anchor_regex"))
+    context_regex = _string_value(validation.get("selected_context_anchor_regex"))
+    unit_regex = _string_value(validation.get("selected_unit_anchor_regex"))
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        if strategy == "single_anchor" and _string_value(
+            candidate.get("primary_anchor_regex")
+        ) == primary_regex:
+            return candidate
+        if (
+            strategy == "contextual_unit"
+            and _string_value(candidate.get("context_anchor_regex")) == context_regex
+            and _string_value(candidate.get("unit_anchor_regex")) == unit_regex
+        ):
+            return candidate
+    return {}
+
+
+def _demote_reference_anchor_verification(domain_structure: dict[str, Any]) -> None:
+    for key in ("primary_anchor", "context_anchor", "unit_anchor"):
+        anchor = domain_structure.get(key)
+        if isinstance(anchor, dict):
+            demoted = dict(anchor)
+            demoted["verified"] = False
+            domain_structure[key] = demoted
 
 
 def _has_declared_executable_reference_contract(

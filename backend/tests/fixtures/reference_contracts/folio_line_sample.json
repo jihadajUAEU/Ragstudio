@@ -1,0 +1,34 @@
+{
+  "pages": [
+    {
+      "page_number": 1,
+      "text": "Folio 12 Line 7 The record begins. Folio 12 Line 8 The record continues."
+    }
+  ],
+  "domain_metadata": {
+    "domain": "archive",
+    "custom_json": {
+      "reference_schema": {
+        "type": "folio_line",
+        "fields": {
+          "folio": "folio",
+          "line": "line"
+        },
+        "canonical_ref_template": "folio:{folio}:line:{line}"
+      },
+      "domain_structure": {
+        "primary_anchor": {
+          "regex": "Folio\\s+(?P<folio>\\d+)\\s+Line\\s+(?P<line>\\d+)",
+          "unit": "folio_line",
+          "verified": false
+        }
+      },
+      "quality_policy": {
+        "required_scripts_by_unit_role": {
+          "folio_line": ["latin"]
+        },
+        "missing_required_script_action": "warn"
+      }
+    }
+  }
+}
