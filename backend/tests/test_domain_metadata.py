@@ -272,6 +272,74 @@ def test_validate_custom_json_accepts_quran_style_relationships():
     assert validate_custom_json(custom_json) is custom_json
 
 
+def test_validate_custom_json_accepts_custom_folio_line_reference_schema():
+    custom_json = {
+        "reference_schema": {
+            "type": "folio_line",
+            "canonical_ref_template": "folio:{folio}:line:{line}",
+            "fields": {"folio": "folio_number", "line": "line_number"},
+        },
+        "domain_structure": {
+            "primary_anchor": {
+                "regex": r"Folio\s+(?P<folio>\d+)\s+Line\s+(?P<line>\d+)",
+                "unit": "folio_line",
+            }
+        },
+    }
+
+    assert validate_custom_json(custom_json) is custom_json
+
+
+def test_validate_custom_json_rejects_template_undeclared_reference_field():
+    with pytest.raises(ValueError, match="canonical_ref_template uses undeclared fields: line"):
+        validate_custom_json(
+            {
+                "reference_schema": {
+                    "type": "folio_line",
+                    "canonical_ref_template": "folio:{folio}:line:{line}",
+                    "fields": {"folio": "folio_number"},
+                }
+            }
+        )
+
+
+def test_validate_custom_json_rejects_malformed_reference_template():
+    with pytest.raises(ValueError, match="canonical_ref_template"):
+        validate_custom_json(
+            {
+                "reference_schema": {
+                    "type": "folio_line",
+                    "canonical_ref_template": "folio:{folio:line:{line}",
+                    "fields": {"folio": "folio_number", "line": "line_number"},
+                }
+            }
+        )
+
+
+def test_validate_custom_json_accepts_reference_identity_and_required_fields():
+    custom_json = {
+        "reference_schema": {
+            "type": "folio_line",
+            "identity_fields": ["folio", "line"],
+            "required_fields": ["folio", "line"],
+        }
+    }
+
+    assert validate_custom_json(custom_json) is custom_json
+
+
+def test_validate_custom_json_rejects_non_string_reference_identity_fields():
+    with pytest.raises(ValueError, match=r"reference_schema\.identity_fields"):
+        validate_custom_json(
+            {"reference_schema": {"type": "folio_line", "identity_fields": ["folio", 7]}}
+        )
+
+    with pytest.raises(ValueError, match=r"reference_schema\.required_fields"):
+        validate_custom_json(
+            {"reference_schema": {"type": "folio_line", "required_fields": ["folio", 7]}}
+        )
+
+
 def test_validate_custom_json_accepts_graph_semantics():
     payload = {
         "graph": {

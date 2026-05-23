@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from copy import deepcopy
+from string import Formatter
 from typing import Any
 
 SAFE_REFERENCE_PATTERN = re.compile(r"^[A-Za-z0-9_?P<>()\[\]\{\}\\\^\$\.\:\-\+\*\,\s|]+$")
@@ -164,11 +165,47 @@ def _validate_reference_schema(value: Any) -> None:
         if item is not None and not isinstance(item, str):
             raise ValueError(f"custom_json.reference_schema.{key} must be a string.")
 
+    for key in ("identity_fields", "required_fields"):
+        _validate_string_list(value.get(key), f"custom_json.reference_schema.{key}")
+
+    _validate_canonical_ref_template(value, fields)
+
     for key in ("reference_regex", "pattern", "regex"):
         pattern = value.get(key)
         if pattern is None:
             continue
         _validate_reference_pattern(pattern, key)
+
+
+def _validate_canonical_ref_template(reference_schema: dict[str, Any], fields: Any) -> None:
+    template = reference_schema.get("canonical_ref_template")
+    if template is None:
+        return
+    if not isinstance(template, str):
+        raise ValueError("custom_json.reference_schema.canonical_ref_template must be a string.")
+    try:
+        template_fields = _template_fields(template)
+    except ValueError as exc:
+        raise ValueError(
+            "custom_json.reference_schema.canonical_ref_template must be a valid "
+            f"Python format template: {exc}"
+        ) from exc
+    if isinstance(fields, dict) and template_fields:
+        field_keys = {key for key in fields if isinstance(key, str)}
+        if not template_fields.issubset(field_keys):
+            missing = sorted(template_fields - field_keys)
+            raise ValueError(
+                "custom_json.reference_schema.canonical_ref_template uses undeclared "
+                f"fields: {', '.join(missing)}"
+            )
+
+
+def _template_fields(template: str) -> set[str]:
+    return {
+        field_name.split(".", 1)[0].split("[", 1)[0]
+        for _, field_name, _, _ in Formatter().parse(template)
+        if field_name
+    }
 
 
 def _validate_reference_pattern(pattern: Any, key: str) -> None:
