@@ -3,8 +3,12 @@ from __future__ import annotations
 import json
 import re
 
-from ragstudio.db.models import Chunk
+from ragstudio.db.models import Chunk, Document
 from ragstudio.services.arabic_text import arabic_query_variants, arabic_tokens
+from ragstudio.services.reference_query_parser import (
+    parse_legacy_reference_query,
+    parse_query_references,
+)
 from sqlalchemy import and_, cast, literal, or_, select
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -56,7 +60,10 @@ class ChunkLexicalSearchRepository:
         document_ids: list[str],
         limit: int,
     ) -> list[Chunk]:
-        references = _query_references(query)
+        reference_contracts = await self._reference_contracts(document_ids)
+        references = parse_query_references(query, reference_contracts)
+        if not reference_contracts:
+            references = parse_legacy_reference_query(query)
         if not references or limit <= 0:
             return []
 
@@ -71,6 +78,18 @@ class ChunkLexicalSearchRepository:
         chunks = list(result.scalars().all())
         supported = [chunk for chunk in chunks if _supports_reference_prefilter(chunk)]
         return supported[:limit]
+
+    async def _reference_contracts(self, document_ids: list[str]) -> list[dict[str, object]]:
+        if not document_ids:
+            return []
+        result = await self.session.execute(
+            select(Document.index_contract).where(Document.id.in_(document_ids))
+        )
+        contracts: list[dict[str, object]] = []
+        for contract in result.scalars().all():
+            if isinstance(contract, dict) and isinstance(contract.get("reference_contract"), dict):
+                contracts.append(contract)
+        return contracts
 
     async def arabic_prefilter(
         self,
@@ -142,27 +161,6 @@ class ChunkLexicalSearchRepository:
 
         result = await self.session.execute(statement)
         return list(result.scalars().all())[:limit]
-
-
-def _query_references(query: str) -> list[str]:
-    references = re.findall(r"\b\d{1,4}:\d{1,6}\b", query)
-    references.extend(
-        f"book:{int(match.group('book'))}:hadith:{int(match.group('hadith'))}"
-        for match in re.finditer(
-            r"\bBook\s+(?P<book>\d{1,4})\s*,?\s*Hadith\s+(?P<hadith>\d{1,6})\b",
-            query,
-            flags=re.IGNORECASE,
-        )
-    )
-    references.extend(
-        f"book:{int(match.group('book'))}:hadith:{int(match.group('hadith'))}"
-        for match in re.finditer(
-            r"\bbook:(?P<book>\d{1,4}):hadith:(?P<hadith>\d{1,6})\b",
-            query,
-            flags=re.IGNORECASE,
-        )
-    )
-    return list(dict.fromkeys(references))
 
 
 def _english_prefilter_terms(query: str) -> list[str]:

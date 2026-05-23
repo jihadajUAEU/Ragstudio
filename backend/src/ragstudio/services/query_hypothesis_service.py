@@ -8,6 +8,7 @@ from typing import Any
 import httpx
 from ragstudio.services.http_client_provider import HttpClientProviderProtocol
 from ragstudio.services.http_retry import raise_for_transient_status, retry_async_http
+from ragstudio.services.reference_query_parser import parse_legacy_reference_query
 
 _ALLOWED_INTENTS = {
     "find_word_occurrence",
@@ -56,15 +57,6 @@ _WORD_TARGET_RE = re.compile(
 )
 _ARABIC_TARGET_RE = re.compile(
     r"(?:كلمة|لفظ)\s+(?P<term>[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]+)"
-)
-_REFERENCE_VALUE_RE = re.compile(r"^\d{1,4}:\d{1,6}$")
-_BOOK_HADITH_CANONICAL_RE = re.compile(
-    r"^book:(?P<book>\d{1,4}):hadith:(?P<hadith>\d{1,6})$",
-    re.IGNORECASE,
-)
-_BOOK_HADITH_TEXT_RE = re.compile(
-    r"\bBook\s+(?P<book>\d{1,4})\s*,?\s*Hadith\s+(?P<hadith>\d{1,6})\b",
-    re.IGNORECASE,
 )
 _PATH_LIKE_RE = re.compile(r"(?:^|/)(?:Users|home|var|tmp|etc|private)(?:/|$)", re.IGNORECASE)
 _CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]+")
@@ -496,18 +488,8 @@ def normalize_reference_hypothesis(value: Any) -> str | None:
     reference = _safe_short_text(value, max_length=80)
     if reference is None:
         return None
-    if _REFERENCE_VALUE_RE.fullmatch(reference):
-        return reference
-    canonical_match = _BOOK_HADITH_CANONICAL_RE.fullmatch(reference)
-    if canonical_match is not None:
-        return (
-            f"book:{int(canonical_match.group('book'))}:"
-            f"hadith:{int(canonical_match.group('hadith'))}"
-        )
-    text_match = _BOOK_HADITH_TEXT_RE.search(reference)
-    if text_match is not None:
-        return f"book:{int(text_match.group('book'))}:hadith:{int(text_match.group('hadith'))}"
-    return None
+    references = parse_legacy_reference_query(reference)
+    return references[0] if references else None
 
 
 def _allowed(value: Any, allowed: set[str], *, default: str) -> str:
