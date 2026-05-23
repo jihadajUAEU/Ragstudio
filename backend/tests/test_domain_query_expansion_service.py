@@ -49,6 +49,34 @@ def test_domain_query_expansion_uses_registered_non_arabic_adapter():
     assert any(item.query == "impossibility" for item in expansion.retrieval_passes)
 
 
+def test_domain_query_expansion_preserves_legal_adapter_with_reference_contract():
+    service = DomainQueryExpansionService()
+
+    expansion = service.expand(
+        "force majeure contract section",
+        domain_metadata=[
+            {
+                "domain": "legal",
+                "document_type": "contract",
+                "custom_json": {
+                    "reference_schema": {
+                        "type": "article_clause",
+                        "fields": {
+                            "article": "article_number",
+                            "clause": "clause_number",
+                        },
+                    }
+                },
+            }
+        ],
+    )
+
+    assert expansion.domain_family == "legal_reference"
+    assert expansion.trace["adapter_sources"] == ["legal_keyword_adapter"]
+    assert "article" in expansion.trace["expanded_terms"]
+    assert any(item.query == "agreement" for item in expansion.retrieval_passes)
+
+
 def test_domain_query_expansion_uses_reference_contract_family():
     service = DomainQueryExpansionService()
 
@@ -77,6 +105,31 @@ def test_domain_query_expansion_does_not_use_arabic_adapter_without_script_contr
             {
                 "domain": "archival_text",
                 "document_type": "register",
+                "custom_json": {
+                    "reference_schema": {
+                        "type": "folio_line",
+                        "fields": {"folio": "folio_number", "line": "line_number"},
+                    }
+                },
+            }
+        ],
+    )
+
+    assert expansion.domain_family == "reference_heavy"
+    assert expansion.expansions == []
+    assert expansion.retrieval_passes == []
+    assert expansion.trace["adapter_sources"] == []
+
+
+def test_domain_query_expansion_does_not_treat_language_as_script_declaration():
+    service = DomainQueryExpansionService()
+
+    expansion = service.expand(
+        "hanan",
+        domain_metadata=[
+            {
+                "domain": "archive",
+                "language": "arabic",
                 "custom_json": {
                     "reference_schema": {
                         "type": "folio_line",

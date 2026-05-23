@@ -219,10 +219,9 @@ def metadata_declared_scripts(metadata: dict[str, Any]) -> frozenset[str]:
         scripts.update(role_scripts)
     for role_scripts in contract.optional_scripts_by_unit_role.values():
         scripts.update(role_scripts)
-    for key in ("script", "language"):
-        value = metadata.get(key)
-        if isinstance(value, str) and value.strip():
-            scripts.add(value.strip().casefold())
+    value = metadata.get("script")
+    if isinstance(value, str) and value.strip():
+        scripts.add(value.strip().casefold())
     return frozenset(scripts)
 
 

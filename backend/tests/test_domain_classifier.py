@@ -91,6 +91,52 @@ def test_domain_classifier_maps_legal_and_policy_to_legal_reference():
         assert result.reference_heavy is True
 
 
+def test_domain_classifier_preserves_specialized_family_with_reference_contract():
+    classifier = DomainClassifier()
+
+    legal = classifier.classify(
+        [
+            {
+                "domain": "legal",
+                "document_type": "contract",
+                "custom_json": {
+                    "reference_schema": {
+                        "type": "article_clause",
+                        "fields": {
+                            "article": "article_number",
+                            "clause": "clause_number",
+                        },
+                    }
+                },
+            }
+        ]
+    )
+    financial = classifier.classify(
+        [
+            {
+                "domain": "finance",
+                "document_type": "invoice",
+                "custom_json": {
+                    "reference_schema": {
+                        "type": "invoice_line",
+                        "fields": {
+                            "invoice": "invoice_number",
+                            "line": "line_number",
+                        },
+                    }
+                },
+            }
+        ]
+    )
+
+    assert legal.domain_profile_id == "legal_reference"
+    assert legal.domain_family == "legal_reference"
+    assert legal.reference_heavy is True
+    assert financial.domain_profile_id == "financial_reference"
+    assert financial.domain_family == "financial_reference"
+    assert financial.reference_heavy is True
+
+
 def test_domain_classifier_maps_layout_heavy_documents():
     result = DomainClassifier().classify(
         [

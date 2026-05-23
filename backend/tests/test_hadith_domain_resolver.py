@@ -209,6 +209,23 @@ def test_hadith_resolver_reverse_window_is_not_limited_to_three_blocks():
     assert "\u0642\u0627\u0644 \u0631\u0633\u0648\u0644" in units[0].text
 
 
+def test_hadith_resolver_preserves_legacy_book_hadith_semantics_without_contract():
+    blocks = [
+        block(ARABIC_BODY, 0, scripts={"arabic"}),
+        block("Book 4, Hadith 7", 1, block_type="header"),
+    ]
+    legacy_context = context(with_contract=False)
+
+    assert HadithResolver().can_resolve(legacy_context) is True
+    units = HadithResolver().resolve_units(
+        EvidenceGraph.from_blocks(blocks),
+        context=legacy_context,
+    )
+
+    assert len(units) == 1
+    assert units[0].preview_ref == "book:4:hadith:7"
+
+
 def test_hadith_resolver_ignores_non_hadith_domains():
     blocks = [
         block(

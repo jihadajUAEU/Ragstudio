@@ -423,7 +423,7 @@ def _declares_book_hadith_contract(
     )
     reference_schema = _dict_value(custom_json.get("reference_schema"))
     if not reference_schema:
-        return False
+        return semantics.reference_type in {"book_hadith", "hadith"}
     fields = _dict_value(reference_schema.get("fields"))
     if {"book", "hadith"}.issubset(fields):
         return True
