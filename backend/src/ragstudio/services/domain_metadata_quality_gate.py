@@ -1458,8 +1458,10 @@ class DomainMetadataQualityGate:
         language: str,
         profile: MetadataQualityProfile,
     ) -> bool:
-        normalized_language = str(language or "").strip().casefold()
-        return normalized_language in {"arabic", "quran"} or "arabic" in profile.required_scripts
+        del language
+        return "arabic" in profile.required_scripts or any(
+            "arabic" in scripts for scripts in profile.required_scripts_by_unit_role.values()
+        )
 
     @staticmethod
     def merge_parser_warnings(

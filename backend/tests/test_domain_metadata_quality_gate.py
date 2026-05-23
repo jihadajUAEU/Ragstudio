@@ -554,6 +554,43 @@ def test_quality_gate_does_not_require_global_arabic_when_role_marks_it_optional
     )
 
 
+def test_quality_gate_does_not_hard_fail_quran_language_when_arabic_is_optional():
+    metadata = DomainMetadata(
+        domain="translation",
+        language="quran",
+        custom_json={
+            "reference_schema": {
+                "type": "chapter_verse",
+                "fields": {"chapter": "chapter", "verse": "verse"},
+                "canonical_ref_template": "{chapter}:{verse}",
+            },
+            "chunking": {"unit": "verse_translation"},
+            "quality_policy": {
+                "required_scripts": [],
+                "optional_scripts_by_unit_role": {"verse_translation": ["arabic"]},
+                "missing_optional_script_action": "no_warning",
+            },
+        },
+    )
+    chunk = AdapterChunk(
+        text="[1:4]\nIt is You we worship and You we ask for help.",
+        source_location={"page": 2, "reference": "1:4"},
+        metadata={
+            "reference_metadata": {"references": ["1:4"]},
+            "canonical_reference_unit": {"unit_role": "verse_translation"},
+        },
+    )
+
+    report = DomainMetadataQualityGate().validate_adapter_chunks(
+        [chunk],
+        language="quran",
+        domain_metadata=metadata,
+    )
+
+    assert report["status"] == "passed"
+    assert "extraction_quality" not in chunk.metadata
+
+
 def test_domain_quality_gate_consumes_role_scoped_script_policies():
     chunks = [
         AdapterChunk(

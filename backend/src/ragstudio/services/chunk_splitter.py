@@ -855,7 +855,7 @@ class ChunkSplitter:
             return []
         if (
             profile.semantics.inline_reference_policy == "cross_reference_only"
-            and profile.semantics.primary_anchor_pattern
+            and profile.semantics.has_primary_unit_anchor
         ):
             return profile.semantics.split_primary_anchor_units(text)
         return profile.semantics.split_reference_units(text)
@@ -1350,12 +1350,43 @@ class ChunkSplitter:
         )
         if reference_metadata:
             metadata["reference_metadata"] = reference_metadata
+            self._enrich_canonical_reference_unit(
+                metadata,
+                reference_metadata=reference_metadata,
+                profile=profile,
+            )
 
         title = self._document_title(piece.text, piece.source_location)
         if title:
             document_metadata = dict(metadata.get("document_metadata") or {})
             document_metadata["title"] = title
             metadata["document_metadata"] = document_metadata
+
+    def _enrich_canonical_reference_unit(
+        self,
+        metadata: dict[str, Any],
+        *,
+        reference_metadata: dict[str, Any],
+        profile: ChunkProfile,
+    ) -> None:
+        semantics = profile.semantics
+        if semantics is None or not semantics.canonical_units_enabled:
+            return
+        if isinstance(metadata.get("canonical_reference_unit"), dict):
+            return
+        references = reference_metadata.get("references")
+        if not isinstance(references, list) or len(references) != 1:
+            return
+        reference = references[0]
+        if not isinstance(reference, str) or not reference:
+            return
+        metadata["canonical_reference_unit"] = {
+            "reference": reference,
+            "unit": semantics.chunk_unit,
+            "answerable": True,
+            "body_status": "split_unit",
+            "assembly_strategy": "structured_reference_metadata",
+        }
 
     def _merge_parser_warnings(
         self,

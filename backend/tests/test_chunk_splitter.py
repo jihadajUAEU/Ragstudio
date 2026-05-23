@@ -57,6 +57,10 @@ def build_canonical_reference_units() -> dict[str, object]:
     return {"enabled": True, "build_canonical_units": True}
 
 
+def require_arabic_quality_policy() -> dict[str, object]:
+    return {"required_scripts": ["arabic"], "missing_required_script_action": "warn"}
+
+
 def test_chunk_splitter_threads_http_client_provider_to_content_normalizer():
     provider = object()
     splitter = ChunkSplitter(http_client_provider=provider)
@@ -185,6 +189,7 @@ def bukhari_hadith_metadata() -> DomainMetadata:
                 "preserve_original_blocks": True,
                 "store_text_hash": True,
             },
+            "quality_policy": require_arabic_quality_policy(),
         },
     )
 
@@ -288,6 +293,59 @@ def test_chunk_splitter_splits_custom_contract_reference_units():
         parser_mode="mineru_strict",
     )
 
+    assert [item.metadata["reference_metadata"]["references"] for item in split] == [
+        ["folio:12:line:7"],
+        ["folio:12:line:8"],
+    ]
+
+
+def test_chunk_splitter_splits_contextual_contract_reference_units():
+    chunk = AdapterChunk(
+        text=(
+            "Folio 12\n\n"
+            "Line 7 The record begins.\n\n"
+            "Line 8 The record continues."
+        ),
+        source_location={"artifact": "archive.md", "page": 4},
+        metadata={"parser_metadata": {"backend": "mineru", "chunk_index": 0}},
+    )
+
+    split = ChunkSplitter(max_words=1500).split(
+        [chunk],
+        domain_metadata=DomainMetadata(
+            domain="archive",
+            custom_json={
+                "reference_schema": {
+                    "type": "folio_line",
+                    "fields": {"folio": "folio", "line": "line"},
+                    "canonical_ref_template": "folio:{folio}:line:{line}",
+                },
+                "domain_structure": {
+                    "context_anchor": {
+                        "regex": r"Folio\s+(?P<folio>\d+)",
+                        "unit": "folio",
+                        "verified": True,
+                    },
+                    "unit_anchor": {
+                        "regex": r"Line\s+(?P<line>\d+)",
+                        "unit": "line",
+                        "context_source": "context_anchor",
+                        "verified": True,
+                    },
+                },
+                "reference_resolution": {
+                    "enabled": True,
+                    "build_canonical_units": True,
+                },
+            },
+        ),
+        parser_mode="mineru_strict",
+    )
+
+    assert [item.metadata["canonical_reference_unit"]["unit"] for item in split] == [
+        "line",
+        "line",
+    ]
     assert [item.metadata["reference_metadata"]["references"] for item in split] == [
         ["folio:12:line:7"],
         ["folio:12:line:8"],
@@ -866,6 +924,7 @@ def test_chunk_splitter_uses_explicit_domain_metadata_for_content_list_normaliza
             tags=["quran"],
             script="arabic",
             reference_pattern="surah_number:verse_number",
+            custom_json={"quality_policy": require_arabic_quality_policy()},
         ),
         parser_mode="mineru_strict",
     )
@@ -908,6 +967,7 @@ def test_chunk_splitter_quarantines_quran_like_equation_from_content_list(tmp_pa
             tags=["quran"],
             script="arabic",
             reference_pattern="surah_number:verse_number",
+            custom_json={"quality_policy": require_arabic_quality_policy()},
         ),
         parser_mode="mineru_strict",
     )
@@ -947,6 +1007,7 @@ def test_chunk_splitter_emits_warning_only_piece_for_quarantined_page(tmp_path: 
             tags=["quran"],
             script="arabic",
             reference_pattern="surah_number:verse_number",
+            custom_json={"quality_policy": require_arabic_quality_policy()},
         ),
         parser_mode="mineru_strict",
     )
@@ -1103,7 +1164,11 @@ def test_chunk_splitter_flags_hadith_reference_missing_expected_arabic():
 
     split = ChunkSplitter(max_words=1500).split(
         [chunk],
-        domain_metadata=DomainMetadata(domain="hadith", script="arabic"),
+        domain_metadata=DomainMetadata(
+            domain="hadith",
+            script="arabic",
+            custom_json={"quality_policy": require_arabic_quality_policy()},
+        ),
         parser_mode="mineru_strict",
     )
 
@@ -1954,7 +2019,12 @@ async def test_chunk_splitter_dedupes_existing_quality_gate_warning():
 
     split = await ChunkSplitter(max_words=1500).split(
         [chunk],
-        domain_metadata=DomainMetadata(domain="religion", tags=["quran"], script="arabic"),
+        domain_metadata=DomainMetadata(
+            domain="religion",
+            tags=["quran"],
+            script="arabic",
+            custom_json={"quality_policy": require_arabic_quality_policy()},
+        ),
         parser_mode="mineru_strict",
     )
 
@@ -1973,7 +2043,12 @@ async def test_chunk_splitter_writes_quality_gate_warnings_to_extraction_quality
 
     split = await ChunkSplitter(max_words=1500).split(
         [chunk],
-        domain_metadata=DomainMetadata(domain="religion", tags=["quran"], script="arabic"),
+        domain_metadata=DomainMetadata(
+            domain="religion",
+            tags=["quran"],
+            script="arabic",
+            custom_json={"quality_policy": require_arabic_quality_policy()},
+        ),
         parser_mode="mineru_strict",
     )
 

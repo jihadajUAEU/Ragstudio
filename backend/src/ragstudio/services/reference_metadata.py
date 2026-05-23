@@ -119,18 +119,19 @@ class ReferenceSemantics:
             contract.required_groups,
         )
         inline_contract_anchor = cls._anchor_by_kind(contract.anchors, "inline_references")
-        first_anchor_unit = next(
-            (anchor.unit_role for anchor in contract.anchors if anchor.unit_role),
-            None,
-        )
         primary_anchor_unit = (
             primary_contract_anchor.unit_role
             if primary_contract_anchor is not None
             else cls._string_value(primary_anchor.get("unit"), default=None)
         )
+        unit_anchor_unit = unit_contract_anchor.unit_role if unit_contract_anchor else None
+        first_anchor_unit = next(
+            (anchor.unit_role for anchor in contract.anchors if anchor.unit_role),
+            None,
+        )
         chunk_unit = cls._string_value(
             chunking.get("unit"),
-            default=first_anchor_unit or primary_anchor_unit or "section",
+            default=unit_anchor_unit or primary_anchor_unit or first_anchor_unit or "section",
         ) or "section"
         if chunk_unit == "section" and structured_reference and not contract.anchors:
             chunk_unit = "verse"
@@ -256,6 +257,17 @@ class ReferenceSemantics:
             required_reference_groups=contract.required_groups,
         )
 
+    @property
+    def has_primary_unit_anchor(self) -> bool:
+        return bool(
+            self.primary_anchor_pattern
+            or (self.context_anchor_pattern and self.unit_anchor_pattern)
+        )
+
+    @property
+    def has_contextual_unit_anchor(self) -> bool:
+        return bool(self.context_anchor_pattern and self.unit_anchor_pattern)
+
     def extract_query_reference(self, query: str) -> dict[str, int | str] | None:
         for pattern in self._compiled_patterns(include_chapter_only=True):
             match = pattern.search(query)
@@ -281,6 +293,8 @@ class ReferenceSemantics:
             return contextual_references
         pattern = self._primary_anchor_regex()
         if pattern is None:
+            if self.has_contextual_unit_anchor:
+                return []
             return self.extract_chunk_references(text)
         stripped = text.strip()
         if not stripped:
@@ -319,6 +333,8 @@ class ReferenceSemantics:
             return contextual_units
         pattern = self._primary_anchor_regex()
         if pattern is None:
+            if self.has_contextual_unit_anchor:
+                return []
             return self.split_reference_units(text)
         matches = list(pattern.finditer(text))
         if not matches:
@@ -347,10 +363,12 @@ class ReferenceSemantics:
                 contextual_references,
                 source_location,
             )
+        if self.has_contextual_unit_anchor and not self.primary_anchor_pattern:
+            return {}
         all_references = self.extract_chunk_references(text)
         if (
             self.inline_reference_policy == "cross_reference_only"
-            and self.primary_anchor_pattern
+            and self.has_primary_unit_anchor
         ):
             primary_references = self.extract_primary_anchor_references(text)
             if not primary_references:
@@ -549,11 +567,19 @@ class ReferenceSemantics:
         unit_pattern = self._unit_anchor_regex()
         if context_pattern is None or unit_pattern is None:
             return []
+        context_matches = list(context_pattern.finditer(text))
+        unit_matches = [
+            match
+            for match in unit_pattern.finditer(text)
+            if not self._overlaps_context_anchor(match, context_matches)
+        ]
+        if not context_matches or not unit_matches:
+            return []
         references: list[dict[str, int | str]] = []
         seen: set[str] = set()
         current_context: dict[str, str] = {}
-        events = [("context", match) for match in context_pattern.finditer(text)]
-        events.extend(("unit", match) for match in unit_pattern.finditer(text))
+        events = [("context", match) for match in context_matches]
+        events.extend(("unit", match) for match in unit_matches)
         events.sort(key=lambda item: item[1].start())
         for event_type, match in events:
             groups = {key: value for key, value in match.groupdict().items() if value}
@@ -580,18 +606,24 @@ class ReferenceSemantics:
         if context_pattern is None or unit_pattern is None:
             return []
         context_matches = list(context_pattern.finditer(text))
-        unit_matches = list(unit_pattern.finditer(text))
+        unit_matches = [
+            match
+            for match in unit_pattern.finditer(text)
+            if not self._overlaps_context_anchor(match, context_matches)
+        ]
         if not context_matches or not unit_matches:
             return []
         units: list[str] = []
         leading = text[: unit_matches[0].start()].strip()
         for index, match in enumerate(unit_matches):
             start = match.start()
-            end = (
-                unit_matches[index + 1].start()
-                if index + 1 < len(unit_matches)
-                else len(text)
-            )
+            end_candidates = []
+            if index + 1 < len(unit_matches):
+                end_candidates.append(unit_matches[index + 1].start())
+            next_context = self._next_context_match(context_matches, start)
+            if next_context is not None:
+                end_candidates.append(next_context.start())
+            end = min(end_candidates) if end_candidates else len(text)
             unit = text[start:end].strip()
             if index == 0 and leading and context_pattern.search(leading):
                 unit = f"{leading}\n\n{unit}".strip()
@@ -602,6 +634,16 @@ class ReferenceSemantics:
             if unit:
                 units.append(unit)
         return units
+
+    def _next_context_match(
+        self,
+        matches: list[re.Match[str]],
+        position: int,
+    ) -> re.Match[str] | None:
+        for match in matches:
+            if match.start() > position:
+                return match
+        return None
 
     def _nearest_context_match(
         self,
@@ -614,6 +656,16 @@ class ReferenceSemantics:
                 break
             current = match
         return current
+
+    @staticmethod
+    def _overlaps_context_anchor(
+        match: re.Match[str],
+        context_matches: list[re.Match[str]],
+    ) -> bool:
+        return any(
+            match.start() < context.end() and context.start() < match.end()
+            for context in context_matches
+        )
 
     def _reference_from_groups(
         self,

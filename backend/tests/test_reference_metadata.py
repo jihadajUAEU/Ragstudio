@@ -153,11 +153,110 @@ def test_reference_metadata_extracts_contextual_surah_verse_units():
     )
     semantics = ReferenceSemantics.from_metadata(metadata)
 
+    assert semantics.chunk_unit == "verse"
     refs = semantics.extract_primary_anchor_references(
         "Surah 7\nThe Elevations\n104 Moses said...\n105 It is only proper..."
     )
 
     assert [ref["canonical"] for ref in refs] == ["7:104", "7:105"]
+
+
+def test_contextual_reference_extraction_ignores_context_anchor_overlap():
+    metadata = DomainMetadata(
+        domain="quran",
+        custom_json={
+            "reference_schema": {
+                "type": "chapter_verse",
+                "fields": {"chapter": "chapter", "verse": "verse"},
+                "canonical_ref_template": "{chapter}:{verse}",
+            },
+            "domain_structure": {
+                "context_anchor": {
+                    "regex": r"\bSurah\s+(?P<chapter>\d{1,4})\b",
+                    "unit": "chapter",
+                    "verified": True,
+                },
+                "unit_anchor": {
+                    "regex": r"\b(?P<verse>\d{1,4})\b",
+                    "unit": "verse",
+                    "context_source": "context_anchor",
+                    "verified": True,
+                },
+            },
+        },
+    )
+
+    refs = ReferenceSemantics.from_metadata(metadata).extract_primary_anchor_references(
+        "Surah 7\nThe Elevations\n104 Moses said...\n105 It is only proper..."
+    )
+
+    assert [ref["canonical"] for ref in refs] == ["7:104", "7:105"]
+
+
+def test_contextual_reference_contract_does_not_use_builtin_primary_fallback():
+    metadata = DomainMetadata(
+        domain="quran",
+        custom_json={
+            "reference_schema": {
+                "type": "chapter_verse",
+                "fields": {"chapter": "chapter", "verse": "verse"},
+                "canonical_ref_template": "{chapter}:{verse}",
+            },
+            "domain_structure": {
+                "context_anchor": {
+                    "regex": r"\bSurah\s+(?P<chapter>\d{1,4})\b",
+                    "unit": "chapter",
+                    "verified": True,
+                },
+                "unit_anchor": {
+                    "regex": r"\bAyah\s+(?P<verse>\d{1,4})\b",
+                    "unit": "verse",
+                    "context_source": "context_anchor",
+                    "verified": True,
+                },
+            },
+        },
+    )
+    semantics = ReferenceSemantics.from_metadata(metadata)
+
+    assert semantics.extract_primary_anchor_references("Cross reference only 7:104") == []
+    assert semantics.derive_reference_metadata("Cross reference only 7:104") == {}
+
+
+def test_contextual_reference_split_stops_at_next_context_anchor():
+    metadata = DomainMetadata(
+        domain="quran",
+        custom_json={
+            "reference_schema": {
+                "type": "chapter_verse",
+                "fields": {"chapter": "chapter", "verse": "verse"},
+                "canonical_ref_template": "{chapter}:{verse}",
+            },
+            "domain_structure": {
+                "context_anchor": {
+                    "regex": r"\bSurah\s+(?P<chapter>\d{1,4})\b",
+                    "unit": "chapter",
+                    "verified": True,
+                },
+                "unit_anchor": {
+                    "regex": r"\b(?P<verse>\d{1,4})\b",
+                    "unit": "verse",
+                    "context_source": "context_anchor",
+                    "verified": True,
+                },
+            },
+        },
+    )
+
+    units = ReferenceSemantics.from_metadata(metadata).split_primary_anchor_units(
+        "Surah 1\n1 first verse\n2 second verse\nSurah 2\n1 new chapter"
+    )
+
+    assert units == [
+        "Surah 1\n\n1 first verse",
+        "Surah 1\n2 second verse",
+        "Surah 2\n1 new chapter",
+    ]
 
 
 def test_unverified_primary_anchor_does_not_enable_canonical_units():
