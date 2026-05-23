@@ -120,3 +120,114 @@ async def test_targeted_vision_recovery_keeps_warning_counted_when_not_configure
     assert request["vision_recovery_status"] == "not_configured"
     assert warning["vision_recovery_status"] == "not_configured"
     assert warning.get("suppressed_from_counts") is None
+
+
+async def test_targeted_vision_recovery_skips_request_when_trigger_is_not_enabled(
+    tmp_path: Path,
+):
+    image_dir = tmp_path / "images"
+    image_dir.mkdir()
+    (image_dir / "ayah.png").write_bytes(b"\x89PNG\r\n\x1a\nfake-image")
+    content_list = tmp_path / "source_content_list.json"
+    content_list.write_text(
+        json.dumps([{"type": "image", "img_path": "images/ayah.png", "page_idx": 0}]),
+        encoding="utf-8",
+    )
+    warning = {
+        "code": "reference_unit_missing_expected_script",
+        "reference": "19:13",
+        "expected_script": "arabic",
+    }
+    request = {
+        "trigger": "missing_required_script",
+        "reference": "19:13",
+        "missing_scripts": ["arabic"],
+        "page_start": 1,
+        "page_end": 1,
+    }
+    chunk = AdapterChunk(
+        text="[19:13] English only.",
+        source_location={"page_start": 1, "page_end": 1},
+        metadata={
+            "parser_metadata": {
+                "artifact_extract_dir": str(tmp_path),
+                "content_list_ref": "source_content_list.json",
+            },
+            "provenance": {
+                "blocks": [{"source_block_ref": "source_content_list.json:block:0"}]
+            },
+            "extraction_quality": {"parser_warnings": [warning]},
+            "quality_repair": {"targeted_vision_recovery_requests": [request]},
+        },
+    )
+    client = FakeVisionRecoveryClient("ÙˆØ­Ù†Ø§Ù†Ø§ Ù…Ù† Ù„Ø¯Ù†Ø§")
+    config = VisionRecoveryConfig(
+        base_url="http://vision.test/v1",
+        model="vision-ocr",
+        enabled=True,
+        target_block_types=frozenset({"image"}),
+        triggers=frozenset({"unreadable_primary_anchor"}),
+    )
+
+    summary = await TargetedVisionRecoveryService(client).recover([chunk], config=config)
+
+    assert summary["targeted_vision_recovery_attempted"] == 0
+    assert summary["targeted_vision_recovery_not_configured"] == 1
+    assert client.calls == []
+    assert request["vision_recovery_status"] == "not_configured"
+    assert request["vision_recovery_reason"] == "trigger_not_enabled"
+    assert warning["vision_recovery_status"] == "not_configured"
+
+
+async def test_targeted_vision_recovery_marks_generic_required_script_warning_code(
+    tmp_path: Path,
+):
+    image_dir = tmp_path / "images"
+    image_dir.mkdir()
+    (image_dir / "folio.png").write_bytes(b"\x89PNG\r\n\x1a\nfake-image")
+    content_list = tmp_path / "source_content_list.json"
+    content_list.write_text(
+        json.dumps([{"type": "image", "img_path": "images/folio.png", "page_idx": 0}]),
+        encoding="utf-8",
+    )
+    warning = {
+        "code": "reference_unit_missing_required_script",
+        "reference": "folio:12:line:7",
+        "required_script": "latin",
+    }
+    request = {
+        "trigger": "missing_required_script",
+        "reference": "folio:12:line:7",
+        "missing_scripts": ["latin"],
+        "page_start": 1,
+        "page_end": 1,
+    }
+    chunk = AdapterChunk(
+        text="Folio 12 Line 7",
+        source_location={"page_start": 1, "page_end": 1},
+        metadata={
+            "parser_metadata": {
+                "artifact_extract_dir": str(tmp_path),
+                "content_list_ref": "source_content_list.json",
+            },
+            "provenance": {
+                "blocks": [{"source_block_ref": "source_content_list.json:block:0"}]
+            },
+            "extraction_quality": {"parser_warnings": [warning]},
+            "quality_repair": {"targeted_vision_recovery_requests": [request]},
+        },
+    )
+    client = FakeVisionRecoveryClient("Visible Latin recovery")
+    config = VisionRecoveryConfig(
+        base_url="http://vision.test/v1",
+        model="vision-ocr",
+        enabled=True,
+        target_block_types=frozenset({"image"}),
+        triggers=frozenset({"missing_required_script"}),
+    )
+
+    summary = await TargetedVisionRecoveryService(client).recover([chunk], config=config)
+
+    assert summary["targeted_vision_recovery_succeeded"] == 1
+    assert warning["vision_recovery_status"] == "succeeded"
+    assert warning["suppressed_from_counts"] is True

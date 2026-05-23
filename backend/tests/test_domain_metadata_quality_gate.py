@@ -649,6 +649,62 @@ def test_domain_quality_gate_uses_reference_metadata_when_text_lacks_reference_l
     ]
 
 
+def test_domain_quality_gate_does_not_use_builtin_reference_fallback_for_contextual_contract():
+    metadata = DomainMetadata(
+        domain="quran",
+        custom_json={
+            "reference_schema": {
+                "type": "chapter_verse",
+                "fields": {"chapter": "chapter", "verse": "verse"},
+                "canonical_ref_template": "{chapter}:{verse}",
+            },
+            "domain_structure": {
+                "context_anchor": {
+                    "regex": r"\bSurah\s+(?P<chapter>\d{1,4})\b",
+                    "unit": "chapter",
+                    "verified": True,
+                },
+                "unit_anchor": {
+                    "regex": r"\bAyah\s+(?P<verse>\d{1,4})\b",
+                    "unit": "verse",
+                    "context_source": "context_anchor",
+                    "verified": True,
+                },
+            },
+            "quality_policy": {
+                "optional_scripts": ["arabic"],
+                "missing_optional_script_action": "warn",
+            },
+        },
+    )
+    chunk = AdapterChunk(
+        text="Cross reference only 7:104",
+        source_location={"page": 4},
+        metadata={},
+    )
+
+    warnings = DomainMetadataQualityGate().warnings_for_text(
+        chunk.text,
+        domain_metadata=metadata,
+    )
+    report = DomainMetadataQualityGate().validate_adapter_chunks(
+        [chunk],
+        domain_metadata=metadata,
+    )
+
+    assert warnings == []
+    assert "reference_unit_missing_expected_script" not in report["parser_quality"][
+        "warning_counts"
+    ]
+    assert "reference_unit_missing_optional_script" not in report["parser_quality"][
+        "warning_counts"
+    ]
+    assert {
+        record.get("reference")
+        for record in report["index_quality_report"]["references"]
+    } == set()
+
+
 def test_domain_quality_gate_annotates_extraction_chunks_for_retrieval_time():
     chunks = [
         AdapterChunk(

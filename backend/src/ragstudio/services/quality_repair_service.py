@@ -17,6 +17,12 @@ PURE_LAYOUT_BLOCK_TYPES = {
     "page_number",
     "aside_text",
 }
+SCRIPT_MISSING_WARNING_CODES = frozenset(
+    {
+        "reference_unit_missing_expected_script",
+        "reference_unit_missing_required_script",
+    }
+)
 
 
 class QualityRepairPass:
@@ -184,11 +190,11 @@ class QualityRepairPass:
         for warning in warnings:
             if not isinstance(warning, dict):
                 continue
-            if warning.get("code") != "reference_unit_missing_expected_script":
+            if warning.get("code") not in SCRIPT_MISSING_WARNING_CODES:
                 continue
             if reference and warning.get("reference") not in {None, reference}:
                 continue
-            expected_script = warning.get("expected_script")
+            expected_script = warning.get("expected_script") or warning.get("required_script")
             if missing_scripts and expected_script not in missing_scripts:
                 continue
             warning["repair"] = repair

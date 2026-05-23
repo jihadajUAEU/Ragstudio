@@ -19,6 +19,13 @@ from ragstudio.services.script_detection import SCRIPT_PATTERNS
 
 logger = logging.getLogger(__name__)
 
+SCRIPT_MISSING_WARNING_CODES = frozenset(
+    {
+        "reference_unit_missing_expected_script",
+        "reference_unit_missing_required_script",
+    }
+)
+
 
 class VisionRecoveryClient(Protocol):
     async def recover_text(
@@ -75,6 +82,16 @@ class TargetedVisionRecoveryService:
         total_attempts = 0
         per_page_attempts: dict[int, int] = {}
         for chunk, request in requests:
+            trigger = self._request_trigger(request)
+            if trigger and trigger not in config.triggers:
+                self._mark_request(
+                    request,
+                    status="not_configured",
+                    reason="trigger_not_enabled",
+                )
+                self._mark_matching_warnings(chunk, request, status="not_configured")
+                summary["targeted_vision_recovery_not_configured"] += 1
+                continue
             if total_attempts >= config.max_total_blocks:
                 self._mark_request(request, status="failed", reason="max_total_blocks_reached")
                 self._mark_matching_warnings(chunk, request, status="failed")
@@ -116,7 +133,7 @@ class TargetedVisionRecoveryService:
                         image_data_url=data_url,
                         block_type=block_type,
                         page=page,
-                        triggers=["missing_required_script"],
+                        triggers=[trigger or "missing_required_script"],
                         existing_text=chunk.text,
                         config=config,
                     )
@@ -338,11 +355,11 @@ class TargetedVisionRecoveryService:
         for warning in warnings:
             if not isinstance(warning, dict):
                 continue
-            if warning.get("code") != "reference_unit_missing_expected_script":
+            if warning.get("code") not in SCRIPT_MISSING_WARNING_CODES:
                 continue
             if reference and warning.get("reference") not in {None, reference}:
                 continue
-            expected_script = warning.get("expected_script")
+            expected_script = warning.get("expected_script") or warning.get("required_script")
             if missing_scripts and expected_script not in missing_scripts:
                 continue
             warning["vision_recovery_status"] = status
@@ -395,6 +412,12 @@ class TargetedVisionRecoveryService:
             if pattern is None or not pattern.search(recovered_text):
                 return False
         return True
+
+    def _request_trigger(self, request: dict[str, Any]) -> str | None:
+        trigger = request.get("trigger")
+        if not isinstance(trigger, str) or not trigger.strip():
+            return None
+        return trigger.strip()
 
     def _page_matches(
         self,

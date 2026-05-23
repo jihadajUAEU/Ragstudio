@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from ragstudio.schemas.parsing import DomainMetadata
@@ -22,6 +23,40 @@ class FakeVisionRecoveryClient:
     async def recover_text(self, **kwargs):
         self.calls.append(kwargs)
         return self.text
+
+
+async def test_vision_recovery_config_uses_contract_triggers_only():
+    metadata = DomainMetadata(
+        domain="archive",
+        custom_json={
+            "vision_recovery_policy": {
+                "enabled": True,
+                "target_block_types": ["image"],
+                "triggers": ["unreadable_primary_anchor"],
+                "languages": ["latin"],
+                "max_blocks_per_page": 2,
+                "max_total_blocks": 5,
+                "failure_action": "block",
+            }
+        },
+    )
+    profile = SimpleNamespace(
+        vision_base_url="http://vision.test/v1",
+        vision_model="vision-ocr",
+        vision_api_key=None,
+        vision_timeout_ms=10_000,
+        llm_capabilities=[],
+    )
+
+    config = VisionRecoveryConfig.from_runtime_profile(metadata, profile)
+
+    assert config is not None
+    assert config.triggers == frozenset({"unreadable_primary_anchor"})
+    assert config.target_block_types == frozenset({"image"})
+    assert config.languages == frozenset({"latin"})
+    assert config.max_blocks_per_page == 2
+    assert config.max_total_blocks == 5
+    assert config.failure_action == "block"
 
 
 async def test_text_blocks_preserved_by_page():

@@ -163,7 +163,7 @@ class DomainMetadataQualityGate:
         )
         if not required_scripts and not optional_scripts:
             return []
-        if not self._has_reference(text, metadata, profile):
+        if not self._has_reference(text, metadata, profile, domain_metadata):
             return []
 
         warnings: list[dict[str, Any]] = []
@@ -885,6 +885,8 @@ class DomainMetadataQualityGate:
                     "end": len(text),
                 }
             ]
+        if semantics.has_primary_unit_anchor:
+            return []
 
         label_units = self._labelled_reference_units(text)
         if label_units:
@@ -1401,9 +1403,13 @@ class DomainMetadataQualityGate:
         text: str,
         metadata: dict[str, Any] | None,
         profile: MetadataQualityProfile,
+        domain_metadata: DomainMetadata | None,
     ) -> bool:
         if self._metadata_references(metadata):
             return True
+        semantics = ReferenceSemantics.from_metadata(domain_metadata or DomainMetadata())
+        if semantics.has_primary_unit_anchor:
+            return bool(semantics.extract_primary_anchor_references(text))
         if CHAPTER_VERSE_PATTERN.search(text) or BOOK_HADITH_PATTERN.search(text):
             return True
 

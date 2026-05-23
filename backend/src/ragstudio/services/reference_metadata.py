@@ -628,12 +628,33 @@ class ReferenceSemantics:
             if index == 0 and leading and context_pattern.search(leading):
                 unit = f"{leading}\n\n{unit}".strip()
             elif not context_pattern.search(unit):
-                context_match = self._nearest_context_match(context_matches, start)
-                if context_match is not None:
-                    unit = f"{context_match.group(0)}\n{unit}".strip()
+                context_prefix = self._context_prefix_for_unit(
+                    text,
+                    context_matches=context_matches,
+                    unit_matches=unit_matches,
+                    unit_index=index,
+                )
+                if context_prefix:
+                    unit = f"{context_prefix}\n{unit}".strip()
             if unit:
                 units.append(unit)
         return units
+
+    def _context_prefix_for_unit(
+        self,
+        text: str,
+        *,
+        context_matches: list[re.Match[str]],
+        unit_matches: list[re.Match[str]],
+        unit_index: int,
+    ) -> str:
+        unit_start = unit_matches[unit_index].start()
+        context_match = self._nearest_context_match(context_matches, unit_start)
+        if context_match is None:
+            return ""
+        if unit_index > 0 and context_match.start() <= unit_matches[unit_index - 1].start():
+            return context_match.group(0).strip()
+        return text[context_match.start() : unit_start].strip()
 
     def _next_context_match(
         self,

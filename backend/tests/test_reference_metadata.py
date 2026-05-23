@@ -259,6 +259,41 @@ def test_contextual_reference_split_stops_at_next_context_anchor():
     ]
 
 
+def test_contextual_reference_split_preserves_context_intro_before_first_unit():
+    metadata = DomainMetadata(
+        domain="quran",
+        custom_json={
+            "reference_schema": {
+                "type": "chapter_verse",
+                "fields": {"chapter": "chapter", "verse": "verse"},
+                "canonical_ref_template": "{chapter}:{verse}",
+            },
+            "domain_structure": {
+                "context_anchor": {
+                    "regex": r"\bSurah\s+(?P<chapter>\d{1,4})\b",
+                    "unit": "chapter",
+                    "verified": True,
+                },
+                "unit_anchor": {
+                    "regex": r"\b(?P<verse>\d{1,4})\b",
+                    "unit": "verse",
+                    "context_source": "context_anchor",
+                    "verified": True,
+                },
+            },
+        },
+    )
+
+    units = ReferenceSemantics.from_metadata(metadata).split_primary_anchor_units(
+        "Surah 1\n1 first verse\nSurah 2\nThe Cow\n1 new chapter"
+    )
+
+    assert units == [
+        "Surah 1\n\n1 first verse",
+        "Surah 2\nThe Cow\n1 new chapter",
+    ]
+
+
 def test_unverified_primary_anchor_does_not_enable_canonical_units():
     metadata = DomainMetadata(
         domain="quran",
