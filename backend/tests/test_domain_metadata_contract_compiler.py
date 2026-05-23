@@ -141,6 +141,108 @@ def test_bad_verified_primary_anchor_raises_for_contract_missing_groups():
         validate_executable_reference_contract(metadata)
 
 
+def test_unverified_bad_primary_anchor_raises_when_reference_chunking_requested():
+    metadata = DomainMetadata(
+        domain="manuscript",
+        custom_json={
+            "reference_schema": {
+                "type": "folio_line",
+                "canonical_ref_template": "folio:{folio}:line:{line}",
+                "fields": {
+                    "folio": "folio_number",
+                    "line": "line_number",
+                },
+            },
+            "chunking": {"unit": "folio_line"},
+            "domain_structure": {
+                "primary_anchor": {
+                    "regex": r"Folio\s+(?P<folio>\d+)",
+                    "unit": "folio_line",
+                    "verified": False,
+                }
+            },
+        },
+    )
+
+    compiled = compile_domain_metadata(metadata)
+
+    with pytest.raises(DomainMetadataContractError, match="line"):
+        validate_executable_reference_contract(compiled)
+
+
+def test_unverified_malformed_template_raises_when_reference_chunking_requested():
+    metadata = DomainMetadata(
+        domain="manuscript",
+        custom_json={
+            "reference_schema": {
+                "type": "folio_line",
+                "canonical_ref_template": "folio:{folio:line:{line}",
+                "fields": {
+                    "folio": "folio_number",
+                    "line": "line_number",
+                },
+            },
+            "chunking": {"unit": "folio_line"},
+            "domain_structure": {
+                "primary_anchor": {
+                    "regex": r"Folio\s+(?P<folio>\d+)\s+Line\s+(?P<line>\d+)",
+                    "unit": "folio_line",
+                    "verified": False,
+                }
+            },
+        },
+    )
+
+    compiled = compile_domain_metadata(metadata)
+
+    with pytest.raises(DomainMetadataContractError, match="canonical_ref_template"):
+        validate_executable_reference_contract(compiled)
+
+
+def test_contextual_anchor_pair_can_satisfy_contract_when_primary_is_incomplete():
+    metadata = DomainMetadata(
+        domain="manuscript",
+        custom_json={
+            "reference_schema": {
+                "type": "folio_line",
+                "canonical_ref_template": "folio:{folio}:line:{line}",
+                "fields": {
+                    "folio": "folio_number",
+                    "line": "line_number",
+                },
+            },
+            "chunking": {"unit": "line"},
+            "domain_structure": {
+                "primary_anchor": {
+                    "regex": r"Folio\s+(?P<folio>\d+)",
+                    "unit": "folio_line",
+                    "verified": True,
+                },
+                "context_anchor": {
+                    "regex": r"Folio\s+(?P<folio>\d+)",
+                    "unit": "folio",
+                    "verified": True,
+                },
+                "unit_anchor": {
+                    "regex": r"Line\s+(?P<line>\d+)",
+                    "unit": "line",
+                    "verified": True,
+                },
+            },
+        },
+    )
+
+    compiled = compile_domain_metadata(metadata)
+
+    assert compiled.custom_json["quality_policy"]["reference_contract_gate"]["required"] == [
+        "reference_schema.type",
+        "domain_structure.context_anchor.regex",
+        "domain_structure.unit_anchor.regex",
+        "reference_resolution.build_canonical_units",
+    ]
+    validate_executable_reference_contract(compiled)
+
+
 def test_domain_label_no_longer_forces_mineru_parser_hints():
     options = compile_index_options(
         IndexDocumentIn(

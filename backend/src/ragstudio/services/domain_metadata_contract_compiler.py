@@ -54,30 +54,29 @@ def validate_executable_reference_contract(metadata: DomainMetadata) -> None:
     if not reference_chunking_requested and not canonical_enabled:
         return
 
-    executable_anchors = _executable_anchors(contract)
-    _validate_anchor_regexes(executable_anchors)
-    primary_anchor_verified = _verified_primary_anchor(contract) is not None
-    composite_verified = _verified_context_anchor(contract) is not None and (
-        _verified_unit_anchor(contract) is not None
-    )
-    if not primary_anchor_verified and not composite_verified:
-        return
-
+    _validate_identity_groups(contract)
+    _validate_anchor_regexes(_executable_anchors(contract))
     if not canonical_enabled:
         raise DomainMetadataContractError(
             "Reference-unit chunking requires custom_json.reference_resolution.enabled=true "
             "and build_canonical_units=true before indexing."
         )
 
-    if primary_anchor_verified:
-        _validate_anchor_required_groups(
-            contract,
-            _verified_primary_anchor(contract),
-            "domain_structure.primary_anchor.regex",
-        )
+    if contract.verified:
         return
 
-    _validate_composite_anchor_required_groups(contract)
+    if _has_satisfied_primary_anchor(contract):
+        raise DomainMetadataContractError(
+            "custom_json.domain_structure.primary_anchor.regex must be verified "
+            "against sampled pages before indexing."
+        )
+    if _has_satisfied_context_unit_anchors(contract):
+        raise DomainMetadataContractError(
+            "custom_json.domain_structure.context_anchor.regex and "
+            "custom_json.domain_structure.unit_anchor.regex must be verified "
+            "against sampled pages before indexing."
+        )
+    _raise_missing_required_groups(contract)
 
 
 def _compile_reference_resolution(custom_json: dict[str, Any]) -> None:
@@ -126,7 +125,12 @@ def _compile_quality_policy(
         "reference_schema.type",
         "reference_resolution.build_canonical_units",
     ]
-    if _anchors_by_kind(contract, "primary_anchor"):
+    if _has_satisfied_context_unit_anchors(contract) and not _has_satisfied_primary_anchor(
+        contract
+    ):
+        required.insert(1, "domain_structure.context_anchor.regex")
+        required.insert(2, "domain_structure.unit_anchor.regex")
+    elif _anchors_by_kind(contract, "primary_anchor"):
         required.insert(1, "domain_structure.primary_anchor.regex")
     else:
         insertion_index = 1
@@ -200,38 +204,67 @@ def _validate_anchor_regexes(anchors: tuple[ReferenceAnchor, ...]) -> None:
             ) from exc
 
 
-def _validate_anchor_required_groups(
-    contract: ExecutableReferenceContract,
-    anchor: ReferenceAnchor | None,
-    path: str,
-) -> None:
-    if anchor is None:
-        return
-    _validate_identity_groups(contract)
-    missing = sorted(contract.required_groups - anchor.group_names)
-    if missing:
+def _raise_missing_required_groups(contract: ExecutableReferenceContract) -> None:
+    missing = sorted(contract.missing_declared_executable_anchor_groups)
+    if not missing:
         raise DomainMetadataContractError(
-            f"custom_json.{path} is missing required named "
-            f"groups: {', '.join(missing)}."
+            "Reference-unit chunking requires a verified primary anchor or "
+            "verified context and unit anchors before indexing."
         )
-
-
-def _validate_composite_anchor_required_groups(contract: ExecutableReferenceContract) -> None:
-    _validate_identity_groups(contract)
-    groups: set[str] = set()
-    for anchor in (
-        _verified_context_anchor(contract),
-        _verified_unit_anchor(contract),
-    ):
-        if anchor is not None:
-            groups.update(anchor.group_names)
-    missing = sorted(contract.required_groups - groups)
-    if missing:
+    primary_missing = _primary_anchor_missing_groups(contract)
+    context_unit_missing = _context_unit_anchor_missing_groups(contract)
+    if primary_missing is not None and primary_missing == set(missing):
+        raise DomainMetadataContractError(
+            "custom_json.domain_structure.primary_anchor.regex is missing required "
+            f"named groups: {', '.join(missing)}."
+        )
+    if context_unit_missing is not None and context_unit_missing == set(missing):
         raise DomainMetadataContractError(
             "custom_json.domain_structure.context_anchor.regex and "
             "custom_json.domain_structure.unit_anchor.regex are missing required "
             f"named groups: {', '.join(missing)}."
         )
+    raise DomainMetadataContractError(
+        "Declared reference anchors are missing required named groups: "
+        f"{', '.join(missing)}."
+    )
+
+
+def _primary_anchor_missing_groups(contract: ExecutableReferenceContract) -> set[str] | None:
+    primary = _first_anchor(contract, "primary_anchor")
+    if primary is None:
+        return None
+    return set(contract.required_groups - primary.group_names)
+
+
+def _context_unit_anchor_missing_groups(
+    contract: ExecutableReferenceContract,
+) -> set[str] | None:
+    context = _first_anchor(contract, "context_anchor")
+    unit = _first_anchor(contract, "unit_anchor")
+    if context is None or unit is None:
+        return None
+    groups = set(context.group_names) | set(unit.group_names)
+    return set(contract.required_groups - groups)
+
+
+def _has_satisfied_primary_anchor(contract: ExecutableReferenceContract) -> bool:
+    return any(
+        contract.required_groups.issubset(anchor.group_names)
+        for anchor in _anchors_by_kind(contract, "primary_anchor")
+    )
+
+
+def _has_satisfied_context_unit_anchors(contract: ExecutableReferenceContract) -> bool:
+    context_groups: set[str] = set()
+    unit_groups: set[str] = set()
+    for anchor in _anchors_by_kind(contract, "context_anchor"):
+        context_groups.update(anchor.group_names)
+    for anchor in _anchors_by_kind(contract, "unit_anchor"):
+        unit_groups.update(anchor.group_names)
+    if not context_groups or not unit_groups:
+        return False
+    return contract.required_groups.issubset(context_groups | unit_groups)
 
 
 def _validate_identity_groups(contract: ExecutableReferenceContract) -> None:
@@ -253,18 +286,6 @@ def _executable_anchors(contract: ExecutableReferenceContract) -> tuple[Referenc
         + _anchors_by_kind(contract, "context_anchor")
         + _anchors_by_kind(contract, "unit_anchor")
     )
-
-
-def _verified_primary_anchor(contract: ExecutableReferenceContract) -> ReferenceAnchor | None:
-    return _first_anchor(contract, "primary_anchor", require_verified=True)
-
-
-def _verified_context_anchor(contract: ExecutableReferenceContract) -> ReferenceAnchor | None:
-    return _first_anchor(contract, "context_anchor", require_verified=True)
-
-
-def _verified_unit_anchor(contract: ExecutableReferenceContract) -> ReferenceAnchor | None:
-    return _first_anchor(contract, "unit_anchor", require_verified=True)
 
 
 def _first_anchor(
