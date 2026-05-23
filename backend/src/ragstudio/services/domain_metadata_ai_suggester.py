@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Sequence
+from copy import deepcopy
 from dataclasses import dataclass
 from itertools import islice
 from typing import Any
@@ -17,8 +18,16 @@ from ragstudio.services.http_client_provider import HttpClientProviderProtocol
 from ragstudio.services.http_retry import raise_for_transient_status, retry_async_http
 from ragstudio.services.metadata_json_schema import validate_custom_json
 from ragstudio.services.page_sampler import SampledPage
+from ragstudio.services.reference_contracts import declared_required_groups
+from ragstudio.services.reference_contract_validator import (
+    ReferenceContractCandidate,
+    ReferenceContractValidationResult,
+    ReferenceContractValidator,
+)
 
 AUTOSUGGEST_MIN_TIMEOUT_MS = 60_000
+AUTOSUGGEST_INITIAL_MAX_TOKENS = 4_096
+AUTOSUGGEST_RETRY_MAX_TOKENS = 8_192
 BASELINE_PROMPT_MAX_STRING = 200
 BASELINE_PROMPT_MAX_LIST = 12
 BASELINE_PROMPT_MAX_DICT_ITEMS = 16
@@ -70,21 +79,38 @@ class DomainMetadataAiSuggester:
             headers["authorization"] = f"Bearer {target.api_key}"
 
         try:
-            response = await self._post_completion(target, headers, payload)
-            if response.status_code >= 400:
-                raise ValueError(
-                    f"Metadata autosuggest LLM returned HTTP {response.status_code}."
-                )
-
-            parsed = self._sanitize_ai_suggestion_payload(
-                self._parse_json(self._message_content(response.json()))
-            )
+            parsed = await self._completion_payload(target, headers, payload)
             suggestion = AiMetadataSuggestion.model_validate(parsed)
-        except (httpx.HTTPError, json.JSONDecodeError, TypeError, ValidationError) as exc:
+        except json.JSONDecodeError as exc:
+            if not self._should_retry_truncated_json(exc, payload):
+                raise ValueError(
+                    "Metadata autosuggest LLM response was invalid: "
+                    f"{self._exception_detail(exc)}"
+                ) from exc
+            retry_payload = self._truncated_json_retry_payload(payload)
+            try:
+                parsed = await self._completion_payload(target, headers, retry_payload)
+                suggestion = AiMetadataSuggestion.model_validate(parsed)
+            except (httpx.HTTPError, json.JSONDecodeError, TypeError, ValidationError) as retry_exc:
+                raise ValueError(
+                    "Metadata autosuggest LLM response was invalid after retry: "
+                    f"{self._exception_detail(retry_exc)}"
+                ) from retry_exc
+        except (httpx.HTTPError, TypeError, ValidationError) as exc:
             raise ValueError(
                 "Metadata autosuggest LLM response was invalid: "
                 f"{self._exception_detail(exc)}"
             ) from exc
+
+        raw_metadata = suggestion.domain_metadata.model_copy(deep=True)
+        candidates = self._reference_contract_candidates(raw_metadata, source="ai_observed")
+        if baseline_profile is not None:
+            candidates.extend(
+                self._reference_contract_candidates(
+                    baseline_profile,
+                    source="baseline_profile",
+                )
+            )
 
         metadata = suggestion.domain_metadata
         if baseline_profile is not None and not self._is_generic_baseline(baseline_profile):
@@ -94,6 +120,14 @@ class DomainMetadataAiSuggester:
             metadata.custom_json = self._normalize_custom_json(metadata.custom_json)
             should_merge_baseline = False
         metadata = compile_domain_metadata(metadata)
+        validation = (
+            ReferenceContractValidator().validate(pages, candidates)
+            if candidates
+            else None
+        )
+        if validation is not None:
+            metadata = self._apply_reference_contract_validation(metadata, validation)
+            metadata = compile_domain_metadata(metadata)
         validate_custom_json(metadata.custom_json)
         ai_source = "ai_vision" if target.supports_images else "ai_llm"
         if should_merge_baseline:
@@ -106,11 +140,174 @@ class DomainMetadataAiSuggester:
         evidence_pages = self._validated_evidence_pages(suggestion.evidence_pages, pages)
         return DomainMetadataSuggestOut(
             domain_metadata=metadata,
+            raw_domain_metadata=raw_metadata,
+            reference_contract_validation=validation.to_payload() if validation else None,
             confidence=suggestion.confidence,
             evidence_pages=evidence_pages,
             rationale=suggestion.rationale,
             warnings=[*sampler_warnings, *suggestion.warnings],
         )
+
+    async def _completion_payload(
+        self,
+        target: LlmTarget,
+        headers: dict[str, str],
+        payload: dict[str, object],
+    ) -> dict[str, object]:
+        response = await self._post_completion(target, headers, payload)
+        if response.status_code >= 400:
+            raise ValueError(
+                f"Metadata autosuggest LLM returned HTTP {response.status_code}."
+            )
+        return self._sanitize_ai_suggestion_payload(
+            self._parse_json(self._message_content(response.json()))
+        )
+
+    def _reference_contract_candidates(
+        self,
+        metadata: DomainMetadata,
+        *,
+        source: str,
+    ) -> list[ReferenceContractCandidate]:
+        custom_json = metadata.custom_json if isinstance(metadata.custom_json, dict) else {}
+        domain_structure = custom_json.get("domain_structure")
+        if not isinstance(domain_structure, dict):
+            return []
+        reference_schema = custom_json.get("reference_schema")
+        schema_type = self._schema_type(reference_schema)
+        required_groups = frozenset(declared_required_groups(custom_json))
+        canonical_ref_template = (
+            self._string_value(reference_schema.get("canonical_ref_template"))
+            if isinstance(reference_schema, dict)
+            else None
+        )
+        primary_anchor = domain_structure.get("primary_anchor")
+        inline_references = domain_structure.get("inline_references")
+        context_anchor = domain_structure.get("context_anchor")
+        unit_anchor = domain_structure.get("unit_anchor")
+
+        candidates: list[ReferenceContractCandidate] = []
+        if isinstance(primary_anchor, dict):
+            primary_regex = self._string_value(primary_anchor.get("regex"))
+            if primary_regex:
+                candidates.append(
+                    ReferenceContractCandidate(
+                        source=source,
+                        schema_type=(
+                            self._string_value(primary_anchor.get("type"))
+                            or schema_type
+                            or "unknown"
+                        ),
+                        primary_anchor_regex=primary_regex,
+                        inline_reference_regex=self._regex_from_section(inline_references),
+                        unit=self._string_value(primary_anchor.get("unit")),
+                        required_groups=required_groups,
+                        canonical_ref_template=canonical_ref_template,
+                    )
+                )
+        if isinstance(context_anchor, dict) and isinstance(unit_anchor, dict):
+            context_regex = self._string_value(context_anchor.get("regex"))
+            unit_regex = self._string_value(unit_anchor.get("regex"))
+            if context_regex and unit_regex:
+                context_group_names = self._regex_group_names(context_regex)
+                unit_group_names = self._regex_group_names(unit_regex)
+                candidates.append(
+                    ReferenceContractCandidate(
+                        source=source,
+                        schema_type=(
+                            self._string_value(unit_anchor.get("type"))
+                            or self._string_value(context_anchor.get("type"))
+                            or schema_type
+                            or "unknown"
+                        ),
+                        context_anchor_regex=context_regex,
+                        unit_anchor_regex=unit_regex,
+                        inline_reference_regex=self._regex_from_section(inline_references),
+                        unit=self._string_value(unit_anchor.get("unit")),
+                        required_groups=required_groups,
+                        context_required_groups=required_groups & context_group_names,
+                        unit_required_groups=required_groups & unit_group_names,
+                        canonical_ref_template=canonical_ref_template,
+                    )
+                )
+        return candidates
+
+    def _apply_reference_contract_validation(
+        self,
+        metadata: DomainMetadata,
+        validation: ReferenceContractValidationResult,
+    ) -> DomainMetadata:
+        custom_json = dict(metadata.custom_json) if isinstance(metadata.custom_json, dict) else {}
+        custom_json["reference_contract_validation"] = validation.to_payload()
+        selected = validation.selected
+        domain_structure = self._demote_reference_anchor_verification(
+            self._dict_value(custom_json.get("domain_structure"))
+        )
+        if selected is None:
+            if domain_structure:
+                custom_json["domain_structure"] = domain_structure
+            return metadata.model_copy(update={"custom_json": custom_json}, deep=True)
+
+        reference_schema = dict(custom_json.get("reference_schema") or {})
+        reference_schema["type"] = selected.schema_type
+        custom_json["reference_schema"] = reference_schema
+        if selected.strategy == "single_anchor":
+            primary_anchor = dict(domain_structure.get("primary_anchor") or {})
+            primary_anchor.update(
+                {
+                    "type": selected.schema_type,
+                    "regex": selected.primary_anchor_regex,
+                    "unit": selected.unit or primary_anchor.get("unit") or "unit",
+                    "verified": True,
+                }
+            )
+            domain_structure["primary_anchor"] = primary_anchor
+        elif selected.strategy == "contextual_unit":
+            context_anchor = dict(domain_structure.get("context_anchor") or {})
+            context_anchor.update(
+                {
+                    "type": selected.schema_type,
+                    "regex": selected.context_anchor_regex,
+                    "unit": context_anchor.get("unit") or "chapter",
+                    "verified": True,
+                }
+            )
+            unit_anchor = dict(domain_structure.get("unit_anchor") or {})
+            unit_anchor.update(
+                {
+                    "type": selected.schema_type,
+                    "regex": selected.unit_anchor_regex,
+                    "unit": selected.unit or unit_anchor.get("unit") or "unit",
+                    "context_source": unit_anchor.get("context_source") or "context_anchor",
+                    "verified": True,
+                }
+            )
+            domain_structure["context_anchor"] = context_anchor
+            domain_structure["unit_anchor"] = unit_anchor
+        inline_references = dict(domain_structure.get("inline_references") or {})
+        if selected.inline_reference_regex:
+            inline_references.update(
+                {
+                    "type": selected.schema_type,
+                    "regex": selected.inline_reference_regex,
+                    "policy": inline_references.get("policy") or "cross_reference_only",
+                }
+            )
+            domain_structure["inline_references"] = inline_references
+        custom_json["domain_structure"] = domain_structure
+        return metadata.model_copy(update={"custom_json": custom_json}, deep=True)
+
+    def _demote_reference_anchor_verification(
+        self,
+        domain_structure: dict[str, object],
+    ) -> dict[str, object]:
+        for key in ("primary_anchor", "context_anchor", "unit_anchor"):
+            anchor = domain_structure.get(key)
+            if isinstance(anchor, dict):
+                demoted = dict(anchor)
+                demoted["verified"] = False
+                domain_structure[key] = demoted
+        return domain_structure
 
     def _target(self, profile: SettingsProfile) -> LlmTarget:
         if profile.vision_base_url and profile.vision_model:
@@ -183,9 +380,51 @@ class DomainMetadataAiSuggester:
             "model": target.model,
             "messages": [{"role": "user", "content": content}],
             "temperature": 0,
-            "max_tokens": 1400,
+            "max_tokens": AUTOSUGGEST_INITIAL_MAX_TOKENS,
             "response_format": {"type": "json_object"},
         }
+
+    def _should_retry_truncated_json(
+        self,
+        exc: json.JSONDecodeError,
+        payload: dict[str, object],
+    ) -> bool:
+        current_max_tokens = payload.get("max_tokens")
+        if not isinstance(current_max_tokens, int):
+            return False
+        if current_max_tokens >= AUTOSUGGEST_RETRY_MAX_TOKENS:
+            return False
+        content = exc.doc or ""
+        message = exc.msg.casefold()
+        near_end = exc.pos >= max(len(content) - 128, 0)
+        return "unterminated string" in message or near_end
+
+    def _truncated_json_retry_payload(
+        self,
+        payload: dict[str, object],
+    ) -> dict[str, object]:
+        retry_payload = deepcopy(payload)
+        retry_payload["max_tokens"] = AUTOSUGGEST_RETRY_MAX_TOKENS
+        messages = retry_payload.get("messages")
+        if not isinstance(messages, list) or not messages:
+            return retry_payload
+        first_message = messages[0]
+        if not isinstance(first_message, dict):
+            return retry_payload
+        content = first_message.get("content")
+        if not isinstance(content, list):
+            return retry_payload
+        content.append(
+            {
+                "type": "text",
+                "text": (
+                    "Retry instruction: return compact minified JSON only. "
+                    "Keep evidence arrays short and every string concise so the "
+                    "JSON object is complete."
+                ),
+            }
+        )
+        return retry_payload
 
     async def _post_completion(
         self,
@@ -299,7 +538,21 @@ Return JSON only with this shape:
         "primary_anchor": {{
           "type": null,
           "regex": null,
-          "unit": null
+          "unit": null,
+          "verified": false
+        }},
+        "context_anchor": {{
+          "type": null,
+          "regex": null,
+          "unit": null,
+          "verified": false
+        }},
+        "unit_anchor": {{
+          "type": null,
+          "regex": null,
+          "unit": null,
+          "context_source": null,
+          "verified": false
         }},
         "inline_references": {{
           "type": null,
@@ -382,6 +635,11 @@ For custom_json.domain_structure, identify the text pattern that starts a primar
 answerable unit and distinguish it from inline cross-references. For example, a
 Tafseer page may use "Verse 18:30" as the section anchor while "25:75-76" inside
 the commentary is only a cross-reference.
+When pages use contextual local numbers, describe that directly. For example,
+if a page has a chapter heading such as "Surah 7" and local verse numbers such
+as "104" and "105", put the chapter heading regex in context_anchor and the
+local verse regex in unit_anchor. Do not invent chapter:verse anchors unless
+the sampled pages visibly contain chapter:verse text.
 For hadith collections, Book N, Hadith N usually starts the primary answerable
 hadith unit. Quran-style parenthetical references such as (6:83), (31:13), or
 (3:64) inside a hadith explanation are cross-references/provenance only unless
@@ -950,18 +1208,21 @@ Content type: {content_type}
         if not isinstance(value, dict):
             return {}
         normalized: dict[str, object] = {}
-        for key in ("primary_anchor", "inline_references"):
+        for key in ("primary_anchor", "context_anchor", "unit_anchor", "inline_references"):
             section = value.get(key)
             if not isinstance(section, dict):
                 continue
             section_values: dict[str, object] = {}
-            for string_key in ("type", "unit", "pattern", "display"):
+            for string_key in ("type", "unit", "pattern", "display", "context_source"):
                 item = section.get(string_key)
                 if isinstance(item, str) and item.strip():
                     section_values[string_key] = item.strip()
             regex = section.get("regex")
             if isinstance(regex, str) and self._is_valid_domain_structure_regex(regex):
                 section_values["regex"] = regex
+            verified = section.get("verified")
+            if isinstance(verified, bool):
+                section_values["verified"] = verified
             policy = section.get("policy")
             if key == "inline_references" and policy in {
                 "cross_reference_only",
@@ -1116,3 +1377,22 @@ Content type: {content_type}
         except ValueError:
             return False
         return True
+
+    def _schema_type(self, value: object) -> str | None:
+        if isinstance(value, dict):
+            return self._string_value(value.get("type"))
+        return None
+
+    def _regex_from_section(self, value: object) -> str | None:
+        if isinstance(value, dict):
+            return self._string_value(value.get("regex"))
+        return None
+
+    def _regex_group_names(self, regex: str) -> frozenset[str]:
+        try:
+            return frozenset(re.compile(regex).groupindex)
+        except re.error:
+            return frozenset()
+
+    def _string_value(self, value: object) -> str | None:
+        return value.strip() if isinstance(value, str) and value.strip() else None
