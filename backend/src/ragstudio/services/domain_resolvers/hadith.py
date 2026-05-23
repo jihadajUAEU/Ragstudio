@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from typing import Any
 
 from ragstudio.services.canonical_assembly import EvidenceBlockView
 from ragstudio.services.domain_resolvers.base import (
@@ -10,6 +11,7 @@ from ragstudio.services.domain_resolvers.base import (
     ResolverContext,
 )
 from ragstudio.services.evidence_graph import EvidenceGraph
+from ragstudio.services.reference_metadata import ReferenceSemantics
 
 HADITH_HEADER_RE = re.compile(
     r"\bBook\s+(?P<book>\d{1,4})\s*,?\s*Hadith\s+(?P<hadith>\d{1,6})\b",
@@ -19,12 +21,10 @@ HADITH_HEADER_RE = re.compile(
 
 class HadithResolver:
     def can_resolve(self, context: ResolverContext) -> bool:
-        if (context.domain_metadata.domain or "").strip().casefold() != "hadith":
-            return False
-        semantics = context.reference_semantics
-        if semantics is None:
-            return True
-        return semantics.reference_type in {"book_hadith", "hadith"} and (
+        semantics = context.reference_semantics or ReferenceSemantics.from_metadata(
+            context.domain_metadata
+        )
+        return _declares_book_hadith_contract(context, semantics) and (
             semantics.chunk_unit in {"hadith", "section", "verse"}
         )
 
@@ -410,3 +410,33 @@ class HadithResolver:
                 if isinstance(warning.get("code"), str)
             ]
         return {key: value for key, value in item.items() if value not in (None, [], "")}
+
+
+def _declares_book_hadith_contract(
+    context: ResolverContext,
+    semantics: ReferenceSemantics,
+) -> bool:
+    custom_json = (
+        context.domain_metadata.custom_json
+        if isinstance(context.domain_metadata.custom_json, dict)
+        else {}
+    )
+    reference_schema = _dict_value(custom_json.get("reference_schema"))
+    if not reference_schema:
+        return False
+    fields = _dict_value(reference_schema.get("fields"))
+    if {"book", "hadith"}.issubset(fields):
+        return True
+    schema_type = _string_value(reference_schema.get("type"))
+    return schema_type in {"book_hadith", "hadith"} and semantics.reference_type in {
+        "book_hadith",
+        "hadith",
+    }
+
+
+def _dict_value(value: Any) -> dict[str, Any]:
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _string_value(value: Any) -> str | None:
+    return value.strip().casefold() if isinstance(value, str) and value.strip() else None

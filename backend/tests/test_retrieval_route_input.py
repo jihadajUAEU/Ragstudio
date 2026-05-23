@@ -58,6 +58,36 @@ def test_route_input_preserves_scope_domain_readiness_and_budgets():
     assert request.reranker_readiness["reason"] == "profile_disabled"
 
 
+def test_retrieval_route_uses_reference_contract_not_domain_name():
+    request = build_retrieval_route_request(
+        query="show Article 12.7",
+        document_ids=["doc-archive"],
+        runtime_profile_id="profile-1",
+        variant_id=None,
+        query_intent="reference",
+        retrieval_strategy="reference_first_hybrid",
+        query_understanding=None,
+        domain_metadata=[
+            {
+                "domain": "archive",
+                "custom_json": {
+                    "reference_schema": {
+                        "type": "article_clause",
+                        "canonical_ref_template": "article:{article}:clause:{clause}",
+                        "fields": {"article": "article_number", "clause": "clause_number"},
+                    },
+                    "reference_resolution": {"build_canonical_units": True},
+                },
+            }
+        ],
+        query_config={"limit": 5},
+    )
+
+    assert request.domain_id == "reference_heavy"
+    assert request.layout_hint == "reference"
+    assert request.materialization_hint == "graph"
+
+
 def test_route_input_carries_document_policy_and_disables_vector_without_gate():
     request = build_retrieval_route_request(
         query="show evidence",

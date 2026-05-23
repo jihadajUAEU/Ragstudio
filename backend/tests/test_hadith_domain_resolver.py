@@ -3,6 +3,7 @@ from ragstudio.services.canonical_assembly import EvidenceBlockView, EvidenceSou
 from ragstudio.services.domain_resolvers.base import ResolverContext
 from ragstudio.services.domain_resolvers.hadith import HadithResolver
 from ragstudio.services.evidence_graph import EvidenceGraph
+from ragstudio.services.reference_metadata import ReferenceSemantics
 
 ARABIC_BODY = (
     "\u0642\u0627\u0644 \u0631\u0633\u0648\u0644 \u0627\u0644\u0644\u0647 "
@@ -28,14 +29,42 @@ def block(
     )
 
 
-def context(domain: str = "hadith") -> ResolverContext:
+def context(domain: str = "hadith", *, with_contract: bool = True) -> ResolverContext:
+    custom_json = (
+        {
+            "reference_schema": {
+                "type": "book_hadith",
+                "fields": {"book": "book_number", "hadith": "hadith_number"},
+                "canonical_ref_template": "book:{book}:hadith:{hadith}",
+            },
+            "domain_structure": {
+                "primary_anchor": {
+                    "regex": (
+                        r"\bBook\s+(?P<book>\d{1,4})\s*,?\s*Hadith\s+"
+                        r"(?P<hadith>\d{1,6})\b"
+                    ),
+                    "unit": "hadith",
+                    "verified": True,
+                }
+            },
+            "chunking": {"unit": "hadith"},
+        }
+        if with_contract
+        else {}
+    )
+    metadata = DomainMetadata(
+        domain=domain,
+        document_type="collection",
+        custom_json=custom_json,
+    )
     return ResolverContext(
-        domain_metadata=DomainMetadata(domain=domain, document_type="collection"),
+        domain_metadata=metadata,
         parent_metadata={"parser_metadata": {"parser": "mineru"}},
         parent_source_location={"artifact": "source.md"},
         runtime_source_id="runtime-doc",
         content_type="text",
         preview_ref=None,
+        reference_semantics=ReferenceSemantics.from_metadata(metadata),
     )
 
 
@@ -192,7 +221,7 @@ def test_hadith_resolver_ignores_non_hadith_domains():
 
     units = HadithResolver().resolve_units(
         EvidenceGraph.from_blocks(blocks),
-        context=context(domain="quran"),
+        context=context(domain="quran", with_contract=False),
     )
 
     assert units == []

@@ -31,6 +31,31 @@ def test_domain_classifier_maps_hadith_to_arabic_reference_family():
     assert result.reference_heavy is True
 
 
+def test_domain_classifier_routes_custom_reference_contracts_as_reference_heavy():
+    result = DomainClassifier().classify(
+        [
+            {
+                "domain": "archive",
+                "custom_json": {
+                    "reference_schema": {
+                        "type": "article_clause",
+                        "fields": {
+                            "article": "article_number",
+                            "clause": "clause_number",
+                        },
+                    }
+                },
+            }
+        ]
+    )
+
+    assert result.domain_profile_id == "reference_heavy"
+    assert result.domain_family == "reference_heavy"
+    assert result.layout_hint == "reference"
+    assert result.materialization_hint == "graph"
+    assert result.reference_heavy is True
+
+
 def test_domain_classifier_maps_legal_and_policy_to_legal_reference():
     classifier = DomainClassifier()
 
