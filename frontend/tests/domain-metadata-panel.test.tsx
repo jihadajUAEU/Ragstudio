@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom/vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { DomainMetadataPanel } from "../src/features/domain-metadata/domain-metadata-panel";
@@ -789,6 +789,52 @@ describe("DomainMetadataPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: /hide sample/i }));
 
     expect(screen.queryByText("Sample custom JSON")).not.toBeInTheDocument();
+  });
+
+  it("renders custom reference contracts without Quran-specific labels", () => {
+    render(
+      <DomainMetadataPanel
+        profiles={[]}
+        value={{
+          parser_mode: "mineru_strict",
+          domain_metadata: {
+            domain: "archive",
+            document_type: "ledger",
+            custom_json: {
+              reference_schema: {
+                type: "folio_line",
+                fields: {
+                  folio: "folio_number",
+                  line: "line_number",
+                },
+                canonical_ref_template: "folio:{folio}:line:{line}",
+              },
+              domain_structure: {
+                primary_anchor: {
+                  regex: "Folio\\s+(?P<folio>\\d+)\\s+Line\\s+(?P<line>\\d+)",
+                  unit: "folio_line",
+                  verified: true,
+                },
+              },
+              quality_policy: {
+                required_scripts_by_unit_role: {
+                  folio_line: ["latin"],
+                },
+              },
+            },
+          },
+        }}
+        onChange={vi.fn()}
+      />,
+    );
+
+    const contract = screen.getByRole("region", { name: "Reference contract" });
+    expect(within(contract).getByText("folio_line")).toBeVisible();
+    expect(within(contract).getByText("folio:{folio}:line:{line}")).toBeVisible();
+    expect(within(contract).getByText("folio, line")).toBeVisible();
+    expect(within(contract).getByText("Primary: folio_line")).toBeVisible();
+    expect(within(contract).getByText("folio_line:latin")).toBeVisible();
+    expect(screen.queryByText(/surah/i)).not.toBeInTheDocument();
   });
 
   it("inserts the reference schema helper into custom JSON", async () => {

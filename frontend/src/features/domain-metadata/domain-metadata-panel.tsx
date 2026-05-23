@@ -17,8 +17,16 @@ const parserOptions: Array<{ value: ParserMode; label: string }> = [
 const sampleCustomJson = {
   source_system: "library_upload",
   audience: "research",
-  citation_style: "surah_ayah",
-  extraction_notes: "Preserve Arabic text, English translation, and verse references.",
+  citation_style: "",
+  extraction_notes: "Preserve source text, translations, and declared references.",
+  reference_schema: {
+    type: "folio_line",
+    fields: {
+      folio: "folio_number",
+      line: "line_number",
+    },
+    canonical_ref_template: "folio:{folio}:line:{line}",
+  },
   review: {
     owner: "domain-expert",
     priority: "high",
@@ -88,6 +96,7 @@ export function DomainMetadataPanel({
   const customJsonText =
     customJsonDraft ?? JSON.stringify(metadata.custom_json ?? {}, null, 2);
   const sampleCustomJsonText = JSON.stringify(sampleCustomJson, null, 2);
+  const referenceContract = summarizeReferenceContract(metadata.custom_json);
   const setMetadata = (patch: DomainMetadata) => {
     const currentMetadata = autosuggestMetadata ?? metadata;
     const nextMetadata = { ...currentMetadata, ...patch };
@@ -436,6 +445,25 @@ export function DomainMetadataPanel({
             onChange={(event) => applyCustomJson(event.target.value)}
           />
         </div>
+        {referenceContract ? (
+          <section
+            aria-label="Reference contract"
+            className="rounded-md border border-[#d6dde1] bg-[#f7fafb] p-3 text-sm text-[#3a4a53] sm:col-span-2"
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="font-semibold text-[#1f2933]">Reference contract</p>
+              <span className="rounded-full border border-[#cfd8dd] bg-white px-2 py-1 font-mono text-xs">
+                {referenceContract.schemaType}
+              </span>
+            </div>
+            <dl className="mt-3 grid gap-2 sm:grid-cols-2">
+              <MetadataSummaryItem label="Template" value={referenceContract.template} mono />
+              <MetadataSummaryItem label="Fields" value={referenceContract.fields.join(", ")} />
+              <MetadataSummaryItem label="Anchors" value={referenceContract.anchors.join(", ")} />
+              <MetadataSummaryItem label="Scripts" value={referenceContract.scripts.join(", ")} />
+            </dl>
+          </section>
+        ) : null}
         {showCustomJsonSample ? (
           <div className="rounded-md border border-[#cfd8dd] bg-[#f7fafb] p-3 sm:col-span-2">
             <p className="mb-2 text-sm font-medium text-[#3a4a53]">Sample custom JSON</p>
@@ -451,6 +479,91 @@ export function DomainMetadataPanel({
           (referenceSchemaState === "error" ? "Reference schema helper failed." : "")}
       </p>
     </section>
+  );
+}
+
+type ReferenceContractSummary = {
+  schemaType: string;
+  template: string;
+  fields: string[];
+  anchors: string[];
+  scripts: string[];
+};
+
+function summarizeReferenceContract(
+  customJson: Record<string, unknown> | undefined,
+): ReferenceContractSummary | null {
+  const referenceSchema = recordValue(customJson?.reference_schema);
+  const domainStructure = recordValue(customJson?.domain_structure);
+  const qualityPolicy = recordValue(customJson?.quality_policy);
+  if (!referenceSchema && !domainStructure) {
+    return null;
+  }
+
+  const fields = Object.keys(recordValue(referenceSchema?.fields) ?? {});
+  const anchors = [
+    anchorLabel("Primary", recordValue(domainStructure?.primary_anchor)),
+    anchorLabel("Context", recordValue(domainStructure?.context_anchor)),
+    anchorLabel("Unit", recordValue(domainStructure?.unit_anchor)),
+    anchorLabel("Inline", recordValue(domainStructure?.inline_references)),
+  ].filter((item): item is string => Boolean(item));
+  const scripts = [
+    ...stringList(qualityPolicy?.required_scripts),
+    ...Object.entries(recordValue(qualityPolicy?.required_scripts_by_unit_role) ?? {}).flatMap(
+      ([role, value]) => stringList(value).map((script) => `${role}:${script}`),
+    ),
+  ];
+
+  return {
+    schemaType: textValue(referenceSchema?.type) ?? "custom",
+    template: textValue(referenceSchema?.canonical_ref_template) ?? "not declared",
+    fields: fields.length ? fields : ["not declared"],
+    anchors: anchors.length ? anchors : ["not declared"],
+    scripts: scripts.length ? scripts : ["not declared"],
+  };
+}
+
+function anchorLabel(label: string, anchor: Record<string, unknown> | null): string | null {
+  const regex = textValue(anchor?.regex);
+  if (!regex) {
+    return null;
+  }
+  const unit = textValue(anchor?.unit);
+  return unit ? `${label}: ${unit}` : label;
+}
+
+function recordValue(value: unknown): Record<string, unknown> | null {
+  return isPlainObject(value) ? value : null;
+}
+
+function textValue(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function stringList(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.flatMap((item) =>
+        typeof item === "string" && item.trim() ? [item.trim()] : [],
+      )
+    : [];
+}
+
+function MetadataSummaryItem({
+  label,
+  value,
+  mono = false,
+}: {
+  label: string;
+  value: string;
+  mono?: boolean;
+}) {
+  return (
+    <div className="min-w-0 rounded-md bg-white p-2">
+      <dt className="text-xs font-semibold uppercase text-[#62717a]">{label}</dt>
+      <dd className={mono ? "mt-1 break-words font-mono text-xs" : "mt-1 break-words text-sm"}>
+        {value}
+      </dd>
+    </div>
   );
 }
 
