@@ -1482,7 +1482,7 @@ def test_ai_metadata_normalizes_document_specific_quality_policies():
     validate_custom_json(normalized)
 
 
-def test_ai_metadata_autosuggest_backfills_hadith_reference_defaults():
+def test_ai_metadata_autosuggest_preserves_hadith_labels_without_reference_defaults():
     metadata = DomainMetadata(
         domain="hadith",
         document_type="collection",
@@ -1510,43 +1510,17 @@ def test_ai_metadata_autosuggest_backfills_hadith_reference_defaults():
     assert normalized["domain_structure"]["primary_anchor"] == {
         "type": "book_hadith",
         "unit": "hadith",
-        "regex": (
-            r"\bBook\s+(?P<book>\d{1,4})\s*,?\s*Hadith\s+"
-            r"(?P<hadith>\d{1,6})\b"
-        ),
     }
     assert normalized["domain_structure"]["inline_references"] == {
-        "type": "chapter_verse",
+        "type": "quran_verse",
         "policy": "cross_reference_only",
-        "regex": r"(?P<chapter>\d{1,4})\s*:\s*(?P<verse>\d{1,4})",
     }
     assert normalized["quality_policy"]["observed_scripts"] == ["Arabic", "English"]
     assert normalized["quality_policy"]["required_scripts"] == ["English"]
     assert normalized["quality_policy"]["optional_scripts"] == ["Arabic"]
-    assert normalized["quality_policy"]["reference_contract_gate"] == {
-        "enabled": True,
-        "action": "block",
-        "required": [
-            "reference_schema.type",
-            "domain_structure.primary_anchor.regex",
-            "reference_resolution.build_canonical_units",
-        ],
-        "reference_family": "book_hadith",
-    }
-    assert normalized["reference_resolution"] == {
-        "enabled": True,
-        "build_canonical_units": True,
-        "carry_forward_body_blocks": True,
-        "header_only_policy": "provenance_only",
-        "continuation_policy": "until_next_reference",
-        "max_page_gap": 2,
-        "require_single_reference_per_answerable_chunk": True,
-    }
-    assert normalized["provenance"] == {
-        "preserve_original_blocks": True,
-        "block_preview_chars": 160,
-        "store_text_hash": True,
-    }
+    assert "reference_contract_gate" not in normalized["quality_policy"]
+    assert "reference_resolution" not in normalized
+    assert "provenance" not in normalized
     validate_custom_json(normalized)
 
 
