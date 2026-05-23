@@ -151,19 +151,25 @@ def build_executable_reference_contract(custom_json: dict[str, Any]) -> Executab
 
 def declared_required_groups(custom_json: dict[str, Any]) -> set[str]:
     reference_schema = _dict_value(custom_json.get("reference_schema"))
-    groups: set[str] = set()
-
-    fields = reference_schema.get("fields")
-    if isinstance(fields, dict):
-        groups.update(
-            str(key).strip() for key in fields if isinstance(key, str) and key.strip()
-        )
 
     template = _string_value(reference_schema.get("canonical_ref_template"))
     if template:
-        groups.update(_template_fields(template))
+        return _template_fields(template)
 
-    return groups
+    for key in ("identity_fields", "required_fields"):
+        groups = _string_list(reference_schema.get(key))
+        if groups:
+            return set(groups)
+
+    fields = reference_schema.get("fields")
+    if isinstance(fields, dict):
+        return {
+            str(key).strip()
+            for key in fields
+            if isinstance(key, str) and key.strip()
+        }
+
+    return set()
 
 
 def canonical_reference_from_groups(groups: dict[str, str], template: str | None) -> str | None:
@@ -236,6 +242,16 @@ def _script_map(value: Any) -> dict[str, frozenset[str]]:
         if isinstance(key, str) and key.strip():
             result[key.strip().casefold()] = _script_set(scripts)
     return result
+
+
+def _string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [
+        item.strip()
+        for item in value
+        if isinstance(item, str) and item.strip()
+    ]
 
 
 def _dict_value(value: Any) -> dict[str, Any]:

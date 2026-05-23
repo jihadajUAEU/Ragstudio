@@ -24,6 +24,77 @@ def test_declared_groups_come_from_fields_and_template_not_schema_family():
     assert declared_required_groups(metadata) == {"folio", "line"}
 
 
+def test_template_fields_are_identity_not_descriptive_schema_fields():
+    metadata = {
+        "reference_schema": {
+            "type": "quran_tafseer",
+            "canonical_ref_template": "{chapter}:{verse}",
+            "fields": {
+                "chapter": "chapter_number",
+                "verse": "verse_number",
+                "page": "page_number",
+            },
+        },
+        "domain_structure": {
+            "primary_anchor": {
+                "regex": r"\[(?P<chapter>\d+):(?P<verse>\d+)\]",
+                "unit": "verse",
+                "verified": True,
+            }
+        },
+    }
+
+    contract = build_executable_reference_contract(metadata)
+
+    assert declared_required_groups(metadata) == {"chapter", "verse"}
+    assert contract.required_groups == frozenset({"chapter", "verse"})
+    assert contract.missing_required_groups == frozenset()
+    assert contract.verified is True
+
+
+def test_declared_groups_use_explicit_identity_fields_without_template():
+    metadata = {
+        "reference_schema": {
+            "type": "gazette_record",
+            "identity_fields": ["volume", "notice"],
+            "fields": {
+                "volume": "volume_number",
+                "notice": "notice_number",
+                "page": "page_number",
+            },
+        }
+    }
+
+    assert declared_required_groups(metadata) == {"volume", "notice"}
+
+
+def test_declared_groups_use_required_fields_without_template_or_identity_fields():
+    metadata = {
+        "reference_schema": {
+            "type": "policy_section",
+            "required_fields": ["section", "clause"],
+            "fields": {
+                "section": "section_number",
+                "clause": "clause_number",
+                "page": "page_number",
+            },
+        }
+    }
+
+    assert declared_required_groups(metadata) == {"section", "clause"}
+
+
+def test_declared_groups_fall_back_to_fields_without_template_or_identity_list():
+    metadata = {
+        "reference_schema": {
+            "type": "legacy_record",
+            "fields": {"volume": "volume_number", "notice": "notice_number"},
+        }
+    }
+
+    assert declared_required_groups(metadata) == {"volume", "notice"}
+
+
 def test_canonical_reference_uses_declared_template():
     assert (
         canonical_reference_from_groups(

@@ -1,6 +1,7 @@
 from ragstudio.schemas.parsing import DomainMetadata
 from ragstudio.services.domain_metadata_ai_suggester import DomainMetadataAiSuggester
 from ragstudio.services.page_sampler import SampledPage
+from ragstudio.services.reference_contracts import build_executable_reference_contract
 from ragstudio.services.reference_contract_validator import ReferenceContractValidator
 
 
@@ -42,6 +43,49 @@ def test_reference_contract_candidates_include_declared_groups_and_template():
     assert contextual.context_required_groups == frozenset({"folio"})
     assert contextual.unit_required_groups == frozenset({"line"})
     assert contextual.canonical_ref_template == "folio:{folio}:line:{line}"
+
+
+def test_quran_like_candidate_uses_template_identity_not_page_field():
+    custom_json = {
+        "reference_schema": {
+            "type": "quran_tafseer",
+            "fields": {
+                "chapter": "chapter_number",
+                "verse": "verse_number",
+                "page": "page_number",
+            },
+            "canonical_ref_template": "{chapter}:{verse}",
+        },
+        "domain_structure": {
+            "primary_anchor": {
+                "regex": r"\[(?P<chapter>\d+):(?P<verse>\d+)\]",
+                "unit": "verse",
+                "verified": True,
+            },
+        },
+    }
+    metadata = DomainMetadata(custom_json=custom_json)
+    candidates = DomainMetadataAiSuggester()._reference_contract_candidates(
+        metadata,
+        source="ai_observed",
+    )
+    validation = ReferenceContractValidator().validate(
+        [SampledPage(page_number=1, text="[1:1] [1:2]")],
+        candidates,
+    )
+    contract = build_executable_reference_contract(custom_json)
+
+    assert contract.required_groups == frozenset({"chapter", "verse"})
+    assert contract.verified is True
+    assert candidates[0].required_groups == frozenset({"chapter", "verse"})
+    assert validation.status == "verified"
+    assert validation.selected is not None
+    assert validation.selected.required_groups_present is True
+    assert validation.selected.matched_units == 2
+    assert [example["reference"] for example in validation.selected.examples] == [
+        "1:1",
+        "1:2",
+    ]
 
 
 def test_production_candidate_rejects_empty_required_capture():
