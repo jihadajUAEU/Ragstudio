@@ -6,6 +6,13 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from ragstudio.services.arabic_text import arabic_query_variants
+from ragstudio.services.reference_regex_registry import (
+    QUERY_ARABIC_PATTERN,
+    QUERY_GRAPH_CONTEXT_PATTERN,
+    QUERY_NORMALIZED_PHRASE_PATTERN,
+    QUERY_PHRASE_PATTERN,
+    REFERENCE_PATTERN,
+)
 
 QueryUnderstandingIntent = Literal[
     "arabic_exact_token",
@@ -23,17 +30,11 @@ QueryRetrievalStrategy = Literal[
     "count_metadata_hybrid",
 ]
 
-_ARABIC_RE = re.compile(r"[\u0600-\u06FF]")
-_REFERENCE_RE = re.compile(r"\b\d{1,3}:\d{1,3}\b")
-_GRAPH_CONTEXT_RE = re.compile(
-    r"\b(?:surrounding|connected|related|nearby|neighboring|previous|next|before|after|context|around)\b",
-    re.IGNORECASE,
-)
-_PHRASE_RE = re.compile(
-    r"\b(?:(?:says|say)(?!\s+about\b)|phrase|quote)\b(?:\s+(?:that|is|was|as))?\s+(?P<phrase>.+)",
-    re.IGNORECASE,
-)
-_NORMALIZED_PHRASE_RE = re.compile(r"[^0-9A-Za-z\u0600-\u06FF]+")
+_ARABIC_RE = QUERY_ARABIC_PATTERN
+_REFERENCE_RE = REFERENCE_PATTERN
+_GRAPH_CONTEXT_RE = QUERY_GRAPH_CONTEXT_PATTERN
+_PHRASE_RE = QUERY_PHRASE_PATTERN
+_NORMALIZED_PHRASE_RE = QUERY_NORMALIZED_PHRASE_PATTERN
 
 
 @dataclass(frozen=True)

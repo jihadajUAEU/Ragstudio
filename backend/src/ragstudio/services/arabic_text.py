@@ -3,8 +3,13 @@ from __future__ import annotations
 import re
 import unicodedata
 
-ARABIC_DIACRITICS = re.compile(r"[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED]")
-ARABIC_TOKEN = re.compile(r"[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]+")
+from ragstudio.services.reference_regex_registry import (
+    ARABIC_DIACRITICS_PATTERN,
+    ARABIC_TOKEN_PATTERN,
+)
+
+ARABIC_DIACRITICS = ARABIC_DIACRITICS_PATTERN
+ARABIC_TOKEN = ARABIC_TOKEN_PATTERN
 ALEF_TRANSLATION = str.maketrans(
     {
         "\u0623": "\u0627",

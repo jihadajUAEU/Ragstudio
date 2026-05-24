@@ -1622,7 +1622,7 @@ Expected: commit succeeds with only operational policy files staged.
 - Test: `backend/tests/test_domain_metadata_quality_gate.py`
 - Test: `backend/tests/test_retrieval_route_input.py`
 
-- [ ] **Step 1: Write failing tests for shared built-in regexes**
+- [x] **Step 1: Write failing tests for shared built-in regexes**
 
 Create `backend/tests/test_reference_regex_registry.py`:
 
@@ -1659,7 +1659,7 @@ def test_reference_patterns_preserve_quran_reference_behavior() -> None:
     assert verifier_match.group("reference") == "12:13"
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run:
 
@@ -1669,7 +1669,7 @@ $env:PYTHONPATH='E:\repos\Ragstudio\backend\src'; pytest backend/tests/test_refe
 
 Expected: FAIL with `ModuleNotFoundError: No module named 'ragstudio.services.reference_regex_registry'`.
 
-- [ ] **Step 3: Add shared built-in regex registry**
+- [x] **Step 3: Add shared built-in regex registry**
 
 Create `backend/src/ragstudio/services/reference_regex_registry.py`:
 
@@ -1714,7 +1714,7 @@ QUERY_PHRASE_PATTERN = re.compile(r'"([^"]{2,160})"')
 QUERY_NORMALIZED_PHRASE_PATTERN = re.compile(r"[^0-9A-Za-z\u0600-\u06FF]+")
 ```
 
-- [ ] **Step 4: Wire script and Arabic modules to the registry**
+- [x] **Step 4: Wire script and Arabic modules to the registry**
 
 In `backend/src/ragstudio/services/script_detection.py`, replace the local `SCRIPT_PATTERNS` definition with:
 
@@ -1734,7 +1734,7 @@ ARABIC_DIACRITICS = ARABIC_DIACRITICS_PATTERN
 ARABIC_TOKEN = ARABIC_TOKEN_PATTERN
 ```
 
-- [ ] **Step 5: Wire reference and query modules to the registry**
+- [x] **Step 5: Wire reference and query modules to the registry**
 
 In `backend/src/ragstudio/services/reference_metadata.py`, import:
 
@@ -1780,7 +1780,7 @@ _REFERENCE_RE = QUERY_REFERENCE_PATTERN
 
 Do not move user-configured regex compilation in `reference_contracts.py`, `reference_query_parser.py`, `reference_contract_validator.py`, or `document_contract.py`; those are contract inputs and should stay close to validation.
 
-- [ ] **Step 6: Run regex registry tests**
+- [x] **Step 6: Run regex registry tests**
 
 Run:
 
@@ -1790,7 +1790,7 @@ $env:PYTHONPATH='E:\repos\Ragstudio\backend\src'; pytest backend/tests/test_refe
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit regex registry**
+- [x] **Step 7: Commit regex registry**
 
 Run:
 

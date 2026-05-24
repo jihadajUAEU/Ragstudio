@@ -7,20 +7,7 @@ domain_metadata_quality_gate.py, and mineru_extraction_validator.py.
 
 from __future__ import annotations
 
-import re
-
-# Full Unicode ranges, including Arabic Presentation Forms and supplements.
-SCRIPT_PATTERNS: dict[str, re.Pattern[str]] = {
-    "arabic": re.compile(
-        r"[\u0600-\u06ff\u0750-\u077f\u08a0-\u08ff\ufb50-\ufdff\ufe70-\ufeff]"
-    ),
-    "latin": re.compile(r"[A-Za-z]"),
-    "cyrillic": re.compile(r"[\u0400-\u04ff]"),
-    "greek": re.compile(r"[\u0370-\u03ff]"),
-    "hebrew": re.compile(r"[\u0590-\u05ff]"),
-    "devanagari": re.compile(r"[\u0900-\u097f]"),
-    "han": re.compile(r"[\u4e00-\u9fff]"),
-}
+from ragstudio.services.reference_regex_registry import SCRIPT_PATTERNS
 
 
 def has_script(text: str, script: str) -> bool:

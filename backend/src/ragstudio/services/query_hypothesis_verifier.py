@@ -9,9 +9,10 @@ from ragstudio.services.query_hypothesis_service import (
     QueryHypothesis,
     normalize_reference_hypothesis,
 )
+from ragstudio.services.reference_regex_registry import QUERY_REFERENCE_PATTERN
 from ragstudio.services.retrieval_evidence import EvidenceCandidate
 
-_REFERENCE_RE = re.compile(r"\[(?P<reference>\d{1,3}:\d{1,3})\]")
+_REFERENCE_RE = QUERY_REFERENCE_PATTERN
 
 
 @dataclass(frozen=True)

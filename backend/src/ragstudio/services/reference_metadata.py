@@ -9,29 +9,15 @@ from ragstudio.services.reference_contracts import (
     ReferenceAnchor,
     build_executable_reference_contract,
 )
+from ragstudio.services.reference_regex_registry import (
+    BOOK_HADITH_PATTERN,
+    CHAPTER_ONLY_PATTERN,
+    LEGAL_SECTION_PATTERN,
+    PAGE_LINE_PATTERN,
+    REFERENCE_PATTERN,
+)
 
-REFERENCE_PATTERN = re.compile(
-    r"(?P<prefix>\bQuran\s+)?(?P<bracket>\[)?"
-    r"(?P<chapter>\d{1,4})\s*:\s*(?P<verse>\d{1,4})"
-    r"(?(bracket)\])",
-    flags=re.IGNORECASE,
-)
-CHAPTER_ONLY_PATTERN = re.compile(
-    r"\b(?:surah|sura|chapter)\s+(?P<chapter>\d{1,4})\b",
-    flags=re.IGNORECASE,
-)
-LEGAL_SECTION_PATTERN = re.compile(
-    r"(?:\bsection\b|\bsec\.?|§)\s*(?P<section>\d+(?:\.\d+)*)",
-    flags=re.IGNORECASE,
-)
-PAGE_LINE_PATTERN = re.compile(
-    r"\b(?:page|p\.?)\s*(?P<page>\d+)(?:\s*(?:[:,-]\s*)?(?:line|l\.?)\s*(?P<line>\d+))?",
-    flags=re.IGNORECASE,
-)
-BOOK_HADITH_PATTERN = re.compile(
-    r"\bBook\s+(?P<book>\d+)\s*,?\s*Hadith\s+(?P<hadith>\d+)\b",
-    flags=re.IGNORECASE,
-)
+
 @dataclass(frozen=True)
 class ReferenceSemantics:
     profile_name: str = "generic"
