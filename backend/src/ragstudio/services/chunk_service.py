@@ -20,6 +20,7 @@ from ragstudio.services.index_quality_gate import IndexQualityGate
 from ragstudio.services.mineru_client import MinerUClient
 from ragstudio.services.mineru_relationship_builder import MinerURelationshipBuilder
 from ragstudio.services.modal_preprocessor import ModalPreprocessor
+from ragstudio.services.operational_policy import DEFAULT_OPERATIONAL_POLICY
 from ragstudio.services.reference_metadata import ReferenceSemantics
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -27,7 +28,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 MinerUStatusCallback = Callable[[dict[str, Any]], Awaitable[None]]
 _SCRUBBED_DOMAIN_METADATA_VALUE = object()
 _UNSAFE_DOMAIN_METADATA_PATH_KEYS = {"artifact_path", "file_path", "path"}
-_FALLBACK_SEARCH_CANDIDATE_LIMIT = 100
+_FALLBACK_SEARCH_CANDIDATE_LIMIT = (
+    DEFAULT_OPERATIONAL_POLICY.chunk_search.fallback_candidate_limit
+)
 
 
 class ChunkService:
@@ -140,7 +143,7 @@ class ChunkService:
         limit = max(search_in.limit, 0)
         offset = max(search_in.offset, 0)
         repository = ChunkLexicalSearchRepository(self.session)
-        prefilter_limit = max(offset + limit, 100)
+        prefilter_limit = max(offset + limit, _FALLBACK_SEARCH_CANDIDATE_LIMIT)
         reference_prefiltered = await repository.reference_prefilter(
             query=search_in.query,
             document_ids=search_in.document_ids,

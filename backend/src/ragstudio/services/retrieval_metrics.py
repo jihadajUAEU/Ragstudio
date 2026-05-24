@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from math import log2
 
+from ragstudio.services.operational_policy import DEFAULT_OPERATIONAL_POLICY
 from ragstudio.services.retrieval_evidence import EvidenceCandidate
 
 
@@ -20,10 +21,12 @@ class RetrievalMetrics:
 
 @dataclass(frozen=True)
 class RetrievalQualityGate:
-    min_precision_at_k: float = 0.75
-    min_recall_at_k: float = 0.70
-    min_mrr: float = 0.80
-    min_hit_rate: float = 1.0
+    min_precision_at_k: float = (
+        DEFAULT_OPERATIONAL_POLICY.retrieval_metrics.min_precision_at_k
+    )
+    min_recall_at_k: float = DEFAULT_OPERATIONAL_POLICY.retrieval_metrics.min_recall_at_k
+    min_mrr: float = DEFAULT_OPERATIONAL_POLICY.retrieval_metrics.min_mrr
+    min_hit_rate: float = DEFAULT_OPERATIONAL_POLICY.retrieval_metrics.min_hit_rate
 
 
 @dataclass(frozen=True)

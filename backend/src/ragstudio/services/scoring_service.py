@@ -3,6 +3,7 @@ from typing import Any
 
 from ragstudio.db.models import Run, Score
 from ragstudio.schemas.evaluation import EvaluationCaseIn
+from ragstudio.services.operational_policy import DEFAULT_OPERATIONAL_POLICY
 from sqlalchemy.ext.asyncio import AsyncSession
 
 UNSCOREABLE_REASON = "No expected_answer, must_include, or must_avoid signals were provided."
@@ -34,17 +35,20 @@ class ScoringService:
         include_misses = [term for term in include_terms if term not in answer_text]
         avoid_hits = [term for term in avoid_terms if term in answer_text]
 
+        policy = DEFAULT_OPERATIONAL_POLICY.evaluation
         total = 0.0
         weights = 0.0
         if expected_terms:
-            total += (len(expected_hits) / len(expected_terms)) * 50.0
-            weights += 50.0
+            total += (len(expected_hits) / len(expected_terms)) * policy.expected_answer_weight
+            weights += policy.expected_answer_weight
         if include_terms:
-            total += (len(include_hits) / len(include_terms)) * 35.0
-            weights += 35.0
+            total += (len(include_hits) / len(include_terms)) * policy.must_include_weight
+            weights += policy.must_include_weight
         if avoid_terms:
-            total += ((len(avoid_terms) - len(avoid_hits)) / len(avoid_terms)) * 15.0
-            weights += 15.0
+            total += (
+                (len(avoid_terms) - len(avoid_hits)) / len(avoid_terms)
+            ) * policy.must_avoid_weight
+            weights += policy.must_avoid_weight
 
         if weights == 0:
             return {

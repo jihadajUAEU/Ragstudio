@@ -1,7 +1,9 @@
 from fastapi import HTTPException, UploadFile
 
-MAX_UPLOAD_BYTES = 25 * 1024 * 1024
-UPLOAD_CHUNK_BYTES = 1024 * 1024
+from ragstudio.services.operational_policy import DEFAULT_OPERATIONAL_POLICY
+
+MAX_UPLOAD_BYTES = DEFAULT_OPERATIONAL_POLICY.upload.max_upload_bytes
+UPLOAD_CHUNK_BYTES = DEFAULT_OPERATIONAL_POLICY.upload.upload_chunk_bytes
 
 # Magic-byte signatures for allowed document types.
 _MAGIC_SIGNATURES: list[tuple[bytes, str]] = [

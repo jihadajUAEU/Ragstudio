@@ -6,6 +6,7 @@ from ragstudio.config import AppSettings
 from ragstudio.db.models import Job
 from ragstudio.services.http_client_provider import HttpClientProviderProtocol
 from ragstudio.services.index_job_runner import IndexJobRunner
+from ragstudio.services.operational_policy import DEFAULT_OPERATIONAL_POLICY
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 
@@ -20,7 +21,7 @@ class BackgroundRunnerFactory:
         settings: AppSettings,
         *,
         worker_id: str,
-        lease_seconds: int = 300,
+        lease_seconds: int = DEFAULT_OPERATIONAL_POLICY.worker.lease_seconds,
         session_factory: async_sessionmaker[AsyncSession] | None = None,
         http_client_provider: HttpClientProviderProtocol | None = None,
     ) -> None:

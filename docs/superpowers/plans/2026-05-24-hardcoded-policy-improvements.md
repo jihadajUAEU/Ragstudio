@@ -1367,7 +1367,7 @@ Expected: commit succeeds with only defaults API and frontend sync files staged.
 - Test: `backend/tests/test_experiments_scoring.py`
 - Test: `backend/tests/test_retrieval_metrics.py`
 
-- [ ] **Step 1: Write failing tests for operational policy values**
+- [x] **Step 1: Write failing tests for operational policy values**
 
 Create `backend/tests/test_operational_policy.py`:
 
@@ -1415,7 +1415,7 @@ def test_variant_presets_are_backend_policy_not_ui_only() -> None:
     }
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run:
 
@@ -1425,7 +1425,7 @@ $env:PYTHONPATH='E:\repos\Ragstudio\backend\src'; pytest backend/tests/test_oper
 
 Expected: FAIL with `ModuleNotFoundError: No module named 'ragstudio.services.operational_policy'`.
 
-- [ ] **Step 3: Add operational policy module**
+- [x] **Step 3: Add operational policy module**
 
 Create `backend/src/ragstudio/services/operational_policy.py`:
 
@@ -1503,7 +1503,7 @@ class OperationalPolicy:
 DEFAULT_OPERATIONAL_POLICY = OperationalPolicy()
 ```
 
-- [ ] **Step 4: Replace operational literals with policy references**
+- [x] **Step 4: Replace operational literals with policy references**
 
 In `backend/src/ragstudio/api/upload_utils.py`, import:
 
@@ -1554,7 +1554,7 @@ similarity_threshold: float = (
 ),
 ```
 
-- [ ] **Step 5: Replace scoring, metric, and variant preset literals**
+- [x] **Step 5: Replace scoring, metric, and variant preset literals**
 
 In `backend/src/ragstudio/services/retrieval_metrics.py`, import `DEFAULT_OPERATIONAL_POLICY` and update the `RetrievalQualityGate` defaults:
 
@@ -1586,7 +1586,7 @@ In `backend/src/ragstudio/schemas/variants.py`, import `DEFAULT_OPERATIONAL_POLI
 VARIANT_PRESET_DEFAULTS = DEFAULT_OPERATIONAL_POLICY.variant_presets
 ```
 
-- [ ] **Step 6: Run operational policy tests**
+- [x] **Step 6: Run operational policy tests**
 
 Run:
 
@@ -1596,7 +1596,7 @@ $env:PYTHONPATH='E:\repos\Ragstudio\backend\src'; pytest backend/tests/test_oper
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit operational policy registry**
+- [x] **Step 7: Commit operational policy registry**
 
 Run:
 

@@ -15,6 +15,7 @@ from ragstudio.db.models import Job
 from ragstudio.services.background_runner_factory import BackgroundRunnerFactory
 from ragstudio.services.http_client_provider import HttpClientProvider
 from ragstudio.services.job_queue_service import JobQueueService
+from ragstudio.services.operational_policy import DEFAULT_OPERATIONAL_POLICY
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +25,7 @@ async def run_once(
     settings: AppSettings,
     *,
     worker_id: str,
-    lease_seconds: int = 300,
+    lease_seconds: int = DEFAULT_OPERATIONAL_POLICY.worker.lease_seconds,
     session_factory: async_sessionmaker[AsyncSession] | None = None,
     http_client_provider: HttpClientProvider | None = None,
 ) -> int:
@@ -89,7 +90,7 @@ async def run_forever(
     *,
     poll_seconds: float = 2.0,
     worker_id: str | None = None,
-    lease_seconds: int = 300,
+    lease_seconds: int = DEFAULT_OPERATIONAL_POLICY.worker.lease_seconds,
 ) -> None:
     settings = AppSettings()
     engine = make_engine(settings.resolved_database_url)

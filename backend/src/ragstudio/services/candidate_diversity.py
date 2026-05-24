@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from ragstudio.services.operational_policy import DEFAULT_OPERATIONAL_POLICY
 from ragstudio.services.retrieval_evidence import EvidenceCandidate
 
 
@@ -7,7 +8,9 @@ def select_diverse_candidates(
     candidates: list[EvidenceCandidate],
     *,
     limit: int,
-    similarity_threshold: float = 0.65,
+    similarity_threshold: float = (
+        DEFAULT_OPERATIONAL_POLICY.candidate_diversity.similarity_threshold
+    ),
 ) -> tuple[list[EvidenceCandidate], dict[str, object]]:
     selected: list[EvidenceCandidate] = []
     suppressed: list[str] = []

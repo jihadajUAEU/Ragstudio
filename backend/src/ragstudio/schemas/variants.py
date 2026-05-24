@@ -3,13 +3,11 @@ from typing import Any, Literal
 from pydantic import Field
 
 from ragstudio.schemas.common import StudioModel
+from ragstudio.services.operational_policy import DEFAULT_OPERATIONAL_POLICY
 
-VARIANT_PRESET_DEFAULTS: dict[str, dict[str, Any]] = {
-    "balanced": {"top_k": 5, "temperature": 0.2, "enable_rerank": True},
-    "precise": {"top_k": 3, "temperature": 0.1, "enable_rerank": True},
-    "broad": {"top_k": 12, "temperature": 0.3, "enable_rerank": True},
-    "fast": {"top_k": 4, "temperature": 0.0, "enable_rerank": False},
-}
+VARIANT_PRESET_DEFAULTS: dict[str, dict[str, Any]] = (
+    DEFAULT_OPERATIONAL_POLICY.variant_presets
+)
 
 VariantPreset = Literal["balanced", "precise", "broad", "fast"]
 

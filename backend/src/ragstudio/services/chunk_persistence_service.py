@@ -13,14 +13,15 @@ from ragstudio.schemas.parsing import DomainMetadata, IndexDocumentIn, ParserMod
 from ragstudio.services.adapter import AdapterChunk
 from ragstudio.services.arabic_text import arabic_tokens, normalize_arabic_text
 from ragstudio.services.chunk_sanitizer import sanitize_db_text, sanitize_db_value
+from ragstudio.services.operational_policy import DEFAULT_OPERATIONAL_POLICY
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 
-_MIN_EXPECTED_CHUNKS = 2
-_MAX_EXPECTED_CHUNKS = 5000
-_PERSIST_BATCH_SIZE = 500
+_MIN_EXPECTED_CHUNKS = DEFAULT_OPERATIONAL_POLICY.chunk_persistence.min_expected_chunks
+_MAX_EXPECTED_CHUNKS = DEFAULT_OPERATIONAL_POLICY.chunk_persistence.max_expected_chunks
+_PERSIST_BATCH_SIZE = DEFAULT_OPERATIONAL_POLICY.chunk_persistence.persist_batch_size
 
 _SCRUBBED_PATH = object()
 PersistProgressCallback = Callable[[int, int], Awaitable[None]]
