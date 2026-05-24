@@ -19,6 +19,8 @@ from ragstudio.services.reference_query_parser import (
     parse_query_references,
 )
 
+QUERY_HYPOTHESIS_PROTOCOL_VERSION = "2026-05-24"
+
 _ALLOWED_INTENTS = {
     "find_word_occurrence",
     "reference_lookup",

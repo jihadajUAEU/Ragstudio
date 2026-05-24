@@ -34,6 +34,8 @@ from ragstudio.proof_packet.redaction import scan_text_file
 
 DEFAULT_PACKET_ROOT = Path("docs/benchmarks/ragstudio-oss-proof-v1")
 PACKET_ID = "ragstudio-oss-proof-v1"
+PROOF_PACKET_PROTOCOL_VERSION = "2026-05-24"
+SOURCE_COMMIT_SHA_LENGTH = 40
 
 
 def validate_packet(
@@ -368,7 +370,7 @@ def _validate_claim_source(
     if not isinstance(source, dict):
         return
     source_commit = source.get("source_commit")
-    if not isinstance(source_commit, str) or len(source_commit) != 40:
+    if not isinstance(source_commit, str) or len(source_commit) != SOURCE_COMMIT_SHA_LENGTH:
         return
     if not git_commit_exists(source_commit, repo_root=repo_root):
         result.add_error(
@@ -466,8 +468,13 @@ def _validate_source_commit(
     manifest: dict[str, Any], result: ValidationResult, *, repo_root: Path | None
 ) -> None:
     source_commit = manifest.get("source_commit")
-    if isinstance(source_commit, str) and len(source_commit) == 40 and not git_commit_exists(
-        source_commit, repo_root=repo_root
+    if (
+        isinstance(source_commit, str)
+        and len(source_commit) == SOURCE_COMMIT_SHA_LENGTH
+        and not git_commit_exists(
+            source_commit,
+            repo_root=repo_root,
+        )
     ):
         result.add_error(
             Finding(

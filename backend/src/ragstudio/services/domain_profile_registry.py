@@ -6,6 +6,8 @@ from typing import Literal
 LayoutHint = Literal["plain_text", "table", "figure", "equation", "reference", "mixed"]
 MaterializationHint = Literal["canonical_only", "vector", "graph", "runtime", "full"]
 
+DOMAIN_PROFILE_POLICY_VERSION = "2026-05-24"
+
 
 @dataclass(frozen=True, slots=True)
 class DomainProfile:

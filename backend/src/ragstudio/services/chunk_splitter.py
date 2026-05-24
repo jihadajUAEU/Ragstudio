@@ -40,6 +40,18 @@ class ChunkProfile:
     image_context_blocks: int = 1  # Preceding text blocks attached to image chunks
 
 
+REFERENCE_HEAVY_TARGET_WORDS = 500
+REFERENCE_HEAVY_HARD_MAX_WORDS = 900
+TAFSEER_BOOK_TARGET_WORDS = 1000
+LAYOUT_TABLE_TARGET_WORDS = 800
+LAYOUT_TABLE_HARD_MAX_WORDS = 1200
+SHORT_REFERENCE_TARGET_WORDS = 400
+SHORT_REFERENCE_HARD_MAX_WORDS = 800
+GENERIC_TARGET_WORDS = 1000
+FULL_WIDTH_LAYOUT_RATIO = 0.70
+SEMANTIC_SPLIT_LOWER_BOUND_RATIO = 0.55
+
+
 @dataclass(frozen=True)
 class SplitPiece:
     text: str
@@ -182,28 +194,36 @@ class ChunkSplitter:
         if semantics.profile_name == "scripture_reference":
             return ChunkProfile(
                 "scripture_reference",
-                target_words=500,
-                hard_max_words=min(self.max_words, 900),
+                target_words=REFERENCE_HEAVY_TARGET_WORDS,
+                hard_max_words=min(self.max_words, REFERENCE_HEAVY_HARD_MAX_WORDS),
                 semantics=semantics,
             )
 
         domain = (metadata.domain or "").casefold()
         document_type = (metadata.document_type or "").casefold()
         if domain == "tafseer" or document_type == "book":
-            return ChunkProfile("tafseer_book", target_words=1000, hard_max_words=self.max_words)
+            return ChunkProfile(
+                "tafseer_book",
+                target_words=TAFSEER_BOOK_TARGET_WORDS,
+                hard_max_words=self.max_words,
+            )
         if document_type == "paper":
             return ChunkProfile(
                 "paper_section",
-                target_words=800,
-                hard_max_words=min(self.max_words, 1200),
+                target_words=LAYOUT_TABLE_TARGET_WORDS,
+                hard_max_words=min(self.max_words, LAYOUT_TABLE_HARD_MAX_WORDS),
             )
         if document_type == "table":
             return ChunkProfile(
                 "table_block",
-                target_words=400,
-                hard_max_words=min(self.max_words, 800),
+                target_words=SHORT_REFERENCE_TARGET_WORDS,
+                hard_max_words=min(self.max_words, SHORT_REFERENCE_HARD_MAX_WORDS),
             )
-        return ChunkProfile("generic", target_words=1000, hard_max_words=self.max_words)
+        return ChunkProfile(
+            "generic",
+            target_words=GENERIC_TARGET_WORDS,
+            hard_max_words=self.max_words,
+        )
 
     async def _split_chunk(
         self,
@@ -569,7 +589,7 @@ class ChunkSplitter:
         domain_metadata: DomainMetadata | None,
     ) -> list[tuple[int, NormalizedBlock]]:
         page_width = self._page_width(page_blocks)
-        full_width_threshold = page_width * 0.70
+        full_width_threshold = page_width * FULL_WIDTH_LAYOUT_RATIO
         full_width: list[tuple[int, NormalizedBlock]] = []
         column_blocks: list[tuple[int, NormalizedBlock]] = []
         for item in page_blocks:
@@ -1149,7 +1169,7 @@ class ChunkSplitter:
         if len(word_matches) <= hard_max_words:
             return None
 
-        lower_word_index = max(1, int(hard_max_words * 0.55))
+        lower_word_index = max(1, int(hard_max_words * SEMANTIC_SPLIT_LOWER_BOUND_RATIO))
         lower_bound = word_matches[lower_word_index - 1].end()
         upper_bound = word_matches[hard_max_words - 1].end()
         split_index: int | None = None

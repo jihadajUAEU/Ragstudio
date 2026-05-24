@@ -11,6 +11,9 @@ from ragstudio.services.reference_contracts import metadata_declares_reference_c
 
 QueryIntent = Literal["count", "title", "reference", "comparison", "summary", "semantic"]
 
+CANDIDATE_EXPANSION_MULTIPLIER = 2
+MIN_EXPANDED_CANDIDATES = 20
+
 
 @dataclass(frozen=True)
 class RetrievalPlan:
@@ -192,7 +195,10 @@ def plan_for_query(
         document_ids=list(document_ids),
         limit=limit,
         intent=intent,
-        candidate_limit=max(limit * 2, 20),
+        candidate_limit=max(
+            limit * CANDIDATE_EXPANSION_MULTIPLIER,
+            MIN_EXPANDED_CANDIDATES,
+        ),
         understanding=understanding,
         retrieval_strategy=understanding.retrieval_strategy,
         graph_context_required=understanding.graph_context_required,

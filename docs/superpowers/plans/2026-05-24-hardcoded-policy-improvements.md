@@ -1821,7 +1821,7 @@ Expected: commit succeeds with only regex registry files staged.
 - Test: `backend/tests/test_parser_normalization.py`
 - Test: `backend/tests/test_proof_packet_validator.py`
 
-- [ ] **Step 1: Write failing tests for the remaining policy catalog**
+- [x] **Step 1: Write failing tests for the remaining policy catalog**
 
 Create `backend/tests/test_static_policy_catalog.py`:
 
@@ -1860,7 +1860,7 @@ def test_policy_catalog_distinguishes_protocol_from_tunable_policy() -> None:
     assert policy_item("query_hypothesis_protocol_vocabulary").kind == "protocol_constant"
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run:
 
@@ -1870,7 +1870,7 @@ $env:PYTHONPATH='E:\repos\Ragstudio\backend\src'; pytest backend/tests/test_stat
 
 Expected: FAIL with `ModuleNotFoundError: No module named 'ragstudio.services.static_policy_catalog'`.
 
-- [ ] **Step 3: Add static policy catalog**
+- [x] **Step 3: Add static policy catalog**
 
 Create `backend/src/ragstudio/services/static_policy_catalog.py`:
 
@@ -1990,7 +1990,7 @@ def policy_item(policy_id: str) -> StaticPolicyItem:
     raise KeyError(f"Unknown static policy item: {policy_id}")
 ```
 
-- [ ] **Step 4: Add policy version constants to remaining protocol/default modules**
+- [x] **Step 4: Add policy version constants to remaining protocol/default modules**
 
 In `backend/src/ragstudio/services/domain_profile_registry.py`, add near the type aliases:
 
@@ -2031,7 +2031,7 @@ In `backend/src/ragstudio/proof_packet/errors.py`, add:
 PROOF_PACKET_ERROR_PROTOCOL_VERSION = "2026-05-24"
 ```
 
-- [ ] **Step 5: Name remaining tunable chunking and retrieval expansion constants**
+- [x] **Step 5: Name remaining tunable chunking and retrieval expansion constants**
 
 In `backend/src/ragstudio/services/chunk_splitter.py`, add near `ChunkProfile`:
 
@@ -2072,7 +2072,7 @@ DEFAULT_QUERY_LIMIT = 8
 
 Replace `max_seeds=5` and `int(query_config.get("limit") or 8)` with those names.
 
-- [ ] **Step 6: Classify provider manifest and preflight constants**
+- [x] **Step 6: Classify provider manifest and preflight constants**
 
 In `backend/src/ragstudio/services/provider_manifest_service.py`, add:
 
@@ -2095,7 +2095,7 @@ DEFAULT_MIN_REFERENCE_SCRIPT_PASS_RATIO = 0.98
 
 Use `DEFAULT_MIN_REFERENCE_SCRIPT_PASS_RATIO` wherever the config fallback currently uses `0.98` or `AppSettings.pdf_ocr_min_reference_script_pass_ratio`.
 
-- [ ] **Step 7: Run classification tests**
+- [x] **Step 7: Run classification tests**
 
 Run:
 
@@ -2105,7 +2105,7 @@ $env:PYTHONPATH='E:\repos\Ragstudio\backend\src'; pytest backend/tests/test_stat
 
 Expected: PASS.
 
-- [ ] **Step 8: Commit static policy classification**
+- [x] **Step 8: Commit static policy classification**
 
 Run:
 

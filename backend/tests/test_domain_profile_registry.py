@@ -1,5 +1,6 @@
 import pytest
 from ragstudio.services.domain_profile_registry import (
+    DOMAIN_PROFILE_POLICY_VERSION,
     DomainProfile,
     DomainProfileRegistry,
 )
@@ -18,6 +19,10 @@ def test_registry_returns_deterministic_default_profile():
         "multimodal_layout",
         "reference_heavy",
     ]
+
+
+def test_domain_profile_policy_version_is_explicit() -> None:
+    assert DOMAIN_PROFILE_POLICY_VERSION == "2026-05-24"
 
 
 def test_registry_resolves_explicit_domain_before_hints():

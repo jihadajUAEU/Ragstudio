@@ -1,5 +1,7 @@
 """Stable proof packet validation error codes and recovery guidance."""
 
+PROOF_PACKET_ERROR_PROTOCOL_VERSION = "2026-05-24"
+
 PACKET_NOT_FOUND = "PACKET_NOT_FOUND"
 JSON_PARSE_ERROR = "JSON_PARSE_ERROR"
 SCHEMA_INVALID = "SCHEMA_INVALID"

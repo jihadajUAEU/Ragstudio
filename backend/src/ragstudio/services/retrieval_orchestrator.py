@@ -49,6 +49,9 @@ from ragstudio.services.vector_retrieval_service import (
     vector_lane_diagnostics,
 )
 
+GRAPH_EXPANSION_MAX_SEEDS = 5
+DEFAULT_QUERY_LIMIT = 8
+
 
 class NativeRuntimeQueryFailed(RuntimeError):
     def __init__(self, error: str, error_type: str | None, timings: dict[str, Any]):
@@ -155,7 +158,7 @@ class RetrievalOrchestrator:
         query_config: dict[str, Any],
     ) -> OrchestratedAnswer:
         started = perf_counter()
-        limit = int(query_config.get("limit") or 8)
+        limit = int(query_config.get("limit") or DEFAULT_QUERY_LIMIT)
         timings: dict[str, Any] = {"orchestrated_query": True}
         deadline_at = _deadline_at(started, query_config)
         if deadline_at is not None:
@@ -358,7 +361,7 @@ class RetrievalOrchestrator:
             graph_seed_candidates = _graph_seed_candidates(
                 seed_candidates,
                 document_ids=document_ids,
-                max_seeds=5,
+                max_seeds=GRAPH_EXPANSION_MAX_SEEDS,
             )
             graph_candidates, graph_traces = await self._safe_graph_expansion(
                 query,

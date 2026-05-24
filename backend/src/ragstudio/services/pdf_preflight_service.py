@@ -7,6 +7,9 @@ from typing import Any, Literal
 
 from ragstudio.services.script_detection import SCRIPT_PATTERNS
 
+PDF_PREFLIGHT_POLICY_VERSION = "2026-05-24"
+DEFAULT_MIN_REFERENCE_SCRIPT_PASS_RATIO = 1.0
+
 
 @dataclass(frozen=True)
 class PdfPreflightIssue:
@@ -187,17 +190,17 @@ def _expects_reference_units(contract: dict[str, Any] | None) -> bool:
 
 def _min_reference_script_pass_ratio(contract: dict[str, Any] | None) -> float:
     if not isinstance(contract, dict):
-        return 1.0
+        return DEFAULT_MIN_REFERENCE_SCRIPT_PASS_RATIO
     preprocessing = contract.get("preprocessing")
     if not isinstance(preprocessing, dict):
-        return 1.0
+        return DEFAULT_MIN_REFERENCE_SCRIPT_PASS_RATIO
     value = preprocessing.get("min_reference_script_pass_ratio")
     if isinstance(value, bool):
-        return 1.0
+        return DEFAULT_MIN_REFERENCE_SCRIPT_PASS_RATIO
     try:
         ratio = float(value)
     except (TypeError, ValueError):
-        return 1.0
+        return DEFAULT_MIN_REFERENCE_SCRIPT_PASS_RATIO
     return max(0.0, min(ratio, 1.0))
 
 

@@ -12,6 +12,9 @@ from ragstudio.schemas.settings import (
 from ragstudio.services.http_client_provider import HttpClientProviderProtocol
 from ragstudio.services.http_retry import raise_for_transient_status, retry_async_http
 
+PROVIDER_MANIFEST_PROTOCOL_VERSION = "2026-05-24"
+
+# Provider manifest protocol vocabulary; update tests before changing these values.
 SUPPORTED_SECTIONS = {"reasoning", "embeddings", "hpcMineru", "reranker"}
 KNOWN_SECTIONS = {"stt", "reasoning", "embeddings", "ragAnything", "hpcMineru", "reranker"}
 CAPABILITIES = {"text", "vision", "reasoning"}
