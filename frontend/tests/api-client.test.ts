@@ -66,6 +66,45 @@ describe("apiClient document uploads", () => {
     expect(apiClient.jobEventsUrl("job-1")).toBe("/api/jobs/job-1/events");
   });
 
+  it("fetches document pipeline timelines", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({
+            document_id: "doc/with spaces",
+            filename: "policy.pdf",
+            status: "running",
+            latest_job_id: null,
+            contract_version: 1,
+            stages: [],
+            events: [],
+            contract: {},
+            warning_groups: [],
+            totals: {
+              jobs: 0,
+              chunks: 0,
+              warnings: 0,
+              graph_nodes: 0,
+              graph_edges: 0,
+              index_records: 0,
+              graph_records: 0,
+            },
+            missing_sections: [],
+          }),
+          { headers: { "Content-Type": "application/json" } },
+        ),
+      ),
+    );
+
+    await apiClient.documentPipelineTimeline("doc/with spaces");
+
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/documents/doc%2Fwith%20spaces/pipeline-timeline",
+      expect.any(Object),
+    );
+  });
+
   it("returns null for job event streams when EventSource is unavailable", () => {
     vi.stubGlobal("EventSource", undefined);
 

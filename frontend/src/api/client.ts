@@ -1,7 +1,7 @@
 import type {
   DiagnosticsOut,
   DocumentOut,
-  DomainMetadata,
+  DocumentPipelineTimelineOut,
   DomainMetadataSuggestOut,
   DomainProfileOut,
   EmbeddingConnectionTestOut,
@@ -178,6 +178,10 @@ export const apiClient = {
   documentParseEvidence: (documentId: string, options: ApiQueryOptions = DOCUMENT_EVIDENCE_QUERY) =>
     request<DocumentParseEvidence>(
       withQuery(`/api/documents/${encodeURIComponent(documentId)}/parse-evidence`, options),
+    ),
+  documentPipelineTimeline: (documentId: string) =>
+    request<DocumentPipelineTimelineOut>(
+      `/api/documents/${encodeURIComponent(documentId)}/pipeline-timeline`,
     ),
   uploadDocument: ({ file, options }: { file: File; options: IndexDocumentIn }) => {
     const formData = new FormData();
