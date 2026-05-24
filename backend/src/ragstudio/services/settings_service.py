@@ -7,12 +7,12 @@ from ragstudio.schemas.runtime import (
     RerankerProvider,
 )
 from ragstudio.schemas.settings import (
-    MINERU_DEFAULT_TIMEOUT_MS,
     LlmCapability,
     LlmProvider,
     SettingsProfileIn,
     SettingsProfileOut,
 )
+from ragstudio.services.runtime_defaults import RUNTIME_DEFAULTS, RUNTIME_LIMITS
 from ragstudio.services.runtime_policy import (
     normalize_embedding_provider,
     normalize_runtime_mode,
@@ -118,7 +118,7 @@ class SettingsService:
             ),
             llm_base_url=profile.llm_base_url,
             has_llm_api_key=bool(profile.llm_api_key),
-            llm_timeout_ms=profile.llm_timeout_ms or 10000,
+            llm_timeout_ms=profile.llm_timeout_ms or RUNTIME_DEFAULTS.llm_timeout_ms,
             llm_capabilities=[
                 cast(LlmCapability, capability)
                 for capability in (profile.llm_capabilities or [])
@@ -129,14 +129,26 @@ class SettingsService:
             embedding_provider=normalize_embedding_provider(profile.embedding_provider),
             embedding_base_url=profile.embedding_base_url,
             has_embedding_api_key=bool(profile.embedding_api_key),
-            embedding_timeout_ms=profile.embedding_timeout_ms or 10000,
-            embedding_dimensions=profile.embedding_dimensions or 1536,
-            embedding_batch_size=profile.embedding_batch_size or 16,
+            embedding_timeout_ms=(
+                profile.embedding_timeout_ms or RUNTIME_DEFAULTS.embedding_timeout_ms
+            ),
+            embedding_dimensions=(
+                profile.embedding_dimensions or RUNTIME_DEFAULTS.embedding_dimensions
+            ),
+            embedding_batch_size=(
+                profile.embedding_batch_size or RUNTIME_DEFAULTS.embedding_batch_size
+            ),
             embedding_tls_verify=default_bool(profile.embedding_tls_verify, True),
             mineru_enabled=bool(profile.mineru_enabled),
             mineru_base_url=profile.mineru_base_url,
-            mineru_timeout_ms=max(profile.mineru_timeout_ms or 0, MINERU_DEFAULT_TIMEOUT_MS),
-            mineru_poll_interval_ms=profile.mineru_poll_interval_ms or 1_000,
+            mineru_timeout_ms=max(
+                profile.mineru_timeout_ms or 0,
+                RUNTIME_DEFAULTS.mineru_timeout_ms,
+            ),
+            mineru_poll_interval_ms=(
+                profile.mineru_poll_interval_ms
+                or RUNTIME_DEFAULTS.mineru_poll_interval_ms
+            ),
             mineru_require_hpc=default_bool(profile.mineru_require_hpc, True),
             mineru_backend=profile.mineru_backend or "pipeline",
             mineru_device=profile.mineru_device or "cuda:0",
@@ -144,7 +156,10 @@ class SettingsService:
             mineru_formula=default_bool(profile.mineru_formula, True),
             mineru_table=default_bool(profile.mineru_table, True),
             mineru_source=profile.mineru_source,
-            mineru_max_concurrent_files=profile.mineru_max_concurrent_files or 1,
+            mineru_max_concurrent_files=(
+                profile.mineru_max_concurrent_files
+                or RUNTIME_DEFAULTS.mineru_max_concurrent_files
+            ),
             runtime_mode=normalize_runtime_mode(
                 profile.runtime_mode,
                 profile.storage_backend,
@@ -152,7 +167,7 @@ class SettingsService:
             vision_model=profile.vision_model,
             vision_base_url=profile.vision_base_url,
             has_vision_api_key=bool(profile.vision_api_key),
-            vision_timeout_ms=profile.vision_timeout_ms or 10000,
+            vision_timeout_ms=profile.vision_timeout_ms or RUNTIME_DEFAULTS.vision_timeout_ms,
             reranker_provider=cast(
                 RerankerProvider,
                 profile.reranker_provider if profile.reranker_provider else "disabled",
@@ -164,7 +179,9 @@ class SettingsService:
             reranker_model=profile.reranker_model,
             reranker_base_url=profile.reranker_base_url,
             has_reranker_api_key=bool(profile.reranker_api_key),
-            reranker_timeout_ms=profile.reranker_timeout_ms or 10000,
+            reranker_timeout_ms=(
+                profile.reranker_timeout_ms or RUNTIME_DEFAULTS.reranker_timeout_ms
+            ),
             pgvector_schema=profile.pgvector_schema or "public",
             pgvector_table_prefix=profile.pgvector_table_prefix or "ragstudio",
             neo4j_uri=profile.neo4j_uri,
@@ -172,32 +189,49 @@ class SettingsService:
             has_neo4j_password=bool(profile.neo4j_password),
             parser=profile.parser or "mineru",
             parse_method=profile.parse_method or "auto",
-            chunk_token_size=profile.chunk_token_size or 1200,
-            chunk_overlap_token_size=profile.chunk_overlap_token_size or 100,
+            chunk_token_size=profile.chunk_token_size or RUNTIME_DEFAULTS.chunk_token_size,
+            chunk_overlap_token_size=(
+                profile.chunk_overlap_token_size
+                or RUNTIME_DEFAULTS.chunk_overlap_token_size
+            ),
             enable_image_processing=default_bool(profile.enable_image_processing, True),
             enable_table_processing=default_bool(profile.enable_table_processing, True),
             enable_equation_processing=default_bool(profile.enable_equation_processing, True),
-            context_window=profile.context_window or 1,
+            context_window=profile.context_window or RUNTIME_DEFAULTS.context_window,
             context_mode=profile.context_mode or "page",
-            max_context_tokens=profile.max_context_tokens or 2000,
+            max_context_tokens=(
+                profile.max_context_tokens or RUNTIME_DEFAULTS.max_context_tokens
+            ),
             include_headers=default_bool(profile.include_headers, True),
             include_captions=default_bool(profile.include_captions, True),
             query_mode=cast(QueryMode, profile.query_mode or "mix"),
-            top_k=profile.top_k or 40,
-            chunk_top_k=profile.chunk_top_k or 20,
+            top_k=profile.top_k or RUNTIME_DEFAULTS.top_k,
+            chunk_top_k=profile.chunk_top_k or RUNTIME_DEFAULTS.chunk_top_k,
             enable_rerank=default_bool(profile.enable_rerank, True),
-            cosine_better_than_threshold=profile.cosine_better_than_threshold or 0.2,
-            max_total_tokens=profile.max_total_tokens or 30000,
-            max_entity_tokens=profile.max_entity_tokens or 6000,
-            max_relation_tokens=profile.max_relation_tokens or 8000,
+            cosine_better_than_threshold=(
+                profile.cosine_better_than_threshold
+                or RUNTIME_DEFAULTS.cosine_better_than_threshold
+            ),
+            max_total_tokens=profile.max_total_tokens or RUNTIME_DEFAULTS.max_total_tokens,
+            max_entity_tokens=profile.max_entity_tokens or RUNTIME_DEFAULTS.max_entity_tokens,
+            max_relation_tokens=(
+                profile.max_relation_tokens or RUNTIME_DEFAULTS.max_relation_tokens
+            ),
             enable_llm_cache=default_bool(profile.enable_llm_cache, True),
             enable_llm_cache_for_entity_extract=default_bool(
                 profile.enable_llm_cache_for_entity_extract,
                 True,
             ),
-            llm_model_max_async=profile.llm_model_max_async or 4,
-            embedding_func_max_async=profile.embedding_func_max_async or 8,
-            max_parallel_insert=profile.max_parallel_insert or 2,
+            llm_model_max_async=(
+                profile.llm_model_max_async or RUNTIME_DEFAULTS.llm_model_max_async
+            ),
+            embedding_func_max_async=(
+                profile.embedding_func_max_async
+                or RUNTIME_DEFAULTS.embedding_func_max_async
+            ),
+            max_parallel_insert=(
+                profile.max_parallel_insert or RUNTIME_DEFAULTS.max_parallel_insert
+            ),
         )
 
     def _normalize_runtime_values(self, values: dict[str, object]) -> dict[str, object]:
@@ -214,10 +248,13 @@ class SettingsService:
         )
         timeout = values.get("mineru_timeout_ms")
         if isinstance(timeout, int):
-            values["mineru_timeout_ms"] = max(timeout, MINERU_DEFAULT_TIMEOUT_MS)
+            values["mineru_timeout_ms"] = max(timeout, RUNTIME_DEFAULTS.mineru_timeout_ms)
         values["mineru_backend"] = cast(str | None, values.get("mineru_backend")) or "pipeline"
         values["mineru_device"] = cast(str | None, values.get("mineru_device")) or "cuda:0"
         max_concurrent = values.get("mineru_max_concurrent_files")
         if isinstance(max_concurrent, int):
-            values["mineru_max_concurrent_files"] = max(1, min(max_concurrent, 8))
+            values["mineru_max_concurrent_files"] = max(
+                RUNTIME_DEFAULTS.mineru_max_concurrent_files,
+                min(max_concurrent, RUNTIME_LIMITS.mineru_max_concurrent_files_max),
+            )
         return values

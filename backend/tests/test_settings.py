@@ -1,5 +1,43 @@
 import pytest
 from ragstudio.db.models import SettingsProfile
+from ragstudio.schemas.settings import SettingsProfileIn
+from ragstudio.services.runtime_defaults import RUNTIME_DEFAULTS, RUNTIME_LIMITS
+
+
+def test_settings_schema_uses_canonical_runtime_defaults() -> None:
+    profile = SettingsProfileIn(provider="openai", llm_model="gpt-4.1", embedding_model="embed")
+
+    assert profile.llm_timeout_ms == RUNTIME_DEFAULTS.llm_timeout_ms
+    assert profile.embedding_timeout_ms == RUNTIME_DEFAULTS.embedding_timeout_ms
+    assert profile.embedding_dimensions == RUNTIME_DEFAULTS.embedding_dimensions
+    assert profile.embedding_batch_size == RUNTIME_DEFAULTS.embedding_batch_size
+    assert profile.mineru_timeout_ms == RUNTIME_DEFAULTS.mineru_timeout_ms
+    assert profile.mineru_poll_interval_ms == RUNTIME_DEFAULTS.mineru_poll_interval_ms
+    assert profile.mineru_max_concurrent_files == RUNTIME_DEFAULTS.mineru_max_concurrent_files
+    assert profile.vision_timeout_ms == RUNTIME_DEFAULTS.vision_timeout_ms
+    assert profile.reranker_timeout_ms == RUNTIME_DEFAULTS.reranker_timeout_ms
+    assert profile.chunk_token_size == RUNTIME_DEFAULTS.chunk_token_size
+    assert profile.chunk_overlap_token_size == RUNTIME_DEFAULTS.chunk_overlap_token_size
+    assert profile.context_window == RUNTIME_DEFAULTS.context_window
+    assert profile.max_context_tokens == RUNTIME_DEFAULTS.max_context_tokens
+    assert profile.top_k == RUNTIME_DEFAULTS.top_k
+    assert profile.chunk_top_k == RUNTIME_DEFAULTS.chunk_top_k
+    assert profile.cosine_better_than_threshold == RUNTIME_DEFAULTS.cosine_better_than_threshold
+    assert profile.max_total_tokens == RUNTIME_DEFAULTS.max_total_tokens
+    assert profile.max_entity_tokens == RUNTIME_DEFAULTS.max_entity_tokens
+    assert profile.max_relation_tokens == RUNTIME_DEFAULTS.max_relation_tokens
+    assert profile.llm_model_max_async == RUNTIME_DEFAULTS.llm_model_max_async
+    assert profile.embedding_func_max_async == RUNTIME_DEFAULTS.embedding_func_max_async
+    assert profile.max_parallel_insert == RUNTIME_DEFAULTS.max_parallel_insert
+
+
+def test_runtime_default_limits_preserve_current_bounds() -> None:
+    assert RUNTIME_LIMITS.timeout_min_ms == 100
+    assert RUNTIME_LIMITS.timeout_max_ms == 1_800_000
+    assert RUNTIME_LIMITS.mineru_timeout_max_ms == 28_800_000
+    assert RUNTIME_LIMITS.mineru_max_concurrent_files_max == 8
+    assert RUNTIME_LIMITS.top_k_max == 200
+    assert RUNTIME_LIMITS.embedding_dimensions_max == 65_536
 
 
 @pytest.mark.asyncio

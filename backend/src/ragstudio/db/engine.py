@@ -4,6 +4,7 @@ from collections.abc import AsyncIterator
 from ragstudio.config import AppSettings
 from ragstudio.db.base import Base
 from ragstudio.services.arabic_text import arabic_tokens, normalize_arabic_text
+from ragstudio.services.runtime_defaults import RUNTIME_DEFAULTS, numeric_default_column_sql
 from sqlalchemy import inspect, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import (
@@ -60,19 +61,19 @@ def _ensure_runtime_columns(connection) -> None:
                 "llm_provider": "VARCHAR DEFAULT 'openai_compatible' NOT NULL",
                 "llm_base_url": "VARCHAR",
                 "llm_api_key": "VARCHAR",
-                "llm_timeout_ms": "INTEGER DEFAULT 10000 NOT NULL",
+                "llm_timeout_ms": numeric_default_column_sql("llm_timeout_ms"),
                 "llm_capabilities": _json_array_column(connection),
                 "embedding_provider": "VARCHAR DEFAULT 'vllm_openai' NOT NULL",
                 "embedding_base_url": "VARCHAR",
                 "embedding_api_key": "VARCHAR",
-                "embedding_timeout_ms": "INTEGER DEFAULT 10000 NOT NULL",
-                "embedding_dimensions": "INTEGER DEFAULT 1536 NOT NULL",
-                "embedding_batch_size": "INTEGER DEFAULT 16 NOT NULL",
+                "embedding_timeout_ms": numeric_default_column_sql("embedding_timeout_ms"),
+                "embedding_dimensions": numeric_default_column_sql("embedding_dimensions"),
+                "embedding_batch_size": numeric_default_column_sql("embedding_batch_size"),
                 "embedding_tls_verify": _bool_column(connection, True),
                 "mineru_enabled": _bool_column(connection, False),
                 "mineru_base_url": "VARCHAR",
-                "mineru_timeout_ms": "INTEGER DEFAULT 14400000 NOT NULL",
-                "mineru_poll_interval_ms": "INTEGER DEFAULT 1000 NOT NULL",
+                "mineru_timeout_ms": numeric_default_column_sql("mineru_timeout_ms"),
+                "mineru_poll_interval_ms": numeric_default_column_sql("mineru_poll_interval_ms"),
                 "mineru_require_hpc": _bool_column(connection, True),
                 "mineru_backend": "VARCHAR DEFAULT 'pipeline' NOT NULL",
                 "mineru_device": "VARCHAR DEFAULT 'cuda:0' NOT NULL",
@@ -80,18 +81,20 @@ def _ensure_runtime_columns(connection) -> None:
                 "mineru_formula": _bool_column(connection, True),
                 "mineru_table": _bool_column(connection, True),
                 "mineru_source": "VARCHAR",
-                "mineru_max_concurrent_files": "INTEGER DEFAULT 1 NOT NULL",
+                "mineru_max_concurrent_files": numeric_default_column_sql(
+                    "mineru_max_concurrent_files"
+                ),
                 "runtime_mode": "VARCHAR DEFAULT 'runtime' NOT NULL",
                 "vision_model": "VARCHAR",
                 "vision_base_url": "VARCHAR",
                 "vision_api_key": "VARCHAR",
-                "vision_timeout_ms": "INTEGER DEFAULT 10000 NOT NULL",
+                "vision_timeout_ms": numeric_default_column_sql("vision_timeout_ms"),
                 "reranker_provider": "VARCHAR DEFAULT 'disabled' NOT NULL",
                 "reranker_fallback_provider": "VARCHAR DEFAULT 'disabled' NOT NULL",
                 "reranker_model": "VARCHAR",
                 "reranker_base_url": "VARCHAR",
                 "reranker_api_key": "VARCHAR",
-                "reranker_timeout_ms": "INTEGER DEFAULT 10000 NOT NULL",
+                "reranker_timeout_ms": numeric_default_column_sql("reranker_timeout_ms"),
                 "pgvector_schema": "VARCHAR DEFAULT 'public' NOT NULL",
                 "pgvector_table_prefix": "VARCHAR DEFAULT 'ragstudio' NOT NULL",
                 "neo4j_uri": "VARCHAR",
@@ -99,29 +102,35 @@ def _ensure_runtime_columns(connection) -> None:
                 "neo4j_password": "VARCHAR",
                 "parser": "VARCHAR DEFAULT 'mineru' NOT NULL",
                 "parse_method": "VARCHAR DEFAULT 'auto' NOT NULL",
-                "chunk_token_size": "INTEGER DEFAULT 1200 NOT NULL",
-                "chunk_overlap_token_size": "INTEGER DEFAULT 100 NOT NULL",
+                "chunk_token_size": numeric_default_column_sql("chunk_token_size"),
+                "chunk_overlap_token_size": numeric_default_column_sql(
+                    "chunk_overlap_token_size"
+                ),
                 "enable_image_processing": _bool_column(connection, True),
                 "enable_table_processing": _bool_column(connection, True),
                 "enable_equation_processing": _bool_column(connection, True),
-                "context_window": "INTEGER DEFAULT 1 NOT NULL",
+                "context_window": numeric_default_column_sql("context_window"),
                 "context_mode": "VARCHAR DEFAULT 'page' NOT NULL",
-                "max_context_tokens": "INTEGER DEFAULT 2000 NOT NULL",
+                "max_context_tokens": numeric_default_column_sql("max_context_tokens"),
                 "include_headers": _bool_column(connection, True),
                 "include_captions": _bool_column(connection, True),
                 "query_mode": "VARCHAR DEFAULT 'mix' NOT NULL",
-                "top_k": "INTEGER DEFAULT 40 NOT NULL",
-                "chunk_top_k": "INTEGER DEFAULT 20 NOT NULL",
+                "top_k": numeric_default_column_sql("top_k"),
+                "chunk_top_k": numeric_default_column_sql("chunk_top_k"),
                 "enable_rerank": _bool_column(connection, True),
-                "cosine_better_than_threshold": "FLOAT DEFAULT 0.2 NOT NULL",
-                "max_total_tokens": "INTEGER DEFAULT 30000 NOT NULL",
-                "max_entity_tokens": "INTEGER DEFAULT 6000 NOT NULL",
-                "max_relation_tokens": "INTEGER DEFAULT 8000 NOT NULL",
+                "cosine_better_than_threshold": numeric_default_column_sql(
+                    "cosine_better_than_threshold"
+                ),
+                "max_total_tokens": numeric_default_column_sql("max_total_tokens"),
+                "max_entity_tokens": numeric_default_column_sql("max_entity_tokens"),
+                "max_relation_tokens": numeric_default_column_sql("max_relation_tokens"),
                 "enable_llm_cache": _bool_column(connection, True),
                 "enable_llm_cache_for_entity_extract": _bool_column(connection, True),
-                "llm_model_max_async": "INTEGER DEFAULT 4 NOT NULL",
-                "embedding_func_max_async": "INTEGER DEFAULT 8 NOT NULL",
-                "max_parallel_insert": "INTEGER DEFAULT 2 NOT NULL",
+                "llm_model_max_async": numeric_default_column_sql("llm_model_max_async"),
+                "embedding_func_max_async": numeric_default_column_sql(
+                    "embedding_func_max_async"
+                ),
+                "max_parallel_insert": numeric_default_column_sql("max_parallel_insert"),
             },
         )
         _normalize_settings_profile_values(connection)
@@ -468,11 +477,11 @@ def _workspace_label(profile_id: str | None) -> str:
 def _normalize_settings_profile_values(connection) -> None:
     connection.execute(
         text(
-            """
+            f"""
             UPDATE settings_profiles
-            SET mineru_timeout_ms = 14400000
+            SET mineru_timeout_ms = {RUNTIME_DEFAULTS.mineru_timeout_ms}
             WHERE mineru_timeout_ms IS NULL
-               OR mineru_timeout_ms < 14400000
+               OR mineru_timeout_ms < {RUNTIME_DEFAULTS.mineru_timeout_ms}
             """
         )
     )
@@ -525,11 +534,11 @@ def _normalize_settings_profile_values(connection) -> None:
     )
     connection.execute(
         text(
-            """
+            f"""
             UPDATE settings_profiles
-            SET mineru_max_concurrent_files = 1
+            SET mineru_max_concurrent_files = {RUNTIME_DEFAULTS.mineru_max_concurrent_files}
             WHERE mineru_max_concurrent_files IS NULL
-               OR mineru_max_concurrent_files < 1
+               OR mineru_max_concurrent_files < {RUNTIME_DEFAULTS.mineru_max_concurrent_files}
             """
         )
     )

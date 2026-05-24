@@ -3,6 +3,7 @@ from typing import Any
 
 from ragstudio.db.base import Base
 from ragstudio.schemas.common import new_id, now_utc
+from ragstudio.services.runtime_defaults import RUNTIME_DEFAULTS
 from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.mutable import MutableDict, MutableList
@@ -29,7 +30,7 @@ class SettingsProfile(Base, TimestampMixin):
     llm_provider: Mapped[str] = mapped_column(String, default="openai_compatible")
     llm_base_url: Mapped[str | None] = mapped_column(String, nullable=True)
     llm_api_key: Mapped[str | None] = mapped_column(String, nullable=True)
-    llm_timeout_ms: Mapped[int] = mapped_column(Integer, default=10000)
+    llm_timeout_ms: Mapped[int] = mapped_column(Integer, default=RUNTIME_DEFAULTS.llm_timeout_ms)
     llm_capabilities: Mapped[list[str]] = mapped_column(
         JsonListType, default=list
     )
@@ -38,14 +39,29 @@ class SettingsProfile(Base, TimestampMixin):
     embedding_provider: Mapped[str] = mapped_column(String, default="vllm_openai")
     embedding_base_url: Mapped[str | None] = mapped_column(String, nullable=True)
     embedding_api_key: Mapped[str | None] = mapped_column(String, nullable=True)
-    embedding_timeout_ms: Mapped[int] = mapped_column(Integer, default=10000)
-    embedding_dimensions: Mapped[int] = mapped_column(Integer, default=1536)
-    embedding_batch_size: Mapped[int] = mapped_column(Integer, default=16)
+    embedding_timeout_ms: Mapped[int] = mapped_column(
+        Integer,
+        default=RUNTIME_DEFAULTS.embedding_timeout_ms,
+    )
+    embedding_dimensions: Mapped[int] = mapped_column(
+        Integer,
+        default=RUNTIME_DEFAULTS.embedding_dimensions,
+    )
+    embedding_batch_size: Mapped[int] = mapped_column(
+        Integer,
+        default=RUNTIME_DEFAULTS.embedding_batch_size,
+    )
     embedding_tls_verify: Mapped[bool] = mapped_column(Boolean, default=True)
     mineru_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     mineru_base_url: Mapped[str | None] = mapped_column(String, nullable=True)
-    mineru_timeout_ms: Mapped[int] = mapped_column(Integer, default=14_400_000)
-    mineru_poll_interval_ms: Mapped[int] = mapped_column(Integer, default=1_000)
+    mineru_timeout_ms: Mapped[int] = mapped_column(
+        Integer,
+        default=RUNTIME_DEFAULTS.mineru_timeout_ms,
+    )
+    mineru_poll_interval_ms: Mapped[int] = mapped_column(
+        Integer,
+        default=RUNTIME_DEFAULTS.mineru_poll_interval_ms,
+    )
     mineru_require_hpc: Mapped[bool] = mapped_column(Boolean, default=True)
     mineru_backend: Mapped[str] = mapped_column(String, default="pipeline")
     mineru_device: Mapped[str] = mapped_column(String, default="cuda:0")
@@ -53,18 +69,27 @@ class SettingsProfile(Base, TimestampMixin):
     mineru_formula: Mapped[bool] = mapped_column(Boolean, default=True)
     mineru_table: Mapped[bool] = mapped_column(Boolean, default=True)
     mineru_source: Mapped[str | None] = mapped_column(String, nullable=True)
-    mineru_max_concurrent_files: Mapped[int] = mapped_column(Integer, default=1)
+    mineru_max_concurrent_files: Mapped[int] = mapped_column(
+        Integer,
+        default=RUNTIME_DEFAULTS.mineru_max_concurrent_files,
+    )
     runtime_mode: Mapped[str] = mapped_column(String, default="runtime")
     vision_model: Mapped[str | None] = mapped_column(String, nullable=True)
     vision_base_url: Mapped[str | None] = mapped_column(String, nullable=True)
     vision_api_key: Mapped[str | None] = mapped_column(String, nullable=True)
-    vision_timeout_ms: Mapped[int] = mapped_column(Integer, default=10000)
+    vision_timeout_ms: Mapped[int] = mapped_column(
+        Integer,
+        default=RUNTIME_DEFAULTS.vision_timeout_ms,
+    )
     reranker_provider: Mapped[str] = mapped_column(String, default="disabled")
     reranker_fallback_provider: Mapped[str] = mapped_column(String, default="disabled")
     reranker_model: Mapped[str | None] = mapped_column(String, nullable=True)
     reranker_base_url: Mapped[str | None] = mapped_column(String, nullable=True)
     reranker_api_key: Mapped[str | None] = mapped_column(String, nullable=True)
-    reranker_timeout_ms: Mapped[int] = mapped_column(Integer, default=10000)
+    reranker_timeout_ms: Mapped[int] = mapped_column(
+        Integer,
+        default=RUNTIME_DEFAULTS.reranker_timeout_ms,
+    )
     pgvector_schema: Mapped[str] = mapped_column(String, default="public")
     pgvector_table_prefix: Mapped[str] = mapped_column(String, default="ragstudio")
     neo4j_uri: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -72,29 +97,62 @@ class SettingsProfile(Base, TimestampMixin):
     neo4j_password: Mapped[str | None] = mapped_column(String, nullable=True)
     parser: Mapped[str] = mapped_column(String, default="mineru")
     parse_method: Mapped[str] = mapped_column(String, default="auto")
-    chunk_token_size: Mapped[int] = mapped_column(Integer, default=1200)
-    chunk_overlap_token_size: Mapped[int] = mapped_column(Integer, default=100)
+    chunk_token_size: Mapped[int] = mapped_column(
+        Integer,
+        default=RUNTIME_DEFAULTS.chunk_token_size,
+    )
+    chunk_overlap_token_size: Mapped[int] = mapped_column(
+        Integer,
+        default=RUNTIME_DEFAULTS.chunk_overlap_token_size,
+    )
     enable_image_processing: Mapped[bool] = mapped_column(Boolean, default=True)
     enable_table_processing: Mapped[bool] = mapped_column(Boolean, default=True)
     enable_equation_processing: Mapped[bool] = mapped_column(Boolean, default=True)
-    context_window: Mapped[int] = mapped_column(Integer, default=1)
+    context_window: Mapped[int] = mapped_column(
+        Integer,
+        default=RUNTIME_DEFAULTS.context_window,
+    )
     context_mode: Mapped[str] = mapped_column(String, default="page")
-    max_context_tokens: Mapped[int] = mapped_column(Integer, default=2000)
+    max_context_tokens: Mapped[int] = mapped_column(
+        Integer,
+        default=RUNTIME_DEFAULTS.max_context_tokens,
+    )
     include_headers: Mapped[bool] = mapped_column(Boolean, default=True)
     include_captions: Mapped[bool] = mapped_column(Boolean, default=True)
     query_mode: Mapped[str] = mapped_column(String, default="mix")
-    top_k: Mapped[int] = mapped_column(Integer, default=40)
-    chunk_top_k: Mapped[int] = mapped_column(Integer, default=20)
+    top_k: Mapped[int] = mapped_column(Integer, default=RUNTIME_DEFAULTS.top_k)
+    chunk_top_k: Mapped[int] = mapped_column(Integer, default=RUNTIME_DEFAULTS.chunk_top_k)
     enable_rerank: Mapped[bool] = mapped_column(Boolean, default=True)
-    cosine_better_than_threshold: Mapped[float] = mapped_column(Float, default=0.2)
-    max_total_tokens: Mapped[int] = mapped_column(Integer, default=30000)
-    max_entity_tokens: Mapped[int] = mapped_column(Integer, default=6000)
-    max_relation_tokens: Mapped[int] = mapped_column(Integer, default=8000)
+    cosine_better_than_threshold: Mapped[float] = mapped_column(
+        Float,
+        default=RUNTIME_DEFAULTS.cosine_better_than_threshold,
+    )
+    max_total_tokens: Mapped[int] = mapped_column(
+        Integer,
+        default=RUNTIME_DEFAULTS.max_total_tokens,
+    )
+    max_entity_tokens: Mapped[int] = mapped_column(
+        Integer,
+        default=RUNTIME_DEFAULTS.max_entity_tokens,
+    )
+    max_relation_tokens: Mapped[int] = mapped_column(
+        Integer,
+        default=RUNTIME_DEFAULTS.max_relation_tokens,
+    )
     enable_llm_cache: Mapped[bool] = mapped_column(Boolean, default=True)
     enable_llm_cache_for_entity_extract: Mapped[bool] = mapped_column(Boolean, default=True)
-    llm_model_max_async: Mapped[int] = mapped_column(Integer, default=4)
-    embedding_func_max_async: Mapped[int] = mapped_column(Integer, default=8)
-    max_parallel_insert: Mapped[int] = mapped_column(Integer, default=2)
+    llm_model_max_async: Mapped[int] = mapped_column(
+        Integer,
+        default=RUNTIME_DEFAULTS.llm_model_max_async,
+    )
+    embedding_func_max_async: Mapped[int] = mapped_column(
+        Integer,
+        default=RUNTIME_DEFAULTS.embedding_func_max_async,
+    )
+    max_parallel_insert: Mapped[int] = mapped_column(
+        Integer,
+        default=RUNTIME_DEFAULTS.max_parallel_insert,
+    )
 
 
 class Document(Base, TimestampMixin):

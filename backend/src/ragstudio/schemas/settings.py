@@ -11,6 +11,7 @@ from ragstudio.schemas.runtime import (
     RuntimeMode,
     StorageBackend,
 )
+from ragstudio.services.runtime_defaults import RUNTIME_DEFAULTS, RUNTIME_LIMITS
 from ragstudio.services.runtime_policy import (
     DEFAULT_EMBEDDING_PROVIDER,
     DEFAULT_RUNTIME_MODE,
@@ -21,9 +22,9 @@ from ragstudio.services.runtime_policy import (
 EmbeddingProvider = Literal["vllm_openai"]
 LlmProvider = Literal["openai_compatible"]
 LlmCapability = Literal["text", "vision", "reasoning"]
-MINERU_DEFAULT_TIMEOUT_MS = 14_400_000
-RUNTIME_TIMEOUT_MIN_MS = 100
-RUNTIME_TIMEOUT_MAX_MS = 1_800_000
+MINERU_DEFAULT_TIMEOUT_MS = RUNTIME_DEFAULTS.mineru_timeout_ms
+RUNTIME_TIMEOUT_MIN_MS = RUNTIME_LIMITS.timeout_min_ms
+RUNTIME_TIMEOUT_MAX_MS = RUNTIME_LIMITS.timeout_max_ms
 
 
 class SettingsProfileIn(StudioModel):
@@ -32,7 +33,11 @@ class SettingsProfileIn(StudioModel):
     llm_provider: LlmProvider = "openai_compatible"
     llm_base_url: str | None = None
     llm_api_key: str | None = None
-    llm_timeout_ms: int = Field(default=10000, ge=RUNTIME_TIMEOUT_MIN_MS, le=RUNTIME_TIMEOUT_MAX_MS)
+    llm_timeout_ms: int = Field(
+        default=RUNTIME_DEFAULTS.llm_timeout_ms,
+        ge=RUNTIME_TIMEOUT_MIN_MS,
+        le=RUNTIME_TIMEOUT_MAX_MS,
+    )
     llm_capabilities: list[LlmCapability] = Field(default_factory=list)
     embedding_model: str
     storage_backend: StorageBackend = DEFAULT_STORAGE_BACKEND
@@ -40,15 +45,33 @@ class SettingsProfileIn(StudioModel):
     embedding_base_url: str | None = None
     embedding_api_key: str | None = None
     embedding_timeout_ms: int = Field(
-        default=10000, ge=RUNTIME_TIMEOUT_MIN_MS, le=RUNTIME_TIMEOUT_MAX_MS
+        default=RUNTIME_DEFAULTS.embedding_timeout_ms,
+        ge=RUNTIME_TIMEOUT_MIN_MS,
+        le=RUNTIME_TIMEOUT_MAX_MS,
     )
-    embedding_dimensions: int = Field(default=1536, ge=1, le=65536)
-    embedding_batch_size: int = Field(default=16, ge=1, le=1024)
+    embedding_dimensions: int = Field(
+        default=RUNTIME_DEFAULTS.embedding_dimensions,
+        ge=1,
+        le=RUNTIME_LIMITS.embedding_dimensions_max,
+    )
+    embedding_batch_size: int = Field(
+        default=RUNTIME_DEFAULTS.embedding_batch_size,
+        ge=1,
+        le=RUNTIME_LIMITS.embedding_batch_size_max,
+    )
     embedding_tls_verify: bool = True
     mineru_enabled: bool = False
     mineru_base_url: str | None = None
-    mineru_timeout_ms: int = Field(default=MINERU_DEFAULT_TIMEOUT_MS, ge=100, le=28_800_000)
-    mineru_poll_interval_ms: int = Field(default=1_000, ge=100, le=60_000)
+    mineru_timeout_ms: int = Field(
+        default=MINERU_DEFAULT_TIMEOUT_MS,
+        ge=RUNTIME_LIMITS.timeout_min_ms,
+        le=RUNTIME_LIMITS.mineru_timeout_max_ms,
+    )
+    mineru_poll_interval_ms: int = Field(
+        default=RUNTIME_DEFAULTS.mineru_poll_interval_ms,
+        ge=RUNTIME_LIMITS.timeout_min_ms,
+        le=RUNTIME_LIMITS.mineru_poll_interval_max_ms,
+    )
     mineru_require_hpc: bool = True
     mineru_backend: str = "pipeline"
     mineru_device: str = "cuda:0"
@@ -56,13 +79,19 @@ class SettingsProfileIn(StudioModel):
     mineru_formula: bool = True
     mineru_table: bool = True
     mineru_source: str | None = None
-    mineru_max_concurrent_files: int = Field(default=1, ge=1, le=8)
+    mineru_max_concurrent_files: int = Field(
+        default=RUNTIME_DEFAULTS.mineru_max_concurrent_files,
+        ge=1,
+        le=RUNTIME_LIMITS.mineru_max_concurrent_files_max,
+    )
     runtime_mode: RuntimeMode = DEFAULT_RUNTIME_MODE
     vision_model: str | None = None
     vision_base_url: str | None = None
     vision_api_key: str | None = None
     vision_timeout_ms: int = Field(
-        default=10000, ge=RUNTIME_TIMEOUT_MIN_MS, le=RUNTIME_TIMEOUT_MAX_MS
+        default=RUNTIME_DEFAULTS.vision_timeout_ms,
+        ge=RUNTIME_TIMEOUT_MIN_MS,
+        le=RUNTIME_TIMEOUT_MAX_MS,
     )
     reranker_provider: RerankerProvider = "disabled"
     reranker_fallback_provider: RerankerFallbackProvider = "disabled"
@@ -70,7 +99,9 @@ class SettingsProfileIn(StudioModel):
     reranker_base_url: str | None = None
     reranker_api_key: str | None = None
     reranker_timeout_ms: int = Field(
-        default=10000, ge=RUNTIME_TIMEOUT_MIN_MS, le=RUNTIME_TIMEOUT_MAX_MS
+        default=RUNTIME_DEFAULTS.reranker_timeout_ms,
+        ge=RUNTIME_TIMEOUT_MIN_MS,
+        le=RUNTIME_TIMEOUT_MAX_MS,
     )
     pgvector_schema: str = "public"
     pgvector_table_prefix: str = "ragstudio"
@@ -79,29 +110,77 @@ class SettingsProfileIn(StudioModel):
     neo4j_password: str | None = None
     parser: str = "mineru"
     parse_method: str = "auto"
-    chunk_token_size: int = Field(default=1200, ge=100, le=8192)
-    chunk_overlap_token_size: int = Field(default=100, ge=0, le=2048)
+    chunk_token_size: int = Field(
+        default=RUNTIME_DEFAULTS.chunk_token_size,
+        ge=RUNTIME_LIMITS.chunk_token_size_min,
+        le=RUNTIME_LIMITS.chunk_token_size_max,
+    )
+    chunk_overlap_token_size: int = Field(
+        default=RUNTIME_DEFAULTS.chunk_overlap_token_size,
+        ge=0,
+        le=RUNTIME_LIMITS.chunk_overlap_token_size_max,
+    )
     enable_image_processing: bool = True
     enable_table_processing: bool = True
     enable_equation_processing: bool = True
-    context_window: int = Field(default=1, ge=0, le=10)
+    context_window: int = Field(
+        default=RUNTIME_DEFAULTS.context_window,
+        ge=0,
+        le=RUNTIME_LIMITS.context_window_max,
+    )
     context_mode: str = "page"
-    max_context_tokens: int = Field(default=2000, ge=100, le=100000)
+    max_context_tokens: int = Field(
+        default=RUNTIME_DEFAULTS.max_context_tokens,
+        ge=100,
+        le=RUNTIME_LIMITS.max_context_tokens_max,
+    )
     include_headers: bool = True
     include_captions: bool = True
     query_mode: QueryMode = "mix"
-    top_k: int = Field(default=40, ge=1, le=200)
-    chunk_top_k: int = Field(default=20, ge=1, le=200)
+    top_k: int = Field(default=RUNTIME_DEFAULTS.top_k, ge=1, le=RUNTIME_LIMITS.top_k_max)
+    chunk_top_k: int = Field(
+        default=RUNTIME_DEFAULTS.chunk_top_k,
+        ge=1,
+        le=RUNTIME_LIMITS.top_k_max,
+    )
     enable_rerank: bool = True
-    cosine_better_than_threshold: float = Field(default=0.2, ge=0, le=1)
-    max_total_tokens: int = Field(default=30000, ge=1000, le=1000000)
-    max_entity_tokens: int = Field(default=6000, ge=0, le=1000000)
-    max_relation_tokens: int = Field(default=8000, ge=0, le=1000000)
+    cosine_better_than_threshold: float = Field(
+        default=RUNTIME_DEFAULTS.cosine_better_than_threshold,
+        ge=0,
+        le=1,
+    )
+    max_total_tokens: int = Field(
+        default=RUNTIME_DEFAULTS.max_total_tokens,
+        ge=1000,
+        le=RUNTIME_LIMITS.runtime_token_budget_max,
+    )
+    max_entity_tokens: int = Field(
+        default=RUNTIME_DEFAULTS.max_entity_tokens,
+        ge=0,
+        le=RUNTIME_LIMITS.runtime_token_budget_max,
+    )
+    max_relation_tokens: int = Field(
+        default=RUNTIME_DEFAULTS.max_relation_tokens,
+        ge=0,
+        le=RUNTIME_LIMITS.runtime_token_budget_max,
+    )
     enable_llm_cache: bool = True
     enable_llm_cache_for_entity_extract: bool = True
-    llm_model_max_async: int = Field(default=4, ge=1, le=128)
-    embedding_func_max_async: int = Field(default=8, ge=1, le=128)
-    max_parallel_insert: int = Field(default=2, ge=1, le=64)
+    llm_model_max_async: int = Field(
+        default=RUNTIME_DEFAULTS.llm_model_max_async,
+        ge=1,
+        le=RUNTIME_LIMITS.async_limit_max,
+    )
+    embedding_func_max_async: int = Field(
+        default=RUNTIME_DEFAULTS.embedding_func_max_async,
+        ge=1,
+        le=RUNTIME_LIMITS.async_limit_max,
+    )
+    max_parallel_insert: int = Field(
+        default=RUNTIME_DEFAULTS.max_parallel_insert,
+        ge=1,
+        le=RUNTIME_LIMITS.max_parallel_insert_max,
+    )
 
     @model_validator(mode="after")
     def normalize_runtime_storage_pair(self) -> Self:

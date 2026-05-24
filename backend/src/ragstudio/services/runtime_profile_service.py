@@ -8,6 +8,7 @@ from ragstudio.schemas.runtime import (
     RerankerProvider,
     RuntimeProfile,
 )
+from ragstudio.services.runtime_defaults import RUNTIME_DEFAULTS
 from ragstudio.services.runtime_policy import (
     DEFAULT_EMBEDDING_PROVIDER,
     normalize_embedding_provider,
@@ -53,13 +54,18 @@ class RuntimeProfileService:
             "runtime_profile_id": profile.id,
             "embedding_provider": embedding_provider,
             "embedding_model": profile.embedding_model,
-            "embedding_dimensions": profile.embedding_dimensions or 1536,
+            "embedding_dimensions": (
+                profile.embedding_dimensions or RUNTIME_DEFAULTS.embedding_dimensions
+            ),
             "pgvector_schema": pgvector_schema,
             "pgvector_table_prefix": pgvector_table_prefix,
             "parser": profile.parser or "mineru",
             "parse_method": profile.parse_method or "auto",
-            "chunk_token_size": profile.chunk_token_size or 1200,
-            "chunk_overlap_token_size": profile.chunk_overlap_token_size or 100,
+            "chunk_token_size": profile.chunk_token_size or RUNTIME_DEFAULTS.chunk_token_size,
+            "chunk_overlap_token_size": (
+                profile.chunk_overlap_token_size
+                or RUNTIME_DEFAULTS.chunk_overlap_token_size
+            ),
             "graph_storage": "neo4j",
             "vector_storage": "pgvector",
         }
@@ -71,19 +77,25 @@ class RuntimeProfileService:
             llm_model=profile.llm_model,
             llm_base_url=profile.llm_base_url,
             llm_api_key=profile.llm_api_key,
-            llm_timeout_ms=profile.llm_timeout_ms or 10000,
+            llm_timeout_ms=profile.llm_timeout_ms or RUNTIME_DEFAULTS.llm_timeout_ms,
             llm_capabilities=profile.llm_capabilities or [],
             vision_model=profile.vision_model,
             vision_base_url=profile.vision_base_url,
             vision_api_key=profile.vision_api_key,
-            vision_timeout_ms=profile.vision_timeout_ms or 10000,
+            vision_timeout_ms=profile.vision_timeout_ms or RUNTIME_DEFAULTS.vision_timeout_ms,
             embedding_provider=embedding_provider,
             embedding_model=profile.embedding_model,
             embedding_base_url=profile.embedding_base_url,
             embedding_api_key=profile.embedding_api_key,
-            embedding_dimensions=profile.embedding_dimensions or 1536,
-            embedding_batch_size=profile.embedding_batch_size or 16,
-            embedding_timeout_ms=profile.embedding_timeout_ms or 10000,
+            embedding_dimensions=(
+                profile.embedding_dimensions or RUNTIME_DEFAULTS.embedding_dimensions
+            ),
+            embedding_batch_size=(
+                profile.embedding_batch_size or RUNTIME_DEFAULTS.embedding_batch_size
+            ),
+            embedding_timeout_ms=(
+                profile.embedding_timeout_ms or RUNTIME_DEFAULTS.embedding_timeout_ms
+            ),
             reranker_provider=cast(
                 RerankerProvider,
                 profile.reranker_provider or "disabled",
@@ -95,7 +107,9 @@ class RuntimeProfileService:
             reranker_model=profile.reranker_model,
             reranker_base_url=profile.reranker_base_url,
             reranker_api_key=profile.reranker_api_key,
-            reranker_timeout_ms=profile.reranker_timeout_ms or 10000,
+            reranker_timeout_ms=(
+                profile.reranker_timeout_ms or RUNTIME_DEFAULTS.reranker_timeout_ms
+            ),
             storage_backend=storage_backend,
             pgvector_schema=pgvector_schema,
             pgvector_table_prefix=pgvector_table_prefix,
@@ -104,35 +118,52 @@ class RuntimeProfileService:
             neo4j_password=profile.neo4j_password or self.settings.neo4j_password,
             parser=profile.parser or "mineru",
             parse_method=profile.parse_method or "auto",
-            chunk_token_size=profile.chunk_token_size or 1200,
-            chunk_overlap_token_size=profile.chunk_overlap_token_size or 100,
+            chunk_token_size=profile.chunk_token_size or RUNTIME_DEFAULTS.chunk_token_size,
+            chunk_overlap_token_size=(
+                profile.chunk_overlap_token_size
+                or RUNTIME_DEFAULTS.chunk_overlap_token_size
+            ),
             enable_image_processing=self._default_bool(profile.enable_image_processing, True),
             enable_table_processing=self._default_bool(profile.enable_table_processing, True),
             enable_equation_processing=self._default_bool(
                 profile.enable_equation_processing,
                 True,
             ),
-            context_window=profile.context_window or 1,
+            context_window=profile.context_window or RUNTIME_DEFAULTS.context_window,
             context_mode=profile.context_mode or "page",
-            max_context_tokens=profile.max_context_tokens or 2000,
+            max_context_tokens=(
+                profile.max_context_tokens or RUNTIME_DEFAULTS.max_context_tokens
+            ),
             include_headers=self._default_bool(profile.include_headers, True),
             include_captions=self._default_bool(profile.include_captions, True),
             query_mode=cast(QueryMode, profile.query_mode or "mix"),
-            top_k=profile.top_k or 40,
-            chunk_top_k=profile.chunk_top_k or 20,
+            top_k=profile.top_k or RUNTIME_DEFAULTS.top_k,
+            chunk_top_k=profile.chunk_top_k or RUNTIME_DEFAULTS.chunk_top_k,
             enable_rerank=self._default_bool(profile.enable_rerank, True),
-            cosine_better_than_threshold=profile.cosine_better_than_threshold or 0.2,
-            max_total_tokens=profile.max_total_tokens or 30000,
-            max_entity_tokens=profile.max_entity_tokens or 6000,
-            max_relation_tokens=profile.max_relation_tokens or 8000,
+            cosine_better_than_threshold=(
+                profile.cosine_better_than_threshold
+                or RUNTIME_DEFAULTS.cosine_better_than_threshold
+            ),
+            max_total_tokens=profile.max_total_tokens or RUNTIME_DEFAULTS.max_total_tokens,
+            max_entity_tokens=profile.max_entity_tokens or RUNTIME_DEFAULTS.max_entity_tokens,
+            max_relation_tokens=(
+                profile.max_relation_tokens or RUNTIME_DEFAULTS.max_relation_tokens
+            ),
             enable_llm_cache=self._default_bool(profile.enable_llm_cache, True),
             enable_llm_cache_for_entity_extract=self._default_bool(
                 profile.enable_llm_cache_for_entity_extract,
                 True,
             ),
-            llm_model_max_async=profile.llm_model_max_async or 4,
-            embedding_func_max_async=profile.embedding_func_max_async or 8,
-            max_parallel_insert=profile.max_parallel_insert or 2,
+            llm_model_max_async=(
+                profile.llm_model_max_async or RUNTIME_DEFAULTS.llm_model_max_async
+            ),
+            embedding_func_max_async=(
+                profile.embedding_func_max_async
+                or RUNTIME_DEFAULTS.embedding_func_max_async
+            ),
+            max_parallel_insert=(
+                profile.max_parallel_insert or RUNTIME_DEFAULTS.max_parallel_insert
+            ),
             runtime_working_dir=str(self.settings.resolved_runtime_working_dir),
             index_shape=index_shape,
         )
