@@ -18,6 +18,9 @@ QUALITY_MATERIALIZATION_POLICIES = {
 LAYOUT_WARNING_LEVELS = {"info", "warn", "block"}
 LAYOUT_RECOVERY_ACTIONS = {"recover_as_text", "ignore", "block"}
 VISION_RECOVERY_FAILURE_ACTIONS = {"info", "warn", "block"}
+REFERENCE_CONTRACT_EXTRACTOR_TYPES = {"regex", "contextual_regex"}
+REFERENCE_CONTRACT_EXECUTION_STATUSES = {"verified", "unverified"}
+REFERENCE_CONTRACT_ACCEPTANCE_MAX = 10_000
 
 
 REFERENCE_CUSTOM_JSON_EXAMPLE: dict[str, Any] = {
@@ -122,6 +125,8 @@ def validate_custom_json(value: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("Custom JSON must be an object.")
 
     _validate_reference_schema(value.get("reference_schema"))
+    _validate_reference_contract_candidates(value.get("reference_contract_candidates"))
+    _validate_reference_contract_execution(value.get("reference_contract_execution"))
     _validate_relationships(value.get("relationships"))
     _validate_chunking(value.get("chunking"))
     _validate_domain_structure(value.get("domain_structure"))
@@ -175,6 +180,170 @@ def _validate_reference_schema(value: Any) -> None:
         if pattern is None:
             continue
         _validate_reference_pattern(pattern, key)
+
+
+def _validate_reference_contract_candidates(value: Any) -> None:
+    if value is None:
+        return
+    if not isinstance(value, list):
+        raise ValueError("custom_json.reference_contract_candidates must be a list.")
+    for index, candidate in enumerate(value):
+        path = f"custom_json.reference_contract_candidates.{index}"
+        if not isinstance(candidate, dict):
+            raise ValueError(f"{path} must be an object.")
+        for key in ("schema_type", "unit"):
+            item = candidate.get(key)
+            if item is not None and not isinstance(item, str):
+                raise ValueError(f"{path}.{key} must be a string.")
+        identity = candidate.get("identity")
+        if not isinstance(identity, dict):
+            raise ValueError(f"{path}.identity must be an object.")
+        fields = identity.get("fields")
+        _validate_string_list(fields, f"{path}.identity.fields")
+        template = identity.get("canonical_ref_template")
+        if not isinstance(template, str):
+            raise ValueError(f"{path}.identity.canonical_ref_template must be a string.")
+        _validate_reference_contract_template(
+            template,
+            set(fields or []),
+            f"{path}.identity.canonical_ref_template",
+        )
+        _validate_reference_contract_extractors(candidate.get("extractors"), path)
+        _validate_reference_contract_acceptance(candidate.get("acceptance"), path)
+
+
+def _validate_reference_contract_template(
+    template: str,
+    declared_fields: set[str],
+    path: str,
+) -> None:
+    try:
+        template_fields = _template_fields(template)
+    except ValueError as exc:
+        raise ValueError(f"{path} must be a valid Python format template: {exc}") from exc
+    missing = sorted(template_fields - declared_fields)
+    if missing:
+        raise ValueError(f"{path} uses undeclared fields: {', '.join(missing)}")
+
+
+def _validate_reference_contract_extractors(value: Any, path: str) -> None:
+    if not isinstance(value, list) or not value:
+        raise ValueError(f"{path}.extractors must be a non-empty list.")
+    for index, extractor in enumerate(value):
+        extractor_path = f"{path}.extractors.{index}"
+        if not isinstance(extractor, dict):
+            raise ValueError(f"{extractor_path} must be an object.")
+        extractor_type = extractor.get("type")
+        if extractor_type not in REFERENCE_CONTRACT_EXTRACTOR_TYPES:
+            raise ValueError(
+                f"{extractor_path}.type must be one of: "
+                f"{', '.join(sorted(REFERENCE_CONTRACT_EXTRACTOR_TYPES))}."
+            )
+        target = extractor.get("target")
+        if target is not None and not isinstance(target, str):
+            raise ValueError(f"{extractor_path}.target must be a string.")
+        if extractor_type == "regex":
+            _validate_reference_pattern(extractor.get("pattern"), f"{extractor_path}.pattern")
+        else:
+            _validate_reference_pattern(
+                extractor.get("context_pattern"),
+                f"{extractor_path}.context_pattern",
+            )
+            _validate_reference_pattern(
+                extractor.get("unit_pattern"),
+                f"{extractor_path}.unit_pattern",
+            )
+
+
+def _validate_reference_contract_acceptance(value: Any, path: str) -> None:
+    if value is None:
+        return
+    if not isinstance(value, dict):
+        raise ValueError(f"{path}.acceptance must be an object.")
+    for key in ("min_matched_units", "min_matched_pages"):
+        item = value.get(key)
+        if item is None:
+            continue
+        if isinstance(item, bool) or not isinstance(item, int):
+            raise ValueError(f"{path}.acceptance.{key} must be an integer.")
+        if item < 1 or item > REFERENCE_CONTRACT_ACCEPTANCE_MAX:
+            raise ValueError(
+                f"{path}.acceptance.{key} must be between 1 and "
+                f"{REFERENCE_CONTRACT_ACCEPTANCE_MAX}."
+            )
+
+
+def _validate_reference_contract_execution(value: Any) -> None:
+    if value is None:
+        return
+    if not isinstance(value, dict):
+        raise ValueError("custom_json.reference_contract_execution must be an object.")
+    _validate_reference_contract_status(
+        value.get("status"),
+        "custom_json.reference_contract_execution.status",
+    )
+    for key in ("selected_schema_type", "selected_unit", "selected_canonical_ref_template"):
+        item = value.get(key)
+        if item is not None and not isinstance(item, str):
+            raise ValueError(f"custom_json.reference_contract_execution.{key} must be a string.")
+    _validate_non_negative_int(
+        value.get("matched_units"),
+        "custom_json.reference_contract_execution.matched_units",
+    )
+    _validate_int_list(
+        value.get("matched_pages"),
+        "custom_json.reference_contract_execution.matched_pages",
+    )
+    reports = value.get("reports")
+    if reports is None:
+        return
+    if not isinstance(reports, list):
+        raise ValueError("custom_json.reference_contract_execution.reports must be a list.")
+    for index, report in enumerate(reports):
+        _validate_reference_contract_execution_report(report, index)
+
+
+def _validate_reference_contract_execution_report(value: Any, index: int) -> None:
+    path = f"custom_json.reference_contract_execution.reports.{index}"
+    if not isinstance(value, dict):
+        raise ValueError(f"{path} must be an object.")
+    _validate_reference_contract_status(value.get("status"), f"{path}.status")
+    for key in ("schema_type", "unit", "canonical_ref_template", "rejection_reason"):
+        item = value.get(key)
+        if item is not None and not isinstance(item, str):
+            raise ValueError(f"{path}.{key} must be a string.")
+    _validate_string_list(value.get("identity_fields"), f"{path}.identity_fields")
+    _validate_non_negative_int(value.get("matched_units"), f"{path}.matched_units")
+    _validate_int_list(value.get("matched_pages"), f"{path}.matched_pages")
+    examples = value.get("examples")
+    if examples is not None and not isinstance(examples, list):
+        raise ValueError(f"{path}.examples must be a list.")
+
+
+def _validate_reference_contract_status(value: Any, path: str) -> None:
+    if value not in REFERENCE_CONTRACT_EXECUTION_STATUSES:
+        raise ValueError(
+            f"{path} must be one of: "
+            f"{', '.join(sorted(REFERENCE_CONTRACT_EXECUTION_STATUSES))}."
+        )
+
+
+def _validate_non_negative_int(value: Any, path: str) -> None:
+    if value is None:
+        return
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{path} must be an integer.")
+    if value < 0:
+        raise ValueError(f"{path} must be greater than or equal to 0.")
+
+
+def _validate_int_list(value: Any, path: str) -> None:
+    if value is None:
+        return
+    if not isinstance(value, list) or any(
+        isinstance(item, bool) or not isinstance(item, int) for item in value
+    ):
+        raise ValueError(f"{path} must be a list of integers.")
 
 
 def _validate_canonical_ref_template(reference_schema: dict[str, Any], fields: Any) -> None:

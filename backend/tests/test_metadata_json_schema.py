@@ -94,3 +94,128 @@ def test_validate_custom_json_checks_template_against_identity_fields():
                 }
             }
         )
+
+
+def test_validate_custom_json_accepts_reference_contract_candidates():
+    payload = {
+        "reference_contract_candidates": [
+            {
+                "schema_type": "chapter_verse",
+                "unit": "verse",
+                "identity": {
+                    "fields": ["chapter", "verse"],
+                    "canonical_ref_template": "{chapter}:{verse}",
+                },
+                "extractors": [
+                    {
+                        "type": "regex",
+                        "target": "page_text",
+                        "pattern": (
+                            r"\[(?P<chapter>\d{1,3}):"
+                            r"(?P<verse>\d{1,3})\]"
+                        ),
+                    }
+                ],
+                "acceptance": {"min_matched_units": 2, "min_matched_pages": 1},
+            }
+        ]
+    }
+
+    assert validate_custom_json(payload) is payload
+
+
+def test_validate_custom_json_rejects_invalid_reference_contract_candidate_extractor():
+    with pytest.raises(
+        ValueError,
+        match=r"reference_contract_candidates\.0\.extractors\.0\.type",
+    ):
+        validate_custom_json(
+            {
+                "reference_contract_candidates": [
+                    {
+                        "schema_type": "chapter_verse",
+                        "unit": "verse",
+                        "identity": {
+                            "fields": ["chapter", "verse"],
+                            "canonical_ref_template": "{chapter}:{verse}",
+                        },
+                        "extractors": [{"type": "python", "target": "page_text"}],
+                    }
+                ]
+            }
+        )
+
+
+def test_validate_custom_json_rejects_candidate_template_without_identity_fields():
+    with pytest.raises(ValueError, match="uses undeclared fields: verse"):
+        validate_custom_json(
+            {
+                "reference_contract_candidates": [
+                    {
+                        "schema_type": "chapter_verse",
+                        "unit": "verse",
+                        "identity": {
+                            "fields": ["chapter"],
+                            "canonical_ref_template": "{chapter}:{verse}",
+                        },
+                        "extractors": [
+                            {
+                                "type": "regex",
+                                "pattern": (
+                                    r"\[(?P<chapter>\d{1,3}):"
+                                    r"(?P<verse>\d{1,3})\]"
+                                ),
+                            }
+                        ],
+                    }
+                ]
+            }
+        )
+
+
+def test_validate_custom_json_accepts_reference_contract_execution_report():
+    payload = {
+        "reference_contract_execution": {
+            "status": "verified",
+            "selected_schema_type": "chapter_verse",
+            "selected_unit": "verse",
+            "selected_canonical_ref_template": "{chapter}:{verse}",
+            "matched_units": 2,
+            "matched_pages": [1],
+            "reports": [
+                {
+                    "status": "verified",
+                    "schema_type": "chapter_verse",
+                    "unit": "verse",
+                    "identity_fields": ["chapter", "verse"],
+                    "canonical_ref_template": "{chapter}:{verse}",
+                    "matched_units": 2,
+                    "matched_pages": [1],
+                    "rejection_reason": None,
+                    "examples": [
+                        {
+                            "canonical_reference": "1:1",
+                            "groups": {"chapter": "1", "verse": "1"},
+                            "page": 1,
+                            "raw": "[1:1]",
+                        }
+                    ],
+                }
+            ],
+        }
+    }
+
+    assert validate_custom_json(payload) is payload
+
+
+def test_validate_custom_json_rejects_invalid_execution_status():
+    with pytest.raises(ValueError, match=r"reference_contract_execution\.status"):
+        validate_custom_json(
+            {
+                "reference_contract_execution": {
+                    "status": "trusted",
+                    "matched_units": 0,
+                    "matched_pages": [],
+                }
+            }
+        )

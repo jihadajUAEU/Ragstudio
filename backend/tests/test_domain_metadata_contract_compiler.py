@@ -6,6 +6,7 @@ from ragstudio.services.domain_metadata_contract_compiler import (
     compile_index_options,
     validate_executable_reference_contract,
 )
+from ragstudio.services.reference_contracts import build_executable_reference_contract
 
 
 def test_custom_folio_line_contract_gets_generic_gate_without_family_rewrite():
@@ -90,6 +91,104 @@ def test_quran_like_contract_uses_template_identity_groups_not_all_fields():
     assert compiled.custom_json["reference_schema"]["type"] == "quran_tafseer"
     assert compiled.custom_json["reference_schema"]["fields"]["page"] == "page_number"
     validate_executable_reference_contract(compiled)
+
+
+def test_compile_domain_metadata_accepts_execution_verified_contract():
+    metadata = DomainMetadata(
+        domain="scripture",
+        custom_json={
+            "reference_schema": {
+                "type": "chapter_verse",
+                "fields": {"chapter": "chapter", "verse": "verse"},
+                "canonical_ref_template": "{chapter}:{verse}",
+            },
+            "domain_structure": {
+                "primary_anchor": {
+                    "type": "chapter_verse",
+                    "regex": r"\[(?P<chapter>\d{1,3}):(?P<verse>\d{1,3})\]",
+                    "unit": "verse",
+                    "verified": True,
+                }
+            },
+            "reference_resolution": {
+                "enabled": True,
+                "build_canonical_units": True,
+            },
+            "reference_contract_execution": {
+                "status": "verified",
+                "matched_units": 2,
+                "matched_pages": [1],
+            },
+        },
+    )
+
+    compiled = compile_domain_metadata(metadata)
+    contract = build_executable_reference_contract(compiled.custom_json)
+
+    assert contract.verified is True
+    assert compiled.custom_json["reference_resolution"]["build_canonical_units"] is True
+    assert compiled.custom_json["quality_policy"]["reference_contract_gate"]["enabled"] is True
+
+
+def test_compile_domain_metadata_leaves_failed_execution_as_metadata_only_hint():
+    metadata = DomainMetadata(
+        domain="scripture",
+        custom_json={
+            "reference_schema": {"type": "chapter_verse"},
+            "reference_contract_execution": {
+                "status": "unverified",
+                "matched_units": 0,
+                "matched_pages": [],
+                "reports": [
+                    {
+                        "status": "unverified",
+                        "schema_type": "chapter_verse",
+                        "rejection_reason": "identity_fields_missing_from_extractor",
+                    }
+                ],
+            },
+        },
+    )
+
+    compiled = compile_domain_metadata(metadata)
+    contract = build_executable_reference_contract(compiled.custom_json)
+
+    assert contract.verified is False
+    assert contract.required_groups == frozenset()
+    assert "reference_resolution" not in compiled.custom_json
+
+
+def test_compile_domain_metadata_demotes_stale_anchor_after_failed_execution():
+    metadata = DomainMetadata(
+        domain="scripture",
+        custom_json={
+            "reference_schema": {
+                "type": "chapter_verse",
+                "fields": {"chapter": "chapter", "verse": "verse"},
+                "canonical_ref_template": "{chapter}:{verse}",
+            },
+            "domain_structure": {
+                "primary_anchor": {
+                    "type": "chapter_verse",
+                    "regex": r"\[(?P<chapter>\d{1,3}):(?P<verse>\d{1,3})\]",
+                    "unit": "verse",
+                    "verified": True,
+                }
+            },
+            "reference_contract_execution": {
+                "status": "unverified",
+                "matched_units": 0,
+                "matched_pages": [],
+            },
+        },
+    )
+
+    compiled = compile_domain_metadata(metadata)
+    contract = build_executable_reference_contract(compiled.custom_json)
+
+    assert compiled.custom_json["domain_structure"]["primary_anchor"]["verified"] is False
+    assert contract.verified is False
+    assert "reference_resolution" not in compiled.custom_json
 
 
 def test_domain_and_tags_without_declared_anchors_do_not_create_reference_contract():

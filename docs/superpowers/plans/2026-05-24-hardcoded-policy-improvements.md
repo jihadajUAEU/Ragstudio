@@ -26,6 +26,7 @@ The plan is split into independently committable tasks:
 8. Domain, API, proof, and query policy classification.
 9. Documentation and verification.
 10. Structured-reference enforcement follow-up.
+11. Model-generated executable contract runner.
 
 ## File Structure
 
@@ -171,6 +172,23 @@ The plan is split into independently committable tasks:
   - Enforce `reference_unit_unresolved` only when the reference contract is verified/executable.
 - Test: `backend/tests/test_domain_metadata_quality_gate.py`
   - Adds regression coverage for `metadata_only` reference hints versus verified executable contracts.
+
+- Create: `backend/src/ragstudio/services/reference_contract_execution.py`
+  - Generic, domain-neutral runner for vision-generated executable reference contracts.
+- Modify: `backend/src/ragstudio/services/domain_metadata_ai_suggester.py`
+  - Ask the model for executable contract candidates and normalize them into runner inputs.
+- Modify: `backend/src/ragstudio/services/domain_metadata_contract_compiler.py`
+  - Accept runner-verified contracts and keep unverified contracts as metadata-only hints.
+- Modify: `backend/src/ragstudio/services/metadata_json_schema.py`
+  - Validate the bounded shape of model-generated contract candidates and execution reports before they are persisted in `custom_json`.
+- Test: `backend/tests/test_reference_contract_execution.py`
+  - Covers model-generated regex/contextual contracts without domain-specific hardcoding.
+- Test: `backend/tests/test_domain_metadata_ai_suggester.py`
+  - Covers model output with executable candidate contracts and legacy metadata fallback.
+- Test: `backend/tests/test_domain_metadata_contract_compiler.py`
+  - Covers verified execution reports enabling enforcement while failed reports stay metadata-only.
+- Test: `backend/tests/test_metadata_json_schema.py`
+  - Covers accepted/rejected model-generated contract payloads and execution report payloads.
 
 ---
 
@@ -2392,7 +2410,7 @@ $env:PYTHONPATH='E:\repos\Ragstudio\backend\src'; pytest backend/tests/test_doma
 
 Expected: PASS. The new regression proves `metadata_only` no longer creates `reference_unit_unresolved`, while verified executable contracts still enforce unresolved reference units.
 
-- [ ] **Step 6: Commit the enforcement fix**
+- [x] **Step 6: Commit the enforcement fix**
 
 Run:
 
@@ -2405,15 +2423,1205 @@ Expected: commit succeeds with only the structured-reference enforcement fix and
 
 ---
 
+### Task 11: Model-Generated Executable Contract Runner
+
+**Recommendation:** Replace domain-shaped validation questions with execution-based verification. Let the vision model generate executable reference contract candidates, then run those candidates against sampled page/block text. Keep deterministic code as a small protocol boundary: sandbox regex execution, require stable identity outputs, require provenance, and mark contracts verified only when execution produces real units.
+
+**Files:**
+- Create: `backend/src/ragstudio/services/reference_contract_execution.py`
+- Modify: `backend/src/ragstudio/services/domain_metadata_ai_suggester.py`
+- Modify: `backend/src/ragstudio/services/domain_metadata_contract_compiler.py`
+- Modify: `backend/src/ragstudio/services/metadata_json_schema.py`
+- Test: `backend/tests/test_reference_contract_execution.py`
+- Test: `backend/tests/test_domain_metadata_ai_suggester.py`
+- Test: `backend/tests/test_domain_metadata_contract_compiler.py`
+- Test: `backend/tests/test_metadata_json_schema.py`
+
+- [x] **Step 1: Add failing runner tests for generated executable contracts**
+
+Create `backend/tests/test_reference_contract_execution.py`:
+
+```python
+from ragstudio.services.page_sampler import SampledPage
+from ragstudio.services.reference_contract_execution import (
+    ContractAcceptance,
+    ContractExtractor,
+    GeneratedReferenceContract,
+    execute_reference_contract,
+)
+
+
+def test_generated_quran_contract_executes_without_schema_hardcoding():
+    contract = GeneratedReferenceContract(
+        schema_type="chapter_verse",
+        unit="verse",
+        identity_fields=("chapter", "verse"),
+        canonical_ref_template="{chapter}:{verse}",
+        extractors=(
+            ContractExtractor(
+                type="regex",
+                target="page_text",
+                pattern=r"\[(?P<chapter>\d{1,3}):(?P<verse>\d{1,3})\]",
+            ),
+        ),
+        acceptance=ContractAcceptance(min_matched_units=2, min_matched_pages=1),
+    )
+
+    report = execute_reference_contract(
+        contract,
+        [SampledPage(page_number=1, text="[1:1] In the name\n[1:2] Praise be")],
+    )
+
+    assert report.status == "verified"
+    assert report.matched_units == 2
+    assert report.matched_pages == [1]
+    assert [unit.canonical_reference for unit in report.units] == ["1:1", "1:2"]
+    assert report.units[0].provenance == {"page": 1, "target": "page_text"}
+
+
+def test_generated_contextual_contract_executes_with_context_and_unit_extractors():
+    contract = GeneratedReferenceContract(
+        schema_type="chapter_verse",
+        unit="verse",
+        identity_fields=("chapter", "verse"),
+        canonical_ref_template="{chapter}:{verse}",
+        extractors=(
+            ContractExtractor(
+                type="contextual_regex",
+                target="page_text",
+                context_pattern=r"\bSurah\s+(?P<chapter>\d{1,3})\b",
+                unit_pattern=r"\b(?P<verse>10[45])\b",
+            ),
+        ),
+        acceptance=ContractAcceptance(min_matched_units=2, min_matched_pages=1),
+    )
+
+    report = execute_reference_contract(
+        contract,
+        [
+            SampledPage(
+                page_number=168,
+                text=(
+                    "Surah 7\n"
+                    '104 Moses said, "O Pharaoh."\n'
+                    "105 I am a messenger."
+                ),
+            )
+        ],
+    )
+
+    assert report.status == "verified"
+    assert [unit.canonical_reference for unit in report.units] == ["7:104", "7:105"]
+
+
+def test_generated_contract_rejects_unnamed_identity_groups():
+    contract = GeneratedReferenceContract(
+        schema_type="chapter_verse",
+        unit="verse",
+        identity_fields=("chapter", "verse"),
+        canonical_ref_template="{chapter}:{verse}",
+        extractors=(
+            ContractExtractor(
+                type="regex",
+                target="page_text",
+                pattern=r"\[(\d{1,3}):(\d{1,3})\]",
+            ),
+        ),
+        acceptance=ContractAcceptance(min_matched_units=1, min_matched_pages=1),
+    )
+
+    report = execute_reference_contract(
+        contract,
+        [SampledPage(page_number=1, text="[1:1] In the name")],
+    )
+
+    assert report.status == "unverified"
+    assert report.rejection_reason == "identity_fields_missing_from_extractor"
+    assert report.matched_units == 0
+```
+
+- [ ] **Step 2: Run the runner tests and confirm they fail**
+
+Run:
+
+```powershell
+$env:PYTHONPATH='E:\repos\Ragstudio\backend\src'; pytest backend/tests/test_reference_contract_execution.py -q
+```
+
+Expected: FAIL with `ModuleNotFoundError: No module named 'ragstudio.services.reference_contract_execution'`.
+
+- [x] **Step 3: Implement the generic executable contract runner**
+
+Create `backend/src/ragstudio/services/reference_contract_execution.py`:
+
+```python
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass, field
+from typing import Literal
+
+from ragstudio.services.page_sampler import SampledPage
+from ragstudio.services.reference_contracts import canonical_reference_from_groups
+
+ContractStatus = Literal["verified", "unverified"]
+ExtractorType = Literal["regex", "contextual_regex"]
+
+
+@dataclass(frozen=True)
+class ContractAcceptance:
+    min_matched_units: int = 1
+    min_matched_pages: int = 1
+
+
+@dataclass(frozen=True)
+class ContractExtractor:
+    type: ExtractorType
+    target: str = "page_text"
+    pattern: str | None = None
+    context_pattern: str | None = None
+    unit_pattern: str | None = None
+
+
+@dataclass(frozen=True)
+class GeneratedReferenceContract:
+    schema_type: str
+    unit: str
+    identity_fields: tuple[str, ...]
+    canonical_ref_template: str
+    extractors: tuple[ContractExtractor, ...]
+    acceptance: ContractAcceptance = field(default_factory=ContractAcceptance)
+
+
+@dataclass(frozen=True)
+class ExtractedReferenceUnit:
+    canonical_reference: str
+    groups: dict[str, str]
+    raw: str
+    start: int
+    extractor_index: int
+    provenance: dict[str, object]
+
+
+@dataclass(frozen=True)
+class ContractExecutionReport:
+    status: ContractStatus
+    schema_type: str
+    unit: str
+    identity_fields: tuple[str, ...]
+    canonical_ref_template: str
+    matched_units: int
+    matched_pages: list[int]
+    units: list[ExtractedReferenceUnit]
+    rejection_reason: str | None = None
+
+
+def execute_reference_contract(
+    contract: GeneratedReferenceContract,
+    pages: list[SampledPage],
+) -> ContractExecutionReport:
+    units: list[ExtractedReferenceUnit] = []
+    matched_pages: set[int] = set()
+    for index, extractor in enumerate(contract.extractors):
+        rejection = _extractor_rejection(contract, extractor)
+        if rejection is not None:
+            return _report(contract, units, matched_pages, rejection)
+        extractor_units = (
+            _regex_units(contract, extractor, index, pages)
+            if extractor.type == "regex"
+            else _contextual_units(contract, extractor, index, pages)
+        )
+        for unit in extractor_units:
+            units.append(unit)
+            page = unit.provenance.get("page")
+            if isinstance(page, int):
+                matched_pages.add(page)
+
+    if len(units) < contract.acceptance.min_matched_units:
+        return _report(contract, units, matched_pages, "insufficient_matched_units")
+    if len(matched_pages) < contract.acceptance.min_matched_pages:
+        return _report(contract, units, matched_pages, "insufficient_matched_pages")
+    return _report(contract, units, matched_pages, None)
+
+
+def _regex_units(
+    contract: GeneratedReferenceContract,
+    extractor: ContractExtractor,
+    extractor_index: int,
+    pages: list[SampledPage],
+) -> list[ExtractedReferenceUnit]:
+    pattern = re.compile(extractor.pattern or "")
+    units: list[ExtractedReferenceUnit] = []
+    for page in pages:
+        for match in pattern.finditer(page.text or ""):
+            unit = _unit_from_groups(
+                contract,
+                match.groupdict(),
+                raw=match.group(0),
+                start=match.start(),
+                extractor_index=extractor_index,
+                page_number=page.page_number,
+                target=extractor.target,
+            )
+            if unit is not None:
+                units.append(unit)
+    return units
+
+
+def _contextual_units(
+    contract: GeneratedReferenceContract,
+    extractor: ContractExtractor,
+    extractor_index: int,
+    pages: list[SampledPage],
+) -> list[ExtractedReferenceUnit]:
+    context_pattern = re.compile(extractor.context_pattern or "")
+    unit_pattern = re.compile(extractor.unit_pattern or "")
+    units: list[ExtractedReferenceUnit] = []
+    for page in pages:
+        current_context: dict[str, str] | None = None
+        matches = [("context", match) for match in context_pattern.finditer(page.text or "")]
+        matches.extend(("unit", match) for match in unit_pattern.finditer(page.text or ""))
+        matches.sort(key=lambda item: item[1].start())
+        for kind, match in matches:
+            groups = {key: value for key, value in match.groupdict().items() if value}
+            if kind == "context":
+                current_context = groups
+                continue
+            if current_context is None:
+                continue
+            unit = _unit_from_groups(
+                contract,
+                {**current_context, **groups},
+                raw=match.group(0),
+                start=match.start(),
+                extractor_index=extractor_index,
+                page_number=page.page_number,
+                target=extractor.target,
+            )
+            if unit is not None:
+                units.append(unit)
+    return units
+
+
+def _unit_from_groups(
+    contract: GeneratedReferenceContract,
+    groups: dict[str, str],
+    *,
+    raw: str,
+    start: int,
+    extractor_index: int,
+    page_number: int,
+    target: str,
+) -> ExtractedReferenceUnit | None:
+    if not all(groups.get(field) for field in contract.identity_fields):
+        return None
+    canonical = canonical_reference_from_groups(groups, contract.canonical_ref_template)
+    if canonical is None:
+        return None
+    return ExtractedReferenceUnit(
+        canonical_reference=canonical,
+        groups={field: groups[field] for field in contract.identity_fields},
+        raw=raw,
+        start=start,
+        extractor_index=extractor_index,
+        provenance={"page": page_number, "target": target},
+    )
+
+
+def _extractor_rejection(
+    contract: GeneratedReferenceContract,
+    extractor: ContractExtractor,
+) -> str | None:
+    patterns = (
+        [extractor.pattern]
+        if extractor.type == "regex"
+        else [extractor.context_pattern, extractor.unit_pattern]
+    )
+    compiled: list[re.Pattern[str]] = []
+    for pattern in patterns:
+        if not pattern:
+            return "missing_extractor_pattern"
+        try:
+            compiled.append(re.compile(pattern))
+        except re.error as exc:
+            return f"invalid_regex:{exc.msg}"
+    declared_groups = set().union(*(set(pattern.groupindex) for pattern in compiled))
+    if not set(contract.identity_fields).issubset(declared_groups):
+        return "identity_fields_missing_from_extractor"
+    return None
+
+
+def _report(
+    contract: GeneratedReferenceContract,
+    units: list[ExtractedReferenceUnit],
+    matched_pages: set[int],
+    rejection_reason: str | None,
+) -> ContractExecutionReport:
+    return ContractExecutionReport(
+        status="verified" if rejection_reason is None else "unverified",
+        schema_type=contract.schema_type,
+        unit=contract.unit,
+        identity_fields=contract.identity_fields,
+        canonical_ref_template=contract.canonical_ref_template,
+        matched_units=len(units),
+        matched_pages=sorted(matched_pages),
+        units=units,
+        rejection_reason=rejection_reason,
+    )
+```
+
+- [x] **Step 4: Run the runner tests and confirm they pass**
+
+Run:
+
+```powershell
+$env:PYTHONPATH='E:\repos\Ragstudio\backend\src'; pytest backend/tests/test_reference_contract_execution.py -q
+```
+
+Expected: PASS.
+
+- [x] **Step 5: Add model-output parsing tests for executable contract candidates**
+
+Append to `backend/tests/test_domain_metadata_ai_suggester.py`:
+
+```python
+from ragstudio.services.reference_contract_execution import execute_reference_contract
+
+
+def test_reference_contract_candidates_accept_model_generated_executable_contract():
+    metadata = DomainMetadata(
+        custom_json={
+            "reference_contract_candidates": [
+                {
+                    "schema_type": "chapter_verse",
+                    "unit": "verse",
+                    "identity": {
+                        "fields": ["chapter", "verse"],
+                        "canonical_ref_template": "{chapter}:{verse}",
+                    },
+                    "extractors": [
+                        {
+                            "type": "regex",
+                            "target": "page_text",
+                            "pattern": r"\[(?P<chapter>\d{1,3}):(?P<verse>\d{1,3})\]",
+                        }
+                    ],
+                    "acceptance": {"min_matched_units": 2, "min_matched_pages": 1},
+                }
+            ]
+        }
+    )
+
+    contracts = DomainMetadataAiSuggester()._generated_reference_contracts(metadata)
+    report = execute_reference_contract(
+        contracts[0],
+        [SampledPage(page_number=1, text="[1:1]\n[1:2]")],
+    )
+
+    assert report.status == "verified"
+    assert report.matched_units == 2
+    assert report.units[0].canonical_reference == "1:1"
+```
+
+- [ ] **Step 6: Run the model-output parsing test and confirm it fails**
+
+Run:
+
+```powershell
+$env:PYTHONPATH='E:\repos\Ragstudio\backend\src'; pytest backend/tests/test_domain_metadata_ai_suggester.py -k generated_executable_contract -q
+```
+
+Expected: FAIL with `AttributeError: 'DomainMetadataAiSuggester' object has no attribute '_generated_reference_contracts'`.
+
+- [x] **Step 7: Parse model-generated executable contracts in the autosuggest service**
+
+In `backend/src/ragstudio/services/domain_metadata_ai_suggester.py`, add imports:
+
+```python
+from ragstudio.services.reference_contract_execution import (
+    ContractAcceptance,
+    ContractExecutionReport,
+    ContractExtractor,
+    GeneratedReferenceContract,
+    execute_reference_contract,
+)
+```
+
+Add this helper below `_reference_contract_candidates`:
+
+```python
+    def _generated_reference_contracts(
+        self,
+        metadata: DomainMetadata,
+    ) -> list[GeneratedReferenceContract]:
+        custom_json = metadata.custom_json if isinstance(metadata.custom_json, dict) else {}
+        raw_candidates = custom_json.get("reference_contract_candidates")
+        if not isinstance(raw_candidates, list):
+            return []
+        contracts: list[GeneratedReferenceContract] = []
+        for raw in raw_candidates:
+            if not isinstance(raw, dict):
+                continue
+            identity = raw.get("identity")
+            if not isinstance(identity, dict):
+                continue
+            fields = tuple(self._string_list(identity.get("fields")))
+            template = self._string_value(identity.get("canonical_ref_template"))
+            schema_type = self._string_value(raw.get("schema_type"))
+            unit = self._string_value(raw.get("unit"))
+            extractors = tuple(self._generated_extractors(raw.get("extractors")))
+            if not fields or template is None or schema_type is None or unit is None:
+                continue
+            if not extractors:
+                continue
+            acceptance = self._generated_acceptance(raw.get("acceptance"))
+            contracts.append(
+                GeneratedReferenceContract(
+                    schema_type=schema_type,
+                    unit=unit,
+                    identity_fields=fields,
+                    canonical_ref_template=template,
+                    extractors=extractors,
+                    acceptance=acceptance,
+                )
+            )
+        return contracts
+
+    def _generated_extractors(self, value: object) -> list[ContractExtractor]:
+        if not isinstance(value, list):
+            return []
+        extractors: list[ContractExtractor] = []
+        for item in value:
+            if not isinstance(item, dict):
+                continue
+            extractor_type = self._string_value(item.get("type"))
+            if extractor_type not in {"regex", "contextual_regex"}:
+                continue
+            extractors.append(
+                ContractExtractor(
+                    type=extractor_type,
+                    target=self._string_value(item.get("target")) or "page_text",
+                    pattern=self._string_value(item.get("pattern")),
+                    context_pattern=self._string_value(item.get("context_pattern")),
+                    unit_pattern=self._string_value(item.get("unit_pattern")),
+                )
+            )
+        return extractors
+
+    def _generated_acceptance(self, value: object) -> ContractAcceptance:
+        if not isinstance(value, dict):
+            return ContractAcceptance()
+        return ContractAcceptance(
+            min_matched_units=max(1, self._int_value(value.get("min_matched_units")) or 1),
+            min_matched_pages=max(1, self._int_value(value.get("min_matched_pages")) or 1),
+        )
+
+    def _int_value(self, value: object) -> int | None:
+        return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+    def _string_list(self, value: object) -> list[str]:
+        if not isinstance(value, list):
+            return []
+        return [item.strip() for item in value if isinstance(item, str) and item.strip()]
+```
+
+- [x] **Step 8: Run the model-output parsing test and confirm it passes**
+
+Run:
+
+```powershell
+$env:PYTHONPATH='E:\repos\Ragstudio\backend\src'; pytest backend/tests/test_domain_metadata_ai_suggester.py -k generated_executable_contract -q
+```
+
+Expected: PASS.
+
+- [x] **Step 9: Apply execution reports before legacy validation candidates**
+
+In `backend/src/ragstudio/services/domain_metadata_ai_suggester.py`, update `suggest()` after `metadata = suggestion.domain_metadata` and before returning `DomainMetadataSuggestOut`:
+
+```python
+        generated_contracts = self._generated_reference_contracts(metadata)
+        if generated_contracts:
+            metadata = self._apply_generated_contract_execution(metadata, generated_contracts, pages)
+        else:
+            candidates = self._reference_contract_candidates(metadata, source=ai_source)
+            if candidates:
+                validation = ReferenceContractValidator().validate(pages, candidates)
+                metadata = self._apply_reference_contract_validation(metadata, validation)
+```
+
+Add this helper:
+
+```python
+    def _apply_generated_contract_execution(
+        self,
+        metadata: DomainMetadata,
+        contracts: list[GeneratedReferenceContract],
+        pages: list[SampledPage],
+    ) -> DomainMetadata:
+        reports = [execute_reference_contract(contract, pages) for contract in contracts]
+        selected = self._select_generated_contract_report(reports)
+        custom_json = dict(metadata.custom_json) if isinstance(metadata.custom_json, dict) else {}
+        custom_json["reference_contract_execution"] = self._execution_report_payload(
+            selected,
+            reports,
+        )
+        custom_json["reference_contract_validation"] = (
+            self._execution_report_to_validation_payload(selected, reports, contracts)
+        )
+        if selected is not None:
+            custom_json["reference_schema"] = {
+                "type": selected.schema_type,
+                "fields": {field: field for field in selected.identity_fields},
+                "canonical_ref_template": selected.canonical_ref_template,
+            }
+            custom_json["reference_resolution"] = {
+                **self._dict_value(custom_json.get("reference_resolution")),
+                "enabled": True,
+                "build_canonical_units": True,
+            }
+            custom_json["domain_structure"] = self._domain_structure_from_execution(
+                selected,
+                custom_json.get("domain_structure"),
+                contracts,
+            )
+        return metadata.model_copy(update={"custom_json": custom_json}, deep=True)
+
+    def _select_generated_contract_report(
+        self,
+        reports: list[ContractExecutionReport],
+    ) -> ContractExecutionReport | None:
+        verified = [report for report in reports if report.status == "verified"]
+        if not verified:
+            return None
+        return sorted(
+            verified,
+            key=lambda report: (report.matched_units, len(report.matched_pages)),
+            reverse=True,
+        )[0]
+
+    def _execution_report_payload(
+        self,
+        selected: ContractExecutionReport | None,
+        reports: list[ContractExecutionReport],
+    ) -> dict[str, object]:
+        return {
+            "status": "verified" if selected is not None else "unverified",
+            "selected_schema_type": selected.schema_type if selected else None,
+            "selected_unit": selected.unit if selected else None,
+            "selected_canonical_ref_template": (
+                selected.canonical_ref_template if selected else None
+            ),
+            "matched_units": selected.matched_units if selected else 0,
+            "matched_pages": selected.matched_pages if selected else [],
+            "reports": [
+                {
+                    "status": report.status,
+                    "schema_type": report.schema_type,
+                    "unit": report.unit,
+                    "identity_fields": list(report.identity_fields),
+                    "canonical_ref_template": report.canonical_ref_template,
+                    "matched_units": report.matched_units,
+                    "matched_pages": report.matched_pages,
+                    "rejection_reason": report.rejection_reason,
+                    "examples": [
+                        {
+                            "canonical_reference": unit.canonical_reference,
+                            "groups": unit.groups,
+                            "page": unit.provenance.get("page"),
+                            "raw": unit.raw[:80],
+                        }
+                        for unit in report.units[:6]
+                    ],
+                }
+                for report in reports
+            ],
+        }
+
+    def _execution_report_to_validation_payload(
+        self,
+        selected: ContractExecutionReport | None,
+        reports: list[ContractExecutionReport],
+        contracts: list[GeneratedReferenceContract],
+    ) -> dict[str, object]:
+        candidates = [
+            {
+                "status": report.status,
+                "schema_type": report.schema_type,
+                "matched_units": report.matched_units,
+                "matched_pages": report.matched_pages,
+                "rejection_reason": report.rejection_reason,
+            }
+            for report in reports
+        ]
+        if selected is None:
+            return {
+                "status": "unverified",
+                "selected_source": "ai_generated_contract",
+                "matched_units": 0,
+                "matched_pages": [],
+                "candidates": candidates,
+            }
+        extractor = self._selected_execution_extractor(selected, contracts)
+        payload: dict[str, object] = {
+            "status": "verified",
+            "selected_source": "ai_generated_contract",
+            "matched_units": selected.matched_units,
+            "matched_pages": selected.matched_pages,
+            "candidates": candidates,
+        }
+        if extractor is not None and extractor.type == "regex":
+            payload["selected_strategy"] = "single_anchor"
+            payload["selected_primary_anchor_regex"] = extractor.pattern
+        elif extractor is not None:
+            payload["selected_strategy"] = "contextual_unit"
+            payload["selected_context_anchor_regex"] = extractor.context_pattern
+            payload["selected_unit_anchor_regex"] = extractor.unit_pattern
+        return payload
+
+    def _domain_structure_from_execution(
+        self,
+        report: ContractExecutionReport,
+        current_value: object,
+        contracts: list[GeneratedReferenceContract],
+    ) -> dict[str, object]:
+        domain_structure = self._dict_value(current_value)
+        first_unit = report.units[0] if report.units else None
+        extractor_index = first_unit.extractor_index if first_unit is not None else 0
+        extractor = self._selected_execution_extractor(report, contracts, extractor_index)
+        if extractor is None:
+            return domain_structure
+        if extractor.type == "regex":
+            domain_structure["primary_anchor"] = {
+                "type": report.schema_type,
+                "regex": extractor.pattern,
+                "unit": report.unit,
+                "verified": True,
+            }
+        else:
+            domain_structure["context_anchor"] = {
+                "type": report.schema_type,
+                "regex": extractor.context_pattern,
+                "unit": "context",
+                "verified": True,
+            }
+            domain_structure["unit_anchor"] = {
+                "type": report.schema_type,
+                "regex": extractor.unit_pattern,
+                "unit": report.unit,
+                "context_source": "context_anchor",
+                "verified": True,
+            }
+        return domain_structure
+
+    def _selected_execution_extractor(
+        self,
+        report: ContractExecutionReport,
+        contracts: list[GeneratedReferenceContract],
+        extractor_index: int = 0,
+    ) -> ContractExtractor | None:
+        for contract in contracts:
+            if (
+                contract.schema_type == report.schema_type
+                and contract.canonical_ref_template == report.canonical_ref_template
+                and extractor_index < len(contract.extractors)
+            ):
+                return contract.extractors[extractor_index]
+        return None
+```
+
+- [x] **Step 10: Update the model prompt to request executable contract candidates**
+
+In `backend/src/ragstudio/services/domain_metadata_ai_suggester.py`, add this block to the JSON shape inside `_prompt()` under `custom_json`:
+
+```text
+      "reference_contract_candidates": [
+        {
+          "schema_type": "chapter_verse",
+          "unit": "verse",
+          "identity": {
+            "fields": ["chapter", "verse"],
+            "canonical_ref_template": "{chapter}:{verse}"
+          },
+          "extractors": [
+            {
+              "type": "regex|contextual_regex",
+              "target": "page_text",
+              "pattern": null,
+              "context_pattern": null,
+              "unit_pattern": null
+            }
+          ],
+          "acceptance": {
+            "min_matched_units": 2,
+            "min_matched_pages": 1
+          }
+        }
+      ],
+```
+
+Also add this instruction below the existing reference-schema paragraph:
+
+```text
+For custom_json.reference_contract_candidates, generate executable extraction
+contracts when the sampled pages show structured references. Prefer named regex
+groups that directly match identity.fields. Do not mark the contract verified;
+Ragstudio will execute candidates against sampled pages and verify only working
+contracts. If the samples do not show enough evidence, return an empty list.
+```
+
+- [x] **Step 11: Add custom-json schema tests for generated contract payloads**
+
+Append to `backend/tests/test_metadata_json_schema.py`:
+
+```python
+def test_validate_custom_json_accepts_reference_contract_candidates():
+    payload = {
+        "reference_contract_candidates": [
+            {
+                "schema_type": "chapter_verse",
+                "unit": "verse",
+                "identity": {
+                    "fields": ["chapter", "verse"],
+                    "canonical_ref_template": "{chapter}:{verse}",
+                },
+                "extractors": [
+                    {
+                        "type": "regex",
+                        "target": "page_text",
+                        "pattern": r"\[(?P<chapter>\d{1,3}):(?P<verse>\d{1,3})\]",
+                    }
+                ],
+                "acceptance": {"min_matched_units": 2, "min_matched_pages": 1},
+            }
+        ]
+    }
+
+    assert validate_custom_json(payload) is payload
+
+
+def test_validate_custom_json_rejects_invalid_reference_contract_candidate_extractor():
+    with pytest.raises(ValueError, match=r"reference_contract_candidates\.0\.extractors\.0\.type"):
+        validate_custom_json(
+            {
+                "reference_contract_candidates": [
+                    {
+                        "schema_type": "chapter_verse",
+                        "unit": "verse",
+                        "identity": {
+                            "fields": ["chapter", "verse"],
+                            "canonical_ref_template": "{chapter}:{verse}",
+                        },
+                        "extractors": [{"type": "python", "target": "page_text"}],
+                    }
+                ]
+            }
+        )
+
+
+def test_validate_custom_json_rejects_candidate_template_without_identity_fields():
+    with pytest.raises(ValueError, match="uses undeclared fields: verse"):
+        validate_custom_json(
+            {
+                "reference_contract_candidates": [
+                    {
+                        "schema_type": "chapter_verse",
+                        "unit": "verse",
+                        "identity": {
+                            "fields": ["chapter"],
+                            "canonical_ref_template": "{chapter}:{verse}",
+                        },
+                        "extractors": [
+                            {
+                                "type": "regex",
+                                "pattern": (
+                                    r"\[(?P<chapter>\d{1,3}):"
+                                    r"(?P<verse>\d{1,3})\]"
+                                ),
+                            }
+                        ],
+                    }
+                ]
+            }
+        )
+
+
+def test_validate_custom_json_accepts_reference_contract_execution_report():
+    payload = {
+        "reference_contract_execution": {
+            "status": "verified",
+            "selected_schema_type": "chapter_verse",
+            "selected_unit": "verse",
+            "selected_canonical_ref_template": "{chapter}:{verse}",
+            "matched_units": 2,
+            "matched_pages": [1],
+            "reports": [
+                {
+                    "status": "verified",
+                    "schema_type": "chapter_verse",
+                    "unit": "verse",
+                    "identity_fields": ["chapter", "verse"],
+                    "canonical_ref_template": "{chapter}:{verse}",
+                    "matched_units": 2,
+                    "matched_pages": [1],
+                    "rejection_reason": None,
+                    "examples": [
+                        {
+                            "canonical_reference": "1:1",
+                            "groups": {"chapter": "1", "verse": "1"},
+                            "page": 1,
+                            "raw": "[1:1]",
+                        }
+                    ],
+                }
+            ],
+        }
+    }
+
+    assert validate_custom_json(payload) is payload
+```
+
+- [x] **Step 12: Validate generated contract payloads in the custom-json schema**
+
+In `backend/src/ragstudio/services/metadata_json_schema.py`, add these constants near the existing policy sets:
+
+```python
+REFERENCE_CONTRACT_EXTRACTOR_TYPES = {"regex", "contextual_regex"}
+REFERENCE_CONTRACT_EXECUTION_STATUSES = {"verified", "unverified"}
+REFERENCE_CONTRACT_ACCEPTANCE_MAX = 10_000
+```
+
+In `validate_custom_json()`, add these calls after `_validate_reference_schema(...)`:
+
+```python
+    _validate_reference_contract_candidates(value.get("reference_contract_candidates"))
+    _validate_reference_contract_execution(value.get("reference_contract_execution"))
+```
+
+Add these helpers below `_validate_reference_schema(...)`:
+
+```python
+def _validate_reference_contract_candidates(value: Any) -> None:
+    if value is None:
+        return
+    if not isinstance(value, list):
+        raise ValueError("custom_json.reference_contract_candidates must be a list.")
+    for index, candidate in enumerate(value):
+        path = f"custom_json.reference_contract_candidates.{index}"
+        if not isinstance(candidate, dict):
+            raise ValueError(f"{path} must be an object.")
+        for key in ("schema_type", "unit"):
+            item = candidate.get(key)
+            if item is not None and not isinstance(item, str):
+                raise ValueError(f"{path}.{key} must be a string.")
+        identity = candidate.get("identity")
+        if not isinstance(identity, dict):
+            raise ValueError(f"{path}.identity must be an object.")
+        fields = identity.get("fields")
+        _validate_string_list(fields, f"{path}.identity.fields")
+        template = identity.get("canonical_ref_template")
+        if not isinstance(template, str):
+            raise ValueError(f"{path}.identity.canonical_ref_template must be a string.")
+        _validate_reference_contract_template(
+            template,
+            set(fields or []),
+            f"{path}.identity.canonical_ref_template",
+        )
+        _validate_reference_contract_extractors(candidate.get("extractors"), path)
+        _validate_reference_contract_acceptance(candidate.get("acceptance"), path)
+
+
+def _validate_reference_contract_template(
+    template: str,
+    declared_fields: set[str],
+    path: str,
+) -> None:
+    try:
+        template_fields = _template_fields(template)
+    except ValueError as exc:
+        raise ValueError(f"{path} must be a valid Python format template: {exc}") from exc
+    missing = sorted(template_fields - declared_fields)
+    if missing:
+        raise ValueError(f"{path} uses undeclared fields: {', '.join(missing)}")
+
+
+def _validate_reference_contract_extractors(value: Any, path: str) -> None:
+    if not isinstance(value, list) or not value:
+        raise ValueError(f"{path}.extractors must be a non-empty list.")
+    for index, extractor in enumerate(value):
+        extractor_path = f"{path}.extractors.{index}"
+        if not isinstance(extractor, dict):
+            raise ValueError(f"{extractor_path} must be an object.")
+        extractor_type = extractor.get("type")
+        if extractor_type not in REFERENCE_CONTRACT_EXTRACTOR_TYPES:
+            raise ValueError(
+                f"{extractor_path}.type must be one of: "
+                f"{', '.join(sorted(REFERENCE_CONTRACT_EXTRACTOR_TYPES))}."
+            )
+        target = extractor.get("target")
+        if target is not None and not isinstance(target, str):
+            raise ValueError(f"{extractor_path}.target must be a string.")
+        if extractor_type == "regex":
+            _validate_reference_pattern(extractor.get("pattern"), f"{extractor_path}.pattern")
+        else:
+            _validate_reference_pattern(
+                extractor.get("context_pattern"),
+                f"{extractor_path}.context_pattern",
+            )
+            _validate_reference_pattern(
+                extractor.get("unit_pattern"),
+                f"{extractor_path}.unit_pattern",
+            )
+
+
+def _validate_reference_contract_acceptance(value: Any, path: str) -> None:
+    if value is None:
+        return
+    if not isinstance(value, dict):
+        raise ValueError(f"{path}.acceptance must be an object.")
+    for key in ("min_matched_units", "min_matched_pages"):
+        item = value.get(key)
+        if item is None:
+            continue
+        if isinstance(item, bool) or not isinstance(item, int):
+            raise ValueError(f"{path}.acceptance.{key} must be an integer.")
+        if item < 1 or item > REFERENCE_CONTRACT_ACCEPTANCE_MAX:
+            raise ValueError(
+                f"{path}.acceptance.{key} must be between 1 and "
+                f"{REFERENCE_CONTRACT_ACCEPTANCE_MAX}."
+            )
+
+
+def _validate_reference_contract_execution(value: Any) -> None:
+    if value is None:
+        return
+    if not isinstance(value, dict):
+        raise ValueError("custom_json.reference_contract_execution must be an object.")
+    _validate_reference_contract_status(
+        value.get("status"),
+        "custom_json.reference_contract_execution.status",
+    )
+    for key in ("selected_schema_type", "selected_unit", "selected_canonical_ref_template"):
+        item = value.get(key)
+        if item is not None and not isinstance(item, str):
+            raise ValueError(f"custom_json.reference_contract_execution.{key} must be a string.")
+    _validate_non_negative_int(
+        value.get("matched_units"),
+        "custom_json.reference_contract_execution.matched_units",
+    )
+    _validate_int_list(
+        value.get("matched_pages"),
+        "custom_json.reference_contract_execution.matched_pages",
+    )
+    reports = value.get("reports")
+    if reports is None:
+        return
+    if not isinstance(reports, list):
+        raise ValueError("custom_json.reference_contract_execution.reports must be a list.")
+    for index, report in enumerate(reports):
+        _validate_reference_contract_execution_report(report, index)
+
+
+def _validate_reference_contract_execution_report(value: Any, index: int) -> None:
+    path = f"custom_json.reference_contract_execution.reports.{index}"
+    if not isinstance(value, dict):
+        raise ValueError(f"{path} must be an object.")
+    _validate_reference_contract_status(value.get("status"), f"{path}.status")
+    for key in ("schema_type", "unit", "canonical_ref_template", "rejection_reason"):
+        item = value.get(key)
+        if item is not None and not isinstance(item, str):
+            raise ValueError(f"{path}.{key} must be a string.")
+    _validate_string_list(value.get("identity_fields"), f"{path}.identity_fields")
+    _validate_non_negative_int(value.get("matched_units"), f"{path}.matched_units")
+    _validate_int_list(value.get("matched_pages"), f"{path}.matched_pages")
+    examples = value.get("examples")
+    if examples is not None and not isinstance(examples, list):
+        raise ValueError(f"{path}.examples must be a list.")
+
+
+def _validate_reference_contract_status(value: Any, path: str) -> None:
+    if value not in REFERENCE_CONTRACT_EXECUTION_STATUSES:
+        raise ValueError(
+            f"{path} must be one of: "
+            f"{', '.join(sorted(REFERENCE_CONTRACT_EXECUTION_STATUSES))}."
+        )
+
+
+def _validate_non_negative_int(value: Any, path: str) -> None:
+    if value is None:
+        return
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{path} must be an integer.")
+    if value < 0:
+        raise ValueError(f"{path} must be greater than or equal to 0.")
+
+
+def _validate_int_list(value: Any, path: str) -> None:
+    if value is None:
+        return
+    if not isinstance(value, list) or any(
+        isinstance(item, bool) or not isinstance(item, int) for item in value
+    ):
+        raise ValueError(f"{path} must be a list of integers.")
+```
+
+This validation is intentionally a protocol boundary, not a hardcoded domain schema. It permits the model to propose new `schema_type`, `unit`, identity field names, and templates, but it rejects unsafe extractor forms, malformed regexes, undeclared template fields, and nonsensical acceptance bounds before the payload can become persisted policy.
+
+- [x] **Step 13: Add compiler tests for execution-verified contracts**
+
+Append to `backend/tests/test_domain_metadata_contract_compiler.py`:
+
+```python
+from ragstudio.schemas.parsing import DomainMetadata
+from ragstudio.services.domain_metadata_contract_compiler import compile_domain_metadata
+from ragstudio.services.reference_contracts import build_executable_reference_contract
+
+
+def test_compile_domain_metadata_accepts_execution_verified_contract():
+    metadata = DomainMetadata(
+        domain="scripture",
+        custom_json={
+            "reference_schema": {
+                "type": "chapter_verse",
+                "fields": {"chapter": "chapter", "verse": "verse"},
+                "canonical_ref_template": "{chapter}:{verse}",
+            },
+            "domain_structure": {
+                "primary_anchor": {
+                    "type": "chapter_verse",
+                    "regex": r"\[(?P<chapter>\d{1,3}):(?P<verse>\d{1,3})\]",
+                    "unit": "verse",
+                    "verified": True,
+                }
+            },
+            "reference_resolution": {
+                "enabled": True,
+                "build_canonical_units": True,
+            },
+            "reference_contract_execution": {
+                "status": "verified",
+                "matched_units": 2,
+                "matched_pages": [1],
+            },
+        },
+    )
+
+    compiled = compile_domain_metadata(metadata)
+    contract = build_executable_reference_contract(compiled.custom_json)
+
+    assert contract.verified is True
+    assert compiled.custom_json["reference_resolution"]["build_canonical_units"] is True
+    assert compiled.custom_json["quality_policy"]["reference_contract_gate"]["enabled"] is True
+
+
+def test_compile_domain_metadata_leaves_failed_execution_as_metadata_only_hint():
+    metadata = DomainMetadata(
+        domain="scripture",
+        custom_json={
+            "reference_schema": {"type": "chapter_verse"},
+            "reference_contract_execution": {
+                "status": "unverified",
+                "matched_units": 0,
+                "matched_pages": [],
+                "reports": [
+                    {
+                        "status": "unverified",
+                        "schema_type": "chapter_verse",
+                        "rejection_reason": "identity_fields_missing_from_extractor",
+                    }
+                ],
+            },
+        },
+    )
+
+    compiled = compile_domain_metadata(metadata)
+    contract = build_executable_reference_contract(compiled.custom_json)
+
+    assert contract.verified is False
+    assert contract.required_groups == frozenset()
+    assert "reference_resolution" not in compiled.custom_json
+```
+
+- [x] **Step 14: Run compiler tests and confirm they pass**
+
+Run:
+
+```powershell
+$env:PYTHONPATH='E:\repos\Ragstudio\backend\src'; pytest backend/tests/test_domain_metadata_contract_compiler.py -q
+```
+
+Expected: PASS.
+
+- [x] **Step 15: Run reference/autosuggest/schema regression suite**
+
+Run:
+
+```powershell
+$env:PYTHONPATH='E:\repos\Ragstudio\backend\src'; pytest backend/tests/test_reference_contract_execution.py backend/tests/test_reference_contract_validator.py backend/tests/test_reference_contracts.py backend/tests/test_domain_metadata_ai_suggester.py backend/tests/test_domain_metadata_contract_compiler.py backend/tests/test_metadata_json_schema.py backend/tests/test_document_contract.py backend/tests/test_domain_metadata_quality_gate.py -q
+```
+
+Expected: PASS.
+
+- [ ] **Step 16: Run live Quran-style upload validation**
+
+Use this only after the automated suite passes and the local Docker stack is running the updated backend and worker image. Upload or reindex the Arabic/English Quran PDF through the UI or API, wait for the job terminal status, then inspect the latest document evidence:
+
+```powershell
+$doc = Invoke-RestMethod 'http://127.0.0.1:8000/api/documents?limit=1&offset=0'
+$id = $doc.items[0].id
+$evidence = Invoke-RestMethod "http://127.0.0.1:8000/api/documents/$id/parse-evidence?warning_limit=20000&warning_offset=0"
+$evidence.contract_status
+$evidence.reference_contract
+$evidence.parser_quality.warning_counts
+```
+
+Expected for a successful generated contract:
+
+```text
+contract_status: verified
+reference_contract.verified: true
+reference_contract.canonical_units: true
+custom_json.reference_contract_execution.status: verified
+reference_unit_unresolved warnings reflect only chunks that actually failed an executable contract
+```
+
+Expected for an unverified generated contract:
+
+```text
+contract_status: metadata_only
+reference_contract.verified: false
+reference_contract.canonical_units: false
+custom_json.reference_contract_execution.status: unverified
+reference_unit_unresolved is not emitted solely because reference_schema exists
+script, table, layout, and parser warnings still appear when independently evidenced
+```
+
+If the document still fails with `custom_json.reference_schema must declare identity groups with canonical_ref_template, identity_fields, required_fields, or fields`, the compiler is still validating hints as enforceable contracts and Task 11 is incomplete.
+
+- [x] **Step 17: Commit the executable contract runner**
+
+Run:
+
+```powershell
+git add backend/src/ragstudio/services/reference_contract_execution.py backend/src/ragstudio/services/domain_metadata_ai_suggester.py backend/src/ragstudio/services/domain_metadata_contract_compiler.py backend/src/ragstudio/services/metadata_json_schema.py backend/tests/test_reference_contract_execution.py backend/tests/test_domain_metadata_ai_suggester.py backend/tests/test_domain_metadata_contract_compiler.py backend/tests/test_metadata_json_schema.py docs/superpowers/plans/2026-05-24-hardcoded-policy-improvements.md
+git commit -m "feat: verify model-generated reference contracts by execution"
+```
+
+Expected: commit succeeds with only the executable contract runner, autosuggest integration, focused tests, and this plan update staged.
+
+---
+
 ## Self-Review
 
-**Spec coverage:** The plan covers constants, regex patterns, prompts, scoring heuristics, thresholds, operational guardrails, worker leases, upload limits, persistence limits, metric gates, eval weights, backend variant presets, frontend default synchronization, API bounds, domain profile defaults, chunk profile word targets, proof protocol constants, query-hypothesis protocol vocabulary, provider manifest vocabulary, and retrieval candidate expansion constants. It distinguishes standard defaults from design limitations by keeping stable defaults while moving tunable heuristics into named policy modules or explicitly classifying stable protocol constants. It lists concrete improvement items and maps each to files, tests, and verification commands.
+**Spec coverage:** The plan covers constants, regex patterns, prompts, scoring heuristics, thresholds, operational guardrails, worker leases, upload limits, persistence limits, metric gates, eval weights, backend variant presets, frontend default synchronization, API bounds, domain profile defaults, chunk profile word targets, proof protocol constants, query-hypothesis protocol vocabulary, provider manifest vocabulary, retrieval candidate expansion constants, and model-generated executable contract verification. It distinguishes standard defaults from design limitations by keeping stable defaults while moving tunable heuristics into named policy modules or explicitly classifying stable protocol constants. It lists concrete improvement items and maps each to files, tests, and verification commands.
 
 **Placeholder scan:** The plan avoids placeholder instructions. Each code-changing step includes concrete code or exact replacement patterns, exact file paths, and focused test commands with expected results.
 
 **Post-review addition:** Task 10 captures the `metadata_only` reference-schema recommendation. It separates vision-proposed reference hints from verified executable reference contracts, preserves independently evidenced script/table/layout quality gates, and requires a focused regression test for both unverified and verified reference behavior.
 
-**Type consistency:** New names used across tasks are consistent: `RUNTIME_DEFAULTS`, `RUNTIME_LIMITS`, `DEFAULT_RETRIEVAL_POLICY`, `PromptTemplate`, `REDACTION_RULES`, `DEFAULT_OPERATIONAL_POLICY`, `SCRIPT_PATTERNS`, `STATIC_POLICY_ITEMS`, `DefaultsOut`, and `RuntimeDefaultsOut`.
+**Flexible-contract addition:** Task 11 captures the requested architecture shift away from domain-specific hardcoded validation questions. It keeps deterministic safety as a small execution protocol while letting the vision model generate candidate contracts, extractors, identity fields, canonical templates, and acceptance hints. Verification is evidence-based: contracts become enforceable only after they execute successfully on sampled pages.
+
+**Type consistency:** New names used across tasks are consistent: `RUNTIME_DEFAULTS`, `RUNTIME_LIMITS`, `DEFAULT_RETRIEVAL_POLICY`, `PromptTemplate`, `REDACTION_RULES`, `DEFAULT_OPERATIONAL_POLICY`, `SCRIPT_PATTERNS`, `STATIC_POLICY_ITEMS`, `DefaultsOut`, `RuntimeDefaultsOut`, `GeneratedReferenceContract`, `ContractExtractor`, `ContractAcceptance`, `ContractExecutionReport`, and `reference_contract_candidates`.
 
 ## Execution Handoff
 

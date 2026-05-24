@@ -32,7 +32,10 @@ def compile_index_options(options: IndexDocumentIn) -> IndexDocumentIn:
 
 def compile_domain_metadata(metadata: DomainMetadata) -> DomainMetadata:
     custom_json = deepcopy(metadata.custom_json) if isinstance(metadata.custom_json, dict) else {}
+    _apply_reference_contract_execution_status(custom_json)
     _apply_reference_contract_validation(custom_json)
+    if _reference_contract_explicitly_unverified(custom_json):
+        return metadata.model_copy(update={"custom_json": custom_json}, deep=True)
     contract = build_executable_reference_contract(custom_json)
     if not _has_declared_executable_reference_contract(contract):
         return metadata.model_copy(update={"custom_json": custom_json}, deep=True)
@@ -171,8 +174,28 @@ def _compile_mineru_parse_options(metadata: DomainMetadata) -> MinerUParseOption
     return None
 
 
+def _reference_contract_explicitly_unverified(custom_json: dict[str, Any]) -> bool:
+    validation = _dict_value(custom_json.get("reference_contract_validation"))
+    if validation.get("status") == "verified":
+        return False
+    if validation.get("status") == "unverified":
+        return True
+    execution = _dict_value(custom_json.get("reference_contract_execution"))
+    return execution.get("status") == "unverified"
+
+
+def _apply_reference_contract_execution_status(custom_json: dict[str, Any]) -> None:
+    execution = _dict_value(custom_json.get("reference_contract_execution"))
+    if execution.get("status") != "unverified":
+        return
+    _demote_reference_contract(custom_json)
+
+
 def _apply_reference_contract_validation(custom_json: dict[str, Any]) -> None:
     validation = _dict_value(custom_json.get("reference_contract_validation"))
+    if validation.get("status") == "unverified":
+        _demote_reference_contract(custom_json)
+        return
     if validation.get("status") != "verified":
         return
     strategy = _string_value(validation.get("selected_strategy"))
@@ -217,6 +240,14 @@ def _apply_reference_contract_validation(custom_json: dict[str, Any]) -> None:
                 unit_anchor["context_source"] = "context_anchor"
             domain_structure["context_anchor"] = context_anchor
             domain_structure["unit_anchor"] = unit_anchor
+    custom_json["domain_structure"] = domain_structure
+
+
+def _demote_reference_contract(custom_json: dict[str, Any]) -> None:
+    domain_structure = _dict_value(custom_json.get("domain_structure"))
+    if not domain_structure:
+        return
+    _demote_reference_anchor_verification(domain_structure)
     custom_json["domain_structure"] = domain_structure
 
 

@@ -20,6 +20,13 @@ from ragstudio.services.http_retry import raise_for_transient_status, retry_asyn
 from ragstudio.services.metadata_json_schema import validate_custom_json
 from ragstudio.services.page_sampler import SampledPage
 from ragstudio.services.prompt_templates import AUTOSUGGEST_PROMPT
+from ragstudio.services.reference_contract_execution import (
+    ContractAcceptance,
+    ContractExecutionReport,
+    ContractExtractor,
+    GeneratedReferenceContract,
+    execute_reference_contract,
+)
 from ragstudio.services.reference_contract_validator import (
     ReferenceContractCandidate,
     ReferenceContractCandidateResult,
@@ -123,14 +130,29 @@ class DomainMetadataAiSuggester:
             metadata.custom_json = self._normalize_custom_json(metadata.custom_json)
             should_merge_baseline = False
         metadata = compile_domain_metadata(metadata)
-        validation = (
-            ReferenceContractValidator().validate(pages, candidates)
-            if candidates
-            else None
-        )
-        if validation is not None:
-            metadata = self._apply_reference_contract_validation(metadata, validation)
+        generated_contracts = self._generated_reference_contracts(metadata)
+        validation: ReferenceContractValidationResult | None = None
+        validation_payload: dict[str, object] | None = None
+        if generated_contracts:
+            metadata = self._apply_generated_contract_execution(
+                metadata,
+                generated_contracts,
+                pages,
+            )
             metadata = compile_domain_metadata(metadata)
+            validation_payload = self._dict_value(
+                metadata.custom_json.get("reference_contract_validation")
+            )
+        else:
+            validation = (
+                ReferenceContractValidator().validate(pages, candidates)
+                if candidates
+                else None
+            )
+            if validation is not None:
+                metadata = self._apply_reference_contract_validation(metadata, validation)
+                metadata = compile_domain_metadata(metadata)
+                validation_payload = validation.to_payload()
         validate_custom_json(metadata.custom_json)
         ai_source = "ai_vision" if target.supports_images else "ai_llm"
         if should_merge_baseline:
@@ -144,7 +166,7 @@ class DomainMetadataAiSuggester:
         return DomainMetadataSuggestOut(
             domain_metadata=metadata,
             raw_domain_metadata=raw_metadata,
-            reference_contract_validation=validation.to_payload() if validation else None,
+            reference_contract_validation=validation_payload,
             confidence=suggestion.confidence,
             evidence_pages=evidence_pages,
             rationale=suggestion.rationale,
@@ -234,6 +256,252 @@ class DomainMetadataAiSuggester:
                     )
                 )
         return candidates
+
+    def _generated_reference_contracts(
+        self,
+        metadata: DomainMetadata,
+    ) -> list[GeneratedReferenceContract]:
+        custom_json = metadata.custom_json if isinstance(metadata.custom_json, dict) else {}
+        raw_candidates = custom_json.get("reference_contract_candidates")
+        if not isinstance(raw_candidates, list):
+            return []
+        contracts: list[GeneratedReferenceContract] = []
+        for raw in raw_candidates:
+            if not isinstance(raw, dict):
+                continue
+            identity = raw.get("identity")
+            if not isinstance(identity, dict):
+                continue
+            fields = tuple(self._string_list(identity.get("fields")))
+            template = self._string_value(identity.get("canonical_ref_template"))
+            schema_type = self._string_value(raw.get("schema_type"))
+            unit = self._string_value(raw.get("unit"))
+            extractors = tuple(self._generated_extractors(raw.get("extractors")))
+            if not fields or template is None or schema_type is None or unit is None:
+                continue
+            if not extractors:
+                continue
+            contracts.append(
+                GeneratedReferenceContract(
+                    schema_type=schema_type,
+                    unit=unit,
+                    identity_fields=fields,
+                    canonical_ref_template=template,
+                    extractors=extractors,
+                    acceptance=self._generated_acceptance(raw.get("acceptance")),
+                )
+            )
+        return contracts
+
+    def _generated_extractors(self, value: object) -> list[ContractExtractor]:
+        if not isinstance(value, list):
+            return []
+        extractors: list[ContractExtractor] = []
+        for item in value:
+            if not isinstance(item, dict):
+                continue
+            extractor_type = self._string_value(item.get("type"))
+            if extractor_type not in {"regex", "contextual_regex"}:
+                continue
+            extractors.append(
+                ContractExtractor(
+                    type=extractor_type,
+                    target=self._string_value(item.get("target")) or "page_text",
+                    pattern=self._string_value(item.get("pattern")),
+                    context_pattern=self._string_value(item.get("context_pattern")),
+                    unit_pattern=self._string_value(item.get("unit_pattern")),
+                )
+            )
+        return extractors
+
+    def _generated_acceptance(self, value: object) -> ContractAcceptance:
+        if not isinstance(value, dict):
+            return ContractAcceptance()
+        return ContractAcceptance(
+            min_matched_units=max(1, self._int_value(value.get("min_matched_units")) or 1),
+            min_matched_pages=max(1, self._int_value(value.get("min_matched_pages")) or 1),
+        )
+
+    def _apply_generated_contract_execution(
+        self,
+        metadata: DomainMetadata,
+        contracts: list[GeneratedReferenceContract],
+        pages: list[SampledPage],
+    ) -> DomainMetadata:
+        reports = [execute_reference_contract(contract, pages) for contract in contracts]
+        selected = self._select_generated_contract_report(reports)
+        custom_json = dict(metadata.custom_json) if isinstance(metadata.custom_json, dict) else {}
+        custom_json["reference_contract_execution"] = self._execution_report_payload(
+            selected,
+            reports,
+        )
+        custom_json["reference_contract_validation"] = (
+            self._execution_report_to_validation_payload(selected, reports, contracts)
+        )
+        domain_structure = self._demote_reference_anchor_verification(
+            self._dict_value(custom_json.get("domain_structure"))
+        )
+        if domain_structure:
+            custom_json["domain_structure"] = domain_structure
+        if selected is not None:
+            custom_json["reference_schema"] = {
+                "type": selected.schema_type,
+                "fields": {field: field for field in selected.identity_fields},
+                "canonical_ref_template": selected.canonical_ref_template,
+            }
+            custom_json["reference_resolution"] = {
+                **self._dict_value(custom_json.get("reference_resolution")),
+                "enabled": True,
+                "build_canonical_units": True,
+            }
+            custom_json["domain_structure"] = self._domain_structure_from_execution(
+                selected,
+                domain_structure,
+                contracts,
+            )
+        return metadata.model_copy(update={"custom_json": custom_json}, deep=True)
+
+    def _select_generated_contract_report(
+        self,
+        reports: list[ContractExecutionReport],
+    ) -> ContractExecutionReport | None:
+        verified = [report for report in reports if report.status == "verified"]
+        if not verified:
+            return None
+        return sorted(
+            verified,
+            key=lambda report: (report.matched_units, len(report.matched_pages)),
+            reverse=True,
+        )[0]
+
+    def _execution_report_payload(
+        self,
+        selected: ContractExecutionReport | None,
+        reports: list[ContractExecutionReport],
+    ) -> dict[str, object]:
+        return {
+            "status": "verified" if selected is not None else "unverified",
+            "selected_schema_type": selected.schema_type if selected else None,
+            "selected_unit": selected.unit if selected else None,
+            "selected_canonical_ref_template": (
+                selected.canonical_ref_template if selected else None
+            ),
+            "matched_units": selected.matched_units if selected else 0,
+            "matched_pages": selected.matched_pages if selected else [],
+            "reports": [
+                {
+                    "status": report.status,
+                    "schema_type": report.schema_type,
+                    "unit": report.unit,
+                    "identity_fields": list(report.identity_fields),
+                    "canonical_ref_template": report.canonical_ref_template,
+                    "matched_units": report.matched_units,
+                    "matched_pages": report.matched_pages,
+                    "rejection_reason": report.rejection_reason,
+                    "examples": [
+                        {
+                            "canonical_reference": unit.canonical_reference,
+                            "groups": unit.groups,
+                            "page": unit.provenance.get("page"),
+                            "raw": unit.raw[:80],
+                        }
+                        for unit in report.units[:6]
+                    ],
+                }
+                for report in reports
+            ],
+        }
+
+    def _execution_report_to_validation_payload(
+        self,
+        selected: ContractExecutionReport | None,
+        reports: list[ContractExecutionReport],
+        contracts: list[GeneratedReferenceContract],
+    ) -> dict[str, object]:
+        candidates = [
+            {
+                "status": report.status,
+                "schema_type": report.schema_type,
+                "matched_units": report.matched_units,
+                "matched_pages": report.matched_pages,
+                "rejection_reason": report.rejection_reason,
+            }
+            for report in reports
+        ]
+        if selected is None:
+            return {
+                "status": "unverified",
+                "selected_source": "ai_generated_contract",
+                "matched_units": 0,
+                "matched_pages": [],
+                "candidates": candidates,
+            }
+        extractor = self._selected_execution_extractor(selected, contracts)
+        payload: dict[str, object] = {
+            "status": "verified",
+            "selected_source": "ai_generated_contract",
+            "matched_units": selected.matched_units,
+            "matched_pages": selected.matched_pages,
+            "candidates": candidates,
+        }
+        if extractor is not None and extractor.type == "regex":
+            payload["selected_strategy"] = "single_anchor"
+            payload["selected_primary_anchor_regex"] = extractor.pattern
+        elif extractor is not None:
+            payload["selected_strategy"] = "contextual_unit"
+            payload["selected_context_anchor_regex"] = extractor.context_pattern
+            payload["selected_unit_anchor_regex"] = extractor.unit_pattern
+        return payload
+
+    def _domain_structure_from_execution(
+        self,
+        report: ContractExecutionReport,
+        current_value: object,
+        contracts: list[GeneratedReferenceContract],
+    ) -> dict[str, object]:
+        domain_structure = self._dict_value(current_value)
+        first_unit = report.units[0] if report.units else None
+        extractor_index = first_unit.extractor_index if first_unit is not None else 0
+        extractor = self._selected_execution_extractor(report, contracts, extractor_index)
+        if extractor is None:
+            return domain_structure
+        if extractor.type == "regex":
+            domain_structure["primary_anchor"] = {
+                "type": report.schema_type,
+                "regex": extractor.pattern,
+                "unit": report.unit,
+                "verified": True,
+            }
+        else:
+            domain_structure["context_anchor"] = {
+                "type": report.schema_type,
+                "regex": extractor.context_pattern,
+                "unit": "context",
+                "verified": True,
+            }
+            domain_structure["unit_anchor"] = {
+                "type": report.schema_type,
+                "regex": extractor.unit_pattern,
+                "unit": report.unit,
+                "context_source": "context_anchor",
+                "verified": True,
+            }
+        return domain_structure
+
+    def _selected_execution_extractor(
+        self,
+        report: ContractExecutionReport,
+        contracts: list[GeneratedReferenceContract],
+        extractor_index: int = 0,
+    ) -> ContractExtractor | None:
+        for contract in contracts:
+            if (
+                contract.schema_type == report.schema_type
+                and contract.canonical_ref_template == report.canonical_ref_template
+                and extractor_index < len(contract.extractors)
+            ):
+                return contract.extractors[extractor_index]
+        return None
 
     def _apply_reference_contract_validation(
         self,
@@ -640,6 +908,29 @@ Return JSON only with this shape:
         "confidence": 0.0
       }},
       "mineru_parse_options": null,
+      "reference_contract_candidates": [
+        {{
+          "schema_type": "chapter_verse",
+          "unit": "verse",
+          "identity": {{
+            "fields": ["chapter", "verse"],
+            "canonical_ref_template": "{{chapter}}:{{verse}}"
+          }},
+          "extractors": [
+            {{
+              "type": "regex|contextual_regex",
+              "target": "page_text",
+              "pattern": null,
+              "context_pattern": null,
+              "unit_pattern": null
+            }}
+          ],
+          "acceptance": {{
+            "min_matched_units": 2,
+            "min_matched_pages": 1
+          }}
+        }}
+      ],
       "retrieval": null
     }},
     "reference_pattern": null,
@@ -655,6 +946,11 @@ Return JSON only with this shape:
 
 For custom_json.reference_schema, describe the editable reference type, display
 format, fields, and any observed pattern only when supported by the samples.
+For custom_json.reference_contract_candidates, generate executable extraction
+contracts when the sampled pages show structured references. Prefer named regex
+groups that directly match identity.fields. Do not mark the contract verified;
+Ragstudio will execute candidates against sampled pages and verify only working
+contracts. If the samples do not show enough evidence, return an empty list.
 For custom_json.relationships, describe useful relationships such as previous,
 next, same_section, same_page, same_article, or same_chapter when they are visible
 or strongly implied by the reference system.
@@ -940,6 +1236,7 @@ Content type: {content_type}
             "parser_normalization",
             "mineru_parse_options",
             "vision_recovery_policy",
+            "reference_contract_candidates",
             "retrieval",
             "graph",
         ):
@@ -1008,6 +1305,12 @@ Content type: {content_type}
                     schema["fields"] = string_fields
             if schema:
                 normalized["reference_schema"] = schema
+
+        reference_contract_candidates = self._normalize_reference_contract_candidates(
+            value.get("reference_contract_candidates")
+        )
+        if reference_contract_candidates:
+            normalized["reference_contract_candidates"] = reference_contract_candidates
 
         relationships = value.get("relationships")
         if isinstance(relationships, dict):
@@ -1236,6 +1539,102 @@ Content type: {content_type}
             normalized["confidence"] = min(max(float(confidence), 0.0), 1.0)
         return normalized
 
+    def _normalize_reference_contract_candidates(self, value: object) -> list[dict[str, object]]:
+        if not isinstance(value, list):
+            return []
+        candidates: list[dict[str, object]] = []
+        for candidate in value:
+            if not isinstance(candidate, dict):
+                continue
+            normalized = self._normalize_reference_contract_candidate(candidate)
+            if not normalized:
+                continue
+            try:
+                validate_custom_json({"reference_contract_candidates": [normalized]})
+            except ValueError:
+                continue
+            candidates.append(normalized)
+            if len(candidates) >= 8:
+                break
+        return candidates
+
+    def _normalize_reference_contract_candidate(
+        self,
+        value: dict[str, object],
+    ) -> dict[str, object]:
+        schema_type = self._string_value(value.get("schema_type"))
+        unit = self._string_value(value.get("unit"))
+        identity = value.get("identity")
+        if schema_type is None or unit is None or not isinstance(identity, dict):
+            return {}
+        fields = self._string_list(identity.get("fields"))
+        template = self._string_value(identity.get("canonical_ref_template"))
+        if not fields or template is None or not self._is_valid_canonical_ref_template(template):
+            return {}
+        extractors = self._normalize_reference_contract_extractors(value.get("extractors"))
+        if not extractors:
+            return {}
+        normalized: dict[str, object] = {
+            "schema_type": schema_type,
+            "unit": unit,
+            "identity": {
+                "fields": fields,
+                "canonical_ref_template": template,
+            },
+            "extractors": extractors,
+        }
+        acceptance = self._normalize_reference_contract_acceptance(value.get("acceptance"))
+        if acceptance:
+            normalized["acceptance"] = acceptance
+        return normalized
+
+    def _normalize_reference_contract_extractors(
+        self,
+        value: object,
+    ) -> list[dict[str, object]]:
+        if not isinstance(value, list):
+            return []
+        extractors: list[dict[str, object]] = []
+        for item in value:
+            if not isinstance(item, dict):
+                continue
+            extractor_type = self._string_value(item.get("type"))
+            if extractor_type not in {"regex", "contextual_regex"}:
+                continue
+            extractor: dict[str, object] = {
+                "type": extractor_type,
+                "target": self._string_value(item.get("target")) or "page_text",
+            }
+            if extractor_type == "regex":
+                pattern = self._string_value(item.get("pattern"))
+                if pattern is None:
+                    continue
+                extractor["pattern"] = pattern
+            else:
+                context_pattern = self._string_value(item.get("context_pattern"))
+                unit_pattern = self._string_value(item.get("unit_pattern"))
+                if context_pattern is None or unit_pattern is None:
+                    continue
+                extractor["context_pattern"] = context_pattern
+                extractor["unit_pattern"] = unit_pattern
+            extractors.append(extractor)
+            if len(extractors) >= 4:
+                break
+        return extractors
+
+    def _normalize_reference_contract_acceptance(
+        self,
+        value: object,
+    ) -> dict[str, int]:
+        if not isinstance(value, dict):
+            return {}
+        normalized: dict[str, int] = {}
+        for key in ("min_matched_units", "min_matched_pages"):
+            item = value.get(key)
+            if isinstance(item, int) and not isinstance(item, bool):
+                normalized[key] = min(max(item, 1), 10_000)
+        return normalized
+
     def _normalize_script_label(self, value: str) -> str:
         normalized = value.strip().casefold()
         if normalized in {"english", "eng", "latin_script", "roman"}:
@@ -1440,6 +1839,9 @@ Content type: {content_type}
         except ValueError:
             return False
         return True
+
+    def _int_value(self, value: object) -> int | None:
+        return value if isinstance(value, int) and not isinstance(value, bool) else None
 
     def _string_list(self, value: object) -> list[str]:
         if not isinstance(value, list):
