@@ -1294,12 +1294,6 @@ Content type: {content_type}
                 item = reference_schema.get(key)
                 if isinstance(item, str):
                     schema[key] = item
-            canonical_ref_template = reference_schema.get("canonical_ref_template")
-            if (
-                isinstance(canonical_ref_template, str)
-                and self._is_valid_canonical_ref_template(canonical_ref_template)
-            ):
-                schema["canonical_ref_template"] = canonical_ref_template
             for key in ("identity_fields", "required_fields"):
                 items = self._string_list(reference_schema.get(key))
                 if items:
@@ -1317,6 +1311,12 @@ Content type: {content_type}
                 }
                 if string_fields:
                     schema["fields"] = string_fields
+            canonical_ref_template = reference_schema.get("canonical_ref_template")
+            if isinstance(canonical_ref_template, str):
+                schema = self._with_declared_canonical_ref_template(
+                    schema,
+                    canonical_ref_template,
+                )
             if schema:
                 normalized["reference_schema"] = schema
 
@@ -1848,11 +1848,64 @@ Content type: {content_type}
             return frozenset()
 
     def _is_valid_canonical_ref_template(self, value: str) -> bool:
+        return self._canonical_ref_template_fields(value) is not None
+
+    def _with_declared_canonical_ref_template(
+        self,
+        schema: dict[str, object],
+        template: str,
+    ) -> dict[str, object]:
+        template_fields = self._canonical_ref_template_fields(template)
+        if template_fields is None:
+            return schema
+        next_schema = dict(schema)
+        declared_fields = self._declared_reference_schema_fields(next_schema)
+        if template_fields and not set(template_fields).issubset(declared_fields):
+            if declared_fields:
+                return schema
+            next_schema["identity_fields"] = template_fields
         try:
-            list(Formatter().parse(value))
+            validate_custom_json(
+                {"reference_schema": {**next_schema, "canonical_ref_template": template}}
+            )
         except ValueError:
-            return False
-        return True
+            return schema
+        next_schema["canonical_ref_template"] = template
+        return next_schema
+
+    def _canonical_ref_template_fields(self, value: str) -> list[str] | None:
+        fields: list[str] = []
+        try:
+            parsed = Formatter().parse(value)
+            for _, field_name, format_spec, conversion in parsed:
+                if field_name is None:
+                    continue
+                if (
+                    not field_name
+                    or "." in field_name
+                    or "[" in field_name
+                    or "]" in field_name
+                    or format_spec
+                    or conversion
+                    or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", field_name)
+                ):
+                    return None
+                if field_name not in fields:
+                    fields.append(field_name)
+        except ValueError:
+            return None
+        return fields
+
+    def _declared_reference_schema_fields(self, schema: dict[str, object]) -> set[str]:
+        declared: set[str] = set()
+        fields = schema.get("fields")
+        if isinstance(fields, dict):
+            declared.update(key for key in fields if isinstance(key, str))
+        for key in ("identity_fields", "required_fields"):
+            values = schema.get(key)
+            if isinstance(values, list):
+                declared.update(item for item in values if isinstance(item, str))
+        return declared
 
     def _int_value(self, value: object) -> int | None:
         return value if isinstance(value, int) and not isinstance(value, bool) else None

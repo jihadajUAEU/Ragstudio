@@ -313,6 +313,90 @@ async def test_suggest_preserves_template_identity_through_validation(monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_suggest_derives_missing_template_identity_fields(monkeypatch):
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": """
+                            {
+                              "domain_metadata": {
+                                "domain": "quran_tafseer",
+                                "custom_json": {
+                                  "reference_schema": {
+                                    "type": "chapter_verse",
+                                    "canonical_ref_template": "{chapter}:{verse}"
+                                  },
+                                  "domain_structure": {
+                                    "primary_anchor": {
+                                      "regex": "\\\\[(?P<chapter>\\\\d+):(?P<verse>\\\\d+)\\\\]",
+                                      "unit": "verse"
+                                    }
+                                  }
+                                }
+                              },
+                              "confidence": 0.9,
+                              "evidence_pages": [1],
+                              "rationale": "The sampled page shows bracketed references.",
+                              "warnings": []
+                            }
+                            """
+                        }
+                    }
+                ]
+            }
+
+    class FakeClient:
+        def __init__(self, timeout):
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def post(self, url, headers, json):
+            return FakeResponse()
+
+    monkeypatch.setattr(
+        "ragstudio.services.domain_metadata_ai_suggester.httpx.AsyncClient",
+        FakeClient,
+    )
+
+    result = await DomainMetadataAiSuggester().suggest(
+        settings_profile=SettingsProfile(
+            id="default",
+            provider="openai-compatible",
+            llm_model="text-model",
+            llm_base_url="http://llm.test/v1",
+            embedding_model="embedding-model",
+            storage_backend="postgres",
+            vision_model="vision-model",
+            vision_base_url="http://vision.test/v1",
+        ),
+        filename="quran.pdf",
+        content_type="application/pdf",
+        pages=[SampledPage(page_number=1, text="[1:1] [1:2]")],
+        sampler_warnings=[],
+    )
+
+    custom_json = result.domain_metadata.custom_json
+    reference_schema = custom_json["reference_schema"]
+    contract = build_executable_reference_contract(custom_json)
+
+    assert reference_schema["canonical_ref_template"] == "{chapter}:{verse}"
+    assert reference_schema["identity_fields"] == ["chapter", "verse"]
+    assert custom_json["reference_contract_validation"]["status"] == "verified"
+    assert contract.required_groups == frozenset({"chapter", "verse"})
+    assert contract.verified is True
+
+
+@pytest.mark.asyncio
 async def test_suggest_executes_model_generated_contract_candidate(monkeypatch):
     class FakeResponse:
         status_code = 200
