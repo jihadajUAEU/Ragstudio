@@ -18,12 +18,17 @@ from ragstudio.api.deps import get_session
 from ragstudio.api.upload_utils import read_upload_file
 from ragstudio.config import AppSettings
 from ragstudio.schemas.document_parse_evidence import DocumentParseEvidence
+from ragstudio.schemas.document_pipeline_timeline import DocumentPipelineTimelineOut
 from ragstudio.schemas.documents import DocumentOut
 from ragstudio.schemas.parsing import IndexDocumentIn
 from ragstudio.services.chunk_service import ChunkService
 from ragstudio.services.document_parse_evidence_service import (
     DocumentParseEvidenceNotFoundError,
     DocumentParseEvidenceService,
+)
+from ragstudio.services.document_pipeline_timeline_service import (
+    DocumentPipelineTimelineNotFoundError,
+    DocumentPipelineTimelineService,
 )
 from ragstudio.services.document_service import ActiveIndexJobError, DocumentService
 from ragstudio.services.domain_metadata_contract_compiler import (
@@ -185,6 +190,17 @@ async def get_document_parse_evidence(
             warning_offset=warning_offset,
         )
     except DocumentParseEvidenceNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Document not found") from exc
+
+
+@router.get("/{document_id}/pipeline-timeline", response_model=DocumentPipelineTimelineOut)
+async def get_document_pipeline_timeline(
+    document_id: str,
+    session: AsyncSession = Depends(get_session),
+) -> DocumentPipelineTimelineOut:
+    try:
+        return await DocumentPipelineTimelineService(session).get_timeline(document_id)
+    except DocumentPipelineTimelineNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Document not found") from exc
 
 

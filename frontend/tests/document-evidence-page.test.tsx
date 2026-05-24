@@ -4,12 +4,14 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { apiClient } from "../src/api/client";
+import type { DocumentPipelineTimelineOut } from "../src/api/generated";
 import { DocumentEvidencePage } from "../src/features/document-evidence/document-evidence-page";
 import type { DocumentParseEvidence } from "../src/features/document-evidence/types";
 
 vi.mock("../src/api/client", () => ({
   apiClient: {
     documentParseEvidence: vi.fn(),
+    documentPipelineTimeline: vi.fn(),
   },
 }));
 
@@ -53,6 +55,56 @@ const evidence: DocumentParseEvidence = {
   missing_sections: [],
 };
 
+const timeline: DocumentPipelineTimelineOut = {
+  document_id: "doc-1",
+  filename: "synthetic.pdf",
+  status: "succeeded",
+  latest_job_id: "job-1",
+  contract_version: 1,
+  stages: [
+    {
+      id: "uploaded",
+      label: "Upload",
+      state: "complete",
+      detail: "Stored source artifact for synthetic.pdf.",
+      order: 10,
+      progress: 0,
+      is_current: false,
+      event_count: 1,
+      warning_count: 0,
+      chunk_count: null,
+      source: "document",
+      started_at: null,
+      completed_at: null,
+      detail_payload: {},
+    },
+  ],
+  events: [],
+  contract: {
+    contract_status: null,
+    verified: null,
+    canonical_units: null,
+    schema_type: null,
+    repair_status: null,
+    validation_status: null,
+    validation_matched_units: null,
+    selected_strategy: null,
+    rejection_reasons: [],
+    detail_payload: {},
+  },
+  warning_groups: [],
+  totals: {
+    jobs: 1,
+    chunks: 1,
+    warnings: 0,
+    graph_nodes: 0,
+    graph_edges: 0,
+    index_records: 0,
+    graph_records: 0,
+  },
+  missing_sections: [],
+};
+
 function renderPage(path = "/document-evidence?documentId=doc-1", client?: QueryClient) {
   window.history.pushState(null, "", path);
   const queryClient = client ?? new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -68,6 +120,7 @@ describe("DocumentEvidencePage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(apiClient.documentParseEvidence).mockResolvedValue(evidence);
+    vi.mocked(apiClient.documentPipelineTimeline).mockResolvedValue(timeline);
   });
 
   it("asks for a document id when missing", () => {
@@ -75,6 +128,7 @@ describe("DocumentEvidencePage", () => {
 
     expect(screen.getByText("Select a document")).toBeVisible();
     expect(apiClient.documentParseEvidence).not.toHaveBeenCalled();
+    expect(apiClient.documentPipelineTimeline).not.toHaveBeenCalled();
   });
 
   it("shows a loading state while the evidence request is pending", () => {
@@ -88,9 +142,21 @@ describe("DocumentEvidencePage", () => {
   it("loads and renders document parse evidence", async () => {
     renderPage();
 
-    expect(await screen.findByText("synthetic.pdf")).toBeVisible();
+    expect((await screen.findAllByText("synthetic.pdf")).length).toBeGreaterThan(0);
+    expect(screen.getByRole("region", { name: "Document stage flow" })).toBeVisible();
     expect(screen.getByRole("button", { name: /Chunk materialization/i })).toBeVisible();
     expect(apiClient.documentParseEvidence).toHaveBeenCalledWith("doc-1");
+    expect(apiClient.documentPipelineTimeline).toHaveBeenCalledWith("doc-1");
+  });
+
+  it("keeps parse evidence visible when the timeline request fails", async () => {
+    vi.mocked(apiClient.documentPipelineTimeline).mockRejectedValue(new Error("Timeline timed out"));
+
+    renderPage();
+
+    expect((await screen.findAllByText("synthetic.pdf")).length).toBeGreaterThan(0);
+    expect(await screen.findByText("Pipeline stage flow unavailable")).toBeVisible();
+    expect(screen.getByText("Timeline timed out")).toBeVisible();
   });
 
   it("shows API errors", async () => {
@@ -108,7 +174,7 @@ describe("DocumentEvidencePage", () => {
 
     renderPage("/document-evidence?documentId=doc-1", client);
 
-    expect(await screen.findByText("synthetic.pdf")).toBeVisible();
+    expect((await screen.findAllByText("synthetic.pdf")).length).toBeGreaterThan(0);
     expect(await screen.findByText("Showing cached evidence")).toBeVisible();
     expect(screen.getByText("Backend timed out")).toBeVisible();
     expect(screen.getByRole("button", { name: "Retry" })).toBeVisible();

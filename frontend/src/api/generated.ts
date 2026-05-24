@@ -324,6 +324,107 @@ export interface JobOut {
   recovery_action: string | null;
 }
 
+export type PipelineStageState =
+  | "pending"
+  | "running"
+  | "complete"
+  | "warning"
+  | "blocked"
+  | "failed"
+  | "skipped"
+  | "metadata_only";
+
+export type PipelineEventSource =
+  | "document"
+  | "structured_event"
+  | "inferred_log"
+  | "job"
+  | "chunk"
+  | "index_record"
+  | "graph_projection"
+  | "contract"
+  | "warning";
+
+export interface DocumentPipelineStageOut {
+  id: string;
+  label: string;
+  state: PipelineStageState;
+  detail: string;
+  order: number;
+  progress: number | null;
+  is_current: boolean;
+  event_count: number;
+  warning_count: number;
+  chunk_count: number | null;
+  source: PipelineEventSource;
+  started_at: string | null;
+  completed_at: string | null;
+  detail_payload: Record<string, unknown>;
+}
+
+export interface DocumentPipelineEventOut {
+  sequence: number;
+  stage_id: string;
+  label: string;
+  detail: string;
+  state: PipelineStageState;
+  progress: number | null;
+  occurred_at: string | null;
+  source: PipelineEventSource;
+  job_id: string | null;
+  chunk_count: number | null;
+  warning: string | null;
+  evidence_refs: Record<string, unknown>[];
+  detail_payload: Record<string, unknown>;
+}
+
+export interface DocumentPipelineWarningGroupOut {
+  code: string;
+  expected_script: string | null;
+  count: number;
+  message: string | null;
+  sample_chunk_ids: string[];
+  sample_references: string[];
+  sample_pages: Array<number | string>;
+}
+
+export interface DocumentPipelineContractOut {
+  contract_status: string | null;
+  verified: boolean | null;
+  canonical_units: boolean | null;
+  schema_type: string | null;
+  repair_status: string | null;
+  validation_status: string | null;
+  validation_matched_units: number | null;
+  selected_strategy: string | null;
+  rejection_reasons: string[];
+  detail_payload: Record<string, unknown>;
+}
+
+export interface DocumentPipelineTotalsOut {
+  jobs: number;
+  chunks: number;
+  warnings: number;
+  graph_nodes: number;
+  graph_edges: number;
+  index_records: number;
+  graph_records: number;
+}
+
+export interface DocumentPipelineTimelineOut {
+  document_id: string;
+  filename: string;
+  status: StageStatus;
+  latest_job_id: string | null;
+  contract_version: number;
+  stages: DocumentPipelineStageOut[];
+  events: DocumentPipelineEventOut[];
+  contract: DocumentPipelineContractOut;
+  warning_groups: DocumentPipelineWarningGroupOut[];
+  totals: DocumentPipelineTotalsOut;
+  missing_sections: string[];
+}
+
 export interface ParserQualityWarningOut {
   chunk_id: string;
   chunk_preview: string;
