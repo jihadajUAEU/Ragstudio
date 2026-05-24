@@ -139,10 +139,24 @@ class DomainMetadataAiSuggester:
                 generated_contracts,
                 pages,
             )
-            metadata = compile_domain_metadata(metadata)
-            validation_payload = self._dict_value(
-                metadata.custom_json.get("reference_contract_validation")
+            generated_payload = self._dict_value(
+                metadata.custom_json.get("reference_contract_execution")
             )
+            if generated_payload.get("status") == "verified":
+                metadata = compile_domain_metadata(metadata)
+                validation_payload = self._dict_value(
+                    metadata.custom_json.get("reference_contract_validation")
+                )
+            elif candidates:
+                validation = ReferenceContractValidator().validate(pages, candidates)
+                metadata = self._apply_reference_contract_validation(metadata, validation)
+                metadata = compile_domain_metadata(metadata)
+                validation_payload = validation.to_payload()
+            else:
+                metadata = compile_domain_metadata(metadata)
+                validation_payload = self._dict_value(
+                    metadata.custom_json.get("reference_contract_validation")
+                )
         else:
             validation = (
                 ReferenceContractValidator().validate(pages, candidates)

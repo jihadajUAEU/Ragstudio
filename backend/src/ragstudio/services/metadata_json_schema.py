@@ -21,6 +21,7 @@ VISION_RECOVERY_FAILURE_ACTIONS = {"info", "warn", "block"}
 REFERENCE_CONTRACT_EXTRACTOR_TYPES = {"regex", "contextual_regex"}
 REFERENCE_CONTRACT_EXECUTION_STATUSES = {"verified", "unverified"}
 REFERENCE_CONTRACT_ACCEPTANCE_MAX = 10_000
+REFERENCE_CONTRACT_EXECUTION_EXAMPLES_MAX = 6
 
 
 REFERENCE_CUSTOM_JSON_EXAMPLE: dict[str, Any] = {
@@ -316,8 +317,42 @@ def _validate_reference_contract_execution_report(value: Any, index: int) -> Non
     _validate_non_negative_int(value.get("matched_units"), f"{path}.matched_units")
     _validate_int_list(value.get("matched_pages"), f"{path}.matched_pages")
     examples = value.get("examples")
-    if examples is not None and not isinstance(examples, list):
+    if examples is None:
+        return
+    if not isinstance(examples, list):
         raise ValueError(f"{path}.examples must be a list.")
+    if len(examples) > REFERENCE_CONTRACT_EXECUTION_EXAMPLES_MAX:
+        raise ValueError(
+            f"{path}.examples must contain "
+            f"{REFERENCE_CONTRACT_EXECUTION_EXAMPLES_MAX} examples or fewer."
+        )
+    for example_index, example in enumerate(examples):
+        _validate_reference_contract_execution_example(
+            example,
+            f"{path}.examples.{example_index}",
+        )
+
+
+def _validate_reference_contract_execution_example(value: Any, path: str) -> None:
+    if not isinstance(value, dict):
+        raise ValueError(f"{path} must be an object.")
+    for key in ("canonical_reference", "raw"):
+        item = value.get(key)
+        if item is not None and not isinstance(item, str):
+            raise ValueError(f"{path}.{key} must be a string.")
+    page = value.get("page")
+    if page is not None and (isinstance(page, bool) or not isinstance(page, int)):
+        raise ValueError(f"{path}.page must be an integer.")
+    groups = value.get("groups")
+    if groups is None:
+        return
+    if not isinstance(groups, dict):
+        raise ValueError(f"{path}.groups must be an object.")
+    if any(
+        not isinstance(key, str) or not isinstance(group_value, str)
+        for key, group_value in groups.items()
+    ):
+        raise ValueError(f"{path}.groups must map strings to strings.")
 
 
 def _validate_reference_contract_status(value: Any, path: str) -> None:

@@ -119,3 +119,32 @@ def test_generated_contract_rejects_insufficient_evidence():
     assert report.status == "unverified"
     assert report.rejection_reason == "insufficient_matched_units"
     assert report.matched_units == 1
+
+
+def test_generated_contract_requires_one_extractor_to_satisfy_acceptance():
+    contract = GeneratedReferenceContract(
+        schema_type="chapter_verse",
+        unit="verse",
+        identity_fields=("chapter", "verse"),
+        canonical_ref_template="{chapter}:{verse}",
+        extractors=(
+            ContractExtractor(
+                type="regex",
+                pattern=r"A(?P<chapter>\d{1,3}):(?P<verse>\d{1,3})",
+            ),
+            ContractExtractor(
+                type="regex",
+                pattern=r"B(?P<chapter>\d{1,3}):(?P<verse>\d{1,3})",
+            ),
+        ),
+        acceptance=ContractAcceptance(min_matched_units=2, min_matched_pages=1),
+    )
+
+    report = execute_reference_contract(
+        contract,
+        [SampledPage(page_number=1, text="A1:1\nB1:2")],
+    )
+
+    assert report.status == "unverified"
+    assert report.rejection_reason == "insufficient_extractor_evidence"
+    assert report.matched_units == 2

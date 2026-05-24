@@ -208,6 +208,38 @@ def test_validate_custom_json_accepts_reference_contract_execution_report():
     assert validate_custom_json(payload) is payload
 
 
+def test_validate_custom_json_rejects_invalid_execution_example_shape():
+    with pytest.raises(ValueError, match=r"reports\.0\.examples\.0\.groups"):
+        validate_custom_json(
+            {
+                "reference_contract_execution": {
+                    "status": "verified",
+                    "matched_units": 1,
+                    "matched_pages": [1],
+                    "reports": [
+                        {
+                            "status": "verified",
+                            "schema_type": "chapter_verse",
+                            "unit": "verse",
+                            "identity_fields": ["chapter", "verse"],
+                            "canonical_ref_template": "{chapter}:{verse}",
+                            "matched_units": 1,
+                            "matched_pages": [1],
+                            "examples": [
+                                {
+                                    "canonical_reference": "1:1",
+                                    "groups": {"chapter": 1, "verse": "1"},
+                                    "page": 1,
+                                    "raw": "[1:1]",
+                                }
+                            ],
+                        }
+                    ],
+                }
+            }
+        )
+
+
 def test_validate_custom_json_rejects_invalid_execution_status():
     with pytest.raises(ValueError, match=r"reference_contract_execution\.status"):
         validate_custom_json(

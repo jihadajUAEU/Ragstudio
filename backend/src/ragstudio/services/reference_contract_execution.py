@@ -59,32 +59,66 @@ class ContractExecutionReport:
     rejection_reason: str | None = None
 
 
+@dataclass(frozen=True)
+class _ExtractorExecution:
+    units: list[ExtractedReferenceUnit]
+    matched_pages: set[int]
+    rejection_reason: str | None
+
+
 def execute_reference_contract(
     contract: GeneratedReferenceContract,
     pages: list[SampledPage],
 ) -> ContractExecutionReport:
-    units: list[ExtractedReferenceUnit] = []
-    matched_pages: set[int] = set()
+    executions: list[_ExtractorExecution] = []
     for index, extractor in enumerate(contract.extractors):
         rejection = _extractor_rejection(contract, extractor)
         if rejection is not None:
-            return _report(contract, units, matched_pages, rejection)
-        extractor_units = (
+            executions.append(_ExtractorExecution([], set(), rejection))
+            continue
+
+        units = (
             _regex_units(contract, extractor, index, pages)
             if extractor.type == "regex"
             else _contextual_units(contract, extractor, index, pages)
         )
-        for unit in extractor_units:
-            units.append(unit)
-            page = unit.provenance.get("page")
-            if isinstance(page, int):
-                matched_pages.add(page)
+        matched_pages = _matched_pages(units)
+        executions.append(
+            _ExtractorExecution(
+                units=units,
+                matched_pages=matched_pages,
+                rejection_reason=_acceptance_rejection(contract, units, matched_pages),
+            )
+        )
 
-    if len(units) < contract.acceptance.min_matched_units:
-        return _report(contract, units, matched_pages, "insufficient_matched_units")
-    if len(matched_pages) < contract.acceptance.min_matched_pages:
-        return _report(contract, units, matched_pages, "insufficient_matched_pages")
-    return _report(contract, units, matched_pages, None)
+    verified = [execution for execution in executions if execution.rejection_reason is None]
+    if verified:
+        selected = _best_execution(verified)
+        return _report(contract, selected.units, selected.matched_pages, None)
+
+    if not executions:
+        return _report(contract, [], set(), "missing_extractor")
+
+    if len(executions) == 1:
+        selected = executions[0]
+        return _report(contract, selected.units, selected.matched_pages, selected.rejection_reason)
+
+    aggregate_units = [
+        unit
+        for execution in executions
+        for unit in execution.units
+    ]
+    aggregate_pages = set().union(*(execution.matched_pages for execution in executions))
+    if _acceptance_rejection(contract, aggregate_units, aggregate_pages) is None:
+        return _report(
+            contract,
+            aggregate_units,
+            aggregate_pages,
+            "insufficient_extractor_evidence",
+        )
+
+    selected = _best_execution(executions)
+    return _report(contract, selected.units, selected.matched_pages, selected.rejection_reason)
 
 
 def _regex_units(
@@ -169,6 +203,35 @@ def _unit_from_groups(
         extractor_index=extractor_index,
         provenance={"page": page_number, "target": target},
     )
+
+
+def _matched_pages(units: list[ExtractedReferenceUnit]) -> set[int]:
+    matched_pages: set[int] = set()
+    for unit in units:
+        page = unit.provenance.get("page")
+        if isinstance(page, int):
+            matched_pages.add(page)
+    return matched_pages
+
+
+def _acceptance_rejection(
+    contract: GeneratedReferenceContract,
+    units: list[ExtractedReferenceUnit],
+    matched_pages: set[int],
+) -> str | None:
+    if len(units) < contract.acceptance.min_matched_units:
+        return "insufficient_matched_units"
+    if len(matched_pages) < contract.acceptance.min_matched_pages:
+        return "insufficient_matched_pages"
+    return None
+
+
+def _best_execution(executions: list[_ExtractorExecution]) -> _ExtractorExecution:
+    return sorted(
+        executions,
+        key=lambda execution: (len(execution.units), len(execution.matched_pages)),
+        reverse=True,
+    )[0]
 
 
 def _extractor_rejection(
