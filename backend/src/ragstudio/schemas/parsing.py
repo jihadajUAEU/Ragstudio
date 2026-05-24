@@ -75,6 +75,8 @@ class DomainProfileIn(StudioModel):
 
 class DomainMetadataSuggestOut(StudioModel):
     domain_metadata: DomainMetadata
+    raw_domain_metadata: DomainMetadata | None = None
+    reference_contract_validation: dict[str, Any] | None = None
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
     evidence_pages: list[int] = Field(default_factory=list)
     rationale: str = ""

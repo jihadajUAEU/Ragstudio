@@ -292,6 +292,16 @@ export interface DomainProfileOut {
   metadata: DomainMetadata;
 }
 
+export interface DomainMetadataSuggestOut {
+  domain_metadata: DomainMetadata;
+  raw_domain_metadata?: DomainMetadata | null;
+  reference_contract_validation?: Record<string, unknown> | null;
+  confidence: number;
+  evidence_pages: number[];
+  rationale: string;
+  warnings: string[];
+}
+
 export interface IndexDocumentIn {
   parser_mode?: ParserMode;
   domain_metadata?: DomainMetadata;

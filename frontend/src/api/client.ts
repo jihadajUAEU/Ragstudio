@@ -2,6 +2,7 @@ import type {
   DiagnosticsOut,
   DocumentOut,
   DomainMetadata,
+  DomainMetadataSuggestOut,
   DomainProfileOut,
   EmbeddingConnectionTestOut,
   EvaluationSetOut,
@@ -249,13 +250,7 @@ export const apiClient = {
     if (payload.profile_id) {
       formData.set("profile_id", payload.profile_id);
     }
-    return request<{
-      domain_metadata: DomainMetadata;
-      confidence: number;
-      evidence_pages: number[];
-      rationale: string;
-      warnings: string[];
-    }>("/api/domain-profiles/suggest", {
+    return request<DomainMetadataSuggestOut>("/api/domain-profiles/suggest", {
       method: "POST",
       body: formData,
     });
