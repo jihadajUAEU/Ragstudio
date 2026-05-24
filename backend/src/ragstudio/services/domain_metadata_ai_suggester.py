@@ -539,8 +539,6 @@ class DomainMetadataAiSuggester:
             )
         )
         return f"""{AUTOSUGGEST_PROMPT.user_prefix}
-Prompt id: {AUTOSUGGEST_PROMPT.prompt_id}
-Prompt version: {AUTOSUGGEST_PROMPT.version}
 Be honest. Use only the sampled pages and filename as evidence.
 Do not guess a specific collection unless the pages show it.
 Review up to 10 sampled pages/images when available. If the samples show structured

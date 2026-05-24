@@ -30,7 +30,7 @@ CHAPTER_ONLY_PATTERN = re.compile(
     flags=re.IGNORECASE,
 )
 LEGAL_SECTION_PATTERN = re.compile(
-    r"(?:\bsection\b|\bsec\.?|Â§)\s*(?P<section>\d+(?:\.\d+)*)",
+    r"(?:\bsection\b|\bsec\.?|§)\s*(?P<section>\d+(?:\.\d+)*)",
     flags=re.IGNORECASE,
 )
 PAGE_LINE_PATTERN = re.compile(

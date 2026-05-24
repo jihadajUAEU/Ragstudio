@@ -176,13 +176,13 @@ export function SettingsPage() {
 
   const settingsMissing =
     settingsQuery.error instanceof ApiError && settingsQuery.error.status === 404;
+  const runtimeDefaults = defaultsQuery.data?.runtime ?? DEFAULT_FORM_VALUES;
   const loadedValues = settingsQuery.data
     ? settingsToFormValues(settingsQuery.data)
     : settingsMissing
-      ? DEFAULT_FORM_VALUES
+      ? { ...DEFAULT_FORM_VALUES, ...runtimeDefaults }
       : null;
   const formValues = formOverride ?? loadedValues;
-  const runtimeDefaults = defaultsQuery.data?.runtime ?? DEFAULT_FORM_VALUES;
 
   const updateSettings = useMutation({
     mutationFn: apiClient.updateDefaultSettings,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -8,6 +9,17 @@ from ragstudio.schemas.document_parse_evidence import DocumentParseEvidence
 from ragstudio.services.redaction_registry import find_redaction_matches
 
 EXPORT_RELATIVE_PATH = "artifacts/document-parse-evidence.export.json"
+EXPORT_ONLY_UNSAFE_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"internal\.local", re.IGNORECASE), "private host"),
+    (re.compile(r"\[fd[0-9a-f]{2}:[^\]]+\]", re.IGNORECASE), "private host"),
+    (
+        re.compile(
+            r'\\?"(?:api[_-]?key|token|secret|password|authorization)\\?"\s*:',
+            re.IGNORECASE,
+        ),
+        "secret-like key",
+    ),
+)
 PUBLIC_SAFETY_LABELS = {
     "local_absolute_path": "local absolute path",
     "unc_path": "local absolute path",
@@ -23,7 +35,6 @@ PUBLIC_SAFETY_LABELS = {
     "slack_token": "secret-shaped value",
     "google_api_key": "secret-shaped value",
     "bearer_token": "secret-shaped value",
-    "secret_key_name": "secret-like key",
 }
 
 
@@ -69,3 +80,6 @@ class DocumentParseEvidenceExporter:
         for match in find_redaction_matches(text):
             label = PUBLIC_SAFETY_LABELS.get(match.rule_id, "public-safety pattern")
             raise UnsafeProofExportError(f"Proof export contains unsafe {label}.")
+        for pattern, label in EXPORT_ONLY_UNSAFE_PATTERNS:
+            if pattern.search(text):
+                raise UnsafeProofExportError(f"Proof export contains unsafe {label}.")

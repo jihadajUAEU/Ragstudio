@@ -7,6 +7,18 @@ from ragstudio.services.reference_contract_validator import ReferenceContractVal
 from ragstudio.services.reference_contracts import build_executable_reference_contract
 
 
+def test_autosuggest_prompt_keeps_legacy_model_facing_body():
+    prompt = DomainMetadataAiSuggester()._prompt(
+        filename="sample.pdf",
+        content_type="application/pdf",
+        pages=[SampledPage(page_number=1, text="Sample text")],
+    )
+
+    assert prompt.startswith("You classify documents for a RAG indexing system.")
+    assert "Prompt id:" not in prompt
+    assert "Prompt version:" not in prompt
+
+
 def test_reference_contract_candidates_include_declared_groups_and_template():
     metadata = DomainMetadata(
         custom_json={

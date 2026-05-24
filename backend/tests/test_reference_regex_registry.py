@@ -1,6 +1,7 @@
 from ragstudio.services.reference_regex_registry import (
     ARABIC_DIACRITICS_PATTERN,
     ARABIC_TOKEN_PATTERN,
+    LEGAL_SECTION_PATTERN,
     QUERY_REFERENCE_PATTERN,
     REFERENCE_PATTERN,
     SCRIPT_PATTERNS,
@@ -32,3 +33,10 @@ def test_reference_patterns_preserve_quran_reference_behavior() -> None:
     verifier_match = QUERY_REFERENCE_PATTERN.search("[12:13]")
     assert verifier_match is not None
     assert verifier_match.group("reference") == "12:13"
+
+
+def test_legal_section_pattern_preserves_section_symbol_behavior() -> None:
+    match = LEGAL_SECTION_PATTERN.search("See § 12.3 for details")
+
+    assert match is not None
+    assert match.group("section") == "12.3"

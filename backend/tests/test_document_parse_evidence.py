@@ -1059,6 +1059,8 @@ def test_document_parse_evidence_exporter_rejects_unsafe_values(tmp_path: Path):
         ("Bearer abc.def.ghi", "secret-shaped value"),
         ("Authorization: Bearer secret", "secret-shaped value"),
         ("http://0.0.0.0:8000/private", "private host"),
+        ("http://internal.local/v1", "private host"),
+        ("http://[fd12:3456::1]/v1", "private host"),
     ],
 )
 def test_document_parse_evidence_exporter_rejects_additional_unsafe_values(
@@ -1078,6 +1080,37 @@ def test_document_parse_evidence_exporter_rejects_additional_unsafe_values(
     )
 
     with pytest.raises(UnsafeProofExportError, match=expected_message):
+        DocumentParseEvidenceExporter().export(
+            evidence,
+            packet_dir=tmp_path,
+            proof_packet_id="packet",
+            source_commit="abc1234",
+        )
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        {"api_key": "not-a-pattern-match"},
+        {"authorization": "plain-value"},
+    ],
+)
+def test_document_parse_evidence_exporter_rejects_secret_like_keys(
+    tmp_path: Path,
+    metadata: dict[str, str],
+):
+    evidence = DocumentParseEvidence(
+        document=DocumentEvidenceSummary(
+            id="doc-unsafe-key",
+            filename="unsafe-key.pdf",
+            content_type="application/pdf",
+            status="succeeded",
+        ),
+        chunks=[ChunkEvidence(id="chunk-unsafe-key", text_preview="safe", metadata=metadata)],
+        proof=ProofEvidence(mode="local"),
+    )
+
+    with pytest.raises(UnsafeProofExportError, match="secret-like key"):
         DocumentParseEvidenceExporter().export(
             evidence,
             packet_dir=tmp_path,

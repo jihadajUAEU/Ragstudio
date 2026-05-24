@@ -3,13 +3,14 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { ApiError, apiClient } from "../src/api/client";
+import { ApiError, apiClient, type DefaultsOut } from "../src/api/client";
 import type { SettingsProfileOut } from "../src/api/generated";
 import { SettingsPage } from "../src/features/settings/settings-page";
 
 vi.mock("../src/api/client", () => ({
   DEFAULT_PARSER_MODE: "mineru_strict",
   apiClient: {
+    defaults: vi.fn(),
     defaultSettings: vi.fn(),
     updateDefaultSettings: vi.fn(),
     testEmbeddingSettings: vi.fn(),
@@ -103,6 +104,36 @@ const settings: SettingsProfileOut = {
   max_parallel_insert: 2,
 };
 
+const backendDefaults: DefaultsOut = {
+  runtime: {
+    llm_timeout_ms: 11000,
+    embedding_timeout_ms: 12000,
+    embedding_dimensions: 1536,
+    embedding_batch_size: 24,
+    mineru_timeout_ms: 1700000,
+    mineru_poll_interval_ms: 1500,
+    mineru_max_concurrent_files: 3,
+    vision_timeout_ms: 13000,
+    reranker_timeout_ms: 14000,
+    chunk_token_size: 1300,
+    chunk_overlap_token_size: 120,
+    context_window: 2,
+    max_context_tokens: 2400,
+    top_k: 77,
+    chunk_top_k: 33,
+    cosine_better_than_threshold: 0.25,
+    max_total_tokens: 31000,
+    max_entity_tokens: 6100,
+    max_relation_tokens: 8100,
+    llm_model_max_async: 5,
+    embedding_func_max_async: 9,
+    max_parallel_insert: 3,
+  },
+  policy_versions: {
+    runtime_defaults: "2026-05-24",
+  },
+};
+
 function renderSettings() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
@@ -115,6 +146,7 @@ function renderSettings() {
 describe("SettingsPage provider sync", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(apiClient.defaults).mockResolvedValue(backendDefaults);
     vi.mocked(apiClient.defaultSettings).mockResolvedValue(settings);
     vi.mocked(apiClient.updateDefaultSettings).mockResolvedValue(settings);
     vi.mocked(apiClient.testMinerUSettings).mockResolvedValue({
@@ -184,6 +216,7 @@ describe("SettingsPage provider sync", () => {
     renderSettings();
 
     expect(await screen.findByText("MinerU parser")).toBeVisible();
+    await waitFor(() => expect(apiClient.defaults).toHaveBeenCalled());
     expect(screen.getByText("LLM generation")).toBeVisible();
     expect(screen.getByLabelText("Runtime mode")).toBeVisible();
     expect(await screen.findByDisplayValue("bolt://127.0.0.1:57687")).toBeVisible();
@@ -456,6 +489,47 @@ describe("SettingsPage provider sync", () => {
         provider: "first-provider",
         runtime_mode: "runtime",
         storage_backend: "postgres_pgvector_neo4j",
+      }),
+    );
+  });
+
+  it("uses backend runtime defaults when creating the first profile", async () => {
+    vi.mocked(apiClient.defaultSettings).mockRejectedValueOnce(
+      new ApiError("No default profile saved", 404, { detail: "No default profile saved" }),
+    );
+    renderSettings();
+
+    expect(await screen.findByText("No default profile saved")).toBeVisible();
+    await waitFor(() => expect(screen.getByLabelText("Top K")).toHaveValue(77));
+    fireEvent.click(screen.getByRole("button", { name: /^Save$/i }));
+
+    await waitFor(() => expect(apiClient.updateDefaultSettings).toHaveBeenCalled());
+    expect(vi.mocked(apiClient.updateDefaultSettings).mock.calls[0][0]).toEqual(
+      expect.objectContaining({
+        top_k: 77,
+        chunk_top_k: 33,
+        max_context_tokens: 2400,
+      }),
+    );
+  });
+
+  it("falls back to local runtime defaults when backend defaults are unavailable", async () => {
+    vi.mocked(apiClient.defaults).mockRejectedValueOnce(new Error("Defaults unavailable"));
+    vi.mocked(apiClient.defaultSettings).mockRejectedValueOnce(
+      new ApiError("No default profile saved", 404, { detail: "No default profile saved" }),
+    );
+    renderSettings();
+
+    expect(await screen.findByText("No default profile saved")).toBeVisible();
+    await waitFor(() => expect(screen.getByLabelText("Top K")).toHaveValue(40));
+    fireEvent.click(screen.getByRole("button", { name: /^Save$/i }));
+
+    await waitFor(() => expect(apiClient.updateDefaultSettings).toHaveBeenCalled());
+    expect(vi.mocked(apiClient.updateDefaultSettings).mock.calls[0][0]).toEqual(
+      expect.objectContaining({
+        top_k: 40,
+        chunk_top_k: 20,
+        max_context_tokens: 2000,
       }),
     );
   });

@@ -10,6 +10,7 @@ from ragstudio.services.parser_normalization import (
     MinerUContentNormalizer,
     VisionRecoveryConfig,
     _parse_vision_recovery_text,
+    _vision_recovery_prompt,
 )
 
 pytestmark = pytest.mark.asyncio
@@ -447,6 +448,24 @@ async def test_vision_recovery_rejects_plain_text_or_refusal_payloads():
         )
         == "Recovered"
     )
+
+
+async def test_vision_recovery_prompt_keeps_legacy_model_facing_body():
+    prompt = _vision_recovery_prompt(
+        block_type="image",
+        page=1,
+        triggers=["missing_text"],
+        existing_text="",
+        config=VisionRecoveryConfig(
+            base_url="http://vision.test/v1",
+            model="vision-ocr",
+            enabled=True,
+        ),
+    )
+
+    assert prompt.startswith("OCR the visible document text")
+    assert "Prompt id:" not in prompt
+    assert "Prompt version:" not in prompt
 
 
 async def test_vision_recovery_respects_total_and_per_page_caps(tmp_path: Path):

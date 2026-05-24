@@ -18,7 +18,6 @@ from ragstudio.services.block_types import (
 )
 from ragstudio.services.http_client_provider import HttpClientProviderProtocol
 from ragstudio.services.http_retry import raise_for_transient_status, retry_async_http
-from ragstudio.services.prompt_templates import VISION_RECOVERY_PROMPT
 from ragstudio.services.script_detection import SCRIPT_PATTERNS
 
 VISION_RECOVERY_TRIGGERS = frozenset(
@@ -1164,9 +1163,6 @@ def _vision_recovery_prompt(
     existing_preview = existing_text[:600].strip() if existing_text else "[none]"
     prompt_hint = f"\nAdditional document hint: {config.prompt_hint}" if config.prompt_hint else ""
     return (
-        f"{VISION_RECOVERY_PROMPT.user_prefix}\n"
-        f"Prompt id: {VISION_RECOVERY_PROMPT.prompt_id}\n"
-        f"Prompt version: {VISION_RECOVERY_PROMPT.version}\n"
         "OCR the visible document text in this cropped block image. "
         "Return only text that is visibly present in the image; do not translate, summarize, "
         "invent missing words, or describe layout. Preserve reading order and line breaks when "
