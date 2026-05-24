@@ -9,11 +9,15 @@ from ragstudio.services.retrieval_evidence import (
     _hydrate_parser_warning_metadata,
     _merge_duplicate_candidate,
 )
+from ragstudio.services.retrieval_policy import DEFAULT_RETRIEVAL_POLICY, FusionScorePolicy
 
-RRF_K = 60
+RRF_K = DEFAULT_RETRIEVAL_POLICY.fusion.rrf_k
 
 
 class RetrievalFusion:
+    def __init__(self, policy: FusionScorePolicy | None = None) -> None:
+        self.policy = policy or DEFAULT_RETRIEVAL_POLICY.fusion
+
     def fuse(
         self,
         ranked_lists: list[list[EvidenceCandidate]],
@@ -33,9 +37,9 @@ class RetrievalFusion:
                 if existing is None:
                     by_key[key] = candidate
                 else:
-                    winner, loser = _duplicate_winner(existing, candidate)
+                    winner, loser = _duplicate_winner(existing, candidate, self.policy)
                     by_key[key] = _merge_duplicate_candidate(winner, loser)
-                scores[key] = scores.get(key, 0.0) + 1.0 / (RRF_K + rank)
+                scores[key] = scores.get(key, 0.0) + 1.0 / (self.policy.rrf_k + rank)
                 tool_list = tools.setdefault(key, [])
                 if candidate.tool not in tool_list:
                     tool_list.append(candidate.tool)
@@ -43,7 +47,7 @@ class RetrievalFusion:
 
         fused: list[EvidenceCandidate] = []
         for key, candidate in by_key.items():
-            direct_boost, reason = _direct_boost(candidate)
+            direct_boost, reason = _direct_boost(candidate, self.policy)
             score_basis = (
                 candidate.final_score if candidate.final_score > 0 else candidate.base_score
             )
@@ -59,7 +63,8 @@ class RetrievalFusion:
                         "lane_ranks": lane_ranks.get(key, {}),
                         "fusion_score_basis": {
                             "formula": "rrf",
-                            "rrf_k": RRF_K,
+                            "rrf_k": self.policy.rrf_k,
+                            "policy_version": DEFAULT_RETRIEVAL_POLICY.policy_version,
                             "rrf_score": scores[key],
                             "candidate_score_basis": score_basis,
                             "direct_boost": direct_boost,
@@ -74,9 +79,9 @@ class RetrievalFusion:
         return sorted(
             fused,
             key=lambda candidate: (
-                _direct_priority(candidate),
+                _direct_priority(candidate, self.policy),
                 candidate.final_score,
-                _lane_priority(candidate),
+                _lane_priority(candidate, self.policy),
                 -candidate.tool_rank,
             ),
             reverse=True,
@@ -105,53 +110,54 @@ def _hydrate_ranked_lists(
     ]
 
 
-def _direct_priority(candidate: EvidenceCandidate) -> int:
+def _direct_priority(candidate: EvidenceCandidate, policy: FusionScorePolicy) -> int:
     features = _features(candidate)
     if features.get("reference_hypothesis"):
-        return 5
+        return policy.direct_priority["reference_hypothesis"]
     if features.get("reference_exact"):
-        return 100
+        return policy.direct_priority["reference_exact"]
     if features.get("arabic_exact"):
-        return 90
+        return policy.direct_priority["arabic_exact"]
     if features.get("target_phrase"):
-        return 80
+        return policy.direct_priority["target_phrase"]
     if candidate.tool in {"reference_exact", "reference"}:
-        return 70
+        return policy.direct_priority["reference_tool"]
     if candidate.tool in {"arabic_lexical", "lexical"}:
-        return 60
+        return policy.direct_priority["lexical_tool"]
     if candidate.tool == "pgvector":
-        return 20
-    return 10
+        return policy.direct_priority["pgvector"]
+    return policy.direct_priority["default"]
 
 
-def _lane_priority(candidate: EvidenceCandidate) -> int:
+def _lane_priority(candidate: EvidenceCandidate, policy: FusionScorePolicy) -> int:
     if candidate.tool in {"metadata", "reference_exact"}:
-        return 40
+        return policy.lane_priority["metadata"]
     if candidate.tool in {"arabic_lexical", "lexical"}:
-        return 35
+        return policy.lane_priority["lexical"]
     if candidate.tool == "graph":
-        return 30
+        return policy.lane_priority["graph"]
     if candidate.tool == "pgvector":
-        return 20
+        return policy.lane_priority["pgvector"]
     if candidate.tool == "native":
-        return 10
-    return 0
+        return policy.lane_priority["native"]
+    return policy.lane_priority["default"]
 
 
 def _duplicate_winner(
     first: EvidenceCandidate,
     second: EvidenceCandidate,
+    policy: FusionScorePolicy,
 ) -> tuple[EvidenceCandidate, EvidenceCandidate]:
     first_key = (
-        _direct_priority(first),
+        _direct_priority(first, policy),
         first.final_score or first.base_score,
-        _lane_priority(first),
+        _lane_priority(first, policy),
         -first.tool_rank,
     )
     second_key = (
-        _direct_priority(second),
+        _direct_priority(second, policy),
         second.final_score or second.base_score,
-        _lane_priority(second),
+        _lane_priority(second, policy),
         -second.tool_rank,
     )
     if second_key > first_key:
@@ -159,14 +165,17 @@ def _duplicate_winner(
     return first, second
 
 
-def _direct_boost(candidate: EvidenceCandidate) -> tuple[float, str | None]:
+def _direct_boost(
+    candidate: EvidenceCandidate,
+    policy: FusionScorePolicy,
+) -> tuple[float, str | None]:
     features = _features(candidate)
     if features.get("reference_exact"):
-        return 100.0, "exact_reference_match"
+        return policy.direct_boost["reference_exact"], "exact_reference_match"
     if features.get("arabic_exact"):
-        return 90.0, "direct_arabic_match"
+        return policy.direct_boost["arabic_exact"], "direct_arabic_match"
     if features.get("target_phrase"):
-        return 80.0, "target_phrase_match"
+        return policy.direct_boost["target_phrase"], "target_phrase_match"
     return 0.0, None
 
 

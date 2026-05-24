@@ -14,6 +14,7 @@ from ragstudio.services.arabic_text import (
 from ragstudio.services.domain_search_policy import DomainSearchPolicy
 from ragstudio.services.reference_metadata import ReferenceSemantics
 from ragstudio.services.retrieval_explainer import build_retrieval_explain
+from ragstudio.services.retrieval_policy import DEFAULT_RETRIEVAL_POLICY, HybridScorePolicy
 
 if TYPE_CHECKING:
     from ragstudio.db.models import Chunk
@@ -73,6 +74,9 @@ class ChunkScore:
 
 
 class HybridChunkSearch:
+    def __init__(self, policy: HybridScorePolicy | None = None) -> None:
+        self.policy = policy or DEFAULT_RETRIEVAL_POLICY.hybrid
+
     def score(
         self,
         query: str,
@@ -126,7 +130,7 @@ class HybridChunkSearch:
                 and semantics.exact_reference_top1
                 and requested_ref in explicit_refs
             ):
-                reference_exact = 100.0
+                reference_exact = self.policy.reference_exact
             elif (
                 quality_allows_reference_boost
                 and semantics
@@ -140,7 +144,7 @@ class HybridChunkSearch:
                 and chapter_start <= q_chapter <= chapter_end
                 and verse_start <= q_verse <= verse_end
             ):
-                reference_exact = 100.0
+                reference_exact = self.policy.reference_exact
             elif (
                 quality_allows_reference_boost
                 and semantics
@@ -150,7 +154,11 @@ class HybridChunkSearch:
                 and isinstance(chapter_end, int)
                 and chapter_start <= q_chapter <= chapter_end
             ):
-                same_chapter = 60.0 if q_verse is None else 5.0
+                same_chapter = (
+                    self.policy.same_chapter_reference_query
+                    if q_verse is None
+                    else self.policy.same_chapter_with_verse_query
+                )
 
             if (
                 quality_allows_reference_boost
@@ -162,7 +170,7 @@ class HybridChunkSearch:
                     reference_metadata.get("next_ref"),
                 }
             ):
-                neighbor_match = 30.0
+                neighbor_match = self.policy.neighbor_match
 
         exact_phrase = self._exact_phrase_score(query_text, chunk_text)
         query_terms = self._terms(query_text)
@@ -201,8 +209,8 @@ class HybridChunkSearch:
             "neighbor_match": neighbor_match,
             "same_chapter": same_chapter,
             "exact_phrase": exact_phrase,
-            "term_coverage": coverage * 10.0,
-            "semantic_density": density * 2.0,
+            "term_coverage": coverage * self.policy.term_coverage_multiplier,
+            "semantic_density": density * self.policy.semantic_density_multiplier,
             "arabic_exact": arabic_exact,
             "arabic_token": arabic_token,
             "metadata_boost": metadata_boost,
@@ -262,9 +270,13 @@ class HybridChunkSearch:
                 query_terms = self._terms(query_text)
                 shared_title_terms = query_terms & title_terms
                 if shared_title_terms:
-                    boost += min(10.0, len(shared_title_terms) * 2.0)
+                    boost += min(
+                        self.policy.metadata_title_term_cap,
+                        len(shared_title_terms)
+                        * self.policy.metadata_title_term_multiplier,
+                    )
 
-        return min(boost, 12.0)
+        return min(boost, self.policy.metadata_boost_cap)
 
     def _layout_context_boost(self, query_text: str, metadata: dict[str, Any]) -> float:
         query_terms = self._terms(query_text)
@@ -300,7 +312,10 @@ class HybridChunkSearch:
                             layout_terms.update(self._terms(value))
 
         overlap = query_terms & layout_terms
-        return min(16.0, len(overlap) * 4.0)
+        return min(
+            self.policy.layout_context_cap,
+            len(overlap) * self.policy.layout_context_term_multiplier,
+        )
 
     def _domain_intent_boost(
         self,
@@ -348,13 +363,13 @@ class HybridChunkSearch:
             else arabic_tokens(chunk.text)
         )
         if variants and token_set and any(variant in token_set for variant in variants):
-            return 40.0
+            return self.policy.arabic_exact
         searchable = str(getattr(chunk, "text_search_ar", "") or normalize_arabic_text(chunk.text))
         if any(
             variant and " " in variant and self._has_arabic_phrase_boundary(searchable, variant)
             for variant in variants
         ):
-            return 40.0
+            return self.policy.arabic_exact
         return 0.0
 
     def _arabic_token_score(self, query: str, chunk: Chunk) -> float:
@@ -371,7 +386,7 @@ class HybridChunkSearch:
             else arabic_tokens(chunk.text)
         )
         if variants & tokens:
-            return 24.0
+            return self.policy.arabic_token
         return 0.0
 
     def _has_arabic_phrase_boundary(self, searchable: str, variant: str) -> bool:
@@ -390,7 +405,7 @@ class HybridChunkSearch:
             return 0.0
         if not any(term in combined for term in ("hadith", "collection", "bukhari")):
             return 0.0
-        return 30.0
+        return self.policy.answer_bearing_count
 
     def _guidance_request_boost(self, query_text: str, chunk_text: str) -> float:
         query_terms = self._terms(query_text)
@@ -404,16 +419,16 @@ class HybridChunkSearch:
         if "straight path" not in query_text or "straight path" not in chunk_text:
             return 0.0
         if _GUIDE_US_RE.search(chunk_text):
-            return 40.0
+            return self.policy.guidance_request
         return 0.0
 
     def _exact_phrase_score(self, query_text: str, chunk_text: str) -> float:
         if query_text and query_text in chunk_text:
-            return 8.0
+            return self.policy.exact_query_phrase
 
         for phrase in self._answer_bearing_phrases(query_text):
             if phrase in chunk_text:
-                return 24.0
+                return self.policy.answer_bearing_phrase
         return 0.0
 
     def _answer_bearing_phrases(self, query_text: str) -> list[str]:

@@ -5,6 +5,7 @@ from typing import Any
 from ragstudio.db.models import Chunk
 from ragstudio.services.evidence_context import evidence_context_from_metadata
 from ragstudio.services.retrieval_evidence import EvidenceCandidate
+from ragstudio.services.retrieval_policy import DEFAULT_RETRIEVAL_POLICY
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 class ContextWindowService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
+        self.policy = DEFAULT_RETRIEVAL_POLICY.context_window
 
     async def window_for(
         self,
@@ -83,9 +85,9 @@ class ContextWindowService:
                     metadata=metadata,
                     tool="metadata",
                     tool_rank=len(candidates) + 1,
-                    base_score=8.0,
-                    boost_score=1.0,
-                    final_score=9.0,
+                    base_score=self.policy.base_score,
+                    boost_score=self.policy.boost_score,
+                    final_score=self.policy.final_score,
                     reasons=reasons,
                     retrieval_pass="context_window",
                     scope_status="in_scope",

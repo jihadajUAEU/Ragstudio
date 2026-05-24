@@ -423,7 +423,7 @@ Expected: commit succeeds with only runtime default files staged.
 - Test: `backend/tests/test_context_window_service.py`
 - Test: `backend/tests/test_retrieval_route_planner.py`
 
-- [ ] **Step 1: Write failing tests for policy export and current values**
+- [x] **Step 1: Write failing tests for policy export and current values**
 
 Create `backend/tests/test_retrieval_policy.py`:
 
@@ -475,7 +475,7 @@ def test_layout_and_route_policies_preserve_current_thresholds() -> None:
     assert DEFAULT_RETRIEVAL_POLICY.policy_version == "2026-05-24"
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run:
 
@@ -485,7 +485,7 @@ $env:PYTHONPATH='E:\repos\Ragstudio\backend\src'; pytest backend/tests/test_retr
 
 Expected: FAIL with `ModuleNotFoundError: No module named 'ragstudio.services.retrieval_policy'`.
 
-- [ ] **Step 3: Add retrieval policy module**
+- [x] **Step 3: Add retrieval policy module**
 
 Create `backend/src/ragstudio/services/retrieval_policy.py`:
 
@@ -595,7 +595,7 @@ class RetrievalPolicy:
 DEFAULT_RETRIEVAL_POLICY = RetrievalPolicy()
 ```
 
-- [ ] **Step 4: Replace hybrid search literals with policy references**
+- [x] **Step 4: Replace hybrid search literals with policy references**
 
 In `backend/src/ragstudio/services/hybrid_chunk_search.py`, import:
 
@@ -636,7 +636,7 @@ return self.policy.exact_query_phrase
 return self.policy.answer_bearing_phrase
 ```
 
-- [ ] **Step 5: Replace fusion and context literals with policy references**
+- [x] **Step 5: Replace fusion and context literals with policy references**
 
 In `retrieval_fusion.py`, import:
 
@@ -689,7 +689,7 @@ def _lane_timeout_ms(response_budget_ms: int | None) -> int:
     return DEFAULT_RETRIEVAL_POLICY.route_planning.lane_timeout_ms(response_budget_ms)
 ```
 
-- [ ] **Step 6: Run retrieval policy tests**
+- [x] **Step 6: Run retrieval policy tests**
 
 Run:
 
@@ -699,7 +699,7 @@ $env:PYTHONPATH='E:\repos\Ragstudio\backend\src'; pytest backend/tests/test_retr
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit retrieval policy refactor**
+- [x] **Step 7: Commit retrieval policy refactor**
 
 Run:
 

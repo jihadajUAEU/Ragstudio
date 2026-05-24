@@ -10,6 +10,7 @@ from ragstudio.services.domain_profile_registry import (
     MaterializationHint,
 )
 from ragstudio.services.evidence_unit_contract import MaterializationPolicy, QualityActionPolicy
+from ragstudio.services.retrieval_policy import DEFAULT_RETRIEVAL_POLICY
 
 RetrievalLane = Literal[
     "postgres_canonical",
@@ -285,9 +286,7 @@ def _readiness(value: RetrievalReadiness | dict[str, object] | None) -> Retrieva
 
 
 def _lane_timeout_ms(response_budget_ms: int | None) -> int:
-    if response_budget_ms is None:
-        return 8000
-    return max(250, min(int(response_budget_ms * 0.35), 8000))
+    return DEFAULT_RETRIEVAL_POLICY.route_planning.lane_timeout_ms(response_budget_ms)
 
 
 def _build_lane_plan(

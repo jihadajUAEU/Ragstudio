@@ -5,6 +5,7 @@ from typing import Any
 from ragstudio.db.models import Chunk
 from ragstudio.services.evidence_context import evidence_context_from_metadata
 from ragstudio.services.retrieval_evidence import EvidenceCandidate
+from ragstudio.services.retrieval_policy import DEFAULT_RETRIEVAL_POLICY
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 class LayoutNeighborService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
+        self.policy = DEFAULT_RETRIEVAL_POLICY.layout_neighbor
 
     async def neighbors_for(
         self,
@@ -111,7 +113,7 @@ class LayoutNeighborService:
                 if row_bbox is not None:
                     row_y_mid = (row_bbox[1] + row_bbox[3]) / 2
                     for seed_y_mid in seed_midpoints[page]:
-                        if abs(row_y_mid - seed_y_mid) <= 150.0:
+                        if abs(row_y_mid - seed_y_mid) <= self.policy.vertical_proximity:
                             is_spatial_proximity = True
                             break
 
@@ -126,20 +128,20 @@ class LayoutNeighborService:
                 candidate_metadata["evidence_context"] = evidence_context
 
             reasons = ["layout_neighbor"]
-            boost_score = 1.5
-            final_score = 10.5
+            boost_score = self.policy.base_boost_score
+            final_score = self.policy.base_final_score
             if is_spatial_proximity:
                 reasons.append("spatial_proximity")
-                boost_score += 1.0
-                final_score += 1.0
+                boost_score += self.policy.spatial_proximity_boost
+                final_score += self.policy.spatial_proximity_boost
             if same_layout_group:
                 reasons.append("layout_group")
-                boost_score += 2.0
-                final_score += 2.0
+                boost_score += self.policy.layout_group_boost
+                final_score += self.policy.layout_group_boost
             if reading_order_neighbor:
                 reasons.append("reading_order_neighbor")
-                boost_score += 1.0
-                final_score += 1.0
+                boost_score += self.policy.reading_order_neighbor_boost
+                final_score += self.policy.reading_order_neighbor_boost
 
             candidates.append(
                 EvidenceCandidate(
@@ -151,7 +153,7 @@ class LayoutNeighborService:
                     metadata=candidate_metadata,
                     tool="metadata",
                     tool_rank=len(candidates) + 1,
-                    base_score=9.0,
+                    base_score=self.policy.base_score,
                     boost_score=boost_score,
                     final_score=final_score,
                     reasons=reasons,
