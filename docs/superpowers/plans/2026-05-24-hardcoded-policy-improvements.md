@@ -922,7 +922,7 @@ Expected: commit succeeds with only prompt-related files staged.
 - Test: create `backend/tests/test_redaction_registry.py`
 - Test: `backend/tests/test_proof_packet_validator.py`
 
-- [ ] **Step 1: Write failing tests for shared redaction rules**
+- [x] **Step 1: Write failing tests for shared redaction rules**
 
 Create `backend/tests/test_redaction_registry.py`:
 
@@ -956,7 +956,7 @@ def test_shared_redaction_registry_redacts_values() -> None:
     assert "[REDACTED:file_uri]" in redacted
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run:
 
@@ -966,7 +966,7 @@ $env:PYTHONPATH='E:\repos\Ragstudio\backend\src'; pytest backend/tests/test_reda
 
 Expected: FAIL with `ModuleNotFoundError: No module named 'ragstudio.services.redaction_registry'`.
 
-- [ ] **Step 3: Add shared redaction registry**
+- [x] **Step 3: Add shared redaction registry**
 
 Create `backend/src/ragstudio/services/redaction_registry.py`:
 
@@ -1032,7 +1032,7 @@ def redact_text(text: str) -> str:
     return redacted
 ```
 
-- [ ] **Step 4: Wire proof and document evidence code to the registry**
+- [x] **Step 4: Wire proof and document evidence code to the registry**
 
 In `backend/src/ragstudio/proof_packet/redaction.py`, replace the local rule tuple with adapters over `REDACTION_RULES`:
 
@@ -1057,7 +1057,7 @@ PUBLIC_SAFETY_LABELS = {
 }
 ```
 
-- [ ] **Step 5: Run redaction tests**
+- [x] **Step 5: Run redaction tests**
 
 Run:
 
@@ -1067,7 +1067,7 @@ $env:PYTHONPATH='E:\repos\Ragstudio\backend\src'; pytest backend/tests/test_reda
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit shared redaction registry**
+- [x] **Step 6: Commit shared redaction registry**
 
 Run:
 

@@ -20,6 +20,7 @@ from ragstudio.schemas.document_parse_evidence import (
     SourceArtifactEvidence,
     WarningEvidence,
 )
+from ragstudio.services.redaction_registry import find_redaction_matches, redact_text
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -779,6 +780,11 @@ class DocumentParseEvidenceService:
 
     def _preview(self, text: str) -> str:
         safe_text = self._sanitize_string(text, context="text_preview")
+        shared_matches = find_redaction_matches(safe_text)
+        if shared_matches:
+            for match in shared_matches:
+                self._record_redaction(_shared_redaction_kind(match.rule_id), "text_preview")
+            safe_text = redact_text(safe_text)
         if len(safe_text) <= TEXT_PREVIEW_LIMIT:
             return safe_text
         hidden = len(safe_text) - TEXT_PREVIEW_LIMIT
@@ -979,3 +985,20 @@ class DocumentParseEvidenceService:
             return None
         stripped = candidate.strip()
         return stripped or None
+
+
+def _shared_redaction_kind(rule_id: str) -> str:
+    if rule_id in {
+        "local_absolute_path",
+        "unc_path",
+        "file_uri",
+    }:
+        return "local path"
+    if rule_id in {
+        "localhost",
+        "private_10_net",
+        "private_172_net",
+        "private_192_net",
+    }:
+        return "private host"
+    return "secret value"

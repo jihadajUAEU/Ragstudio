@@ -1,37 +1,30 @@
 from __future__ import annotations
 
 import json
-import re
 from dataclasses import dataclass
 from pathlib import Path
 
 from ragstudio.schemas.document_parse_evidence import DocumentParseEvidence
+from ragstudio.services.redaction_registry import find_redaction_matches
 
 EXPORT_RELATIVE_PATH = "artifacts/document-parse-evidence.export.json"
-UNSAFE_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
-    (re.compile(r"(?<![A-Za-z0-9])[A-Za-z]:[\\/][^\"\\s]+"), "local absolute path"),
-    (re.compile(r"\\\\[^\s\\/:*?\"<>|]+\\[^\s\"']+"), "local absolute path"),
-    (re.compile(r"/Users/|/home/|/tmp/|/var/", re.IGNORECASE), "local absolute path"),
-    (
-        re.compile(
-            r"(localhost|127\.0\.0\.1|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|"
-            r"172\.(?:1[6-9]|2\d|3[0-1])\.\d+\.\d+|0\.0\.0\.0|internal\.local|\[::1\]|\[fd[0-9a-f]{2}:[^\]]+\])",
-            re.IGNORECASE,
-        ),
-        "private host",
-    ),
-    (
-        re.compile(r"\"(?:api[_-]?key|token|secret|password|authorization)\"\s*:", re.IGNORECASE),
-        "secret-like key",
-    ),
-    (re.compile(r"sk-[A-Za-z0-9_-]{8,}"), "secret-shaped value"),
-    (re.compile(r"ghp_[A-Za-z0-9_]{20,}", re.IGNORECASE), "secret-shaped value"),
-    (re.compile(r"\bBearer\s+[A-Za-z0-9._=-]{6,}\b", re.IGNORECASE), "secret-shaped value"),
-    (
-        re.compile(r"Authorization\s*:\s*Bearer\s+[A-Za-z0-9._=-]{6,}\b", re.IGNORECASE),
-        "secret-shaped value",
-    ),
-)
+PUBLIC_SAFETY_LABELS = {
+    "local_absolute_path": "local absolute path",
+    "unc_path": "local absolute path",
+    "file_uri": "local absolute path",
+    "localhost": "private host",
+    "private_10_net": "private host",
+    "private_172_net": "private host",
+    "private_192_net": "private host",
+    "openai_key": "secret-shaped value",
+    "aws_access_key": "secret-shaped value",
+    "github_token": "secret-shaped value",
+    "github_pat": "secret-shaped value",
+    "slack_token": "secret-shaped value",
+    "google_api_key": "secret-shaped value",
+    "bearer_token": "secret-shaped value",
+    "secret_key_name": "secret-like key",
+}
 
 
 class UnsafeProofExportError(ValueError):
@@ -73,6 +66,6 @@ class DocumentParseEvidenceExporter:
         )
 
     def _validate_safe(self, text: str) -> None:
-        for pattern, label in UNSAFE_PATTERNS:
-            if pattern.search(text):
-                raise UnsafeProofExportError(f"Proof export contains unsafe {label}.")
+        for match in find_redaction_matches(text):
+            label = PUBLIC_SAFETY_LABELS.get(match.rule_id, "public-safety pattern")
+            raise UnsafeProofExportError(f"Proof export contains unsafe {label}.")
