@@ -165,6 +165,8 @@ async def test_answer_service_sends_fused_evidence_and_returns_usage(monkeypatch
         "prompt_tokens": 42,
         "completion_tokens": 12,
         "total_tokens": 54,
+        "prompt_id": "runtime_answer.v1",
+        "prompt_version": "2026-05-24",
     }
     assert fake_client.timeout == 5
     assert request["url"] == "http://llm.example/v1/chat/completions"
@@ -205,5 +207,8 @@ async def test_answer_service_does_not_duplicate_chat_completions_suffix(monkeyp
     )
 
     assert answer == "Supported. [S1]"
-    assert token_metadata == {}
+    assert token_metadata == {
+        "prompt_id": "runtime_answer.v1",
+        "prompt_version": "2026-05-24",
+    }
     assert fake_client.requests[0]["url"] == "http://llm.example/v1/chat/completions"

@@ -19,6 +19,7 @@ from ragstudio.services.http_client_provider import HttpClientProviderProtocol
 from ragstudio.services.http_retry import raise_for_transient_status, retry_async_http
 from ragstudio.services.metadata_json_schema import validate_custom_json
 from ragstudio.services.page_sampler import SampledPage
+from ragstudio.services.prompt_templates import AUTOSUGGEST_PROMPT
 from ragstudio.services.reference_contract_validator import (
     ReferenceContractCandidate,
     ReferenceContractCandidateResult,
@@ -537,7 +538,9 @@ class DomainMetadataAiSuggester:
                 indent=2,
             )
         )
-        return f"""You classify documents for a RAG indexing system.
+        return f"""{AUTOSUGGEST_PROMPT.user_prefix}
+Prompt id: {AUTOSUGGEST_PROMPT.prompt_id}
+Prompt version: {AUTOSUGGEST_PROMPT.version}
 Be honest. Use only the sampled pages and filename as evidence.
 Do not guess a specific collection unless the pages show it.
 Review up to 10 sampled pages/images when available. If the samples show structured

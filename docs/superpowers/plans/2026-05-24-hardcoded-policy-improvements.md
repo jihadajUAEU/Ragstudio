@@ -724,7 +724,7 @@ Expected: commit succeeds with only retrieval policy files staged.
 - Test: `backend/tests/test_parser_normalization.py`
 - Test: create `backend/tests/test_prompt_templates.py`
 
-- [ ] **Step 1: Write failing tests for prompt metadata**
+- [x] **Step 1: Write failing tests for prompt metadata**
 
 Create `backend/tests/test_prompt_templates.py`:
 
@@ -759,7 +759,7 @@ def test_llm_reranker_prompt_keeps_json_contract() -> None:
     assert "zero-based" in LLM_RERANKER_PROMPT.system
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run:
 
@@ -769,7 +769,7 @@ $env:PYTHONPATH='E:\repos\Ragstudio\backend\src'; pytest backend/tests/test_prom
 
 Expected: FAIL with `ModuleNotFoundError: No module named 'ragstudio.services.prompt_templates'`.
 
-- [ ] **Step 3: Add prompt template definitions**
+- [x] **Step 3: Add prompt template definitions**
 
 Create `backend/src/ragstudio/services/prompt_templates.py`:
 
@@ -823,7 +823,7 @@ VISION_RECOVERY_PROMPT = PromptTemplate(
 )
 ```
 
-- [ ] **Step 4: Wire runtime answer and LLM reranker prompts**
+- [x] **Step 4: Wire runtime answer and LLM reranker prompts**
 
 In `runtime_answer_service.py`, import:
 
@@ -863,7 +863,7 @@ Add the prompt metadata to payload:
 "metadata": LLM_RERANKER_PROMPT.metadata(),
 ```
 
-- [ ] **Step 5: Wire autosuggest and vision prompt metadata without changing prompt text**
+- [x] **Step 5: Wire autosuggest and vision prompt metadata without changing prompt text**
 
 In `domain_metadata_ai_suggester.py`, import `AUTOSUGGEST_PROMPT`. At the top of the string returned by `_prompt`, keep the current first sentence and add a comment-free metadata line inside the prompt body:
 
@@ -889,7 +889,7 @@ return (
 
 After adding those lines, keep the existing recovery prompt text that lists block type, page, triggers, existing text, and output JSON unchanged.
 
-- [ ] **Step 6: Run prompt tests**
+- [x] **Step 6: Run prompt tests**
 
 Run:
 
@@ -899,7 +899,7 @@ $env:PYTHONPATH='E:\repos\Ragstudio\backend\src'; pytest backend/tests/test_prom
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit prompt template registry**
+- [x] **Step 7: Commit prompt template registry**
 
 Run:
 

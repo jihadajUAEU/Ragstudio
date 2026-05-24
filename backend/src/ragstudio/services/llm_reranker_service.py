@@ -7,6 +7,7 @@ import httpx
 from ragstudio.schemas.chunks import ChunkOut
 from ragstudio.services.http_client_provider import HttpClientProviderProtocol
 from ragstudio.services.http_retry import raise_for_transient_status, retry_async_http
+from ragstudio.services.prompt_templates import LLM_RERANKER_PROMPT
 
 
 class LLMRerankerService:
@@ -130,14 +131,11 @@ def _payload(query: str, chunks: list[ChunkOut], profile: Any) -> dict[str, Any]
         "messages": [
             {
                 "role": "system",
-                "content": (
-                    "Rank evidence for the user query. Return only a JSON array. "
-                    "Each item must contain index, score, and reason. Use zero-based "
-                    "indexes from the provided evidence."
-                ),
+                "content": LLM_RERANKER_PROMPT.system,
             },
             {"role": "user", "content": f"Query: {query}\n\nEvidence:\n{evidence}"},
         ],
+        "metadata": LLM_RERANKER_PROMPT.metadata(),
     }
 
 

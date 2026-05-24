@@ -5,6 +5,7 @@ from typing import Any
 import httpx
 from ragstudio.services.http_client_provider import HttpClientProviderProtocol
 from ragstudio.services.http_retry import raise_for_transient_status, retry_async_http
+from ragstudio.services.prompt_templates import ANSWER_PROMPT
 from ragstudio.services.retrieval_evidence import EvidenceCandidate
 
 
@@ -26,11 +27,7 @@ class RuntimeAnswerService:
             "messages": [
                 {
                     "role": "system",
-                    "content": (
-                        "Answer only from the provided evidence. Cite evidence by its "
-                        "label, such as [S1] or [S2]. If the evidence does not support "
-                        "an answer, say that clearly and do not guess."
-                    ),
+                    "content": ANSWER_PROMPT.system,
                 },
                 {"role": "user", "content": self._prompt(query, evidence)},
             ],
@@ -63,7 +60,9 @@ class RuntimeAnswerService:
         response.raise_for_status()
         body = response.json()
 
-        return self._content(body), self._usage(body)
+        usage = self._usage(body)
+        usage.update(ANSWER_PROMPT.metadata())
+        return self._content(body), usage
 
     async def _post_for_retry(
         self,
