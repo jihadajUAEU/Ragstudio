@@ -34,7 +34,7 @@ ledger, and inspector belong in the document evidence view.
 ## User Experience
 
 On the Documents page or document header, each active/recent document shows a
-compact rail with stage status:
+compact rail with stage status. The baseline flow is:
 
 1. Upload
 2. Vision
@@ -45,10 +45,17 @@ compact rail with stage status:
 7. Materialization
 8. Proof/readiness
 
-Each stage has a visible state such as `pending`, `running`, `complete`,
-`warning`, `blocked`, or `metadata only`. The rail must also show the current
-stage label and a short progress detail, for example `Persisted 4500 of 17699
-canonical chunks`.
+These baseline stages are product vocabulary, not a frontend hardcoded list.
+The backend stage contract owns the ordered stages for each document. If a
+future pipeline adds, removes, renames, or skips a stage, the backend returns
+the revised ordered list and the UI renders it generically. The frontend may
+have optional icon/color mappings for known stage ids, but unknown stage ids
+must still render with a neutral fallback label, status, and detail panel.
+
+Each returned stage has a visible state such as `pending`, `running`,
+`complete`, `warning`, `blocked`, `skipped`, or `metadata_only`. The rail must
+also show the current stage label and a short progress detail, for example
+`Persisted 4500 of 17699 canonical chunks`.
 
 In the document evidence view, the user sees:
 
@@ -132,12 +139,26 @@ The stage contract should include:
 
 - Document identity and status.
 - Current job identity, progress, latest log, and stage.
-- Ordered stage summaries.
+- Ordered stage summaries with stable `id`, display `label`, state, optional
+  order, and fallback display metadata.
 - Ordered stage events.
 - Per-stage detail payloads.
 - Warning summary with stable warning codes.
 - Contract summary with verification and repair/validation fields.
 - Missing-data markers for unavailable sections.
+
+Stage contract compatibility rules:
+
+- Adding a stage: backend emits the new stage in the ordered list; existing UI
+  renders it with generic fallback if no custom renderer exists.
+- Removing or skipping a stage: backend omits it or returns it as `skipped`;
+  frontend does not assume every baseline stage exists.
+- Renaming a stage: keep the stable `id` and change only the display `label`
+  unless the semantics changed.
+- Changing semantics: introduce a new `id` or contract version so historical
+  documents remain interpretable.
+- Historical documents: render the stage list persisted or reconstructed for
+  that document/job, not the latest global pipeline definition.
 
 ## Error Handling
 
@@ -168,6 +189,9 @@ The stage contract should include:
 - A running upload shows a compact rail with the current stage and progress.
 - The document evidence view shows the actual ordered stage flow for the
   selected document.
+- Adding, omitting, or skipping a stage in the backend stage contract does not
+  require React component changes unless a custom stage-specific renderer is
+  desired.
 - The contract stage clearly distinguishes verified executable contracts from
   metadata-only hints.
 - The warning section shows grouped warning counts and keeps
