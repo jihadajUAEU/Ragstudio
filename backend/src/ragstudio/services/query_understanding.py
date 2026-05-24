@@ -176,7 +176,13 @@ def understand_query(query: str, *, domain_expansion: Any | None = None) -> Quer
 
 
 def _reference_hints(query: str) -> list[str]:
-    return list(dict.fromkeys(_REFERENCE_RE.findall(query)))
+    hints = []
+    for match in _REFERENCE_RE.finditer(query):
+        chapter = match.group("chapter")
+        verse = match.group("verse")
+        if chapter and verse:
+            hints.append(f"{chapter}:{verse}")
+    return list(dict.fromkeys(hints))
 
 
 def _needs_graph_context(query: str) -> bool:
