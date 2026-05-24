@@ -1,5 +1,6 @@
 from ragstudio.api.routes import (
     chunks,
+    defaults,
     diagnostics,
     documents,
     domain_profiles,
@@ -17,6 +18,7 @@ from ragstudio.api.routes import (
 
 ROUTERS = [
     health.router,
+    defaults.router,
     settings.router,
     variants.router,
     documents.router,

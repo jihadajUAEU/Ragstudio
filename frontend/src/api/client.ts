@@ -61,6 +61,36 @@ export interface ReindexDocumentOut {
   status: string;
 }
 
+export interface RuntimeDefaultsOut {
+  llm_timeout_ms: number;
+  embedding_timeout_ms: number;
+  embedding_dimensions: number;
+  embedding_batch_size: number;
+  mineru_timeout_ms: number;
+  mineru_poll_interval_ms: number;
+  mineru_max_concurrent_files: number;
+  vision_timeout_ms: number;
+  reranker_timeout_ms: number;
+  chunk_token_size: number;
+  chunk_overlap_token_size: number;
+  context_window: number;
+  max_context_tokens: number;
+  top_k: number;
+  chunk_top_k: number;
+  cosine_better_than_threshold: number;
+  max_total_tokens: number;
+  max_entity_tokens: number;
+  max_relation_tokens: number;
+  llm_model_max_async: number;
+  embedding_func_max_async: number;
+  max_parallel_insert: number;
+}
+
+export interface DefaultsOut {
+  runtime: RuntimeDefaultsOut;
+  policy_versions: Record<string, string>;
+}
+
 export type ApiQueryOptions = Record<string, string | number | boolean | null | undefined>;
 export type PageQueryOptions = Pick<ApiQueryOptions, "limit" | "offset">;
 export const FIRST_LIST_PAGE: PageQueryOptions = { limit: 500, offset: 0 };
@@ -142,6 +172,7 @@ function formatApiDetail(detail: unknown): string {
 
 export const apiClient = {
   health: () => request<HealthOut>("/api/health"),
+  defaults: () => request<DefaultsOut>("/api/defaults"),
   documents: (options: PageQueryOptions = FIRST_LIST_PAGE) =>
     request<Page<DocumentOut>>(withQuery("/api/documents", options)),
   documentParseEvidence: (documentId: string, options: ApiQueryOptions = DOCUMENT_EVIDENCE_QUERY) =>

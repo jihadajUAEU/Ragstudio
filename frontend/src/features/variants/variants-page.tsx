@@ -23,7 +23,7 @@ const queryKeys = {
   variants: ["variants"],
 } as const;
 
-const presetDefaults: Record<VariantPreset, Record<string, unknown>> = {
+const uiVariantPresets: Record<VariantPreset, Record<string, unknown>> = {
   balanced: { top_k: 5, temperature: 0.2, enable_rerank: true },
   precise: { top_k: 3, temperature: 0.1, enable_rerank: true },
   broad: { top_k: 12, temperature: 0.3, enable_rerank: true },
@@ -33,7 +33,7 @@ const presetDefaults: Record<VariantPreset, Record<string, unknown>> = {
 const defaultPreset: VariantPreset = "balanced";
 
 function presetParametersText(preset: VariantPreset) {
-  return JSON.stringify(presetDefaults[preset], null, 2);
+  return JSON.stringify(uiVariantPresets[preset], null, 2);
 }
 
 export function VariantsPage() {

@@ -1094,7 +1094,7 @@ Expected: commit succeeds with only redaction files staged.
 - Test: `frontend/tests/settings-page.test.tsx`
 - Test: `frontend/tests/variants-page.test.tsx`
 
-- [ ] **Step 1: Write failing backend API test**
+- [x] **Step 1: Write failing backend API test**
 
 Create `backend/tests/test_defaults_api.py`:
 
@@ -1121,7 +1121,7 @@ def test_defaults_api_returns_runtime_defaults() -> None:
     assert body["policy_versions"]["retrieval"] == "2026-05-24"
 ```
 
-- [ ] **Step 2: Run backend test to verify it fails**
+- [x] **Step 2: Run backend test to verify it fails**
 
 Run:
 
@@ -1131,7 +1131,7 @@ $env:PYTHONPATH='E:\repos\Ragstudio\backend\src'; pytest backend/tests/test_defa
 
 Expected: FAIL with `404 Not Found` for `/api/defaults`.
 
-- [ ] **Step 3: Add defaults schema and route**
+- [x] **Step 3: Add defaults schema and route**
 
 Create `backend/src/ragstudio/schemas/defaults.py`:
 
@@ -1205,7 +1205,7 @@ from ragstudio.api.routes import defaults
 app.include_router(defaults.router, prefix="/api")
 ```
 
-- [ ] **Step 4: Add frontend client method and tests**
+- [x] **Step 4: Add frontend client method and tests**
 
 In `frontend/src/api/client.ts`, add types:
 
@@ -1263,7 +1263,7 @@ it("fetches runtime defaults", async () => {
 });
 ```
 
-- [ ] **Step 5: Use API defaults in settings page without changing visible behavior**
+- [x] **Step 5: Use API defaults in settings page without changing visible behavior**
 
 In `frontend/src/features/settings/settings-page.tsx`, add:
 
@@ -1293,7 +1293,7 @@ onBlur={() => commitNumberField("top_k", runtimeDefaults.top_k)}
 
 Keep `SETTINGS_DEFAULTS` as a local offline fallback with the same values so the page still renders if `/api/defaults` is unavailable.
 
-- [ ] **Step 6: Clarify variant presets are UI presets**
+- [x] **Step 6: Clarify variant presets are UI presets**
 
 In `frontend/src/features/variants/variants-page.tsx`, rename:
 
@@ -1309,7 +1309,7 @@ const uiVariantPresets = {
 
 Update usages of `presets` to `uiVariantPresets`. This keeps current values and makes the file's hardcoded items accurately scoped to UI presets rather than runtime defaults.
 
-- [ ] **Step 7: Run backend and frontend tests**
+- [x] **Step 7: Run backend and frontend tests**
 
 Run:
 
@@ -1327,7 +1327,7 @@ cd frontend; npm test -- api-client.test.ts settings-page.test.tsx variants-page
 
 Expected: PASS. If this project uses Vitest without `--runInBand`, run `npm test -- api-client.test.ts settings-page.test.tsx variants-page.test.tsx`.
 
-- [ ] **Step 8: Regenerate OpenAPI bindings if the project expects generated API drift to be committed**
+- [x] **Step 8: Regenerate OpenAPI bindings if the project expects generated API drift to be committed**
 
 Run:
 
@@ -1337,7 +1337,7 @@ Run:
 
 Expected: OpenAPI schema updates include `/api/defaults`. If the shell script cannot run in PowerShell, run it from Git Bash.
 
-- [ ] **Step 9: Commit defaults API and frontend sync**
+- [x] **Step 9: Commit defaults API and frontend sync**
 
 Run:
 

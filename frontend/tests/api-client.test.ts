@@ -153,4 +153,24 @@ describe("apiClient document uploads", () => {
     ]);
     expect(bodies[0]).toMatchObject({ query: "reference", limit: 5, offset: 20 });
   });
+
+  it("fetches runtime defaults", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({
+            runtime: { top_k: 40, chunk_top_k: 20, max_context_tokens: 2000 },
+            policy_versions: { retrieval: "2026-05-24" },
+          }),
+          { headers: { "Content-Type": "application/json" } },
+        ),
+      ),
+    );
+
+    const result = await apiClient.defaults();
+
+    expect(fetch).toHaveBeenCalledWith("/api/defaults", expect.any(Object));
+    expect(result.policy_versions.retrieval).toBe("2026-05-24");
+  });
 });

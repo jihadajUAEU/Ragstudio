@@ -1175,13 +1175,17 @@ async def test_reranker_connection_test_uses_saved_llm_key_for_llm_provider(clie
                 "Content-Type": "application/json",
                 "Authorization": "Bearer saved-llm-token",
             },
-            "json": {
-                "model": "gpt-4.1",
-                "temperature": 0,
-                "messages": requests[0]["json"]["messages"],
-            },
-        }
-    ]
+                "json": {
+                    "model": "gpt-4.1",
+                    "temperature": 0,
+                    "messages": requests[0]["json"]["messages"],
+                    "metadata": {
+                        "prompt_id": "llm_reranker.v1",
+                        "prompt_version": "2026-05-24",
+                    },
+                },
+            }
+        ]
 
 
 @pytest.mark.asyncio
