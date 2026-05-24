@@ -58,6 +58,7 @@ class MetadataQualityProfile:
     reference_type: str | None
     equation_blocks_allowed: bool
     structured_references: bool
+    require_resolved_reference_unit: bool
     missing_required_script_action: str
     missing_optional_script_action: str
     materialization_policy: str
@@ -128,6 +129,7 @@ class DomainMetadataQualityGate:
             reference_type=reference_type,
             equation_blocks_allowed=expected_profile.allows_equations_as_content(),
             structured_references=semantics.profile_name != "generic",
+            require_resolved_reference_unit=_reference_unit_resolution_required(custom_json),
             missing_required_script_action=_quality_action(
                 quality_policy.get("missing_required_script_action"),
                 default="warn",
@@ -1424,7 +1426,11 @@ class DomainMetadataQualityGate:
             return True
         if not chunk.text.strip():
             return False
-        return bool(profile.structured_references and profile.reference_unit)
+        return bool(
+            profile.structured_references
+            and profile.reference_unit
+            and profile.require_resolved_reference_unit
+        )
 
     def _is_provenance_only_chunk(self, chunk: AdapterChunk) -> bool:
         if chunk.content_type == "reference_provenance":
@@ -1657,6 +1663,18 @@ def _materialization_policy(value: Any) -> str:
     }:
         return str(value)
     return "block_if_required_scripts_missing"
+
+
+def _reference_unit_resolution_required(custom_json: dict[str, Any]) -> bool:
+    reference_contract = custom_json.get("reference_contract")
+    if isinstance(reference_contract, dict) and reference_contract.get("verified") is False:
+        return False
+    validation = custom_json.get("reference_contract_validation")
+    if isinstance(validation, dict) and validation.get("status") == "unverified":
+        return False
+    if custom_json.get("contract_status") == "metadata_only":
+        return False
+    return True
 
 
 def _string_value(value: Any) -> str | None:

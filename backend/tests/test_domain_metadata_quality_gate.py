@@ -1016,3 +1016,142 @@ def test_domain_quality_gate_builds_retrieval_trace_from_same_warning_shape():
         "warning_counts": {"reference_unit_missing_expected_script": 2},
         "affected_candidate_ids": ["metadata:chunk-1", "native:chunk-2"],
     }
+
+
+@pytest.mark.parametrize(
+    "contract_fields",
+    [
+        {"contract_status": "metadata_only"},
+        {"reference_contract": {"verified": False, "anchors": [], "canonical_units": False}},
+        {
+            "reference_contract_validation": {
+                "status": "unverified",
+                "selected_source": None,
+                "selected_strategy": None,
+                "matched_units": 0,
+                "matched_pages": [],
+                "candidates": [],
+            }
+        },
+    ],
+)
+def test_unverified_reference_schema_does_not_emit_reference_unit_unresolved(contract_fields):
+    metadata = DomainMetadata(
+        domain="policy",
+        document_type="insurance_policy",
+        language="mixed",
+        custom_json={
+            "reference_schema": {
+                "type": "bilingual_section_numbering",
+                "fields": {"clause": "clause"},
+                "canonical_ref_template": "{clause}",
+            },
+            **contract_fields,
+            "domain_structure": {
+                "primary_anchor": {
+                    "regex": r"^(?:Clause|البند)\s+(?P<clause>\d+)",
+                    "unit": "clause",
+                    "verified": False,
+                }
+            },
+            "quality_policy": {
+                "required_scripts": ["latin"],
+                "missing_required_script_action": "warn",
+            },
+        },
+    )
+    chunk = AdapterChunk(
+        text="Definitions and general terms without a clause anchor.",
+        source_location={"page": 1},
+        metadata={},
+    )
+
+    report = DomainMetadataQualityGate().validate_adapter_chunks(
+        [chunk],
+        domain_metadata=metadata,
+    )
+
+    assert "reference_unit_unresolved" not in report["parser_quality"]["warning_counts"]
+    assert report["index_quality_report"]["summary"]["reference_unit_unresolved_count"] == 0
+
+
+def test_metadata_only_reference_hints_keep_independent_script_materialization_gate():
+    metadata = DomainMetadata(
+        domain="policy",
+        document_type="insurance_policy",
+        language="mixed",
+        custom_json={
+            "reference_schema": {
+                "type": "bilingual_section_numbering",
+                "fields": {"clause": "clause"},
+                "canonical_ref_template": "{clause}",
+            },
+            "contract_status": "metadata_only",
+            "quality_policy": {
+                "required_scripts": ["latin"],
+                "missing_required_script_action": "block",
+                "materialization_policy": "block_if_required_scripts_missing",
+            },
+        },
+    )
+    chunk = AdapterChunk(
+        text="البند 12 تعريفات وشروط عامة.",
+        source_location={"page": 1, "reference": "12"},
+        metadata={"reference_metadata": {"references": ["12"]}},
+    )
+
+    report = DomainMetadataQualityGate().validate_adapter_chunks(
+        [chunk],
+        domain_metadata=metadata,
+    )
+
+    assert report["parser_quality"]["warning_counts"] == {
+        "reference_unit_missing_expected_script": 1
+    }
+    assert report["index_quality_report"]["summary"][
+        "reference_units_missing_expected_script"
+    ] == 1
+    assert report["index_quality_report"]["summary"]["reference_unit_unresolved_count"] == 0
+    policy = chunk.metadata["quality_action_policy"]
+    assert policy["index_vector"] is False
+    assert policy["project_graph"] is False
+    assert "missing_expected_script:latin" in policy["quality_flags"]
+
+
+def test_verified_reference_contract_still_enforces_unresolved_reference_units():
+    metadata = DomainMetadata(
+        domain="policy",
+        document_type="insurance_policy",
+        language="mixed",
+        custom_json={
+            "reference_schema": {
+                "type": "bilingual_section_numbering",
+                "fields": {"clause": "clause"},
+                "canonical_ref_template": "{clause}",
+            },
+            "domain_structure": {
+                "primary_anchor": {
+                    "regex": r"^(?:Clause|البند)\s+(?P<clause>\d+)",
+                    "unit": "clause",
+                    "verified": True,
+                }
+            },
+            "quality_policy": {
+                "required_scripts": ["latin"],
+                "missing_required_script_action": "warn",
+            },
+        },
+    )
+    chunk = AdapterChunk(
+        text="Definitions and general terms without a clause anchor.",
+        source_location={"page": 1},
+        metadata={},
+    )
+
+    report = DomainMetadataQualityGate().validate_adapter_chunks(
+        [chunk],
+        domain_metadata=metadata,
+    )
+
+    assert report["parser_quality"]["warning_counts"]["reference_unit_unresolved"] == 1
+    assert report["index_quality_report"]["summary"]["reference_unit_unresolved_count"] == 1

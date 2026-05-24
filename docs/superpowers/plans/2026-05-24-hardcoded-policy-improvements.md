@@ -25,6 +25,7 @@ The plan is split into independently committable tasks:
 7. Reference and query regex registry.
 8. Domain, API, proof, and query policy classification.
 9. Documentation and verification.
+10. Structured-reference enforcement follow-up.
 
 ## File Structure
 
@@ -165,6 +166,11 @@ The plan is split into independently committable tasks:
 - Test: `backend/tests/test_domain_profile_registry.py`
 - Test: `backend/tests/test_parser_normalization.py`
 - Test: `backend/tests/test_proof_packet_validator.py`
+
+- Modify: `backend/src/ragstudio/services/domain_metadata_quality_gate.py`
+  - Enforce `reference_unit_unresolved` only when the reference contract is verified/executable.
+- Test: `backend/tests/test_domain_metadata_quality_gate.py`
+  - Adds regression coverage for `metadata_only` reference hints versus verified executable contracts.
 
 ---
 
@@ -2204,11 +2210,208 @@ Expected: commit succeeds with only documentation files staged.
 
 ---
 
+### Task 10: Structured-Reference Enforcement Follow-Up
+
+**Recommendation:** Change structured-reference enforcement to require a verified/executable contract. For `metadata_only`, keep `reference_schema` and `domain_structure` as hints for retrieval/display, but do not require every chunk to resolve to a reference unit. Keep script, table, and layout gates from the vision model when they are independently supported by evidence.
+
+**Files:**
+- Modify: `backend/src/ragstudio/services/domain_metadata_quality_gate.py`
+- Test: `backend/tests/test_domain_metadata_quality_gate.py`
+
+- [x] **Step 1: Write regression tests for unverified versus verified reference contracts**
+
+Append to `backend/tests/test_domain_metadata_quality_gate.py`:
+
+```python
+def test_unverified_reference_schema_does_not_emit_reference_unit_unresolved():
+    metadata = DomainMetadata(
+        domain="policy",
+        document_type="insurance_policy",
+        language="mixed",
+        custom_json={
+            "reference_schema": {
+                "type": "bilingual_section_numbering",
+                "fields": {"clause": "clause"},
+                "canonical_ref_template": "{clause}",
+            },
+            "domain_structure": {
+                "primary_anchor": {
+                    "regex": r"^(?:Clause|البند)\s+(?P<clause>\d+)",
+                    "unit": "clause",
+                    "verified": False,
+                }
+            },
+            "quality_policy": {
+                "required_scripts": ["latin"],
+                "missing_required_script_action": "warn",
+            },
+        },
+    )
+    chunk = AdapterChunk(
+        text="Definitions and general terms without a clause anchor.",
+        source_location={"page": 1},
+        metadata={},
+    )
+
+    report = DomainMetadataQualityGate().validate_adapter_chunks(
+        [chunk],
+        domain_metadata=metadata,
+    )
+
+    assert "reference_unit_unresolved" not in report["parser_quality"]["warning_counts"]
+    assert report["index_quality_report"]["summary"]["reference_unit_unresolved_count"] == 0
+
+
+def test_verified_reference_contract_still_enforces_unresolved_reference_units():
+    metadata = DomainMetadata(
+        domain="policy",
+        document_type="insurance_policy",
+        language="mixed",
+        custom_json={
+            "reference_schema": {
+                "type": "bilingual_section_numbering",
+                "fields": {"clause": "clause"},
+                "canonical_ref_template": "{clause}",
+            },
+            "domain_structure": {
+                "primary_anchor": {
+                    "regex": r"^(?:Clause|البند)\s+(?P<clause>\d+)",
+                    "unit": "clause",
+                    "verified": True,
+                }
+            },
+            "quality_policy": {
+                "required_scripts": ["latin"],
+                "missing_required_script_action": "warn",
+            },
+        },
+    )
+    chunk = AdapterChunk(
+        text="Definitions and general terms without a clause anchor.",
+        source_location={"page": 1},
+        metadata={},
+    )
+
+    report = DomainMetadataQualityGate().validate_adapter_chunks(
+        [chunk],
+        domain_metadata=metadata,
+    )
+
+    assert report["parser_quality"]["warning_counts"]["reference_unit_unresolved"] == 1
+    assert report["index_quality_report"]["summary"]["reference_unit_unresolved_count"] == 1
+```
+
+Reviewer follow-up added during implementation: make the unverified case
+parameterized across each disabling signal (`contract_status=metadata_only`,
+`reference_contract.verified=false`, and
+`reference_contract_validation.status=unverified`). Also add a regression where
+metadata-only reference hints still produce script/materialization blocking when
+`reference_metadata.references` independently identifies a reference unit.
+
+- [x] **Step 2: Run the focused tests and confirm the first test fails before implementation**
+
+Run:
+
+```powershell
+$env:PYTHONPATH='E:\repos\Ragstudio\backend\src'; pytest backend/tests/test_domain_metadata_quality_gate.py -k "unverified_reference_schema or verified_reference_contract" -q
+```
+
+Expected before implementation: FAIL because unverified `reference_schema` currently makes `ReferenceSemantics.profile_name` structured and `DomainMetadataQualityGate` treats the chunk as requiring a resolved reference unit.
+
+- [x] **Step 3: Split reference hints from executable enforcement**
+
+Keep `ReferenceSemantics.from_metadata()` unchanged so `reference_schema` and
+standard reference metadata still act as retrieval/display hints and existing
+structured-reference reporting remains compatible.
+
+In `backend/src/ragstudio/services/domain_metadata_quality_gate.py`, change
+`MetadataQualityProfile.structured_references` from:
+
+```python
+structured_references=semantics.profile_name != "generic",
+```
+
+to:
+
+```python
+structured_references=(
+    semantics.profile_name != "generic"
+    and _reference_enforcement_enabled(custom_json)
+),
+```
+
+Add:
+
+```python
+def _reference_enforcement_enabled(custom_json: dict[str, Any]) -> bool:
+    reference_contract = custom_json.get("reference_contract")
+    if isinstance(reference_contract, dict) and reference_contract.get("verified") is False:
+        return False
+    validation = custom_json.get("reference_contract_validation")
+    if isinstance(validation, dict) and validation.get("status") == "unverified":
+        return False
+    if custom_json.get("contract_status") == "metadata_only":
+        return False
+    return True
+```
+
+This keeps vision-derived `reference_schema` useful for retrieval/display hints
+while preventing unverified `metadata_only` contracts from becoming hard quality
+gates.
+
+Reviewer follow-up added during implementation: keep `structured_references`
+as the hint/reporting signal and add a separate
+`require_resolved_reference_unit` flag. `annotate_reference_quality()` must still
+run for metadata-only hints so independently evidenced script/table/layout gates
+continue to produce quality reports and materialization policy.
+
+- [x] **Step 4: Keep independent script/table/layout gates intact**
+
+Do not remove or weaken these paths in `backend/src/ragstudio/services/domain_metadata_quality_gate.py`:
+
+```python
+required_scripts = set(contract.required_scripts)
+optional_scripts = set(contract.optional_scripts)
+required_scripts_by_unit_role = dict(contract.required_scripts_by_unit_role)
+optional_scripts_by_unit_role = dict(contract.optional_scripts_by_unit_role)
+```
+
+The intended behavior is:
+
+- script gates still run when `quality_policy.required_scripts`, role-scoped scripts, parser metadata, or chunk metadata independently identifies expected scripts;
+- table/layout gates still run from parser metadata and layout quality policy;
+- only the global “every content chunk must resolve to a reference unit” rule requires `contract.verified`.
+
+- [x] **Step 5: Run validation**
+
+Run:
+
+```powershell
+$env:PYTHONPATH='E:\repos\Ragstudio\backend\src'; pytest backend/tests/test_domain_metadata_quality_gate.py backend/tests/test_reference_metadata.py backend/tests/test_reference_contracts.py -q
+```
+
+Expected: PASS. The new regression proves `metadata_only` no longer creates `reference_unit_unresolved`, while verified executable contracts still enforce unresolved reference units.
+
+- [ ] **Step 6: Commit the enforcement fix**
+
+Run:
+
+```powershell
+git add backend/src/ragstudio/services/domain_metadata_quality_gate.py backend/tests/test_domain_metadata_quality_gate.py docs/superpowers/plans/2026-05-24-hardcoded-policy-improvements.md
+git commit -m "fix: require verified reference contracts for unresolved-unit enforcement"
+```
+
+Expected: commit succeeds with only the structured-reference enforcement fix and plan update staged.
+
+---
+
 ## Self-Review
 
 **Spec coverage:** The plan covers constants, regex patterns, prompts, scoring heuristics, thresholds, operational guardrails, worker leases, upload limits, persistence limits, metric gates, eval weights, backend variant presets, frontend default synchronization, API bounds, domain profile defaults, chunk profile word targets, proof protocol constants, query-hypothesis protocol vocabulary, provider manifest vocabulary, and retrieval candidate expansion constants. It distinguishes standard defaults from design limitations by keeping stable defaults while moving tunable heuristics into named policy modules or explicitly classifying stable protocol constants. It lists concrete improvement items and maps each to files, tests, and verification commands.
 
 **Placeholder scan:** The plan avoids placeholder instructions. Each code-changing step includes concrete code or exact replacement patterns, exact file paths, and focused test commands with expected results.
+
+**Post-review addition:** Task 10 captures the `metadata_only` reference-schema recommendation. It separates vision-proposed reference hints from verified executable reference contracts, preserves independently evidenced script/table/layout quality gates, and requires a focused regression test for both unverified and verified reference behavior.
 
 **Type consistency:** New names used across tasks are consistent: `RUNTIME_DEFAULTS`, `RUNTIME_LIMITS`, `DEFAULT_RETRIEVAL_POLICY`, `PromptTemplate`, `REDACTION_RULES`, `DEFAULT_OPERATIONAL_POLICY`, `SCRIPT_PATTERNS`, `STATIC_POLICY_ITEMS`, `DefaultsOut`, and `RuntimeDefaultsOut`.
 
