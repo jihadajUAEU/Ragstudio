@@ -2125,7 +2125,7 @@ Expected: commit succeeds with only static policy classification files staged.
 - Create or Modify: `docs/architecture/hardcoded-policy-inventory.md` if `docs/architecture/` exists; otherwise create `docs/hardcoded-policy-inventory.md`
 - Test: focused backend and frontend test commands from this task.
 
-- [ ] **Step 1: Write the architecture note**
+- [x] **Step 1: Write the architecture note**
 
 Create `docs/hardcoded-policy-inventory.md` if there is no existing `docs/architecture/` directory. Use this content:
 
@@ -2160,7 +2160,7 @@ Ragstudio keeps product runtime defaults, retrieval policy, prompts, and public-
 - Proof packet IDs, proof error codes, provider manifest vocabulary, query-hypothesis vocabularies, and block-type vocabularies are protocol constants. Do not tune them like scoring weights.
 ```
 
-- [ ] **Step 2: Run backend verification**
+- [x] **Step 2: Run backend verification**
 
 Run:
 
@@ -2170,7 +2170,7 @@ $env:PYTHONPATH='E:\repos\Ragstudio\backend\src'; pytest backend/tests/test_sett
 
 Expected: PASS.
 
-- [ ] **Step 3: Run frontend verification**
+- [x] **Step 3: Run frontend verification**
 
 Run:
 
@@ -2180,7 +2180,7 @@ cd frontend; npm test -- api-client.test.ts settings-page.test.tsx variants-page
 
 Expected: PASS.
 
-- [ ] **Step 4: Inspect changed files**
+- [x] **Step 4: Inspect changed files**
 
 Run:
 
@@ -2191,7 +2191,7 @@ git diff -- backend/src/ragstudio/services/runtime_defaults.py backend/src/ragst
 
 Expected: diff shows behavior-preserving refactors and named registries, not unrelated UI or retrieval tuning.
 
-- [ ] **Step 5: Commit documentation**
+- [x] **Step 5: Commit documentation**
 
 Run:
 
