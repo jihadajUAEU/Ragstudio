@@ -2124,7 +2124,7 @@ def _confirmed_hypothesis_answer_allowed(
         verification.confirmed
         and bool(verification.reference)
         and hypothesis.intent == "find_word_occurrence"
-        and hypothesis.answer_shape in {"surah_and_verse", "reference"}
+        and hypothesis.answer_shape == "reference"
         and getattr(domain_expansion, "domain_family", None) == "reference_heavy"
     )
 

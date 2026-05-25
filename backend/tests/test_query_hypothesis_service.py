@@ -5,6 +5,7 @@ from ragstudio.services.query_hypothesis_service import (
     QueryHypothesis,
     QueryHypothesisService,
     QueryTargetTerm,
+    _probable_answer,
     parse_query_hypothesis_payload,
 )
 
@@ -41,18 +42,21 @@ def test_parse_hypothesis_extracts_transliteration_target_and_probable_answer():
             }
         ],
         "domain_hint": "quran",
-        "answer_shape": "surah_and_verse",
+        "answer_shape": "reference",
         "probable_answer": {
-            "surah": "Maryam",
-            "surah_number": 19,
-            "ayah": 13,
+            "reference_groups": {"chapter": "19", "verse": "13"},
+            "display_label": "Surah Maryam, 19:13",
             "matched_term": "حنانا",
         },
         "confidence": 0.82,
         "needs_clarification": False,
     }
 
-    hypothesis = QueryHypothesisService.parse_hypothesis(raw, original_query="where is hanan")
+    hypothesis = QueryHypothesisService.parse_hypothesis(
+        raw,
+        original_query="where is hanan",
+        reference_contracts=[chapter_verse_contract()],
+    )
 
     assert hypothesis.intent == "find_word_occurrence"
     assert hypothesis.target_terms == [
@@ -64,11 +68,11 @@ def test_parse_hypothesis_extracts_transliteration_target_and_probable_answer():
         )
     ]
     assert hypothesis.domain_hint == "quran"
-    assert hypothesis.answer_shape == "surah_and_verse"
+    assert hypothesis.answer_shape == "reference"
     assert hypothesis.probable_answer == ProbableAnswer(
-        surah="Maryam",
-        surah_number=19,
-        ayah=13,
+        reference="19:13",
+        reference_groups={"chapter": "19", "verse": "13"},
+        display_label="Surah Maryam, 19:13",
         matched_term="حنانا",
     )
     assert hypothesis.confidence == pytest.approx(0.82)
@@ -109,6 +113,33 @@ def test_probable_answer_uses_contract_identity_fields():
         "unit_ref": "104",
     }
     assert hypothesis.probable_answer.matched_term == "mercy"
+
+
+def test_probable_answer_uses_reference_groups_without_domain_fields():
+    answer = _probable_answer(
+        {
+            "matched_term": "mercy",
+            "reference_groups": {"chapter": "19", "verse": "13"},
+            "display_label": "Chapter 19, verse 13",
+        },
+        reference_contracts=[
+            {
+                "reference_contract": {
+                    "verified": True,
+                    "canonical_units": True,
+                    "canonical_ref_template": "{chapter}:{verse}",
+                    "required_groups": ["chapter", "verse"],
+                }
+            }
+        ],
+    )
+
+    assert answer is not None
+    assert answer.reference == "19:13"
+    assert answer.reference_groups == {"chapter": "19", "verse": "13"}
+    assert answer.display_label == "Chapter 19, verse 13"
+    assert not hasattr(answer, "surah_number")
+    assert not hasattr(answer, "ayah")
 
 
 def test_probable_answer_uses_matching_contract_template_when_multiple_contracts_exist():
@@ -162,7 +193,7 @@ def test_parse_hypothesis_drops_unsafe_and_oversized_terms():
             {"surface": "حنانا", "script": "arabic", "term_type": "exact_text"},
         ],
         "domain_hint": "quran",
-        "answer_shape": "surah_and_verse",
+        "answer_shape": "reference",
         "confidence": 2,
         "needs_clarification": False,
     }
@@ -179,11 +210,12 @@ def test_parse_hypothesis_sanitizes_unsafe_probable_answer_strings():
         "intent": "find_word_occurrence",
         "target_terms": [{"surface": "hanan", "script": "latin", "term_type": "transliteration"}],
         "domain_hint": "quran",
-        "answer_shape": "surah_and_verse",
+        "answer_shape": "reference",
         "probable_answer": {
             "surah": "Maryam\nInjected",
             "surah_number": 19,
             "ayah": 13,
+            "display_label": "Maryam\nInjected",
             "matched_term": "http://example.com",
             "reference": "/Users/meet/private",
         },
@@ -193,9 +225,7 @@ def test_parse_hypothesis_sanitizes_unsafe_probable_answer_strings():
     hypothesis = QueryHypothesisService.parse_hypothesis(raw, original_query="where is hanan")
 
     assert hypothesis.probable_answer == ProbableAnswer(
-        surah="Maryam Injected",
-        surah_number=19,
-        ayah=13,
+        display_label="Maryam Injected",
     )
 
 
@@ -483,6 +513,24 @@ def article_clause_contract() -> dict[str, object]:
     }
 
 
+def chapter_verse_contract() -> dict[str, object]:
+    return {
+        "reference_contract": {
+            "schema_type": "chapter_verse",
+            "canonical_ref_template": "{chapter}:{verse}",
+            "required_groups": ["chapter", "verse"],
+            "verified": True,
+            "anchors": [
+                {
+                    "kind": "primary_anchor",
+                    "regex": r"(?P<chapter>\d{1,4}):(?P<verse>\d{1,6})",
+                    "verified": True,
+                }
+            ],
+        }
+    }
+
+
 def book_hadith_contract() -> dict[str, object]:
     return {
         "reference_contract": {
@@ -521,7 +569,7 @@ async def test_hypothesize_returns_llm_json_hypothesis(monkeypatch):
                                 '{"intent":"find_word_occurrence",'
                                 '"target_terms":[{"surface":"hanan","script":"latin",'
                                 '"term_type":"transliteration"}],'
-                                '"domain_hint":"quran","answer_shape":"surah_and_verse",'
+                                '"domain_hint":"quran","answer_shape":"reference",'
                                 '"confidence":0.8}'
                             )
                         }

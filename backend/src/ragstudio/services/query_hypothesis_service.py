@@ -41,7 +41,6 @@ _ALLOWED_DOMAIN_HINTS = {
     "unknown",
 }
 _ALLOWED_ANSWER_SHAPES = {
-    "surah_and_verse",
     "reference",
     "short_answer",
     "explanation",
@@ -91,15 +90,12 @@ class ProbableAnswer:
     reference: str | None = None
     reference_groups: dict[str, str] | None = None
     display_label: str | None = None
-    surah: str | None = None
-    surah_number: int | None = None
-    ayah: int | None = None
 
     def to_trace(self) -> dict[str, Any]:
         return {
             key: value
             for key, value in asdict(self).items()
-            if value is not None and value != ""
+            if value is not None
         }
 
 
@@ -480,12 +476,6 @@ def _probable_answer(
 ) -> ProbableAnswer | None:
     if not isinstance(raw, dict):
         return None
-    surah_number = _positive_int(raw.get("surah_number"))
-    ayah = _positive_int(raw.get("ayah"))
-    if raw.get("surah_number") is not None and surah_number is None:
-        return None
-    if raw.get("ayah") is not None and ayah is None:
-        return None
     reference_group_match = _reference_groups_from_contracts(raw, reference_contracts)
     reference_groups = reference_group_match.groups if reference_group_match else None
     contract_reference = (
@@ -508,9 +498,6 @@ def _probable_answer(
             raw.get("display_label", raw.get("reference_label")),
             max_length=120,
         ),
-        surah=_safe_short_text(raw.get("surah"), max_length=80),
-        surah_number=surah_number,
-        ayah=ayah,
     )
 
 
@@ -705,6 +692,8 @@ def _reference_groups_from_contracts(
     raw: dict[str, Any],
     reference_contracts: list[dict[str, Any]],
 ) -> _ReferenceGroupMatch | None:
+    raw_groups = raw.get("reference_groups")
+    group_sources = [raw_groups, raw] if isinstance(raw_groups, dict) else [raw]
     for contract in reference_contracts:
         reference_contract = _reference_contract_payload(contract)
         if reference_contract.get("verified") is not True:
@@ -713,14 +702,15 @@ def _reference_groups_from_contracts(
         fields = _string_list(reference_contract.get("required_groups"))
         if not fields:
             fields = sorted(_template_fields(template) or set()) if template else []
-        groups: dict[str, str] = {}
-        for field_name in fields:
-            value = _safe_reference_group(raw.get(field_name))
-            if value is None:
-                break
-            groups[field_name] = value
-        if len(groups) == len(fields) and groups:
-            return _ReferenceGroupMatch(groups=groups, template=template)
+        for source in group_sources:
+            groups: dict[str, str] = {}
+            for field_name in fields:
+                value = _safe_reference_group(source.get(field_name))
+                if value is None:
+                    break
+                groups[field_name] = value
+            if len(groups) == len(fields) and groups:
+                return _ReferenceGroupMatch(groups=groups, template=template)
     return None
 
 

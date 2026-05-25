@@ -1,4 +1,5 @@
 import asyncio
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -13,6 +14,7 @@ from ragstudio.services.query_hypothesis_service import (
     QueryHypothesisService,
     QueryTargetTerm,
 )
+from ragstudio.services.query_hypothesis_verifier import QueryHypothesisVerification
 from ragstudio.services.retrieval_evidence import (
     EvidenceCandidate,
     apply_query_aware_ordering,
@@ -22,6 +24,7 @@ from ragstudio.services.retrieval_evidence import (
 from ragstudio.services.retrieval_fusion import RetrievalFusion
 from ragstudio.services.retrieval_orchestrator import (
     RetrievalOrchestrator,
+    _confirmed_hypothesis_answer_allowed,
     _evidence_from_context,
     _graph_seed_candidates,
 )
@@ -361,6 +364,35 @@ def test_plan_for_reference_context_query_sets_graph_context_strategy():
     assert plan.intent == "reference"
     assert plan.retrieval_strategy == "graph_context_hybrid"
     assert plan.graph_context_required is True
+
+
+def test_confirmed_hypothesis_answer_requires_generic_reference_shape():
+    hypothesis = QueryHypothesis(
+        original_query="find mercy",
+        valid=True,
+        intent="find_word_occurrence",
+        target_terms=[
+            QueryTargetTerm(surface="mercy", script="latin", term_type="exact_text")
+        ],
+        answer_shape="surah_and_verse",
+        probable_answer=ProbableAnswer(reference="19:13"),
+    )
+    verification = QueryHypothesisVerification(
+        status="confirmed",
+        reason="target_term_found_in_evidence",
+        target_terms=["mercy"],
+        matched_terms=["mercy"],
+        reference="19:13",
+    )
+
+    assert (
+        _confirmed_hypothesis_answer_allowed(
+            hypothesis,
+            verification,
+            domain_expansion=SimpleNamespace(domain_family="reference_heavy"),
+        )
+        is False
+    )
 
 
 def test_plan_for_arabic_token_carries_retrieval_passes():
@@ -1326,7 +1358,7 @@ class HananHypothesisService:
                 )
             ],
             domain_hint="quran",
-            answer_shape="surah_and_verse",
+            answer_shape="reference",
             probable_answer=ProbableAnswer(
                 reference="19:13",
                 display_label="Surah Maryam, 19:13",

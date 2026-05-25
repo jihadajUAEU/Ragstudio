@@ -44,11 +44,10 @@ def test_verifier_confirms_probable_reference_and_matched_arabic_term():
             )
         ],
         domain_hint="quran",
-        answer_shape="surah_and_verse",
+        answer_shape="reference",
         probable_answer=ProbableAnswer(
-            surah="Maryam",
-            surah_number=19,
-            ayah=13,
+            reference="19:13",
+            display_label="Surah Maryam, 19:13",
             matched_term="حنانا",
         ),
         confidence=0.82,
@@ -82,7 +81,7 @@ def test_verifier_confirms_probable_reference_and_matched_arabic_term():
 
     assert verification.status == "confirmed"
     assert verification.reference == "19:13"
-    assert verification.surah == "Maryam"
+    assert verification.reference_label == "Surah Maryam, 19:13"
     assert verification.matched_terms == ["حنانا"]
     assert verification.evidence_label == "S1"
 
@@ -123,7 +122,7 @@ def test_verifier_rejects_when_reference_does_not_match_probable_answer():
     hypothesis = QueryHypothesis(
         original_query="where is hanan",
         target_terms=[QueryTargetTerm(surface="hanan", script="latin")],
-        probable_answer=ProbableAnswer(surah_number=19, ayah=13, matched_term="حنانا"),
+        probable_answer=ProbableAnswer(reference="19:13", matched_term="حنانا"),
         valid=True,
     )
     candidate = EvidenceCandidate(
@@ -149,6 +148,27 @@ def test_verifier_rejects_when_reference_does_not_match_probable_answer():
 
     assert verification.status == "rejected"
     assert verification.reason == "target_term_not_confirmed_in_evidence"
+
+
+def test_verifier_does_not_synthesize_chapter_verse_reference_without_contract():
+    hypothesis = QueryHypothesis(
+        original_query="find mercy",
+        valid=True,
+        intent="find_word_occurrence",
+        target_terms=[
+            QueryTargetTerm(surface="mercy", script="latin", term_type="exact_text")
+        ],
+        answer_shape="reference",
+        probable_answer=ProbableAnswer(
+            matched_term="mercy",
+            display_label="Chapter 19, verse 13",
+        ),
+    )
+
+    verification = QueryHypothesisVerifier().verify(hypothesis, [], document_ids=[])
+
+    assert verification.reference is None
+    assert verification.status == "unverified"
 
 
 def test_verifier_confirms_possible_reference_only_when_evidence_matches():

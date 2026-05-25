@@ -24,9 +24,6 @@ class QueryHypothesisVerification:
     possible_reference_results: list[dict[str, str | None]] = field(default_factory=list)
     reference: str | None = None
     reference_label: str | None = None
-    surah: str | None = None
-    surah_number: int | None = None
-    ayah: int | None = None
     evidence_candidate_id: str | None = None
     evidence_label: str | None = None
 
@@ -115,15 +112,12 @@ class QueryHypothesisVerifier:
                 possible_reference_results=possible_reference_results,
                 reference=reference or expected_reference,
                 reference_label=answer.display_label if answer is not None else None,
-                surah=answer.surah if answer is not None else None,
-                surah_number=answer.surah_number if answer is not None else None,
-                ayah=answer.ayah if answer is not None else None,
                 evidence_candidate_id=candidate.candidate_id,
                 evidence_label=f"S{index}",
             )
 
         return QueryHypothesisVerification(
-            status="rejected",
+            status="rejected" if evidence else "unverified",
             reason="target_term_not_confirmed_in_evidence",
             target_terms=target_terms,
             matched_terms=[],
@@ -269,11 +263,7 @@ def _expected_reference(hypothesis: QueryHypothesis) -> str | None:
     answer = hypothesis.probable_answer
     if answer is None:
         return None
-    if answer.reference:
-        return answer.reference
-    if answer.surah_number is not None and answer.ayah is not None:
-        return f"{answer.surah_number}:{answer.ayah}"
-    return None
+    return answer.reference
 
 
 def _reference(candidate: EvidenceCandidate, *, matched_terms: list[str]) -> str | None:
