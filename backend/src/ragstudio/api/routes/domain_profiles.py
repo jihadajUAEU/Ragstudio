@@ -17,6 +17,7 @@ from ragstudio.services.metadata_json_schema import (
     validate_custom_json,
 )
 from ragstudio.services.page_sampler import PageSampler
+from ragstudio.services.upload_contract_package import build_analysis_binding
 
 router = APIRouter(prefix="/api/domain-profiles", tags=["domain-profiles"])
 
@@ -57,6 +58,7 @@ async def suggest_domain_metadata(
     filename = file.filename or "upload"
     content_type = file.content_type or "application/octet-stream"
     data = await read_upload_file(file)
+    analysis_binding = build_analysis_binding(filename=filename, content=data)
     sampler = PageSampler(max_pages=10)
     pages = sampler.sample(data, filename=filename, content_type=content_type)
     if not pages:
@@ -65,7 +67,7 @@ async def suggest_domain_metadata(
             detail="Could not sample pages from this file for AI metadata autosuggest.",
         )
     try:
-        return await DomainMetadataAiSuggester(
+        suggestion = await DomainMetadataAiSuggester(
             http_client_provider=request.app.state.http_clients,
         ).suggest(
             settings_profile=settings_profile,
@@ -75,6 +77,7 @@ async def suggest_domain_metadata(
             sampler_warnings=sampler.warnings,
             baseline_profile=baseline_profile,
         )
+        return suggestion.model_copy(update={"analysis_binding": analysis_binding})
     except ValueError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 

@@ -34,6 +34,7 @@ from ragstudio.services.reference_contract_validator import (
     ReferenceContractValidator,
 )
 from ragstudio.services.reference_contracts import declared_required_groups
+from ragstudio.services.upload_contract_package import normalize_upload_ready_domain_metadata
 
 AUTOSUGGEST_MIN_TIMEOUT_MS = 60_000
 AUTOSUGGEST_INITIAL_MAX_TOKENS = 4_096
@@ -167,7 +168,6 @@ class DomainMetadataAiSuggester:
                 metadata = self._apply_reference_contract_validation(metadata, validation)
                 metadata = compile_domain_metadata(metadata)
                 validation_payload = validation.to_payload()
-        validate_custom_json(metadata.custom_json)
         ai_source = "ai_vision" if target.supports_images else "ai_llm"
         if should_merge_baseline:
             metadata.metadata_sources = self._merge_unique_strings(
@@ -176,11 +176,19 @@ class DomainMetadataAiSuggester:
             )
         else:
             metadata.metadata_sources = [ai_source]
+        metadata, contract_state = normalize_upload_ready_domain_metadata(metadata)
+        validate_custom_json(metadata.custom_json)
+        normalized_validation_payload = self._dict_value(
+            metadata.custom_json.get("reference_contract_validation")
+        )
+        if normalized_validation_payload:
+            validation_payload = normalized_validation_payload
         evidence_pages = self._validated_evidence_pages(suggestion.evidence_pages, pages)
         return DomainMetadataSuggestOut(
             domain_metadata=metadata,
             raw_domain_metadata=raw_metadata,
             reference_contract_validation=validation_payload,
+            contract_state=contract_state,
             confidence=suggestion.confidence,
             evidence_pages=evidence_pages,
             rationale=suggestion.rationale,

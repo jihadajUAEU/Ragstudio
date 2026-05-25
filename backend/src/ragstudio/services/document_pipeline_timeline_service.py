@@ -13,6 +13,7 @@ from ragstudio.schemas.document_pipeline_timeline import (
     DocumentPipelineTimelineOut,
     DocumentPipelineTotalsOut,
     DocumentPipelineWarningGroupOut,
+    PipelineEventSource,
     PipelineStageState,
 )
 from sqlalchemy import select
@@ -26,7 +27,13 @@ class DocumentPipelineTimelineNotFoundError(Exception):
 _BASE_STAGE_ORDER = {
     "uploaded": 10,
     "vision": 20,
+    "vision_sampled": 22,
     "contract": 30,
+    "contract_proposed": 32,
+    "contract_executed": 34,
+    "contract_verified": 36,
+    "upload_contract_applied": 38,
+    "canonical_units_enabled": 39,
     "queued": 40,
     "worker_claimed": 45,
     "mineru_parsing": 50,
@@ -47,7 +54,13 @@ _BASE_STAGE_ORDER = {
 _STAGE_DISPLAY_METADATA: dict[str, tuple[str, str, str]] = {
     "uploaded": ("layout", "upload", "generic"),
     "vision": ("domain", "vision", "generic"),
+    "vision_sampled": ("domain", "vision", "generic"),
     "contract": ("domain", "contract", "contract"),
+    "contract_proposed": ("domain", "contract", "contract"),
+    "contract_executed": ("domain", "contract", "contract"),
+    "contract_verified": ("domain", "contract", "contract"),
+    "upload_contract_applied": ("domain", "upload", "contract"),
+    "canonical_units_enabled": ("context", "chunks", "contract"),
     "queued": ("runtime", "queue", "generic"),
     "worker_claimed": ("runtime", "worker", "generic"),
     "mineru_parsing": ("layout", "parser", "generic"),
@@ -81,8 +94,17 @@ class DocumentPipelineTimelineService:
         graph_records = await self._graph_records(document_id)
 
         contract = _contract_summary(document.index_contract or {})
+        latest_index_options = _latest_index_options(document, jobs)
         warning_groups = _warning_groups(chunks)
-        events = _events(document, jobs, contract, warning_groups, index_records, graph_records)
+        events = _events(
+            document,
+            jobs,
+            contract,
+            warning_groups,
+            index_records,
+            graph_records,
+            latest_index_options,
+        )
         stages = _stages(
             events,
             jobs,
@@ -161,6 +183,7 @@ def _events(
     warning_groups: list[DocumentPipelineWarningGroupOut],
     index_records: list[IndexRecord],
     graph_records: list[GraphProjectionRecord],
+    latest_index_options: dict[str, Any],
 ) -> list[DocumentPipelineEventOut]:
     events: list[DocumentPipelineEventOut] = []
     sequence = 1
@@ -184,7 +207,8 @@ def _events(
     )
     sequence += 1
 
-    domain_metadata = _dict(document.index_contract or {}, "domain_metadata")
+    index_contract = document.index_contract or {}
+    domain_metadata = _domain_metadata(index_contract, latest_index_options)
     if domain_metadata:
         events.append(
             DocumentPipelineEventOut(
@@ -222,6 +246,13 @@ def _events(
             )
         )
         sequence += 1
+
+    sequence = _append_contract_flow_events(
+        events,
+        sequence,
+        index_contract,
+        latest_index_options,
+    )
 
     for job in jobs:
         structured_events = _structured_job_events(job)
@@ -343,6 +374,227 @@ def _stages(
             )
         )
     return sorted(stages, key=lambda stage: (stage.order, stage.id))
+
+
+def _latest_index_options(document: Document, jobs: list[Job]) -> dict[str, Any]:
+    for job in reversed(jobs):
+        for candidate in (job.job_options, _dict(job.result or {}, "index_options")):
+            if isinstance(candidate, dict) and candidate:
+                return dict(candidate)
+
+    domain_metadata = _dict(document.index_contract or {}, "domain_metadata")
+    if domain_metadata:
+        payload: dict[str, Any] = {"domain_metadata": domain_metadata}
+        analysis_binding = _dict(document.index_contract or {}, "analysis_binding")
+        if analysis_binding:
+            payload["analysis_binding"] = analysis_binding
+        return payload
+    return {}
+
+
+def _domain_metadata(
+    index_contract: dict[str, Any],
+    latest_index_options: dict[str, Any],
+) -> dict[str, Any]:
+    return (
+        _dict(latest_index_options, "domain_metadata")
+        or _dict(index_contract, "domain_metadata")
+    )
+
+
+def _append_contract_flow_events(
+    events: list[DocumentPipelineEventOut],
+    sequence: int,
+    index_contract: dict[str, Any],
+    latest_index_options: dict[str, Any],
+) -> int:
+    domain_metadata = _domain_metadata(index_contract, latest_index_options)
+    latest_custom_json = _dict(domain_metadata, "custom_json")
+    reference_schema = _dict(latest_custom_json, "reference_schema")
+    domain_structure = _dict(latest_custom_json, "domain_structure")
+    execution = _dict(latest_custom_json, "reference_contract_execution")
+    validation = _dict(latest_custom_json, "reference_contract_validation")
+    reference_resolution = _dict(latest_custom_json, "reference_resolution")
+    reference_contract = _dict(index_contract, "reference_contract")
+    vision_analysis = _dict(index_contract, "vision_analysis")
+    analysis_binding = _dict(latest_index_options, "analysis_binding")
+    evidence_pages = _evidence_pages(
+        latest_index_options,
+        latest_custom_json,
+        execution,
+        validation,
+        vision_analysis,
+    )
+
+    if evidence_pages or analysis_binding:
+        sequence = _append_flow_event(
+            events,
+            sequence,
+            stage_id="vision_sampled",
+            label="Vision sampled pages",
+            detail="Vision analysis sampled pages for upload contract evidence.",
+            state="complete",
+            source="document",
+            detail_payload={
+                "evidence_pages": evidence_pages,
+                "analysis_binding": analysis_binding or None,
+            },
+        )
+
+    if reference_schema or domain_structure:
+        sequence = _append_flow_event(
+            events,
+            sequence,
+            stage_id="contract_proposed",
+            label="Contract proposed",
+            detail="Reference contract structure was proposed from document metadata.",
+            state="complete",
+            source="contract",
+            detail_payload={
+                "reference_schema": reference_schema,
+                "domain_structure": domain_structure,
+                "identity_fields": _reference_schema_fields(reference_schema),
+            },
+        )
+
+    if execution:
+        execution_state = _contract_status_state(execution)
+        sequence = _append_flow_event(
+            events,
+            sequence,
+            stage_id="contract_executed",
+            label="Contract executed",
+            detail=(
+                "Contract execution verified sampled reference units."
+                if execution_state == "complete"
+                else "Contract execution is metadata-only and did not verify canonical units."
+            ),
+            state=execution_state,
+            source="contract",
+            detail_payload=execution,
+        )
+
+    if validation:
+        validation_state = _contract_status_state(validation)
+        sequence = _append_flow_event(
+            events,
+            sequence,
+            stage_id="contract_verified",
+            label="Contract verified",
+            detail=(
+                "Contract validation verified the selected reference strategy."
+                if validation_state == "complete"
+                else "Contract validation is metadata-only and not upload-enforced."
+            ),
+            state=validation_state,
+            source="contract",
+            detail_payload=validation,
+        )
+
+    if latest_custom_json and (analysis_binding or execution or validation):
+        sequence = _append_flow_event(
+            events,
+            sequence,
+            stage_id="upload_contract_applied",
+            label="Upload contract applied",
+            detail="Upload metadata package was applied to indexing options.",
+            state="complete",
+            source="contract",
+            detail_payload={
+                "custom_json": latest_custom_json,
+                "analysis_binding": analysis_binding or None,
+            },
+        )
+
+    canonical_units = (
+        reference_contract.get("verified") is True
+        and reference_contract.get("canonical_units") is True
+    )
+    if canonical_units or reference_contract or reference_resolution:
+        sequence = _append_flow_event(
+            events,
+            sequence,
+            stage_id="canonical_units_enabled",
+            label="Canonical units enabled",
+            detail=(
+                "Verified contract enables canonical reference units."
+                if canonical_units
+                else "Canonical reference units are unavailable without a verified contract."
+            ),
+            state="complete" if canonical_units else "metadata_only",
+            source="contract",
+            detail_payload={
+                "reference_contract": reference_contract,
+                "reference_resolution": reference_resolution,
+            },
+        )
+
+    return sequence
+
+
+def _append_flow_event(
+    events: list[DocumentPipelineEventOut],
+    sequence: int,
+    *,
+    stage_id: str,
+    label: str,
+    detail: str,
+    state: PipelineStageState,
+    source: PipelineEventSource,
+    detail_payload: dict[str, Any],
+) -> int:
+    events.append(
+        DocumentPipelineEventOut(
+            sequence=sequence,
+            stage_id=stage_id,
+            label=label,
+            detail=detail,
+            state=state,
+            progress=None,
+            occurred_at=None,
+            source=source,
+            detail_payload=detail_payload,
+        )
+    )
+    return sequence + 1
+
+
+def _evidence_pages(
+    latest_index_options: dict[str, Any],
+    latest_custom_json: dict[str, Any],
+    execution: dict[str, Any],
+    validation: dict[str, Any],
+    vision_analysis: dict[str, Any],
+) -> list[Any]:
+    custom_vision_analysis = _dict(latest_custom_json, "vision_analysis")
+    for value in (
+        latest_index_options.get("evidence_pages"),
+        latest_custom_json.get("evidence_pages"),
+        custom_vision_analysis.get("sample_pages"),
+        execution.get("matched_pages"),
+        validation.get("matched_pages"),
+        vision_analysis.get("sample_pages"),
+    ):
+        pages = _list_value(value)
+        if pages:
+            return pages
+    return []
+
+
+def _contract_status_state(payload: dict[str, Any]) -> PipelineStageState:
+    if _normalized_status(payload.get("status")) == "verified":
+        return "complete"
+    return "metadata_only"
+
+
+def _reference_schema_fields(reference_schema: dict[str, Any]) -> list[str]:
+    for key in ("identity_fields", "required_fields", "fields"):
+        values = reference_schema.get(key)
+        if isinstance(values, list):
+            return [item.strip() for item in values if isinstance(item, str) and item.strip()]
+        if isinstance(values, dict):
+            return [item.strip() for item in values if isinstance(item, str) and item.strip()]
+    return []
 
 
 def _contract_summary(index_contract: dict[str, Any]) -> DocumentPipelineContractOut:
@@ -610,6 +862,14 @@ def _int_or_none(value: Any) -> int | None:
     if isinstance(value, bool):
         return None
     return value if isinstance(value, int) else None
+
+
+def _list_value(value: Any) -> list[Any]:
+    return list(value) if isinstance(value, list) else []
+
+
+def _normalized_status(value: Any) -> str | None:
+    return value.strip().casefold() if isinstance(value, str) and value.strip() else None
 
 
 def _first_string(*values: Any) -> str | None:

@@ -337,6 +337,164 @@ async def test_document_pipeline_timeline_service_builds_dynamic_stage_flow(clie
 
 
 @pytest.mark.asyncio
+async def test_document_pipeline_timeline_service_builds_contract_flow_stages(client):
+    custom_json = {
+        "reference_contract_execution": {
+            "status": "verified",
+            "matched_units": 12,
+            "matched_pages": [1, 2],
+        },
+        "reference_contract_validation": {
+            "status": "verified",
+            "selected_strategy": "chapter_verse",
+        },
+        "reference_resolution": {
+            "enabled": True,
+            "build_canonical_units": True,
+        },
+        "reference_schema": {
+            "fields": ["chapter", "verse"],
+            "canonical_ref_template": "{chapter}:{verse}",
+        },
+    }
+    domain_metadata = {
+        "domain": "religious_text",
+        "document_type": "quran_translation",
+        "language": "mixed",
+        "metadata_sources": ["ai_vision"],
+        "custom_json": custom_json,
+    }
+    analysis_binding = {
+        "filename": "quran_arabic_english.pdf",
+        "size_bytes": 2048,
+        "sha256": "a" * 64,
+    }
+    document = Document(
+        id="doc-contract-flow",
+        filename="quran_arabic_english.pdf",
+        content_type="application/pdf",
+        sha256="sha-contract-flow",
+        artifact_path="/data/uploads/quran_arabic_english.pdf",
+        status=StageStatus.RUNNING.value,
+        index_contract={
+            "contract_status": "compiled_reference_contract",
+            "domain_metadata": domain_metadata,
+            "reference_contract": {
+                "verified": True,
+                "canonical_units": True,
+                "schema_type": "chapter_verse",
+                "strategy": "chapter_verse",
+            },
+        },
+    )
+    job = Job(
+        id="job-contract-flow",
+        type="index_document",
+        target_id=document.id,
+        status=StageStatus.RUNNING.value,
+        progress=1,
+        job_options={
+            "parser_mode": "mineru_strict",
+            "domain_metadata": domain_metadata,
+            "analysis_binding": analysis_binding,
+        },
+    )
+    async with client._transport.app.state.session_factory() as session:
+        session.add_all([document, job])
+        await session.commit()
+        timeline = await DocumentPipelineTimelineService(session).get_timeline(document.id)
+
+    stage_ids = [stage.id for stage in timeline.stages]
+    assert "vision_sampled" in stage_ids
+    assert "contract_proposed" in stage_ids
+    assert "contract_executed" in stage_ids
+    assert "contract_verified" in stage_ids
+    assert "upload_contract_applied" in stage_ids
+    assert "canonical_units_enabled" in stage_ids
+
+    stages = {stage.id: stage for stage in timeline.stages}
+    assert stages["contract_executed"].state == "complete"
+    assert stages["contract_executed"].detail_payload["matched_units"] == 12
+    assert stages["contract_executed"].detail_payload["matched_pages"] == [1, 2]
+    assert stages["contract_verified"].state == "complete"
+    assert stages["contract_verified"].detail_payload["selected_strategy"] == "chapter_verse"
+    assert stages["upload_contract_applied"].detail_payload["analysis_binding"] == analysis_binding
+    assert stages["canonical_units_enabled"].state == "complete"
+
+
+@pytest.mark.asyncio
+async def test_document_pipeline_timeline_does_not_show_upload_handoff_for_manual_metadata(
+    client,
+):
+    document = Document(
+        id="doc-manual-custom-json",
+        filename="manual.pdf",
+        content_type="application/pdf",
+        sha256="sha-manual-custom-json",
+        artifact_path="/data/uploads/manual.pdf",
+        status=StageStatus.SUCCEEDED.value,
+        index_contract={
+            "contract_status": "metadata_only",
+            "domain_metadata": {
+                "domain": "policy",
+                "custom_json": {
+                    "quality_policy": {"observed_scripts": ["latin"]},
+                },
+            },
+        },
+    )
+    async with client._transport.app.state.session_factory() as session:
+        session.add(document)
+        await session.commit()
+        timeline = await DocumentPipelineTimelineService(session).get_timeline(document.id)
+
+    stage_ids = {stage.id for stage in timeline.stages}
+    assert "upload_contract_applied" not in stage_ids
+
+
+@pytest.mark.asyncio
+async def test_document_pipeline_timeline_uses_contract_binding_without_job_rows(client):
+    analysis_binding = {
+        "filename": "quran_arabic_english.pdf",
+        "size_bytes": 2048,
+        "sha256": "d" * 64,
+    }
+    document = Document(
+        id="doc-contract-binding-no-jobs",
+        filename="quran_arabic_english.pdf",
+        content_type="application/pdf",
+        sha256="sha-contract-binding-no-jobs",
+        artifact_path="/data/uploads/quran_arabic_english.pdf",
+        status=StageStatus.SUCCEEDED.value,
+        index_contract={
+            "contract_status": "metadata_only",
+            "analysis_binding": analysis_binding,
+            "domain_metadata": {
+                "domain": "religious_text",
+                "custom_json": {
+                    "reference_contract_validation": {
+                        "status": "unverified",
+                        "matched_units": 0,
+                    },
+                    "reference_resolution": {
+                        "enabled": False,
+                        "build_canonical_units": False,
+                    },
+                },
+            },
+        },
+    )
+    async with client._transport.app.state.session_factory() as session:
+        session.add(document)
+        await session.commit()
+        timeline = await DocumentPipelineTimelineService(session).get_timeline(document.id)
+
+    stages = {stage.id: stage for stage in timeline.stages}
+    assert stages["vision_sampled"].detail_payload["analysis_binding"] == analysis_binding
+    assert stages["upload_contract_applied"].detail_payload["analysis_binding"] == analysis_binding
+
+
+@pytest.mark.asyncio
 async def test_document_pipeline_timeline_route_returns_timeline(client):
     document = Document(
         id="doc-route-timeline",

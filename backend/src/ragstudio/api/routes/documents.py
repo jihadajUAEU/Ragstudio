@@ -53,6 +53,7 @@ from ragstudio.services.runtime_profile_service import (
     RuntimeProfileNotConfiguredError,
     RuntimeProfileService,
 )
+from ragstudio.services.upload_contract_package import assert_analysis_binding_matches
 
 router = APIRouter(prefix="/api/documents", tags=["documents"])
 
@@ -64,18 +65,34 @@ async def upload_document(
     parser_mode: str | None = Form(default=None),
     domain_metadata: str | None = Form(default=None),
     mineru_parse_options: str | None = Form(default=None),
+    analysis_binding: str | None = Form(default=None),
     session: AsyncSession = Depends(get_session),
 ) -> DocumentOut:
     options = (
-        _parse_index_options(parser_mode, domain_metadata, mineru_parse_options)
+        _parse_index_options(
+            parser_mode,
+            domain_metadata,
+            mineru_parse_options,
+            analysis_binding,
+        )
         if parser_mode is not None
         or domain_metadata is not None
         or mineru_parse_options is not None
+        or analysis_binding is not None
         else None
     )
     compiled_options = compile_index_options(options) if options is not None else None
     index_options = compiled_options or IndexDocumentIn()
     _validate_index_options(index_options)
+    content = await read_upload_file(file)
+    try:
+        assert_analysis_binding_matches(
+            index_options.analysis_binding,
+            filename=file.filename or "upload.bin",
+            content=content,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     settings = request.app.state.settings
     await _ensure_runtime_ready(session, settings)
     try:
@@ -87,7 +104,6 @@ async def upload_document(
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
-    content = await read_upload_file(file)
     try:
         service = DocumentService(
             session,
@@ -229,23 +245,18 @@ def _parse_index_options(
     parser_mode: str | None,
     domain_metadata: str | None,
     mineru_parse_options: str | None = None,
+    analysis_binding: str | None = None,
 ) -> IndexDocumentIn:
-    try:
-        metadata_payload = json.loads(domain_metadata or "{}")
-    except json.JSONDecodeError as exc:
-        raise HTTPException(
-            status_code=400,
-            detail=f"domain_metadata must be valid JSON: {exc.msg}",
-        ) from exc
+    metadata_payload = _parse_json_form("domain_metadata", domain_metadata) or {}
     mineru_parse_options_payload = None
     if mineru_parse_options:
-        try:
-            mineru_parse_options_payload = json.loads(mineru_parse_options)
-        except json.JSONDecodeError as exc:
-            raise HTTPException(
-                status_code=400,
-                detail=f"mineru_parse_options must be valid JSON: {exc.msg}",
-            ) from exc
+        mineru_parse_options_payload = _parse_json_form(
+            "mineru_parse_options",
+            mineru_parse_options,
+        )
+    analysis_binding_payload = None
+    if analysis_binding:
+        analysis_binding_payload = _parse_json_form("analysis_binding", analysis_binding)
     try:
         payload = {
             "parser_mode": parser_mode or DEFAULT_PARSER_MODE,
@@ -253,9 +264,23 @@ def _parse_index_options(
         }
         if mineru_parse_options_payload is not None:
             payload["mineru_parse_options"] = mineru_parse_options_payload
+        if analysis_binding_payload is not None:
+            payload["analysis_binding"] = analysis_binding_payload
         return IndexDocumentIn.model_validate(payload)
     except ValidationError as exc:
         raise HTTPException(status_code=422, detail=exc.errors()) from exc
+
+
+def _parse_json_form(field_name: str, value: str | None) -> object:
+    if not value:
+        return None
+    try:
+        return json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{field_name} must be valid JSON: {exc.msg}",
+        ) from exc
 
 
 def _validate_index_options(options: IndexDocumentIn) -> None:

@@ -73,10 +73,27 @@ class DomainProfileIn(StudioModel):
     metadata: DomainMetadata
 
 
+class AnalysisBinding(StudioModel):
+    filename: str
+    size_bytes: int = Field(ge=0)
+    sha256: str
+
+
+class ContractStateSummary(StudioModel):
+    state: Literal["verified", "metadata_only", "generic"]
+    canonical_units: bool = False
+    reason: str = ""
+    matched_units: int | None = None
+    selected_strategy: str | None = None
+    identity_fields: list[str] = Field(default_factory=list)
+
+
 class DomainMetadataSuggestOut(StudioModel):
     domain_metadata: DomainMetadata
     raw_domain_metadata: DomainMetadata | None = None
     reference_contract_validation: dict[str, Any] | None = None
+    analysis_binding: AnalysisBinding | None = None
+    contract_state: ContractStateSummary | None = None
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
     evidence_pages: list[int] = Field(default_factory=list)
     rationale: str = ""
@@ -87,3 +104,4 @@ class IndexDocumentIn(StudioModel):
     parser_mode: ParserMode = DEFAULT_PARSER_MODE
     domain_metadata: DomainMetadata = Field(default_factory=DomainMetadata)
     mineru_parse_options: MinerUParseOptionsIn | None = None
+    analysis_binding: AnalysisBinding | None = None

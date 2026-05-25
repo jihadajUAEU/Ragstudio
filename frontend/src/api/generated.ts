@@ -273,6 +273,21 @@ export interface DomainMetadata {
   metadata_sources?: string[];
 }
 
+export interface AnalysisBinding {
+  filename: string;
+  size_bytes: number;
+  sha256: string;
+}
+
+export interface ContractStateSummary {
+  state: "verified" | "metadata_only" | "generic";
+  canonical_units?: boolean;
+  reason?: string;
+  matched_units?: number | null;
+  selected_strategy?: string | null;
+  identity_fields?: string[];
+}
+
 export interface MinerUParseOptionsIn {
   parser?: string | null;
   parse_method?: string | null;
@@ -296,6 +311,8 @@ export interface DomainMetadataSuggestOut {
   domain_metadata: DomainMetadata;
   raw_domain_metadata?: DomainMetadata | null;
   reference_contract_validation?: Record<string, unknown> | null;
+  analysis_binding?: AnalysisBinding | null;
+  contract_state?: ContractStateSummary | null;
   confidence: number;
   evidence_pages: number[];
   rationale: string;
@@ -305,6 +322,7 @@ export interface DomainMetadataSuggestOut {
 export interface IndexDocumentIn {
   parser_mode?: ParserMode;
   domain_metadata?: DomainMetadata;
+  analysis_binding?: AnalysisBinding | null;
   mineru_parse_options?: MinerUParseOptionsIn | null;
 }
 

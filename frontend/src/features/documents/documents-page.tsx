@@ -3,6 +3,7 @@ import {
   useEffect,
   useMemo,
   useRef,
+  type ChangeEvent,
   useState,
   type KeyboardEvent,
   type ReactNode,
@@ -100,6 +101,7 @@ interface DocumentPreprocessingStatus {
 export function DocumentsPage() {
   const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const selectedFileRef = useRef<File | null>(null);
   const hadActiveJobsRef = useRef(false);
   const documentsPanelRef = useRef<HTMLDivElement>(null);
   const jobsPanelRef = useRef<HTMLDivElement>(null);
@@ -120,6 +122,8 @@ export function DocumentsPage() {
   const [jobsPageSize, setJobsPageSize] = useState(JOBS_TABLE_PAGE_SIZE);
   const [liveJobEventsById, setLiveJobEventsById] = useState<LiveJobEventsById>({});
   const [visionSuggestion, setVisionSuggestion] = useState<DomainMetadataSuggestion | null>(null);
+  const [visionSuggestionFileKey, setVisionSuggestionFileKey] = useState<string | null>(null);
+  const [visionRequestFileKey, setVisionRequestFileKey] = useState<string | null>(null);
   const jobsQuery = useQuery({
     queryKey: queryKeys.jobs,
     queryFn: () => apiClient.jobs(FIRST_LIST_PAGE),
@@ -146,8 +150,11 @@ export function DocumentsPage() {
   const uploadDocument = useMutation({
     mutationFn: apiClient.uploadDocument,
     onSuccess: () => {
+      selectedFileRef.current = null;
       setFile(null);
       setVisionSuggestion(null);
+      setVisionSuggestionFileKey(null);
+      setVisionRequestFileKey(null);
       analyzeWithVision.reset();
       if (fileInputRef.current) {
         fileInputRef.current.value = "";
@@ -159,9 +166,6 @@ export function DocumentsPage() {
   });
   const analyzeWithVision = useMutation({
     mutationFn: apiClient.suggestDomainMetadata,
-    onSuccess: (suggestion) => {
-      setVisionSuggestion(suggestion);
-    },
   });
   const deleteDocument = useMutation({
     mutationFn: apiClient.deleteDocument,
@@ -261,6 +265,46 @@ export function DocumentsPage() {
   const refresh = () => {
     void documentsQuery.refetch();
     void jobsQuery.refetch();
+  };
+  const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const nextFile = event.target.files?.[0] ?? null;
+    selectedFileRef.current = nextFile;
+    setFile(nextFile);
+    setVisionSuggestion(null);
+    setVisionSuggestionFileKey(null);
+    setVisionRequestFileKey(null);
+    analyzeWithVision.reset();
+    uploadDocument.reset();
+  };
+  const analyzeSelectedFile = async () => {
+    const selectedFile = selectedFileRef.current;
+    if (!selectedFile) {
+      return;
+    }
+    const requestedFileKey = fileKey(selectedFile);
+    setVisionRequestFileKey(requestedFileKey);
+    setVisionSuggestion(null);
+    setVisionSuggestionFileKey(null);
+
+    try {
+      const suggestion = await analyzeWithVision.mutateAsync({ file: selectedFile });
+      if (
+        selectedFile === selectedFileRef.current &&
+        requestedFileKey === fileKey(selectedFileRef.current)
+      ) {
+        setVisionSuggestion(suggestion);
+        setVisionSuggestionFileKey(requestedFileKey);
+      }
+    } catch {
+      // The mutation object owns the user-visible error state.
+    } finally {
+      if (
+        selectedFile === selectedFileRef.current &&
+        requestedFileKey === fileKey(selectedFileRef.current)
+      ) {
+        setVisionRequestFileKey(null);
+      }
+    }
   };
   const documentsById = useMemo(
     () => new Map(documents.map((document) => [document.id, document])),
@@ -685,6 +729,18 @@ export function DocumentsPage() {
   );
 
   const isRefreshing = documentsQuery.isFetching || jobsQuery.isFetching;
+  const currentFileKey = fileKey(file);
+  const currentVisionSuggestion =
+    file &&
+    visionSuggestion &&
+    visionSuggestionFileKey === currentFileKey &&
+    analysisBindingMatchesFile(visionSuggestion.analysis_binding, file)
+      ? visionSuggestion
+      : null;
+  const isAnalyzingCurrentFile =
+    analyzeWithVision.isPending && visionRequestFileKey === currentFileKey;
+  const uploadDisabled =
+    !file || !currentVisionSuggestion || isAnalyzingCurrentFile || uploadDocument.isPending;
 
   return (
     <div className="mx-auto flex max-w-7xl flex-col gap-5">
@@ -735,12 +791,13 @@ export function DocumentsPage() {
           className="flex flex-col gap-4"
           onSubmit={(event) => {
             event.preventDefault();
-            if (file && visionSuggestion) {
+            if (file && currentVisionSuggestion) {
               uploadDocument.mutate({
                 file,
                 options: {
                   parser_mode: DEFAULT_PARSER_MODE,
-                  domain_metadata: visionSuggestion.domain_metadata,
+                  domain_metadata: currentVisionSuggestion.domain_metadata,
+                  analysis_binding: currentVisionSuggestion.analysis_binding ?? undefined,
                 },
               });
             }
@@ -753,13 +810,8 @@ export function DocumentsPage() {
                 ref={fileInputRef}
                 type="file"
                 className="block h-11 w-full min-w-0 rounded-md border border-[var(--rs-line-strong)] bg-[var(--rs-paper)] text-sm text-[var(--rs-ink)] file:mr-3 file:h-full file:border-0 file:bg-[var(--rs-field)] file:px-3 file:text-sm file:font-medium file:text-[var(--rs-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rs-accent)]"
-                onChange={(event) => {
-                  setFile(event.target.files?.[0] ?? null);
-                  setVisionSuggestion(null);
-                  analyzeWithVision.reset();
-                  uploadDocument.reset();
-                }}
-                disabled={uploadDocument.isPending || analyzeWithVision.isPending}
+                onChange={handleFileChange}
+                disabled={uploadDocument.isPending}
               />
             </label>
           </div>
@@ -767,23 +819,25 @@ export function DocumentsPage() {
             <Button
               type="button"
               variant="secondary"
-              disabled={!file || analyzeWithVision.isPending || uploadDocument.isPending}
+              disabled={!file || isAnalyzingCurrentFile || uploadDocument.isPending}
               onClick={() => {
-                if (file) {
-                  analyzeWithVision.mutate({ file });
-                }
+                void analyzeSelectedFile();
               }}
             >
-              {analyzeWithVision.isPending ? (
+              {isAnalyzingCurrentFile ? (
                 <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
               ) : (
                 <Sparkles className="h-4 w-4" aria-hidden="true" />
               )}
               Analyze with vision
             </Button>
-            {visionSuggestion ? (
+            {currentVisionSuggestion ? (
               <span className="text-sm font-medium text-[#1f6f43]">
                 Vision metadata generated
+              </span>
+            ) : visionSuggestion ? (
+              <span className="text-sm text-[#a63d2a]">
+                Vision analysis is stale or missing file binding.
               </span>
             ) : (
               <span className="text-sm text-[#62717a]">
@@ -791,18 +845,19 @@ export function DocumentsPage() {
               </span>
             )}
           </div>
-          {visionSuggestion ? (
+          {currentVisionSuggestion ? (
             <div className="rounded-md border border-[#cfe3d5] bg-[#f6fbf7] p-3 text-sm text-[#24313a]">
-              <div className="font-medium">{visionSuggestion.domain_metadata.domain}</div>
+              <div className="font-medium">{currentVisionSuggestion.domain_metadata.domain}</div>
               <div className="mt-1 text-[#62717a]">
-                {visionSuggestion.domain_metadata.document_type ?? "document"} · Confidence{" "}
-                {Math.round((visionSuggestion.confidence ?? 0) * 100)}%
+                {currentVisionSuggestion.domain_metadata.document_type ?? "document"} · Confidence{" "}
+                {Math.round((currentVisionSuggestion.confidence ?? 0) * 100)}%
               </div>
-              {visionSuggestion.evidence_pages.length > 0 ? (
+              {currentVisionSuggestion.evidence_pages.length > 0 ? (
                 <div className="mt-1 text-[#62717a]">
-                  Evidence pages: {visionSuggestion.evidence_pages.join(", ")}
+                  Evidence pages: {currentVisionSuggestion.evidence_pages.join(", ")}
                 </div>
               ) : null}
+              <VisionContractState suggestion={currentVisionSuggestion} />
             </div>
           ) : null}
           {analyzeWithVision.error ? (
@@ -811,15 +866,10 @@ export function DocumentsPage() {
             </p>
           ) : null}
           <div className="flex justify-end">
-              <Button
-                type="submit"
-                variant={file && visionSuggestion ? "default" : "secondary"}
-                disabled={
-                  !file ||
-                  !visionSuggestion ||
-                analyzeWithVision.isPending ||
-                uploadDocument.isPending
-              }
+            <Button
+              type="submit"
+              variant={file && currentVisionSuggestion ? "default" : "secondary"}
+              disabled={uploadDisabled}
             >
               {uploadDocument.isPending ? (
                 <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
@@ -1110,6 +1160,81 @@ export function DocumentsPage() {
       </section>
     </div>
   );
+}
+
+function VisionContractState({ suggestion }: { suggestion: DomainMetadataSuggestion }) {
+  const contractState = suggestion.contract_state;
+  const state = contractState?.state ?? "generic";
+  const stateLabel = formatContractState(state);
+  const canonicalUnits = Boolean(contractState?.canonical_units);
+  const matchedUnits = contractState?.matched_units;
+  const identityFields = contractState?.identity_fields ?? [];
+  const selectedStrategy = contractState?.selected_strategy;
+  const note =
+    state === "metadata_only"
+      ? "Reference observations will be used as hints, not enforced as reference-unit chunks."
+      : contractState?.reason;
+
+  return (
+    <div className="mt-3 border-t border-[#cfe3d5] pt-3">
+      <div className="flex flex-wrap gap-2 text-xs font-medium">
+        <span className={`rounded-md border px-2 py-1 ${contractStateToneClass(state)}`}>
+          Contract: {stateLabel}
+        </span>
+        <span className="rounded-md border border-[#d6dde1] bg-white px-2 py-1 text-[#24313a]">
+          Canonical units: {canonicalUnits ? "on" : "off"}
+        </span>
+        {typeof matchedUnits === "number" ? (
+          <span className="rounded-md border border-[#d6dde1] bg-white px-2 py-1 text-[#24313a]">
+            Matched units: {matchedUnits}
+          </span>
+        ) : null}
+        {selectedStrategy ? (
+          <span className="rounded-md border border-[#d6dde1] bg-white px-2 py-1 text-[#24313a]">
+            Strategy: {selectedStrategy}
+          </span>
+        ) : null}
+      </div>
+      {identityFields.length ? (
+        <p className="mt-2 text-xs text-[#3a4a53]">
+          Identity fields: {identityFields.join(", ")}
+        </p>
+      ) : null}
+      {note ? <p className="mt-2 text-xs leading-5 text-[#62717a]">{note}</p> : null}
+    </div>
+  );
+}
+
+function fileKey(selectedFile: File | null): string | null {
+  return selectedFile
+    ? `${selectedFile.name}:${selectedFile.size}:${selectedFile.lastModified}`
+    : null;
+}
+
+function analysisBindingMatchesFile(
+  binding: DomainMetadataSuggestion["analysis_binding"] | undefined,
+  selectedFile: File | null,
+): boolean {
+  return Boolean(
+    selectedFile &&
+      binding &&
+      binding.filename === selectedFile.name &&
+      binding.size_bytes === selectedFile.size,
+  );
+}
+
+function formatContractState(state: string): string {
+  return state === "metadata_only" ? "metadata-only" : state.replaceAll("_", "-");
+}
+
+function contractStateToneClass(state: string): string {
+  if (state === "verified") {
+    return "border-[#5ca66b] bg-[#ecf8ee] text-[#235c2f]";
+  }
+  if (state === "metadata_only") {
+    return "border-[#e2c46b] bg-[#fff8df] text-[#705000]";
+  }
+  return "border-[#d6dde1] bg-white text-[#3a4a53]";
 }
 
 function isActiveJob(job: JobOut): boolean {

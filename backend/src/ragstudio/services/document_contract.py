@@ -46,6 +46,11 @@ def build_document_index_contract(options: IndexDocumentIn) -> dict[str, Any]:
             else "metadata_only"
         ),
         "parser_mode": options.parser_mode,
+        "analysis_binding": (
+            options.analysis_binding.model_dump(mode="json")
+            if options.analysis_binding is not None
+            else None
+        ),
         "domain_metadata": domain_metadata,
         "reference_contract": reference_contract,
         "parser_contract": {

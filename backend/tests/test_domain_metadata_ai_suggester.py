@@ -491,6 +491,118 @@ async def test_suggest_executes_model_generated_contract_candidate(monkeypatch):
     assert contract.verified is True
     assert result.reference_contract_validation is not None
     assert result.reference_contract_validation["status"] == "verified"
+    assert result.contract_state is not None
+    assert result.contract_state.state == "verified"
+    assert result.contract_state.canonical_units is True
+    assert result.contract_state.identity_fields == ["chapter", "verse"]
+
+
+@pytest.mark.asyncio
+async def test_suggest_demotes_unverified_generated_contract_to_metadata_only(monkeypatch):
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": """
+                            {
+                              "domain_metadata": {
+                                "domain": "scripture",
+                                "custom_json": {
+                                  "reference_schema": {
+                                    "type": "chapter_verse",
+                                    "fields": {
+                                      "chapter": "chapter_number",
+                                      "verse": "verse_number"
+                                    },
+                                    "canonical_ref_template": "{chapter}:{verse}"
+                                  },
+                                  "chunking": {
+                                    "unit": "verse",
+                                    "include_neighbors": 1
+                                  },
+                                  "reference_contract_candidates": [
+                                    {
+                                      "schema_type": "chapter_verse",
+                                      "unit": "verse",
+                                      "identity": {
+                                        "fields": ["chapter", "verse"],
+                                        "canonical_ref_template": "{chapter}:{verse}"
+                                      },
+                                      "extractors": [
+                                        {
+                                          "type": "regex",
+                                          "target": "page_text",
+                                          "pattern": "\\\\[(?P<c>\\\\d+):(?P<v>\\\\d+)\\\\]"
+                                        }
+                                      ],
+                                      "acceptance": {
+                                        "min_matched_units": 3,
+                                        "min_matched_pages": 1
+                                      }
+                                    }
+                                  ]
+                                }
+                              },
+                              "confidence": 0.9,
+                              "evidence_pages": [1],
+                              "rationale": "The sampled page shows bracketed references.",
+                              "warnings": []
+                            }
+                            """
+                        }
+                    }
+                ]
+            }
+
+    class FakeClient:
+        def __init__(self, timeout):
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def post(self, url, headers, json):
+            return FakeResponse()
+
+    monkeypatch.setattr(
+        "ragstudio.services.domain_metadata_ai_suggester.httpx.AsyncClient",
+        FakeClient,
+    )
+
+    result = await DomainMetadataAiSuggester().suggest(
+        settings_profile=SettingsProfile(
+            id="default",
+            provider="openai-compatible",
+            llm_model="text-model",
+            llm_base_url="http://llm.test/v1",
+            embedding_model="embedding-model",
+            storage_backend="postgres",
+            vision_model="vision-model",
+            vision_base_url="http://vision.test/v1",
+        ),
+        filename="quran.pdf",
+        content_type="application/pdf",
+        pages=[SampledPage(page_number=1, text="[1:1] [1:2]")],
+        sampler_warnings=[],
+    )
+
+    custom_json = result.domain_metadata.custom_json
+
+    assert custom_json["reference_contract_execution"]["status"] == "unverified"
+    assert custom_json["reference_contract_validation"]["status"] == "unverified"
+    assert custom_json["reference_resolution"]["enabled"] is False
+    assert custom_json["reference_resolution"]["build_canonical_units"] is False
+    assert custom_json["chunking"] == {"include_neighbors": 1}
+    assert result.contract_state is not None
+    assert result.contract_state.state == "metadata_only"
+    assert result.contract_state.canonical_units is False
 
 
 @pytest.mark.asyncio
@@ -601,6 +713,9 @@ async def test_suggest_falls_back_to_legacy_validation_when_generated_contract_f
     assert custom_json["reference_contract_validation"]["selected_source"] == "ai_observed"
     assert custom_json["reference_resolution"]["build_canonical_units"] is True
     assert contract.verified is True
+    assert result.contract_state is not None
+    assert result.contract_state.state == "verified"
+    assert result.contract_state.canonical_units is True
 
 
 def test_malformed_template_candidate_fails_without_throwing():

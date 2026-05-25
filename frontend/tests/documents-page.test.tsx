@@ -33,6 +33,52 @@ function renderDocumentsPage() {
   );
 }
 
+function createVisionSuggestion(
+  file: File,
+  overrides: Partial<Awaited<ReturnType<typeof apiClient.suggestDomainMetadata>>> = {},
+): Awaited<ReturnType<typeof apiClient.suggestDomainMetadata>> {
+  return {
+    domain_metadata: {
+      domain: "quran_tafseer",
+      document_type: "translation",
+      metadata_sources: ["ai_vision"],
+      custom_json: {
+        quality_policy: {
+          required_scripts: ["arabic", "latin"],
+        },
+      },
+    },
+    analysis_binding: {
+      filename: file.name,
+      size_bytes: file.size,
+      sha256: `sha-${file.name}`,
+    },
+    contract_state: {
+      state: "verified",
+      canonical_units: true,
+      reason: "Executable reference contract verified on sampled pages.",
+      matched_units: 120,
+      selected_strategy: "chapter_verse",
+      identity_fields: ["chapter", "verse"],
+    },
+    confidence: 0.95,
+    evidence_pages: [1, 2, 3],
+    rationale: "The sampled pages show Quran and translation references.",
+    warnings: [],
+    ...overrides,
+  };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+  return { promise, resolve, reject };
+}
+
 function openJobsWarningsTab() {
   fireEvent.click(screen.getByRole("tab", { name: /jobs & warnings/i }));
 }
@@ -95,22 +141,9 @@ describe("DocumentsPage", () => {
       items: [],
     });
     vi.mocked(apiClient.domainProfiles).mockResolvedValue({ items: [], total: 0 });
-    vi.mocked(apiClient.suggestDomainMetadata).mockResolvedValue({
-      domain_metadata: {
-        domain: "quran_tafseer",
-        document_type: "translation",
-        metadata_sources: ["ai_vision"],
-        custom_json: {
-          quality_policy: {
-            required_scripts: ["arabic", "latin"],
-          },
-        },
-      },
-      confidence: 0.95,
-      evidence_pages: [1, 2, 3],
-      rationale: "The sampled pages show Quran and translation references.",
-      warnings: [],
-    });
+    vi.mocked(apiClient.suggestDomainMetadata).mockImplementation(async ({ file }) =>
+      createVisionSuggestion(file),
+    );
     vi.mocked(apiClient.deleteDocument).mockResolvedValue(undefined);
     vi.mocked(apiClient.uploadDocument).mockResolvedValue({
       id: "doc-upload",
@@ -190,6 +223,8 @@ describe("DocumentsPage", () => {
     renderDocumentsPage();
 
     const file = new File(["pdf"], "quran-arabic-english.pdf", { type: "application/pdf" });
+    const suggestion = createVisionSuggestion(file);
+    vi.mocked(apiClient.suggestDomainMetadata).mockResolvedValueOnce(suggestion);
     fireEvent.change(screen.getByLabelText(/upload file/i), { target: { files: [file] } });
 
     const uploadButton = screen.getByRole("button", { name: /upload and index/i });
@@ -202,6 +237,10 @@ describe("DocumentsPage", () => {
     });
     expect(vi.mocked(apiClient.suggestDomainMetadata).mock.calls[0][0]).toEqual({ file });
     expect(await screen.findByText("quran_tafseer")).toBeVisible();
+    expect(screen.getByText("Contract: verified")).toBeVisible();
+    expect(screen.getByText("Canonical units: on")).toBeVisible();
+    expect(screen.getByText("Matched units: 120")).toBeVisible();
+    expect(screen.getByText("Identity fields: chapter, verse")).toBeVisible();
     expect(uploadButton).toBeEnabled();
 
     fireEvent.click(uploadButton);
@@ -213,21 +252,23 @@ describe("DocumentsPage", () => {
       file,
       options: {
         parser_mode: "mineru_strict",
-        domain_metadata: expect.objectContaining({
-          domain: "quran_tafseer",
-          document_type: "translation",
-        }),
+        domain_metadata: suggestion.domain_metadata,
+        analysis_binding: suggestion.analysis_binding,
       },
     });
+    expect(vi.mocked(apiClient.uploadDocument).mock.calls[0][0].options.domain_metadata).toBe(
+      suggestion.domain_metadata,
+    );
+    expect(vi.mocked(apiClient.uploadDocument).mock.calls[0][0].options.analysis_binding).toBe(
+      suggestion.analysis_binding,
+    );
     expect(apiClient.uploadDocument).toHaveBeenCalledWith(
       {
         file,
         options: {
           parser_mode: "mineru_strict",
-          domain_metadata: expect.objectContaining({
-            domain: "quran_tafseer",
-            document_type: "translation",
-          }),
+          domain_metadata: suggestion.domain_metadata,
+          analysis_binding: suggestion.analysis_binding,
         },
       },
       expect.anything(),
@@ -263,6 +304,85 @@ describe("DocumentsPage", () => {
 
     expect(screen.queryByText("Vision metadata generated")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /upload and index/i })).toBeDisabled();
+  });
+
+  it("ignores late vision responses for a previously selected file", async () => {
+    const firstAnalysis = deferred<Awaited<ReturnType<typeof apiClient.suggestDomainMetadata>>>();
+    vi.mocked(apiClient.suggestDomainMetadata).mockReturnValueOnce(firstAnalysis.promise);
+    renderDocumentsPage();
+
+    const firstFile = new File(["one"], "one.pdf", { type: "application/pdf" });
+    const secondFile = new File(["two"], "two.pdf", { type: "application/pdf" });
+    const fileInput = screen.getByLabelText(/upload file/i);
+
+    fireEvent.change(fileInput, { target: { files: [firstFile] } });
+    fireEvent.click(screen.getByRole("button", { name: /analyze with vision/i }));
+
+    await waitFor(() => {
+      expect(apiClient.suggestDomainMetadata).toHaveBeenCalled();
+    });
+    expect(vi.mocked(apiClient.suggestDomainMetadata).mock.calls[0][0]).toEqual({
+      file: firstFile,
+    });
+
+    fireEvent.change(fileInput, { target: { files: [secondFile] } });
+
+    await act(async () => {
+      firstAnalysis.resolve(createVisionSuggestion(firstFile));
+      await firstAnalysis.promise;
+    });
+
+    expect(screen.queryByText(/Canonical units:/i)).not.toBeInTheDocument();
+    expect(screen.queryByText("Vision metadata generated")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /upload and index/i })).toBeDisabled();
+  });
+
+  it("keeps upload disabled when vision analysis has no file binding", async () => {
+    renderDocumentsPage();
+
+    const file = new File(["pdf"], "unbound.pdf", { type: "application/pdf" });
+    vi.mocked(apiClient.suggestDomainMetadata).mockResolvedValueOnce(
+      createVisionSuggestion(file, { analysis_binding: null }),
+    );
+
+    fireEvent.change(screen.getByLabelText(/upload file/i), { target: { files: [file] } });
+    fireEvent.click(screen.getByRole("button", { name: /analyze with vision/i }));
+
+    expect(await screen.findByText("Vision analysis is stale or missing file binding.")).toBeVisible();
+    expect(screen.queryByText(/Canonical units:/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /upload and index/i })).toBeDisabled();
+  });
+
+  it("shows metadata-only contract review without enabling canonical units", async () => {
+    renderDocumentsPage();
+
+    const file = new File(["pdf"], "metadata-only.pdf", { type: "application/pdf" });
+    vi.mocked(apiClient.suggestDomainMetadata).mockResolvedValueOnce(
+      createVisionSuggestion(file, {
+        contract_state: {
+          state: "metadata_only",
+          canonical_units: false,
+          reason:
+            "Reference observations are kept as metadata hints because no executable contract is verified.",
+          matched_units: 8,
+          selected_strategy: "chapter_verse",
+          identity_fields: ["chapter", "verse"],
+        },
+      }),
+    );
+
+    fireEvent.change(screen.getByLabelText(/upload file/i), { target: { files: [file] } });
+    fireEvent.click(screen.getByRole("button", { name: /analyze with vision/i }));
+
+    expect(await screen.findByText("Contract: metadata-only")).toBeVisible();
+    expect(screen.getByText("Canonical units: off")).toBeVisible();
+    expect(screen.getByText("Matched units: 8")).toBeVisible();
+    expect(
+      screen.getByText(
+        "Reference observations will be used as hints, not enforced as reference-unit chunks.",
+      ),
+    ).toBeVisible();
+    expect(screen.getByRole("button", { name: /upload and index/i })).toBeEnabled();
   });
 
   it("blocks upload when vision metadata generation fails", async () => {

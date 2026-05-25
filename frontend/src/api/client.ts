@@ -188,6 +188,9 @@ export const apiClient = {
     formData.set("file", file);
     formData.set("parser_mode", options.parser_mode ?? DEFAULT_PARSER_MODE);
     formData.set("domain_metadata", JSON.stringify(options.domain_metadata ?? {}));
+    if (options.analysis_binding) {
+      formData.set("analysis_binding", JSON.stringify(options.analysis_binding));
+    }
     if (options.mineru_parse_options) {
       formData.set("mineru_parse_options", JSON.stringify(options.mineru_parse_options));
     }

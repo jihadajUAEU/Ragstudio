@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import json
 from pathlib import Path
 
@@ -277,6 +278,61 @@ async def test_upload_uses_default_parser_mode_when_omitted(client, monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_upload_preserves_matching_vision_analysis_binding(client, monkeypatch):
+    await seed_product_runtime_profile(client)
+    allow_product_readiness(monkeypatch)
+    content = b"Quran [1:1]\n[1:2]\n"
+    binding = {
+        "filename": "quran.pdf",
+        "size_bytes": len(content),
+        "sha256": hashlib.sha256(content).hexdigest(),
+    }
+
+    response = await client.post(
+        "/api/documents",
+        data={
+            "parser_mode": "mineru_strict",
+            "domain_metadata": json.dumps({"domain": "quran_translation"}),
+            "analysis_binding": json.dumps(binding),
+        },
+        files={"file": ("quran.pdf", content, "application/pdf")},
+    )
+
+    assert response.status_code == 201
+    document_id = response.json()["id"]
+    jobs = await wait_for_jobs(client, 1, terminal=False)
+    job_summary = next(job for job in jobs if job["target_id"] == document_id)
+    async with client._transport.app.state.session_factory() as session:
+        job = await session.get(Job, job_summary["id"])
+
+    assert job is not None
+    assert job.job_options["analysis_binding"] == binding
+
+
+@pytest.mark.asyncio
+async def test_upload_rejects_stale_vision_analysis_binding_before_runtime(client):
+    content = b"current file"
+    stale_binding = {
+        "filename": "quran.pdf",
+        "size_bytes": len(content),
+        "sha256": hashlib.sha256(b"previous file").hexdigest(),
+    }
+
+    response = await client.post(
+        "/api/documents",
+        data={
+            "parser_mode": "mineru_strict",
+            "domain_metadata": json.dumps({"domain": "quran_translation"}),
+            "analysis_binding": json.dumps(stale_binding),
+        },
+        files={"file": ("quran.pdf", content, "application/pdf")},
+    )
+
+    assert response.status_code == 422
+    assert "Vision analysis does not match the uploaded file" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
 async def test_pdf_preprocessing_rejects_when_sample_cleanup_still_fails(
     client,
     monkeypatch,
@@ -287,6 +343,7 @@ async def test_pdf_preprocessing_rejects_when_sample_cleanup_still_fails(
     failed_preflight = PdfPreflightResult(
         status="failed",
         inspected_pages=1,
+        inspected_page_numbers=[1],
         extracted_text_chars=48,
         arabic_unit_count=0,
         missing_arabic_unit_count=1,
@@ -328,10 +385,29 @@ async def test_pdf_preprocessing_rejects_when_sample_cleanup_still_fails(
     options = IndexDocumentIn(
         domain_metadata=DomainMetadata(
             domain="quran",
-            custom_json={
-                "vision_analysis": {
-                    "sample_pages": [1],
-                    "expected_scripts": ["arabic", "latin"],
+                custom_json={
+                    "reference_schema": {
+                        "type": "chapter_verse",
+                        "fields": {
+                            "chapter": "chapter_number",
+                            "verse": "verse_number",
+                        },
+                        "canonical_ref_template": "{chapter}:{verse}",
+                    },
+                    "domain_structure": {
+                        "primary_anchor": {
+                            "regex": r"\[(?P<chapter>\d+):(?P<verse>\d+)\]",
+                            "unit": "verse",
+                            "verified": True,
+                        }
+                    },
+                    "reference_resolution": {
+                        "enabled": True,
+                        "build_canonical_units": True,
+                    },
+                    "vision_analysis": {
+                        "sample_pages": [1],
+                        "expected_scripts": ["arabic", "latin"],
                     "observed_unit_pattern": "reference_units_with_parallel_arabic_and_english",
                 },
                 "preprocessing": {
@@ -425,6 +501,69 @@ async def test_documents_list_includes_latest_index_options(client, tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_documents_list_does_not_merge_chunk_metadata_with_job_binding(client, tmp_path):
+    session_factory = client._transport.app.state.session_factory
+    artifact = tmp_path / "uploads" / "indexed-binding-sha"
+    artifact.parent.mkdir(parents=True)
+    artifact.write_text("Quran 1:4", encoding="utf-8")
+    analysis_binding = {
+        "filename": "quran.pdf",
+        "size_bytes": 128,
+        "sha256": "b" * 64,
+    }
+    async with session_factory() as session:
+        document = Document(
+            filename="quran.pdf",
+            content_type="application/pdf",
+            sha256="indexed-binding-sha",
+            artifact_path=str(artifact),
+            status=StageStatus.SUCCEEDED.value,
+        )
+        session.add(document)
+        await session.flush()
+        session.add(
+            Chunk(
+                document_id=document.id,
+                text="[1:4] It is You we worship and You we ask for help.",
+                source_location={"page": 2},
+                metadata_json={
+                    "parser_metadata": {
+                        "backend": "mineru",
+                        "parser_mode": "mineru_strict",
+                    },
+                    "domain_metadata": {
+                        "domain": "quran_tafseer",
+                        "document_type": "commentary",
+                    },
+                },
+            )
+        )
+        session.add(
+            Job(
+                type="index_document",
+                target_id=document.id,
+                status=StageStatus.SUCCEEDED.value,
+                job_options={
+                    "parser_mode": "mineru_strict",
+                    "analysis_binding": analysis_binding,
+                    "domain_metadata": {
+                        "domain": "quran_tafseer",
+                        "document_type": "commentary",
+                    },
+                },
+            )
+        )
+        await session.commit()
+
+    response = await client.get("/api/documents")
+
+    assert response.status_code == 200
+    document = response.json()["items"][0]
+    assert document["latest_index_options"]["domain_metadata"]["domain"] == "quran_tafseer"
+    assert document["latest_index_options"]["analysis_binding"] is None
+
+
+@pytest.mark.asyncio
 async def test_documents_list_uses_latest_job_options_when_no_chunks(client, tmp_path):
     session_factory = client._transport.app.state.session_factory
     artifact = tmp_path / "uploads" / "failed-preflight-sha"
@@ -447,6 +586,11 @@ async def test_documents_list_uses_latest_job_options_when_no_chunks(client, tmp
                 status=StageStatus.FAILED.value,
                 job_options={
                     "parser_mode": "mineru_strict",
+                    "analysis_binding": {
+                        "filename": "failed-preflight.pdf",
+                        "size_bytes": 512,
+                        "sha256": "c" * 64,
+                    },
                     "domain_metadata": {
                         "domain": "quran",
                         "custom_json": {
@@ -471,6 +615,11 @@ async def test_documents_list_uses_latest_job_options_when_no_chunks(client, tmp
     document_payload = response.json()["items"][0]
     assert document_payload["latest_index_options"]["parser_mode"] == "mineru_strict"
     assert document_payload["latest_index_options"]["domain_metadata"]["domain"] == "quran"
+    assert document_payload["latest_index_options"]["analysis_binding"] == {
+        "filename": "failed-preflight.pdf",
+        "size_bytes": 512,
+        "sha256": "c" * 64,
+    }
 
 
 @pytest.mark.asyncio
@@ -697,15 +846,18 @@ async def test_upload_stores_compiled_document_index_contract(client, monkeypatc
         files={"file": ("sample.txt", b"Verse 1:1\nIn the name", "text/plain")},
         data={
             "parser_mode": "mineru_strict",
-            "domain_metadata": (
-                '{"domain":"quran_tafseer","language":"arabic",'
-                '"custom_json":{"reference_schema":{"type":"chapter_verse"},'
-                '"chunking":{"unit":"verse"},'
-                '"domain_structure":{"primary_anchor":'
-                '{"regex":"(?P<chapter>\\\\d{1,4}):(?P<verse>\\\\d{1,4})"}},'
-                '"reference_resolution":{"enabled":true,"build_canonical_units":true}}}'
-            ),
-        },
+                "domain_metadata": (
+                    '{"domain":"quran_tafseer","language":"arabic",'
+                    '"custom_json":{"reference_schema":{"type":"chapter_verse",'
+                    '"fields":{"chapter":"chapter_number","verse":"verse_number"},'
+                    '"canonical_ref_template":"{chapter}:{verse}"},'
+                    '"chunking":{"unit":"verse"},'
+                    '"domain_structure":{"primary_anchor":'
+                    '{"regex":"(?P<chapter>\\\\d{1,4}):(?P<verse>\\\\d{1,4})",'
+                    '"unit":"verse","verified":true}},'
+                    '"reference_resolution":{"enabled":true,"build_canonical_units":true}}}'
+                ),
+            },
     )
 
     assert response.status_code == 201
@@ -772,7 +924,7 @@ async def test_reindex_document_queues_job_with_updated_metadata(client, monkeyp
     assert job.job_options["domain_metadata"]["document_type"] == "religious_text"
     assert job.job_options["domain_metadata"]["tags"] == ["quran"]
     custom_json = job.job_options["domain_metadata"]["custom_json"]
-    assert custom_json["reference_schema"]["type"] == "chapter_verse"
+    assert custom_json["reference_schema"]["type"] == "surah_ayah"
     assert custom_json["retrieval"]["exact_reference_top1"] is True
 
 
@@ -805,13 +957,22 @@ async def test_reindex_stores_compiled_document_index_contract(client, monkeypat
                 "domain": "quran_tafseer",
                 "language": "arabic",
                 "custom_json": {
-                    "reference_schema": {"type": "chapter_verse"},
-                    "chunking": {"unit": "verse"},
-                    "domain_structure": {
-                        "primary_anchor": {
-                            "regex": "(?P<chapter>\\d{1,4}):(?P<verse>\\d{1,4})"
-                        }
-                    },
+                        "reference_schema": {
+                            "type": "chapter_verse",
+                            "fields": {
+                                "chapter": "chapter_number",
+                                "verse": "verse_number",
+                            },
+                            "canonical_ref_template": "{chapter}:{verse}",
+                        },
+                        "chunking": {"unit": "verse"},
+                        "domain_structure": {
+                            "primary_anchor": {
+                                "regex": "(?P<chapter>\\d{1,4}):(?P<verse>\\d{1,4})",
+                                "unit": "verse",
+                                "verified": True,
+                            }
+                        },
                     "reference_resolution": {
                         "enabled": True,
                         "build_canonical_units": True,
