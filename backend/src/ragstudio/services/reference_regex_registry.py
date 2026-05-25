@@ -42,6 +42,9 @@ BOOK_HADITH_PATTERN = re.compile(
     flags=re.IGNORECASE,
 )
 
+# These legacy regexes are compatibility adapters. Generic reference contracts
+# must provide verified domain_structure regexes instead of relying on fallback
+# enforcement from this registry.
 LEGACY_REFERENCE_PATTERN_PROFILES = {
     "chapter_verse": ("REFERENCE_PATTERN", "CHAPTER_ONLY_PATTERN"),
     "book_hadith": ("BOOK_HADITH_PATTERN",),

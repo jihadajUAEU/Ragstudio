@@ -42,6 +42,27 @@ def quran_metadata() -> DomainMetadata:
     )
 
 
+def verified_quran_metadata() -> DomainMetadata:
+    metadata = quran_metadata()
+    custom_json = dict(metadata.custom_json or {})
+    reference_schema = dict(custom_json["reference_schema"])
+    reference_schema["canonical_ref_template"] = "{chapter}:{verse}"
+    custom_json["reference_schema"] = reference_schema
+    custom_json["domain_structure"] = {
+        "primary_anchor": {
+            "regex": r"\bVerse\s+(?P<chapter>\d{1,4}):(?P<verse>\d{1,4})\b",
+            "unit": "verse",
+            "verified": True,
+        },
+        "inline_references": {"policy": "starts_unit"},
+    }
+    custom_json["reference_resolution"] = {
+        "enabled": True,
+        "build_canonical_units": True,
+    }
+    return metadata.model_copy(update={"custom_json": custom_json})
+
+
 def test_reference_semantics_detects_scripture_profile_from_metadata_json():
     semantics = ReferenceSemantics.from_metadata(quran_metadata())
 
@@ -182,8 +203,87 @@ def test_reference_metadata_records_generic_identity_ranges():
         "parent_ref": {"start": 7, "end": 7},
         "unit_ref": {"start": 104, "end": 104},
     }
+    assert metadata["reference_identity_range"] == metadata["identity_ranges"]
     assert metadata["previous_ref"] == "7:103"
     assert metadata["next_ref"] == "7:105"
+
+
+def test_verified_generic_identity_range_does_not_emit_chapter_or_hadith_fields():
+    semantics = ReferenceSemantics.from_metadata(
+        DomainMetadata(
+            custom_json={
+                "reference_schema": {
+                    "type": "part_item",
+                    "fields": {"part": "part", "item": "item"},
+                    "canonical_ref_template": "{part}:{item}",
+                },
+                "domain_structure": {
+                    "primary_anchor": {
+                        "regex": r"Part\s+(?P<part>\d+),\s+Item\s+(?P<item>\d+)",
+                        "unit": "item",
+                        "verified": True,
+                    }
+                },
+                "reference_resolution": {"enabled": True, "build_canonical_units": True},
+            }
+        )
+    )
+
+    metadata = semantics.derive_reference_metadata("Part 2, Item 7", {"page": 4})
+
+    assert metadata["reference_identity_range"] == {
+        "part": {"start": 2, "end": 2},
+        "item": {"start": 7, "end": 7},
+    }
+    assert "chapter_start" not in metadata
+    assert "verse_start" not in metadata
+    assert "book_start" not in metadata
+    assert "hadith_start" not in metadata
+
+
+def test_unverified_legacy_schema_does_not_use_builtin_reference_adapter():
+    semantics = ReferenceSemantics.from_metadata(
+        DomainMetadata(
+            reference_pattern="chapter_number:verse_number",
+            custom_json={"reference_schema": {"type": "chapter_verse"}},
+        )
+    )
+
+    assert semantics.reference_capability == "hint"
+    assert semantics.extract_query_reference("Text [3:9]") is None
+    assert semantics.derive_reference_metadata("Text [3:9]") == {}
+
+
+def test_hint_chapter_verse_anchor_keeps_legacy_fields_out_of_metadata():
+    semantics = ReferenceSemantics.from_metadata(
+        DomainMetadata(
+            custom_json={
+                "reference_schema": {
+                    "type": "chapter_verse",
+                    "fields": {"chapter": "chapter", "verse": "verse"},
+                    "canonical_ref_template": "{chapter}:{verse}",
+                },
+                "domain_structure": {
+                    "primary_anchor": {
+                        "regex": r"\bVerse\s+(?P<chapter>\d{1,4}):(?P<verse>\d{1,4})\b",
+                        "unit": "verse",
+                        "verified": True,
+                    }
+                },
+            }
+        )
+    )
+
+    metadata = semantics.derive_reference_metadata("Verse 18:30 body.")
+
+    assert semantics.reference_capability == "hint"
+    assert metadata["references"] == ["18:30"]
+    assert metadata["reference_identity_range"] == {
+        "chapter": {"start": 18, "end": 18},
+        "verse": {"start": 30, "end": 30},
+    }
+    assert "chapter_start" not in metadata
+    assert "verse_start" not in metadata
 
 
 def test_reference_semantics_extracts_custom_anchor_references():
@@ -476,6 +576,10 @@ def test_reference_semantics_supports_book_hadith_schema():
             "book": {"start": 1, "end": 1},
             "hadith": {"start": 2, "end": 2},
         },
+        "reference_identity_range": {
+            "book": {"start": 1, "end": 1},
+            "hadith": {"start": 2, "end": 2},
+        },
         "book_start": 1,
         "book_end": 1,
         "hadith_start": 2,
@@ -497,7 +601,7 @@ def test_reference_semantics_stays_generic_without_reference_cues():
 
 
 def test_extract_query_reference_supports_quran_bracket_and_bare_forms():
-    semantics = ReferenceSemantics.from_metadata(quran_metadata())
+    semantics = ReferenceSemantics.from_metadata(verified_quran_metadata())
 
     assert semantics.extract_query_reference("What does Quran 1:4 say?") == {
         "chapter": 1,
@@ -525,7 +629,7 @@ def test_extract_query_reference_supports_quran_bracket_and_bare_forms():
 
 
 def test_extract_chunk_references_finds_multiple_markers():
-    semantics = ReferenceSemantics.from_metadata(quran_metadata())
+    semantics = ReferenceSemantics.from_metadata(verified_quran_metadata())
 
     refs = semantics.extract_chunk_references(
         "Surah 1\n\n[1:1]\n\nPraise text\n\n[1:2]\n\nMerciful text"
@@ -538,7 +642,7 @@ def test_extract_chunk_references_finds_multiple_markers():
 
 
 def test_extract_chunk_references_deduplicates_markers_in_order():
-    semantics = ReferenceSemantics.from_metadata(quran_metadata())
+    semantics = ReferenceSemantics.from_metadata(verified_quran_metadata())
 
     refs = semantics.extract_chunk_references("[1:1] repeated [1:1] then [1:2]")
 
@@ -549,7 +653,7 @@ def test_extract_chunk_references_deduplicates_markers_in_order():
 
 
 def test_derive_reference_metadata_records_range_pages_and_neighbors():
-    semantics = ReferenceSemantics.from_metadata(quran_metadata())
+    semantics = ReferenceSemantics.from_metadata(verified_quran_metadata())
 
     metadata = semantics.derive_reference_metadata(
         "Surah 1\n\n[1:4]\n\nIt is You we worship.",
@@ -562,6 +666,10 @@ def test_derive_reference_metadata_records_range_pages_and_neighbors():
     assert metadata["verse_start"] == 4
     assert metadata["verse_end"] == 4
     assert metadata["references"] == ["1:4"]
+    assert metadata["reference_identity_range"] == {
+        "chapter": {"start": 1, "end": 1},
+        "verse": {"start": 4, "end": 4},
+    }
     assert metadata["page_start"] == 7
     assert metadata["page_end"] == 8
     assert metadata["previous_ref"] == "1:3"
@@ -571,8 +679,21 @@ def test_derive_reference_metadata_records_range_pages_and_neighbors():
 def test_derive_reference_metadata_omits_neighbors_when_not_configured():
     semantics = ReferenceSemantics.from_metadata(
         DomainMetadata(
-            reference_pattern="chapter_number:verse_number",
-            custom_json={"reference_schema": {"type": "chapter_verse"}},
+            custom_json={
+                "reference_schema": {
+                    "type": "chapter_verse",
+                    "fields": {"chapter": "chapter", "verse": "verse"},
+                    "canonical_ref_template": "{chapter}:{verse}",
+                },
+                "domain_structure": {
+                    "primary_anchor": {
+                        "regex": r"\[(?P<chapter>\d{1,4}):(?P<verse>\d{1,4})\]",
+                        "unit": "verse",
+                        "verified": True,
+                    }
+                },
+                "reference_resolution": {"enabled": True, "build_canonical_units": True},
+            }
         )
     )
 
@@ -605,6 +726,7 @@ def test_derive_reference_metadata_keeps_cross_reference_only_mentions_non_prima
                         "policy": "cross_reference_only",
                     },
                 },
+                "reference_resolution": {"enabled": True, "build_canonical_units": True},
             }
         )
     )
@@ -644,7 +766,7 @@ def test_builtin_quran_tafseer_defaults_inline_references_to_cross_references(tm
 
 
 def test_chunk_reference_metadata_aliases_derive_reference_metadata():
-    semantics = ReferenceSemantics.from_metadata(quran_metadata())
+    semantics = ReferenceSemantics.from_metadata(verified_quran_metadata())
 
     assert semantics.chunk_reference_metadata("[1:4]") == semantics.derive_reference_metadata(
         "[1:4]"
@@ -706,7 +828,7 @@ def test_reference_semantics_infers_page_line_from_standard_metadata():
 
 
 def test_reference_semantics_splits_text_into_reference_units():
-    semantics = ReferenceSemantics.from_metadata(quran_metadata())
+    semantics = ReferenceSemantics.from_metadata(verified_quran_metadata())
 
     assert semantics.split_reference_units("Surah 1\n\n[1:1] One\n\n[1:2] Two") == [
         "Surah 1\n\n[1:1] One",

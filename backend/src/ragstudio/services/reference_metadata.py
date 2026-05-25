@@ -24,20 +24,13 @@ def _numeric_identity_ranges(
     references: list[dict[str, int | str]],
 ) -> dict[str, dict[str, int]]:
     ranges: dict[str, dict[str, int]] = {}
-    keys = {
-        key
-        for reference in references
-        for key, value in reference.items()
-        if key != "ref" and isinstance(value, int)
-    }
-    for key in keys:
-        values = [
-            int(reference[key])
-            for reference in references
-            if isinstance(reference.get(key), int)
-        ]
-        if values:
-            ranges[key] = {"start": min(values), "end": max(values)}
+    for reference in references:
+        for key, value in reference.items():
+            if key == "ref" or not isinstance(value, int) or isinstance(value, bool):
+                continue
+            current = ranges.setdefault(key, {"start": value, "end": value})
+            current["start"] = min(current["start"], value)
+            current["end"] = max(current["end"], value)
     return ranges
 
 
@@ -487,6 +480,7 @@ class ReferenceSemantics:
         identity_ranges = _numeric_identity_ranges(references)
         if identity_ranges:
             metadata["identity_ranges"] = identity_ranges
+            metadata["reference_identity_range"] = identity_ranges
         cross_reference_labels = self._reference_labels(cross_references or [])
         if cross_reference_labels:
             metadata["cross_references"] = cross_reference_labels
@@ -508,11 +502,14 @@ class ReferenceSemantics:
                 metadata["previous_ref"] = previous_ref
             if next_ref:
                 metadata["next_ref"] = next_ref
-        chapter_verse_refs = [
-            ref
-            for ref in references
-            if isinstance(ref.get("chapter"), int) and isinstance(ref.get("verse"), int)
-        ]
+        if self._legacy_adapter_selected("surah_ayah", "chapter_verse"):
+            chapter_verse_refs = [
+                ref
+                for ref in references
+                if isinstance(ref.get("chapter"), int) and isinstance(ref.get("verse"), int)
+            ]
+        else:
+            chapter_verse_refs = []
         if chapter_verse_refs:
             chapter_values = [int(ref["chapter"]) for ref in chapter_verse_refs]
             verse_values = [int(ref["verse"]) for ref in chapter_verse_refs]
@@ -535,11 +532,14 @@ class ReferenceSemantics:
                     metadata["previous_ref"] = f"{chapter_start}:{previous_verse}"
                 metadata["next_ref"] = f"{chapter_end}:{verse_end + self.include_neighbors}"
 
-        book_hadith_refs = [
-            ref
-            for ref in references
-            if isinstance(ref.get("book"), int) and isinstance(ref.get("hadith"), int)
-        ]
+        if self._legacy_adapter_selected("book_hadith", "hadith"):
+            book_hadith_refs = [
+                ref
+                for ref in references
+                if isinstance(ref.get("book"), int) and isinstance(ref.get("hadith"), int)
+            ]
+        else:
+            book_hadith_refs = []
         if book_hadith_refs:
             book_values = [int(ref["book"]) for ref in book_hadith_refs]
             hadith_values = [int(ref["hadith"]) for ref in book_hadith_refs]
@@ -573,6 +573,12 @@ class ReferenceSemantics:
         metadata.update(self._page_range(source_location))
 
         return metadata
+
+    def _legacy_adapter_selected(self, *reference_types: str) -> bool:
+        return (
+            self.reference_capability == "verified"
+            and (self.reference_type or "").casefold() in reference_types
+        )
 
     def _reference_labels(self, references: list[dict[str, int | str]]) -> list[str]:
         labels: list[str] = []
@@ -621,9 +627,8 @@ class ReferenceSemantics:
             except re.error:
                 pass
         reference_type = (self.reference_type or "").casefold()
-        if reference_type in {"surah_ayah", "chapter_verse"} or (
-            self.reference_capability == "verified" and not reference_type
-        ):
+        verified_adapter = self.reference_capability == "verified"
+        if verified_adapter and reference_type in {"surah_ayah", "chapter_verse"}:
             patterns.append(REFERENCE_PATTERN)
             if include_chapter_only:
                 patterns.append(CHAPTER_ONLY_PATTERN)
@@ -631,7 +636,7 @@ class ReferenceSemantics:
             patterns.append(LEGAL_SECTION_PATTERN)
         if reference_type in {"page_line", "page"}:
             patterns.append(PAGE_LINE_PATTERN)
-        if reference_type in {"book_hadith", "hadith"}:
+        if verified_adapter and reference_type in {"book_hadith", "hadith"}:
             patterns.append(BOOK_HADITH_PATTERN)
         return patterns
 
