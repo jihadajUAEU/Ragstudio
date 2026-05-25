@@ -567,14 +567,7 @@ class ChunkService:
         if search_in.search_weights is None:
             return False
         weights = search_in.search_weights.model_dump(exclude_none=True)
-        for key in (
-            "metadata_boost",
-            "domain_intent",
-            "reference_exact",
-            "same_chapter",
-            "neighbor_match",
-        ):
-            value = weights.get(key)
+        for value in weights.values():
             if isinstance(value, int | float) and value > 0:
                 return True
         return False

@@ -1888,10 +1888,21 @@ git commit -m "fix: make query understanding contract-aware"
 ### Task 11: Add Architecture Drift Guards And Documentation
 
 **Files:**
+- Modify: `backend/src/ragstudio/services/chunk_service.py`
+- Modify: `backend/src/ragstudio/services/evidence_first_answer_service.py`
+- Modify: `backend/src/ragstudio/services/hybrid_chunk_search.py`
+- Modify: `backend/src/ragstudio/services/reference_metadata.py`
+- Modify: `backend/tests/test_retrieval_orchestrator.py`
+- Modify: `backend/tests/test_runtime_query_service.py`
 - Create: `backend/tests/test_architecture_drift_guards.py`
 - Modify: `docs/architecture/hardcoded-policy-inventory.md`
 
-- [ ] **Step 1: Add architecture drift guard tests**
+- [x] **Step 0: Remove remaining generic-file domain terms**
+
+Remove the lingering domain-shaped score labels, answer-rendering branches, and
+fallback checks that the drift guard is meant to catch.
+
+- [x] **Step 1: Add architecture drift guard tests**
 
 Create `backend/tests/test_architecture_drift_guards.py`:
 
@@ -1951,7 +1962,7 @@ def test_reference_contract_inventory_records_proof_boundary():
     assert "metadata-only reference hints" in inventory
 ```
 
-- [ ] **Step 2: Run guard tests to verify they fail**
+- [x] **Step 2: Run guard tests to verify they fail**
 
 Run:
 
@@ -1961,7 +1972,7 @@ $env:PYTHONPATH='backend/src'; python -m pytest backend/tests/test_architecture_
 
 Expected: FAIL until the previous tasks remove generic-file domain terms and the inventory text is updated.
 
-- [ ] **Step 3: Update hardcoded policy inventory**
+- [x] **Step 3: Update hardcoded policy inventory**
 
 In `docs/architecture/hardcoded-policy-inventory.md`, add this section:
 
@@ -1975,7 +1986,7 @@ In `docs/architecture/hardcoded-policy-inventory.md`, add this section:
 - Stage-flow UI metadata is backend-owned. React may provide fallback icons, but it must not be the source of truth for pipeline stage vocabulary.
 ```
 
-- [ ] **Step 4: Run full focused validation**
+- [x] **Step 4: Run full focused validation**
 
 Run:
 
@@ -1987,7 +1998,7 @@ python -m ruff check backend/src/ragstudio/services/reference_contracts.py backe
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add backend/tests/test_architecture_drift_guards.py docs/architecture/hardcoded-policy-inventory.md

@@ -107,7 +107,7 @@ class HybridChunkSearch:
         reference_metadata = metadata.get("reference_metadata")
 
         reference_exact = 0.0
-        same_chapter = 0.0
+        same_parent_reference = 0.0
         neighbor_match = 0.0
         requested_ref = self._query_reference_label(query_ref)
         quality_allows_reference_boost = self._quality_allows_reference_boost(metadata)
@@ -155,22 +155,22 @@ class HybridChunkSearch:
             elif (
                 quality_allows_reference_boost
                 and semantics
-                and semantics.boost_same_chapter
+                and semantics.boost_same_parent_reference
                 and isinstance(q_chapter, int)
                 and isinstance(chapter_start, int)
                 and isinstance(chapter_end, int)
                 and chapter_start <= q_chapter <= chapter_end
             ):
-                same_chapter = (
-                    self.policy.same_chapter_reference_query
+                same_parent_reference = (
+                    self.policy.same_parent_reference_query
                     if q_verse is None
-                    else self.policy.same_chapter_with_verse_query
+                    else self.policy.same_parent_with_unit_query
                 )
 
             if (
                 quality_allows_reference_boost
                 and semantics
-                and semantics.boost_neighbor_verses
+                and semantics.boost_neighbor_references
                 and requested_ref
                 in {
                     reference_metadata.get("previous_ref"),
@@ -214,7 +214,7 @@ class HybridChunkSearch:
         breakdown: dict[str, float] = {
             "reference_exact": reference_exact,
             "neighbor_match": neighbor_match,
-            "same_chapter": same_chapter,
+            "same_parent_reference": same_parent_reference,
             "exact_phrase": exact_phrase,
             "term_coverage": coverage * self.policy.term_coverage_multiplier,
             "semantic_density": density * self.policy.semantic_density_multiplier,

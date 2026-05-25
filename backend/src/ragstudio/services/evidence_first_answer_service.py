@@ -18,16 +18,8 @@ class EvidenceFirstAnswerService:
         matched_term = str(matched_terms[0]) if matched_terms else "the requested term"
         reference = getattr(verification, "reference", None)
         reference_label = getattr(verification, "reference_label", None)
-        surah = getattr(verification, "surah", None)
-        surah_number = getattr(verification, "surah_number", None)
-        ayah = getattr(verification, "ayah", None)
         if reference and reference_label:
             answer = f"The word {matched_term} is mentioned at {reference_label}. [{label}]"
-        elif surah and surah_number and ayah:
-            answer = (
-                f"The word {matched_term} is mentioned in Surah {surah}, "
-                f"{surah_number}:{ayah}. [{label}]"
-            )
         elif reference:
             answer = f"The word {matched_term} is mentioned at {reference}. [{label}]"
         else:

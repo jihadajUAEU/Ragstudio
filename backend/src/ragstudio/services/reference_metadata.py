@@ -108,6 +108,14 @@ class ReferenceSemantics:
     unit_anchor_pattern: str | None = None
     inline_reference_pattern: str | None = None
     inline_reference_policy: str = "starts_unit"
+
+    @property
+    def boost_same_parent_reference(self) -> bool:
+        return self.boost_same_chapter
+
+    @property
+    def boost_neighbor_references(self) -> bool:
+        return self.boost_neighbor_verses
     required_reference_groups: frozenset[str] = field(default_factory=frozenset)
     reference_identity_fields: tuple[str, ...] = ()
 

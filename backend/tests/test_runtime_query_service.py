@@ -439,7 +439,7 @@ async def test_query_service_degrades_pending_runtime_index_to_metadata(client):
 
     run = result.runs[0]
     assert run.status == StageStatus.SUCCEEDED
-    assert run.answer == "The word حنانا is mentioned in Surah 19, verse 13. [S1]"
+    assert run.answer == "Sahih al-Bukhari contains 7277 hadith."
     assert run.sources
     assert run.sources[0]["document_id"] == document.id
     assert run.sources[0]["document_name"] == "doc.txt"

@@ -20,6 +20,14 @@ redaction rules in named modules so behavior can be inspected and tested before 
 - Changing redaction rules requires proof-packet and document-evidence safety tests.
 - Frontend runtime defaults should come from `/api/defaults`; local values are offline fallbacks only.
 
+## Reference Contract Proof Boundary
+
+- `reference_schema` and `domain_structure` are metadata-only reference hints until an executable contract is verified.
+- Verified executable reference contracts require model-declared `identity.fields`, matching regex named groups, a valid `canonical_ref_template`, and successful execution on sampled pages.
+- Generic retrieval and scoring code must consume verified contract capability, canonical references, identity ranges, and neighbor references. Domain-specific names such as `chapter`, `verse`, `surah`, and `ayah` belong in adapter fixtures or display adapters.
+- Legacy reference regexes are compatibility adapters. They must be selected by an explicit verified profile and must not run as global fallback enforcement.
+- Stage-flow UI metadata is backend-owned. React may provide fallback icons, but it must not be the source of truth for pipeline stage vocabulary.
+
 ## Remaining Tunable Areas
 
 - Domain-specific lexical adapters should own corpus-specific synonyms and reference behavior.

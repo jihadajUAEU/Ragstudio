@@ -1328,9 +1328,8 @@ class HananHypothesisService:
             domain_hint="quran",
             answer_shape="surah_and_verse",
             probable_answer=ProbableAnswer(
-                surah="Maryam",
-                surah_number=19,
-                ayah=13,
+                reference="19:13",
+                display_label="Surah Maryam, 19:13",
                 matched_term="حنانا",
             ),
             confidence=0.86,
@@ -2397,7 +2396,7 @@ async def test_orchestrator_uses_hypothesis_terms_and_confirmed_answer_for_word_
 
     assert result.error is None
     assert answer_service.called is False
-    assert result.answer == "The word حنانا is mentioned in Surah Maryam, 19:13. [S1]"
+    assert result.answer == "The word حنانا is mentioned at Surah Maryam, 19:13. [S1]"
     assert result.token_metadata["answer_mode"] == "confirmed_hypothesis"
     assert chunk_service.search_queries[0] == "حنانا"
 
