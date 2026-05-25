@@ -16,6 +16,7 @@ def test_context_policy_reads_verified_structural_links():
                 "verified": True,
                 "relationships": ["heading_path", "section_path", "reference_range"],
                 "max_reference_distance": 2,
+                "reference_unit_field": "item",
             }
         }
     )
@@ -23,6 +24,7 @@ def test_context_policy_reads_verified_structural_links():
     assert policy == ContextExpansionPolicy(
         relationships=frozenset({"heading_path", "section_path", "reference_range"}),
         max_reference_distance=2,
+        reference_unit_field="item",
     )
 
 
@@ -288,8 +290,8 @@ async def test_context_window_service_returns_verified_structural_context(
                         "heading_path": ["Part 1", "Section 2"],
                         "section_path": ["Part 1"],
                         "reference_identity_range": {
-                            "part": {"start": 1, "end": 1},
                             "item": {"start": 10, "end": 10},
+                            "part": {"start": 1, "end": 1},
                         },
                         "context_contract": {
                             "verified": True,
@@ -299,6 +301,7 @@ async def test_context_window_service_returns_verified_structural_context(
                                 "reference_range",
                             ],
                             "max_reference_distance": 2,
+                            "reference_unit_field": "item",
                         },
                     },
                 ),
@@ -323,8 +326,8 @@ async def test_context_window_service_returns_verified_structural_context(
                     source_location={"page": 4},
                     metadata_json={
                         "reference_identity_range": {
-                            "part": {"start": 1, "end": 1},
                             "item": {"start": 12, "end": 12},
+                            "part": {"start": 1, "end": 1},
                         }
                     },
                 ),
@@ -335,8 +338,8 @@ async def test_context_window_service_returns_verified_structural_context(
                     source_location={"page": 5},
                     metadata_json={
                         "reference_identity_range": {
-                            "part": {"start": 1, "end": 1},
                             "item": {"start": 20, "end": 20},
+                            "part": {"start": 1, "end": 1},
                         }
                     },
                 ),
@@ -347,8 +350,8 @@ async def test_context_window_service_returns_verified_structural_context(
                     source_location={"page": 6},
                     metadata_json={
                         "reference_identity_range": {
-                            "part": {"start": 2, "end": 2},
                             "item": {"start": 10, "end": 10},
+                            "part": {"start": 2, "end": 2},
                         }
                     },
                 ),
@@ -365,13 +368,14 @@ async def test_context_window_service_returns_verified_structural_context(
                 "heading_path": ["Part 1", "Section 2"],
                 "section_path": ["Part 1"],
                 "reference_identity_range": {
-                    "part": {"start": 1, "end": 1},
                     "item": {"start": 10, "end": 10},
+                    "part": {"start": 1, "end": 1},
                 },
                 "context_contract": {
                     "verified": True,
                     "relationships": ["heading_path", "section_path", "reference_range"],
                     "max_reference_distance": 2,
+                    "reference_unit_field": "item",
                 },
             },
             tool="metadata",

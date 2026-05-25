@@ -160,15 +160,19 @@ def _seed_paths(
 
 def _seed_reference_ranges(
     seeds: list[EvidenceCandidate],
-) -> list[tuple[dict[str, dict[str, int]], int]]:
-    values: list[tuple[dict[str, dict[str, int]], int]] = []
+) -> list[tuple[dict[str, dict[str, int]], int, str | None]]:
+    values: list[tuple[dict[str, dict[str, int]], int, str | None]] = []
     for seed in seeds:
         policy = context_policy_from_metadata(seed.metadata)
         if "reference_range" not in policy.relationships:
             continue
         reference_range = _reference_range_value(seed.metadata.get("reference_identity_range"))
         if reference_range:
-            values.append((reference_range, policy.max_reference_distance))
+            values.append((
+                reference_range,
+                policy.max_reference_distance,
+                policy.reference_unit_field or _string_value(seed.metadata, "reference_unit_field"),
+            ))
     return values
 
 
@@ -224,7 +228,7 @@ def _structural_relationship_reasons(
     *,
     seed_heading_paths: set[tuple[str, ...]],
     seed_section_paths: set[tuple[str, ...]],
-    seed_reference_ranges: list[tuple[dict[str, dict[str, int]], int]],
+    seed_reference_ranges: list[tuple[dict[str, dict[str, int]], int, str | None]],
 ) -> list[str]:
     reasons: list[str] = []
     if _same_path(metadata, seed_heading_paths, "heading_path"):
@@ -261,14 +265,19 @@ def _path_value(value: Any) -> tuple[str, ...]:
 
 def _near_reference_range(
     metadata: dict[str, Any],
-    seed_ranges: list[tuple[dict[str, dict[str, int]], int]],
+    seed_ranges: list[tuple[dict[str, dict[str, int]], int, str | None]],
 ) -> bool:
     current = _reference_range_value(metadata.get("reference_identity_range"))
     if not current:
         return False
     return any(
-        _reference_ranges_are_near(current, seed, max_distance=max_distance)
-        for seed, max_distance in seed_ranges
+        _reference_ranges_are_near(
+            current,
+            seed,
+            max_distance=max_distance,
+            unit_field=unit_field,
+        )
+        for seed, max_distance, unit_field in seed_ranges
     )
 
 
@@ -277,12 +286,16 @@ def _reference_ranges_are_near(
     seed: dict[str, dict[str, int]],
     *,
     max_distance: int,
+    unit_field: str | None = None,
 ) -> bool:
-    seed_fields = list(seed)
+    seed_fields = tuple(seed)
     if not seed_fields or not all(field in current for field in seed_fields):
         return False
-    unit_field = seed_fields[-1]
-    parent_fields = seed_fields[:-1]
+    if unit_field is None and len(seed_fields) == 1:
+        unit_field = seed_fields[0]
+    if unit_field is None or unit_field not in seed or unit_field not in current:
+        return False
+    parent_fields = tuple(field for field in seed_fields if field != unit_field)
     if any(_range_distance(seed[field], current[field]) != 0 for field in parent_fields):
         return False
     return _range_distance(seed[unit_field], current[unit_field]) <= max_distance

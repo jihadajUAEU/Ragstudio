@@ -481,6 +481,9 @@ class ReferenceSemantics:
         if identity_ranges:
             metadata["identity_ranges"] = identity_ranges
             metadata["reference_identity_range"] = identity_ranges
+            if self.reference_identity_fields:
+                metadata["reference_identity_fields"] = list(self.reference_identity_fields)
+                metadata["reference_unit_field"] = self.reference_identity_fields[-1]
         cross_reference_labels = self._reference_labels(cross_references or [])
         if cross_reference_labels:
             metadata["cross_references"] = cross_reference_labels

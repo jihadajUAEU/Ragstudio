@@ -990,6 +990,36 @@ def test_raw_native_candidate_marks_missing_canonical_layout_context(tmp_path):
     assert candidates[0]["metadata"]["risk_flags"] == ["runtime_bridge_missing"]
 
 
+def test_partial_native_metadata_still_marks_missing_canonical_layout_context(tmp_path):
+    adapter = NativeRAGAnythingAdapter(
+        profile(runtime_working_dir=str(tmp_path / "runtime")),
+        AppSettings(database_url="postgresql+asyncpg://user:pass@localhost:5432/ragstudio"),
+    )
+    proxy = SimpleNamespace(
+        collected_results=[
+            {
+                "id": "runtime-partial-1",
+                "full_doc_id": "doc-1",
+                "content": "Runtime text with partial metadata",
+                "score": 0.9,
+                "metadata": {
+                    "layout_group_id": "figure-2",
+                    "reference_metadata": {"references": ["19:13"]},
+                },
+            }
+        ]
+    )
+
+    candidates = adapter._native_sources_from_proxy(proxy, ["doc-1"])
+
+    metadata = candidates[0]["metadata"]
+    assert metadata["layout_group_id"] == "figure-2"
+    assert metadata["reference_metadata"] == {"references": ["19:13"]}
+    assert metadata["canonical_hydration_status"] == "missing"
+    assert metadata["layout_context_status"] == "runtime_minimal"
+    assert metadata["risk_flags"] == ["runtime_bridge_missing"]
+
+
 def test_native_candidate_keeps_rich_layout_context_without_loss_flag(tmp_path):
     adapter = NativeRAGAnythingAdapter(
         profile(runtime_working_dir=str(tmp_path / "runtime")),

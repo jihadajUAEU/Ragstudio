@@ -982,21 +982,10 @@ class NativeRAGAnythingAdapter:
 
 def _has_canonical_layout_context(metadata: Mapping[str, Any]) -> bool:
     evidence_context = metadata.get("evidence_context")
-    if isinstance(evidence_context, Mapping) and evidence_context:
-        return True
-    return any(
-        key in metadata
-        for key in (
-            "provenance",
-            "layout_group_id",
-            "layout_role",
-            "reading_order",
-            "block_index",
-            "parent_chunk_id",
-            "previous_chunk_id",
-            "next_chunk_id",
-            "reference_metadata",
-        )
+    return isinstance(evidence_context, Mapping) and bool(
+        evidence_context.get("breadcrumb")
+        or evidence_context.get("layout_summary")
+        or evidence_context.get("source_location")
     )
 
 

@@ -580,6 +580,8 @@ def test_reference_semantics_supports_book_hadith_schema():
             "book": {"start": 1, "end": 1},
             "hadith": {"start": 2, "end": 2},
         },
+        "reference_identity_fields": ["book", "hadith"],
+        "reference_unit_field": "hadith",
         "book_start": 1,
         "book_end": 1,
         "hadith_start": 2,

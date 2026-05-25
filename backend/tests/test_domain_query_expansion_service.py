@@ -115,7 +115,7 @@ def test_domain_query_expansion_does_not_use_arabic_adapter_without_script_contr
         ],
     )
 
-    assert expansion.domain_family == "reference_heavy"
+    assert expansion.domain_family == "generic"
     assert expansion.expansions == []
     assert expansion.retrieval_passes == []
     assert expansion.trace["adapter_sources"] == []
@@ -140,7 +140,7 @@ def test_domain_query_expansion_does_not_treat_language_as_script_declaration():
         ],
     )
 
-    assert expansion.domain_family == "reference_heavy"
+    assert expansion.domain_family == "generic"
     assert expansion.expansions == []
     assert expansion.retrieval_passes == []
     assert expansion.trace["adapter_sources"] == []
@@ -246,7 +246,19 @@ def quran_domain_metadata() -> dict[str, object]:
         "custom_json": {
             "reference_schema": {
                 "type": "chapter_verse",
+                "canonical_ref_template": "{chapter}:{verse}",
+                "identity_fields": ["chapter", "verse"],
                 "fields": {"chapter": "chapter_number", "verse": "verse_number"},
+            },
+            "domain_structure": {
+                "primary_anchor": {
+                    "regex": r"(?P<chapter>\d+):(?P<verse>\d+)",
+                    "unit": "verse",
+                    "verified": True,
+                }
+            },
+            "reference_resolution": {
+                "build_canonical_units": True,
             },
             "quality_policy": {
                 "required_scripts_by_unit_role": {"verse": ["arabic"]},
@@ -322,7 +334,7 @@ def test_domain_query_expansion_uses_hypothesis_target_terms_from_sentence():
             )
         ],
         domain_hint="quran",
-        answer_shape="surah_and_verse",
+        answer_shape="reference",
         confidence=0.8,
         valid=True,
     )
