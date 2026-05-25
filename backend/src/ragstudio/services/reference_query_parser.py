@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import re
+from string import Formatter
 from typing import Any
 
 from ragstudio.services.reference_contracts import canonical_reference_from_groups
+
+_REFERENCE_GROUP_VALUE = r"[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*"
 
 
 def parse_query_references(query: str, contracts: list[dict[str, Any]]) -> list[str]:
@@ -14,6 +17,7 @@ def parse_query_references(query: str, contracts: list[dict[str, Any]]) -> list[
             continue
         template = _string_value(reference_contract.get("canonical_ref_template"))
         anchors = _anchors(reference_contract)
+        references.extend(_template_references(query, reference_contract, template))
         references.extend(_single_anchor_references(query, anchors, template))
         references.extend(_contextual_references(query, anchors, template))
     return list(dict.fromkeys(references))
@@ -110,6 +114,26 @@ def _contextual_references(
     return references
 
 
+def _template_references(
+    query: str,
+    reference_contract: dict[str, Any],
+    template: str | None,
+) -> list[str]:
+    pattern = _canonical_template_pattern(template)
+    if pattern is None:
+        return []
+    required_groups = set(_string_list(reference_contract.get("required_groups")))
+    references: list[str] = []
+    for match in pattern.finditer(query):
+        groups = {key: value for key, value in match.groupdict().items() if value}
+        if required_groups and not required_groups.issubset(groups):
+            continue
+        reference = canonical_reference_from_groups(groups, template)
+        if reference:
+            references.append(reference)
+    return references
+
+
 def _reference_contract(contract: dict[str, Any]) -> dict[str, Any]:
     reference_contract = contract.get("reference_contract")
     if isinstance(reference_contract, dict):
@@ -153,6 +177,43 @@ def _compiled_pattern(value: Any) -> re.Pattern[str] | None:
         return re.compile(value, flags=re.IGNORECASE)
     except re.error:
         return None
+
+
+def _canonical_template_pattern(template: str | None) -> re.Pattern[str] | None:
+    if not template:
+        return None
+    parts: list[str] = [r"(?<![A-Za-z0-9_])"]
+    seen_groups: set[str] = set()
+    try:
+        parsed = list(Formatter().parse(template))
+    except ValueError:
+        return None
+    for literal, field_name, _format_spec, _conversion in parsed:
+        parts.append(re.escape(literal))
+        if not field_name:
+            continue
+        group_name = field_name.split(".", 1)[0].split("[", 1)[0]
+        if not re.fullmatch(r"[A-Za-z]\w*", group_name) or group_name in seen_groups:
+            return None
+        seen_groups.add(group_name)
+        parts.append(rf"(?P<{group_name}>{_REFERENCE_GROUP_VALUE})")
+    if not seen_groups:
+        return None
+    parts.append(r"(?![A-Za-z0-9_])")
+    try:
+        return re.compile("".join(parts), flags=re.IGNORECASE)
+    except re.error:
+        return None
+
+
+def _string_list(value: Any) -> list[str]:
+    if isinstance(value, list | tuple | set):
+        return [
+            item.strip()
+            for item in value
+            if isinstance(item, str) and item.strip()
+        ]
+    return []
 
 
 def _string_value(value: Any) -> str | None:

@@ -141,6 +141,12 @@ class QueryHypothesis:
         }
 
 
+@dataclass(frozen=True)
+class _ReferenceGroupMatch:
+    groups: dict[str, str]
+    template: str | None
+
+
 class QueryHypothesisService:
     def __init__(self, http_client_provider: HttpClientProviderProtocol | None = None) -> None:
         self.http_client_provider = http_client_provider
@@ -480,13 +486,14 @@ def _probable_answer(
         return None
     if raw.get("ayah") is not None and ayah is None:
         return None
-    reference_groups = _reference_groups_from_contracts(raw, reference_contracts)
+    reference_group_match = _reference_groups_from_contracts(raw, reference_contracts)
+    reference_groups = reference_group_match.groups if reference_group_match else None
     contract_reference = (
         canonical_reference_from_groups(
             reference_groups,
-            _first_verified_template(reference_contracts),
+            reference_group_match.template,
         )
-        if reference_groups
+        if reference_group_match is not None
         else None
     )
     reference = contract_reference or _safe_reference(
@@ -697,14 +704,14 @@ def _reference_from_contract_groups(
 def _reference_groups_from_contracts(
     raw: dict[str, Any],
     reference_contracts: list[dict[str, Any]],
-) -> dict[str, str] | None:
+) -> _ReferenceGroupMatch | None:
     for contract in reference_contracts:
         reference_contract = _reference_contract_payload(contract)
         if reference_contract.get("verified") is not True:
             continue
+        template = _string_value(reference_contract.get("canonical_ref_template"))
         fields = _string_list(reference_contract.get("required_groups"))
         if not fields:
-            template = _string_value(reference_contract.get("canonical_ref_template"))
             fields = sorted(_template_fields(template) or set()) if template else []
         groups: dict[str, str] = {}
         for field_name in fields:
@@ -713,18 +720,7 @@ def _reference_groups_from_contracts(
                 break
             groups[field_name] = value
         if len(groups) == len(fields) and groups:
-            return groups
-    return None
-
-
-def _first_verified_template(reference_contracts: list[dict[str, Any]]) -> str | None:
-    for contract in reference_contracts:
-        reference_contract = _reference_contract_payload(contract)
-        if reference_contract.get("verified") is not True:
-            continue
-        template = _string_value(reference_contract.get("canonical_ref_template"))
-        if template:
-            return template
+            return _ReferenceGroupMatch(groups=groups, template=template)
     return None
 
 

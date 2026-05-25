@@ -111,6 +111,47 @@ def test_probable_answer_uses_contract_identity_fields():
     assert hypothesis.probable_answer.matched_term == "mercy"
 
 
+def test_probable_answer_uses_matching_contract_template_when_multiple_contracts_exist():
+    payload = {
+        "intent": "find_word_occurrence",
+        "target_terms": ["procedure"],
+        "answer_shape": "reference",
+        "probable_answer": {
+            "article": "12",
+            "clause": "7",
+            "matched_term": "procedure",
+        },
+    }
+    contracts = [
+        {
+            "reference_contract": {
+                "verified": True,
+                "canonical_ref_template": "book:{book}:hadith:{hadith}",
+                "required_groups": ["book", "hadith"],
+            }
+        },
+        {
+            "reference_contract": {
+                "verified": True,
+                "canonical_ref_template": "article:{article}:clause:{clause}",
+                "required_groups": ["article", "clause"],
+            }
+        },
+    ]
+
+    hypothesis = parse_query_hypothesis_payload(
+        payload,
+        reference_contracts=contracts,
+    )
+
+    assert hypothesis.probable_answer is not None
+    assert hypothesis.probable_answer.reference == "article:12:clause:7"
+    assert hypothesis.probable_answer.reference_groups == {
+        "article": "12",
+        "clause": "7",
+    }
+
+
 def test_parse_hypothesis_drops_unsafe_and_oversized_terms():
     raw = {
         "intent": "find_word_occurrence",

@@ -102,6 +102,54 @@ async def test_repository_reference_prefilter_uses_document_reference_contract(
 
 
 @pytest.mark.asyncio
+async def test_repository_reference_prefilter_uses_verified_template_without_anchors(
+    database_url,
+    tmp_path,
+):
+    engine = make_engine(database_url)
+    await init_db(engine)
+    factory = make_session_factory(engine)
+
+    async with factory() as session:
+        document = Document(
+            id="doc-template",
+            filename="template.pdf",
+            content_type="application/pdf",
+            sha256="template-sha",
+            artifact_path=str(tmp_path / "template.pdf"),
+            status="ready",
+            index_contract={
+                "reference_contract": {
+                    "verified": True,
+                    "canonical_ref_template": "{chapter}:{verse}",
+                    "required_groups": ["chapter", "verse"],
+                }
+            },
+        )
+        session.add(document)
+        session.add(
+            Chunk(
+                id="chunk-19-13",
+                document_id="doc-template",
+                text="[19:13] Example body.",
+                source_location={"page": 4},
+                metadata_json={"reference_metadata": {"references": ["19:13"]}},
+                preview_ref="19:13",
+            )
+        )
+        await session.commit()
+
+        chunks = await ChunkLexicalSearchRepository(session).reference_prefilter(
+            query="show 19:13.",
+            document_ids=["doc-template"],
+            limit=5,
+        )
+
+    assert [chunk.id for chunk in chunks] == ["chunk-19-13"]
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
 async def test_init_db_creates_english_text_trigram_index(database_url):
     engine = make_engine(database_url)
     await init_db(engine)

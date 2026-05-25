@@ -127,6 +127,25 @@ def test_understanding_detects_exact_quran_reference():
     ]
 
 
+def test_understanding_uses_verified_reference_contract_template_without_patterns():
+    understanding = understand_query(
+        "show 19:13.",
+        reference_contracts=[
+            {
+                "reference_contract": {
+                    "verified": True,
+                    "canonical_units": True,
+                    "canonical_ref_template": "{chapter}:{verse}",
+                    "required_groups": ["chapter", "verse"],
+                }
+            }
+        ],
+    )
+
+    assert understanding.intent == "reference"
+    assert understanding.reference_hints == ["19:13"]
+
+
 def test_understanding_does_not_treat_bare_colon_reference_as_global_contract():
     understanding = understand_query("show 19:13")
 

@@ -25,6 +25,20 @@ def test_parse_query_references_uses_contract_patterns():
     ]
 
 
+def test_parse_query_references_uses_verified_canonical_template_without_anchors():
+    contracts = [
+        {
+            "reference_contract": {
+                "verified": True,
+                "canonical_ref_template": "{chapter}:{verse}",
+                "required_groups": ["chapter", "verse"],
+            }
+        }
+    ]
+
+    assert parse_query_references("show 19:13.", contracts) == ["19:13"]
+
+
 def test_parse_query_references_uses_contextual_contract_patterns():
     contracts = [
         {
