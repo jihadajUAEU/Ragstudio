@@ -305,6 +305,7 @@ function ArchitectureRoute({ route }: { route: ThreePillarTraceSummary["route"] 
       <KeyValue label="Source of truth" value={route.sourceOfTruth} />
       <KeyValue label="Direct evidence" value={route.directEvidenceRequired ? "required" : "not required"} />
       <KeyValue label="Graph context" value={route.graphContextRequired ? "required" : "not required"} />
+      <ReasonChips label="Contract reasons" values={route.domainReasons} />
     </>
   );
 }
@@ -375,6 +376,7 @@ function LayoutNeighbors({ layout }: { layout: ThreePillarTraceSummary["layout"]
       <KeyValue label="Reason" value={layout.reason} />
       <KeyValue label="Candidates" value={layout.candidateCount === null ? "not recorded" : String(layout.candidateCount)} />
       <KeyValue label="Reading order" value={layout.readingOrderNeighbors ? "yes" : "no"} />
+      <ReasonChips label="Layout reasons" values={layout.layoutReasons} />
       <ListValue label="Layout groups" values={layout.layoutGroupIds} />
       <ListValue label="Canonical chunks" values={layout.canonicalChunkIds} />
     </>
@@ -387,6 +389,7 @@ function ContextWindowDetails({ context }: { context: ThreePillarTraceSummary["c
       <KeyValue label="Status" value={context.status} />
       <KeyValue label="Reason" value={context.reason} />
       <KeyValue label="Candidates" value={context.candidateCount === null ? "not recorded" : String(context.candidateCount)} />
+      <ReasonChips label="Context reasons" values={context.contextReasons} />
       <ListValue
         label="Relationship reasons"
         values={context.relationshipReasons.map((item) => `${item.chunkId}: ${item.reason}`)}
@@ -438,6 +441,28 @@ function ListValue({ label, values }: { label: string; values: string[] }) {
     <div className="min-w-0 rounded-md bg-[#f8fafb] px-3 py-2 sm:col-span-2">
       <p className="text-xs font-semibold text-[#62717a]">{label}</p>
       <p className="mt-1 break-words text-sm text-[#24313a]">{values.length ? values.join(", ") : "not recorded"}</p>
+    </div>
+  );
+}
+
+function ReasonChips({ label, values }: { label: string; values: string[] }) {
+  return (
+    <div className="min-w-0 rounded-md bg-[#f8fafb] px-3 py-2 sm:col-span-2">
+      <p className="text-xs font-semibold text-[#62717a]">{label}</p>
+      {values.length ? (
+        <div className="mt-1 flex flex-wrap gap-1.5">
+          {values.map((value) => (
+            <span
+              key={value}
+              className="inline-flex min-h-6 items-center rounded-md bg-[#eef4f6] px-2 text-xs font-semibold text-[#3a4a53]"
+            >
+              {value}
+            </span>
+          ))}
+        </div>
+      ) : (
+        <p className="mt-1 break-words text-sm text-[#24313a]">not recorded</p>
+      )}
     </div>
   );
 }

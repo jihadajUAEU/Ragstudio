@@ -229,6 +229,7 @@ async def test_orchestrator_expands_layout_neighbors_from_seed_candidates(
     assert traces[0]["timed_out"] is False
     assert traces[0]["partial"] is False
     assert traces[0]["layout_group_ids"] == ["figure-2"]
+    assert traces[0]["layout_reasons"] == ["layout_group", "reading_order_neighbor"]
     assert traces[0]["reading_order_neighbors"] is True
     assert traces[0]["layout_summaries"]["neighbor-layout-orchestrator"] == "text; page=2"
 
@@ -340,6 +341,12 @@ async def test_orchestrator_expands_context_window_from_seed_candidates(
     assert traces[0]["status"] == "ran"
     assert traces[0]["reason"] == "adjacent_parent_sibling_context_window"
     assert traces[0]["candidate_count"] == 4
+    assert set(traces[0]["context_reasons"]) == {
+        "parent_context",
+        "reading_order_adjacent",
+        "linked_context",
+        "sibling_context",
+    }
     assert traces[0]["relationship_reasons"][
         "parent-context-window-orchestrator"
     ] == "parent_context"
@@ -1971,6 +1978,9 @@ async def test_orchestrator_emits_retrieval_route_plan_trace():
     assert route_trace["document_ids"] == ["doc-quran"]
     assert route_trace["intent"] == "reference"
     assert route_trace["direct_evidence_required"] is True
+    assert "domain_profile:reference_heavy" in route_trace["domain_reasons"]
+    assert "verified_reference_contract" in route_trace["domain_reasons"]
+    assert "materialization:full" in route_trace["domain_reasons"]
     assert result.error is None
 
 

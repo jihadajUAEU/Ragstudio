@@ -49,16 +49,19 @@ export interface NormalizedEvidence {
       domain: string;
       materializationHint: string;
       qualityPolicy: string;
+      reasons?: string[];
     };
     layout?: {
       layoutGroupId: string;
       layoutRole: string;
       readingOrder: string;
+      reasons?: string[];
     };
     context?: {
       parentChunkId: string;
       previousChunkId: string;
       nextChunkId: string;
+      reasons?: string[];
     };
     assembly?: {
       groundingStatus: string;
@@ -139,31 +142,49 @@ export function EvidenceViewer({
               </div>
             </EvidenceSection>
             <EvidenceSection title="Domain and materialization">
-              <ArchitectureKeyValues
-                values={[
-                  ["Domain", evidence.architecture?.domain?.domain],
-                  ["Materialization", evidence.architecture?.domain?.materializationHint],
-                  ["Quality policy", evidence.architecture?.domain?.qualityPolicy],
-                ]}
-              />
+              <div className="space-y-2">
+                <ArchitectureKeyValues
+                  values={[
+                    ["Domain", evidence.architecture?.domain?.domain],
+                    ["Materialization", evidence.architecture?.domain?.materializationHint],
+                    ["Quality policy", evidence.architecture?.domain?.qualityPolicy],
+                  ]}
+                />
+                <ReasonList
+                  label="Contract reasons"
+                  values={evidence.architecture?.domain?.reasons}
+                />
+              </div>
             </EvidenceSection>
             <EvidenceSection title="Layout chain">
-              <ArchitectureKeyValues
-                values={[
-                  ["Layout group", evidence.architecture?.layout?.layoutGroupId],
-                  ["Layout role", evidence.architecture?.layout?.layoutRole],
-                  ["Reading order", evidence.architecture?.layout?.readingOrder],
-                ]}
-              />
+              <div className="space-y-2">
+                <ArchitectureKeyValues
+                  values={[
+                    ["Layout group", evidence.architecture?.layout?.layoutGroupId],
+                    ["Layout role", evidence.architecture?.layout?.layoutRole],
+                    ["Reading order", evidence.architecture?.layout?.readingOrder],
+                  ]}
+                />
+                <ReasonList
+                  label="Layout reasons"
+                  values={evidence.architecture?.layout?.reasons}
+                />
+              </div>
             </EvidenceSection>
             <EvidenceSection title="Context chain">
-              <ArchitectureKeyValues
-                values={[
-                  ["Parent", evidence.architecture?.context?.parentChunkId],
-                  ["Previous", evidence.architecture?.context?.previousChunkId],
-                  ["Next", evidence.architecture?.context?.nextChunkId],
-                ]}
-              />
+              <div className="space-y-2">
+                <ArchitectureKeyValues
+                  values={[
+                    ["Parent", evidence.architecture?.context?.parentChunkId],
+                    ["Previous", evidence.architecture?.context?.previousChunkId],
+                    ["Next", evidence.architecture?.context?.nextChunkId],
+                  ]}
+                />
+                <ReasonList
+                  label="Context reasons"
+                  values={evidence.architecture?.context?.reasons}
+                />
+              </div>
             </EvidenceSection>
             {evidence.architecture?.assembly ? (
               <EvidenceSection title="Context assembly">
@@ -400,6 +421,15 @@ function List({ values }: { values: string[] }) {
       ))}
     </ul>
   );
+}
+
+function ReasonList({ label, values }: { label: string; values?: string[] }) {
+  return values?.length ? (
+    <div className="space-y-2">
+      <p className="text-xs font-semibold text-[#62717a]">{label}</p>
+      <List values={values} />
+    </div>
+  ) : null;
 }
 
 function RouteActions({

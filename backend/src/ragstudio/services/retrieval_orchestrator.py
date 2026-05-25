@@ -31,6 +31,7 @@ from ragstudio.services.query_hypothesis_verifier import (
 )
 from ragstudio.services.reference_contracts import (
     metadata_list_declared_scripts,
+    metadata_list_has_verified_reference_contract,
     metadata_list_reference_contracts,
 )
 from ragstudio.services.reranker_service import RerankerService
@@ -243,6 +244,11 @@ class RetrievalOrchestrator:
                     plan.understanding and plan.understanding.direct_evidence_required
                 ),
                 "graph_context_required": plan.graph_context_required,
+                "domain_reasons": _domain_trace_reasons(
+                    route_plan=route_plan,
+                    route_request=route_request,
+                    domain_metadata=domain_metadata,
+                ),
             }
         )
         traces.append(query_hypothesis.to_trace())
@@ -1056,6 +1062,9 @@ class RetrievalOrchestrator:
             trace["layout_group_ids"] = layout_group_ids
         if any("reading_order_neighbor" in candidate.reasons for candidate in candidates):
             trace["reading_order_neighbors"] = True
+        layout_reasons = _unique_reasons(candidates, exclude={"layout_neighbor"})
+        if layout_reasons:
+            trace["layout_reasons"] = layout_reasons
         layout_summaries = _candidate_layout_summaries(candidates)
         if layout_summaries:
             trace["layout_summaries"] = layout_summaries
@@ -1110,6 +1119,9 @@ class RetrievalOrchestrator:
         relationship_reasons = _candidate_context_relationship_reasons(candidates)
         if relationship_reasons:
             trace["relationship_reasons"] = relationship_reasons
+        context_reasons = _unique_reasons(candidates, exclude={"context_window"})
+        if context_reasons:
+            trace["context_reasons"] = context_reasons
         return candidates, [trace]
 
     async def _metadata_after_native_result(
@@ -1910,6 +1922,20 @@ def _layout_neighbor_trace_reason(candidates: list[EvidenceCandidate]) -> str:
     return "same_page_or_reference_neighbors"
 
 
+def _unique_reasons(
+    candidates: list[EvidenceCandidate],
+    *,
+    exclude: set[str],
+) -> list[str]:
+    values: list[str] = []
+    for candidate in candidates:
+        for reason in candidate.reasons:
+            if reason in exclude or reason in values:
+                continue
+            values.append(reason)
+    return values
+
+
 def _candidate_layout_group_ids(candidates: list[EvidenceCandidate]) -> list[str]:
     values: list[str] = []
     for candidate in candidates:
@@ -1946,6 +1972,31 @@ def _context_window_trace_reason(candidates: list[EvidenceCandidate]) -> str:
     if has_adjacent:
         return "adjacent_context_window"
     return "context_window"
+
+
+def _domain_trace_reasons(
+    *,
+    route_plan: Any,
+    route_request: Any,
+    domain_metadata: list[dict[str, Any]],
+) -> list[str]:
+    reasons: list[str] = []
+    domain_profile_id = _str_or_none(getattr(route_plan, "domain_profile_id", None))
+    if domain_profile_id:
+        reasons.append(f"domain_profile:{domain_profile_id}")
+    if metadata_list_has_verified_reference_contract(domain_metadata):
+        reasons.append("verified_reference_contract")
+
+    materialization_policy = getattr(route_request, "materialization_policy", None)
+    materialization_action = _str_or_none(getattr(materialization_policy, "action", None))
+    if materialization_action:
+        reasons.append(f"materialization:{materialization_action}")
+    materialization_reasons = getattr(materialization_policy, "reasons", ()) or ()
+    for reason in materialization_reasons:
+        value = _str_or_none(reason)
+        if value and value not in reasons:
+            reasons.append(value)
+    return reasons
 
 
 def _candidate_context_relationship_reasons(

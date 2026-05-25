@@ -31,6 +31,7 @@ const run: RunOut = {
     {
       stage: "retrieval_route_plan",
       domain_profile_id: "reference_heavy",
+      domain_reasons: ["domain_profile:reference_heavy", "verified_reference_contract"],
       layout_hint: "reference",
       materialization_hint: "graph",
       source_of_truth: "postgres_canonical_evidence",
@@ -52,6 +53,7 @@ const run: RunOut = {
       stage: "layout_neighbor_expansion",
       status: "ran",
       reason: "same_page_reference_layout_group_or_reading_order_neighbors",
+      layout_reasons: ["bbox_overlap", "layout_group"],
       candidate_count: 1,
       layout_group_ids: ["table-srg-001"],
       reading_order_neighbors: true,
@@ -62,6 +64,7 @@ const run: RunOut = {
       lane: "context_window",
       status: "ran",
       reason: "adjacent_parent_sibling_context_window",
+      context_reasons: ["heading_path_context"],
       candidate_count: 4,
       relationship_reasons: {
         "chunk-parent": "parent_context",
@@ -108,6 +111,10 @@ describe("buildThreePillarTrace", () => {
     const summary = buildThreePillarTrace(run);
 
     expect(summary.route.domainProfileId).toBe("reference_heavy");
+    expect(summary.route.domainReasons).toEqual([
+      "domain_profile:reference_heavy",
+      "verified_reference_contract",
+    ]);
     expect(summary.route.materializationHint).toBe("graph");
     expect(summary.lanes.map((lane) => lane.lane)).toEqual([
       "metadata",
@@ -115,7 +122,9 @@ describe("buildThreePillarTrace", () => {
       "reranker",
     ]);
     expect(summary.layout.layoutGroupIds).toEqual(["table-srg-001"]);
+    expect(summary.layout.layoutReasons).toEqual(["bbox_overlap", "layout_group"]);
     expect(summary.layout.readingOrderNeighbors).toBe(true);
+    expect(summary.context.contextReasons).toEqual(["heading_path_context"]);
     expect(summary.context.relationshipReasons).toEqual([
       { chunkId: "chunk-parent", reason: "parent_context" },
       { chunkId: "chunk-prev", reason: "reading_order_adjacent_and_linked_context" },
@@ -130,6 +139,12 @@ describe("buildThreePillarTrace", () => {
       { candidateId: "chunk-b", before: 1, after: 2, delta: -1 },
     ]);
     expect(summary.sources[0].layout.readingOrder).toBe("12");
+    expect(summary.sources[0].domain.reasons).toEqual([
+      "domain_profile:reference_heavy",
+      "verified_reference_contract",
+    ]);
+    expect(summary.sources[0].layout.reasons).toEqual(["bbox_overlap", "layout_group"]);
+    expect(summary.sources[0].context.reasons).toEqual(["heading_path_context"]);
     expect(summary.sources[0].context.parentChunkId).toBe("chunk-parent");
   });
 });

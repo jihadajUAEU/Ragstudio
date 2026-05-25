@@ -12,6 +12,7 @@ export interface ThreePillarTraceSummary {
 
 export interface RoutePlanSummary {
   domainProfileId: string;
+  domainReasons: string[];
   layoutHint: string;
   materializationHint: string;
   sourceOfTruth: string;
@@ -35,6 +36,7 @@ export interface LaneSummary {
 export interface LayoutSummary {
   status: string;
   reason: string;
+  layoutReasons: string[];
   candidateCount: number | null;
   layoutGroupIds: string[];
   readingOrderNeighbors: boolean;
@@ -46,6 +48,7 @@ export interface LayoutSummary {
 export interface ContextWindowSummary {
   status: string;
   reason: string;
+  contextReasons: string[];
   candidateCount: number | null;
   relationshipReasons: Array<{ chunkId: string; reason: string }>;
   raw?: Record<string, unknown>;
@@ -78,16 +81,19 @@ export interface SourceArchitectureSummary {
     domain: string;
     materializationHint: string;
     qualityPolicy: string;
+    reasons: string[];
   };
   layout: {
     layoutGroupId: string;
     layoutRole: string;
     readingOrder: string;
+    reasons: string[];
   };
   context: {
     parentChunkId: string;
     previousChunkId: string;
     nextChunkId: string;
+    reasons: string[];
   };
 }
 
@@ -99,18 +105,45 @@ export function buildThreePillarTrace(run: RunOut): ThreePillarTraceSummary {
   const assemblyTrace = traceByStage(run.chunk_traces, "context_assembly");
   const firstRerankerTrace = recordValue(run.reranker_traces[0]);
   const assembledContext = recordValue(assemblyTrace?.assembled_context);
+  const route: RoutePlanSummary = {
+    domainProfileId:
+      textValue(routeTrace?.domain_profile_id) ?? textValue(routeTrace?.domain_id) ?? "not recorded",
+    domainReasons: stringArray(routeTrace?.domain_reasons),
+    layoutHint: textValue(routeTrace?.layout_hint) ?? "not recorded",
+    materializationHint: textValue(routeTrace?.materialization_hint) ?? "not recorded",
+    sourceOfTruth: textValue(routeTrace?.source_of_truth) ?? "not recorded",
+    directEvidenceRequired: routeTrace?.direct_evidence_required === true,
+    graphContextRequired: routeTrace?.graph_context_required === true,
+    raw: routeTrace,
+  };
+  const layout: LayoutSummary = {
+    status: textValue(layoutTrace?.status) ?? "unknown",
+    reason: textValue(layoutTrace?.reason) ?? "not recorded",
+    layoutReasons: stringArray(layoutTrace?.layout_reasons),
+    candidateCount: numberValue(layoutTrace?.candidate_count),
+    layoutGroupIds: stringArray(layoutTrace?.layout_group_ids),
+    readingOrderNeighbors: layoutTrace?.reading_order_neighbors === true,
+    canonicalChunkIds: stringArray(layoutTrace?.canonical_chunk_ids),
+    layoutSummaries: objectEntries(layoutTrace?.layout_summaries).map(([chunkId, summary]) => ({
+      chunkId,
+      summary,
+    })),
+    raw: layoutTrace,
+  };
+  const context: ContextWindowSummary = {
+    status: textValue(contextTrace?.status) ?? "unknown",
+    reason: textValue(contextTrace?.reason) ?? "not recorded",
+    contextReasons: stringArray(contextTrace?.context_reasons),
+    candidateCount: numberValue(contextTrace?.candidate_count),
+    relationshipReasons: objectEntries(contextTrace?.relationship_reasons).map(([chunkId, reason]) => ({
+      chunkId,
+      reason,
+    })),
+    raw: contextTrace,
+  };
 
   return {
-    route: {
-      domainProfileId:
-        textValue(routeTrace?.domain_profile_id) ?? textValue(routeTrace?.domain_id) ?? "not recorded",
-      layoutHint: textValue(routeTrace?.layout_hint) ?? "not recorded",
-      materializationHint: textValue(routeTrace?.materialization_hint) ?? "not recorded",
-      sourceOfTruth: textValue(routeTrace?.source_of_truth) ?? "not recorded",
-      directEvidenceRequired: routeTrace?.direct_evidence_required === true,
-      graphContextRequired: routeTrace?.graph_context_required === true,
-      raw: routeTrace,
-    },
+    route,
     lanes: run.chunk_traces
       .map(recordValue)
       .filter((trace): trace is Record<string, unknown> => trace?.stage === "retrieval_lane_result")
@@ -125,29 +158,8 @@ export function buildThreePillarTrace(run: RunOut): ThreePillarTraceSummary {
         canonicalChunkIds: stringArray(trace.canonical_chunk_ids),
         raw: trace,
       })),
-    layout: {
-      status: textValue(layoutTrace?.status) ?? "unknown",
-      reason: textValue(layoutTrace?.reason) ?? "not recorded",
-      candidateCount: numberValue(layoutTrace?.candidate_count),
-      layoutGroupIds: stringArray(layoutTrace?.layout_group_ids),
-      readingOrderNeighbors: layoutTrace?.reading_order_neighbors === true,
-      canonicalChunkIds: stringArray(layoutTrace?.canonical_chunk_ids),
-      layoutSummaries: objectEntries(layoutTrace?.layout_summaries).map(([chunkId, summary]) => ({
-        chunkId,
-        summary,
-      })),
-      raw: layoutTrace,
-    },
-    context: {
-      status: textValue(contextTrace?.status) ?? "unknown",
-      reason: textValue(contextTrace?.reason) ?? "not recorded",
-      candidateCount: numberValue(contextTrace?.candidate_count),
-      relationshipReasons: objectEntries(contextTrace?.relationship_reasons).map(([chunkId, reason]) => ({
-        chunkId,
-        reason,
-      })),
-      raw: contextTrace,
-    },
+    layout,
+    context,
     assembly: {
       includedCandidates: numberValue(assemblyTrace?.included_candidates),
       droppedCandidates: numberValue(assemblyTrace?.dropped_candidates),
@@ -184,7 +196,13 @@ export function buildThreePillarTrace(run: RunOut): ThreePillarTraceSummary {
         .filter((item): item is { candidateId: string; before: number; after: number; delta: number } => item !== null),
       raw: rerankerLaneTrace ?? firstRerankerTrace ?? undefined,
     },
-    sources: run.sources.map((source, index) => sourceArchitectureSummary(source, index)),
+    sources: run.sources.map((source, index) =>
+      sourceArchitectureSummary(source, index, {
+        domainReasons: route.domainReasons,
+        layoutReasons: layout.layoutReasons,
+        contextReasons: context.contextReasons,
+      }),
+    ),
   };
 }
 
@@ -212,6 +230,11 @@ function laneTrace(
 function sourceArchitectureSummary(
   source: Record<string, unknown>,
   index: number,
+  reasons: {
+    domainReasons: string[];
+    layoutReasons: string[];
+    contextReasons: string[];
+  },
 ): SourceArchitectureSummary {
   const metadata = recordValue(source.metadata) ?? recordValue(source.metadata_json) ?? {};
   const domainMetadata = recordValue(metadata.domain_metadata);
@@ -224,6 +247,7 @@ function sourceArchitectureSummary(
         textValue(metadata.quality_action_policy) ??
         textValue(source.quality_action_policy) ??
         "not recorded",
+      reasons: reasons.domainReasons,
     },
     layout: {
       layoutGroupId: textValue(metadata.layout_group_id) ?? "not recorded",
@@ -232,11 +256,13 @@ function sourceArchitectureSummary(
         numberValue(metadata.reading_order)?.toString() ??
         textValue(metadata.reading_order) ??
         "not recorded",
+      reasons: reasons.layoutReasons,
     },
     context: {
       parentChunkId: textValue(metadata.parent_chunk_id) ?? "not recorded",
       previousChunkId: textValue(metadata.previous_chunk_id) ?? "not recorded",
       nextChunkId: textValue(metadata.next_chunk_id) ?? "not recorded",
+      reasons: reasons.contextReasons,
     },
   };
 }
