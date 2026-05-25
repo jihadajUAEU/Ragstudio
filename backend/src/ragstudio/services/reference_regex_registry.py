@@ -42,6 +42,13 @@ BOOK_HADITH_PATTERN = re.compile(
     flags=re.IGNORECASE,
 )
 
+LEGACY_REFERENCE_PATTERN_PROFILES = {
+    "chapter_verse": ("REFERENCE_PATTERN", "CHAPTER_ONLY_PATTERN"),
+    "book_hadith": ("BOOK_HADITH_PATTERN",),
+    "legal_section": ("LEGAL_SECTION_PATTERN",),
+    "page_line": ("PAGE_LINE_PATTERN",),
+}
+
 QUERY_ARABIC_PATTERN = re.compile(r"[\u0600-\u06FF]")
 QUERY_REFERENCE_PATTERN = re.compile(r"\[(?P<reference>\d{1,3}:\d{1,3})\]")
 QUERY_GRAPH_CONTEXT_PATTERN = re.compile(

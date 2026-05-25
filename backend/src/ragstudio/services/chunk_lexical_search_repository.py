@@ -62,8 +62,11 @@ class ChunkLexicalSearchRepository:
     ) -> list[Chunk]:
         reference_contracts = await self._reference_contracts(document_ids)
         references = parse_query_references(query, reference_contracts)
-        if not reference_contracts:
-            references = parse_legacy_reference_query(query)
+        if not references:
+            references = parse_legacy_reference_query(
+                query,
+                enabled_profiles=_legacy_reference_profiles(reference_contracts),
+            )
         if not references or limit <= 0:
             return []
 
@@ -202,3 +205,15 @@ def _supports_reference_prefilter(chunk: Chunk) -> bool:
         isinstance(domain_metadata.get(key), str) and bool(domain_metadata.get(key))
         for key in ("citation_style", "reference_unit")
     )
+
+
+def _legacy_reference_profiles(contracts: list[dict[str, object]]) -> set[str]:
+    profiles: set[str] = set()
+    for contract in contracts:
+        reference_contract = contract.get("reference_contract")
+        if not isinstance(reference_contract, dict):
+            continue
+        schema_type = reference_contract.get("schema_type")
+        if isinstance(schema_type, str) and reference_contract.get("verified") is True:
+            profiles.add(schema_type)
+    return profiles

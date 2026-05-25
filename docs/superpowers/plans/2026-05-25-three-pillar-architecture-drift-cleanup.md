@@ -786,7 +786,7 @@ git commit -m "feat: use generic reference coordinates for scoring"
 - Modify: `backend/tests/test_chunk_lexical_search_repository.py`
 - Modify: `backend/tests/test_reference_query_parser.py`
 
-- [ ] **Step 1: Add legacy fallback tests**
+- [x] **Step 1: Add legacy fallback tests**
 
 Append to `backend/tests/test_reference_query_parser.py`:
 
@@ -820,7 +820,7 @@ def test_legacy_reference_query_requires_enabled_profile():
     ]
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run:
 
@@ -830,7 +830,7 @@ $env:PYTHONPATH='backend/src'; python -m pytest backend/tests/test_reference_que
 
 Expected: FAIL because `parse_legacy_reference_query()` does not accept `enabled_profiles`.
 
-- [ ] **Step 3: Change legacy parser signature**
+- [x] **Step 3: Change legacy parser signature**
 
 In `backend/src/ragstudio/services/reference_query_parser.py`, change:
 
@@ -870,7 +870,7 @@ def parse_legacy_reference_query(
     return list(dict.fromkeys(references))
 ```
 
-- [ ] **Step 4: Add profile extraction helper**
+- [x] **Step 4: Add profile extraction helper**
 
 In `backend/src/ragstudio/services/chunk_lexical_search_repository.py`, add:
 
@@ -897,7 +897,7 @@ if not references:
     )
 ```
 
-- [ ] **Step 5: Classify legacy regex registry**
+- [x] **Step 5: Classify legacy regex registry**
 
 In `backend/src/ragstudio/services/reference_regex_registry.py`, add:
 
@@ -912,7 +912,7 @@ LEGACY_REFERENCE_PATTERN_PROFILES = {
 
 This records that these patterns are adapter compatibility, not generic enforcement.
 
-- [ ] **Step 6: Run focused tests**
+- [x] **Step 6: Run focused tests**
 
 Run:
 
@@ -922,7 +922,7 @@ $env:PYTHONPATH='backend/src'; python -m pytest backend/tests/test_reference_que
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```powershell
 git add backend/src/ragstudio/services/reference_regex_registry.py backend/src/ragstudio/services/reference_query_parser.py backend/src/ragstudio/services/chunk_lexical_search_repository.py backend/tests/test_reference_query_parser.py backend/tests/test_chunk_lexical_search_repository.py

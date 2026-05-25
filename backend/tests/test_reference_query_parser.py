@@ -49,7 +49,34 @@ def test_parse_query_references_uses_contextual_contract_patterns():
 
 
 def test_legacy_reference_query_is_only_compatibility_parser():
-    assert parse_legacy_reference_query("Book 13, Hadith 25 and 2:255") == [
+    assert parse_legacy_reference_query(
+        "Book 13, Hadith 25 and 2:255",
+        enabled_profiles={"chapter_verse", "book_hadith"},
+    ) == [
         "2:255",
         "book:13:hadith:25",
     ]
+
+
+def test_query_reference_parser_ignores_unverified_contracts():
+    references = parse_query_references(
+        "Find 7:104",
+        [
+            {
+                "reference_contract": {
+                    "verified": False,
+                    "canonical_ref_template": "{parent_ref}:{unit_ref}",
+                }
+            }
+        ],
+    )
+
+    assert references == []
+
+
+def test_legacy_reference_query_requires_enabled_profile():
+    assert parse_legacy_reference_query("Find 7:104", enabled_profiles=set()) == []
+    assert parse_legacy_reference_query(
+        "Find 7:104",
+        enabled_profiles={"chapter_verse"},
+    ) == ["7:104"]
