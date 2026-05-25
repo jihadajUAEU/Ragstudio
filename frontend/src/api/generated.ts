@@ -351,6 +351,9 @@ export interface DocumentPipelineStageOut {
   state: PipelineStageState;
   detail: string;
   order: number;
+  category: string;
+  icon_hint: string;
+  inspector_kind: string;
   progress: number | null;
   is_current: boolean;
   event_count: number;

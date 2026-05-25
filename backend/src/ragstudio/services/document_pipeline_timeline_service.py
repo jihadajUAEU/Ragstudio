@@ -44,6 +44,27 @@ _BASE_STAGE_ORDER = {
     "proof_readiness": 150,
 }
 
+_STAGE_DISPLAY_METADATA: dict[str, tuple[str, str, str]] = {
+    "uploaded": ("layout", "upload", "generic"),
+    "vision": ("domain", "vision", "generic"),
+    "contract": ("domain", "contract", "contract"),
+    "queued": ("runtime", "queue", "generic"),
+    "worker_claimed": ("runtime", "worker", "generic"),
+    "mineru_parsing": ("layout", "parser", "generic"),
+    "mineru_validated": ("layout", "parser", "generic"),
+    "chunks_persisting": ("context", "chunks", "generic"),
+    "chunks_persisted": ("context", "chunks", "generic"),
+    "quality_gates": ("domain", "quality", "warnings"),
+    "search_ready": ("context", "search", "generic"),
+    "runtime_enriching": ("context", "runtime", "generic"),
+    "graph_enriching": ("context", "graph", "generic"),
+    "materialization": ("context", "database", "generic"),
+    "ready": ("context", "ready", "generic"),
+    "ready_with_warnings": ("context", "warning", "warnings"),
+    "failed": ("runtime", "failed", "generic"),
+    "proof_readiness": ("context", "proof", "generic"),
+}
+
 
 class DocumentPipelineTimelineService:
     def __init__(self, session: AsyncSession) -> None:
@@ -275,6 +296,7 @@ def _stages(
     for stage_id, stage_events in grouped.items():
         last = stage_events[-1]
         state = _stage_state(stage_id, stage_events, current_stage_id, contract)
+        category, icon_hint, inspector_kind = _stage_display_metadata(stage_id)
         warning_count = _stage_warning_count(stage_id, warning_groups)
         detail_payload = dict(last.detail_payload)
         if stage_id == "contract":
@@ -302,6 +324,9 @@ def _stages(
                 state=state,
                 detail=last.detail,
                 order=_stage_order(stage_id, last.sequence),
+                category=category,
+                icon_hint=icon_hint,
+                inspector_kind=inspector_kind,
                 progress=last.progress,
                 is_current=stage_id == current_stage_id,
                 event_count=len(stage_events),
@@ -501,6 +526,10 @@ def _stage_warning_count(
 
 def _stage_order(stage_id: str, sequence: int) -> int:
     return _BASE_STAGE_ORDER.get(stage_id, 1000 + sequence)
+
+
+def _stage_display_metadata(stage_id: str) -> tuple[str, str, str]:
+    return _STAGE_DISPLAY_METADATA.get(stage_id, ("custom", "stage", "generic"))
 
 
 def _missing_sections(jobs: list[Job], chunks: list[Chunk]) -> list[str]:

@@ -1135,11 +1135,12 @@ reference is available.
 **Files:**
 - Modify: `backend/src/ragstudio/schemas/document_pipeline_timeline.py`
 - Modify: `backend/src/ragstudio/services/document_pipeline_timeline_service.py`
+- Modify: `frontend/src/api/generated.ts`
 - Modify: `frontend/src/features/document-evidence/document-pipeline-stage-flow.tsx`
 - Modify: `backend/tests/test_document_pipeline_timeline.py`
 - Modify: `frontend/tests/document-pipeline-stage-flow.test.tsx`
 
-- [ ] **Step 1: Add backend stage metadata test**
+- [x] **Step 1: Add backend stage metadata test**
 
 Append to `backend/tests/test_document_pipeline_timeline.py`:
 
@@ -1193,7 +1194,7 @@ def _stage(stage_id: str, label: str, state: str, detail: str):
     )()
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run:
 
@@ -1203,7 +1204,7 @@ $env:PYTHONPATH='backend/src'; python -m pytest backend/tests/test_document_pipe
 
 Expected: FAIL because stage display metadata is not exposed.
 
-- [ ] **Step 3: Add schema fields**
+- [x] **Step 3: Add schema fields**
 
 In `backend/src/ragstudio/schemas/document_pipeline_timeline.py`, add fields to `DocumentPipelineStageOut`:
 
@@ -1213,7 +1214,7 @@ In `backend/src/ragstudio/schemas/document_pipeline_timeline.py`, add fields to 
     inspector_kind: str = "generic"
 ```
 
-- [ ] **Step 4: Add backend display metadata helper**
+- [x] **Step 4: Add backend display metadata helper**
 
 In `backend/src/ragstudio/services/document_pipeline_timeline_service.py`, add:
 
@@ -1258,7 +1259,7 @@ icon_hint=icon_hint,
 inspector_kind=inspector_kind,
 ```
 
-- [ ] **Step 5: Update frontend icon and inspector selection**
+- [x] **Step 5: Update frontend icon and inspector selection**
 
 In `frontend/src/features/document-evidence/document-pipeline-stage-flow.tsx`, update `iconForStage()` to prefer `stage.icon_hint`:
 
@@ -1296,7 +1297,7 @@ Update inspector checks:
 {stage.inspector_kind === "warnings" ? <WarningGroupList warningGroups={warningGroups} /> : null}
 ```
 
-- [ ] **Step 6: Add frontend regression test**
+- [x] **Step 6: Add frontend regression test**
 
 Append to `frontend/tests/document-pipeline-stage-flow.test.tsx`:
 
@@ -1379,7 +1380,7 @@ it("renders backend-provided unknown stages with generic inspector", () => {
 });
 ```
 
-- [ ] **Step 7: Run focused tests**
+- [x] **Step 7: Run focused tests**
 
 Run:
 
@@ -1390,10 +1391,10 @@ cd frontend; npm test -- document-pipeline-stage-flow.test.tsx --run
 
 Expected: PASS.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```powershell
-git add backend/src/ragstudio/schemas/document_pipeline_timeline.py backend/src/ragstudio/services/document_pipeline_timeline_service.py frontend/src/features/document-evidence/document-pipeline-stage-flow.tsx backend/tests/test_document_pipeline_timeline.py frontend/tests/document-pipeline-stage-flow.test.tsx
+git add backend/src/ragstudio/schemas/document_pipeline_timeline.py backend/src/ragstudio/services/document_pipeline_timeline_service.py frontend/src/api/generated.ts frontend/src/features/document-evidence/document-pipeline-stage-flow.tsx backend/tests/test_document_pipeline_timeline.py frontend/tests/document-pipeline-stage-flow.test.tsx
 git commit -m "feat: expose backend stage display metadata"
 ```
 

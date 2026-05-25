@@ -18,6 +18,9 @@ const timeline: DocumentPipelineTimelineOut = {
       state: "complete",
       detail: "religious_text - quran_translation - mixed",
       order: 20,
+      category: "domain",
+      icon_hint: "vision",
+      inspector_kind: "generic",
       progress: null,
       is_current: false,
       event_count: 1,
@@ -34,6 +37,9 @@ const timeline: DocumentPipelineTimelineOut = {
       state: "metadata_only",
       detail: "Reference structure is metadata only and is not enforced.",
       order: 30,
+      category: "domain",
+      icon_hint: "contract",
+      inspector_kind: "contract",
       progress: null,
       is_current: false,
       event_count: 1,
@@ -50,6 +56,9 @@ const timeline: DocumentPipelineTimelineOut = {
       state: "running",
       detail: "Persisted 4500 of 17699 canonical chunks.",
       order: 70,
+      category: "context",
+      icon_hint: "chunks",
+      inspector_kind: "generic",
       progress: 57,
       is_current: true,
       event_count: 3,
@@ -66,6 +75,9 @@ const timeline: DocumentPipelineTimelineOut = {
       state: "warning",
       detail: "Future stage emitted by backend contract.",
       order: 1004,
+      category: "custom",
+      icon_hint: "stage",
+      inspector_kind: "generic",
       progress: null,
       is_current: false,
       event_count: 1,
@@ -82,6 +94,9 @@ const timeline: DocumentPipelineTimelineOut = {
       state: "warning",
       detail: "Grouped 2826 parser warnings.",
       order: 90,
+      category: "domain",
+      icon_hint: "quality",
+      inspector_kind: "warnings",
       progress: null,
       is_current: false,
       event_count: 1,
@@ -235,5 +250,83 @@ describe("DocumentPipelineStageFlow", () => {
     expect(screen.getByText("arabic")).toBeVisible();
     expect(screen.getByText("equation_missing_latex")).toBeVisible();
     expect(screen.getByText("reference_unit_unresolved")).toBeVisible();
+  });
+
+  it("renders backend-provided unknown stages with generic inspector", () => {
+    render(
+      <DocumentPipelineStageFlow
+        timeline={{
+          document_id: "doc-generic",
+          filename: "generic-reference.pdf",
+          status: "succeeded",
+          latest_job_id: "job-generic",
+          contract_version: 1,
+          stages: [
+            {
+              id: "model_compiler",
+              label: "Model compiler",
+              state: "complete",
+              detail: "Executed generated contract candidates.",
+              order: 25,
+              category: "custom",
+              icon_hint: "stage",
+              inspector_kind: "generic",
+              source: "job",
+              progress: null,
+              is_current: false,
+              event_count: 1,
+              warning_count: 0,
+              chunk_count: null,
+              started_at: null,
+              completed_at: null,
+              detail_payload: {},
+            },
+          ],
+          events: [
+            {
+              sequence: 1,
+              stage_id: "model_compiler",
+              label: "Model compiler",
+              detail: "Executed generated contract candidates.",
+              state: "complete",
+              progress: null,
+              occurred_at: null,
+              source: "job",
+              job_id: "job-generic",
+              chunk_count: null,
+              warning: null,
+              evidence_refs: [],
+              detail_payload: {},
+            },
+          ],
+          contract: {
+            contract_status: "metadata_only",
+            verified: false,
+            canonical_units: false,
+            schema_type: "parent_item",
+            repair_status: "unverified",
+            validation_status: "unverified",
+            validation_matched_units: 0,
+            selected_strategy: null,
+            rejection_reasons: [],
+            detail_payload: {},
+          },
+          warning_groups: [],
+          totals: {
+            jobs: 1,
+            chunks: 0,
+            warnings: 0,
+            graph_nodes: 0,
+            graph_edges: 0,
+            index_records: 0,
+            graph_records: 0,
+          },
+          missing_sections: ["chunks"],
+        }}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: /Model compiler complete/i })).toBeInTheDocument();
+    expect(screen.queryByText("Contract proof boundary")).not.toBeInTheDocument();
   });
 });

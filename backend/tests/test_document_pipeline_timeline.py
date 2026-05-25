@@ -11,7 +11,51 @@ from ragstudio.schemas.document_pipeline_timeline import (
 )
 from ragstudio.services.document_pipeline_timeline_service import (
     DocumentPipelineTimelineService,
+    _stage_display_metadata,
 )
+
+
+def _stage(stage_id: str, label: str, state: str, detail: str):
+    category, icon_hint, inspector_kind = _stage_display_metadata(stage_id)
+    return type(
+        "StageStub",
+        (),
+        {
+            "id": stage_id,
+            "label": label,
+            "state": state,
+            "detail": detail,
+            "category": category,
+            "icon_hint": icon_hint,
+            "inspector_kind": inspector_kind,
+        },
+    )()
+
+
+def test_pipeline_stage_contract_includes_display_metadata():
+    stage = _stage(
+        stage_id="contract",
+        label="Contract",
+        state="metadata_only",
+        detail="Reference structure is metadata only and is not enforced.",
+    )
+
+    assert stage.category == "domain"
+    assert stage.icon_hint == "contract"
+    assert stage.inspector_kind == "contract"
+
+
+def test_unknown_pipeline_stage_gets_neutral_display_metadata():
+    stage = _stage(
+        stage_id="model_compiler",
+        label="Model compiler",
+        state="complete",
+        detail="Executed model-generated contract candidates.",
+    )
+
+    assert stage.category == "custom"
+    assert stage.icon_hint == "stage"
+    assert stage.inspector_kind == "generic"
 
 
 def test_document_pipeline_timeline_contract_serializes_dynamic_stages():
@@ -258,6 +302,14 @@ async def test_document_pipeline_timeline_service_builds_dynamic_stage_flow(clie
     assert "vision" in stage_ids
     assert "contract" in stage_ids
     assert "mineru_validated" in stage_ids
+    contract_stage = next(stage for stage in timeline.stages if stage.id == "contract")
+    assert contract_stage.category == "domain"
+    assert contract_stage.icon_hint == "contract"
+    assert contract_stage.inspector_kind == "contract"
+    custom_stage = next(stage for stage in timeline.stages if stage.id == "custom_future_stage")
+    assert custom_stage.category == "custom"
+    assert custom_stage.icon_hint == "stage"
+    assert custom_stage.inspector_kind == "generic"
     assert "custom_future_stage" in stage_ids
     assert "quality_gates" in stage_ids
     assert "materialization" in stage_ids

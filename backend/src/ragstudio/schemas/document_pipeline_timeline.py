@@ -34,6 +34,9 @@ class DocumentPipelineStageOut(StudioModel):
     state: PipelineStageState
     detail: str
     order: int
+    category: str = "custom"
+    icon_hint: str = "stage"
+    inspector_kind: str = "generic"
     progress: int | None = None
     is_current: bool = False
     event_count: int = 0

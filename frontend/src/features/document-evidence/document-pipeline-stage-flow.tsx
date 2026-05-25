@@ -122,6 +122,7 @@ function FlowMap({
                   : "border-[var(--rs-line)] bg-[var(--rs-paper)] hover:border-[var(--rs-accent)]"
               }`}
               aria-pressed={selected}
+              aria-label={stageButtonLabel(stage)}
               onClick={() => onSelectStage(stage.id)}
             >
               <span className="flex h-7 w-7 items-center justify-center rounded-md border border-[var(--rs-line)]">
@@ -221,8 +222,10 @@ function StageInspector({
         ) : null}
       </div>
 
-      {stage.id === "contract" ? <ContractInspector contract={contract} /> : null}
-      {stage.id === "quality_gates" ? <WarningGroupList warningGroups={warningGroups} /> : null}
+      {stage.inspector_kind === "contract" ? <ContractInspector contract={contract} /> : null}
+      {stage.inspector_kind === "warnings" ? (
+        <WarningGroupList warningGroups={warningGroups} />
+      ) : null}
     </section>
   );
 }
@@ -337,6 +340,11 @@ function pickInitialStageId(stages: DocumentPipelineStageOut[]) {
   );
 }
 
+function stageButtonLabel(stage: DocumentPipelineStageOut) {
+  const progress = stage.progress !== null ? ` ${stage.progress}%` : "";
+  return `${stage.label} ${stateLabel(stage.state)}${progress}`;
+}
+
 function iconForStage(stage: DocumentPipelineStageOut) {
   if (stage.state === "warning" || stage.warning_count > 0) {
     return AlertTriangle;
@@ -344,22 +352,22 @@ function iconForStage(stage: DocumentPipelineStageOut) {
   if (stage.state === "running") {
     return Clock;
   }
-  if (stage.id.includes("contract")) {
-    return ShieldCheck;
+  switch (stage.icon_hint) {
+    case "contract":
+      return ShieldCheck;
+    case "graph":
+      return GitBranch;
+    case "chunks":
+    case "database":
+      return Database;
+    case "ready":
+      return CheckCircle2;
+    case "upload":
+    case "vision":
+      return FileCheck2;
+    default:
+      return Circle;
   }
-  if (stage.id.includes("graph")) {
-    return GitBranch;
-  }
-  if (stage.id.includes("chunk") || stage.id.includes("materialization")) {
-    return Database;
-  }
-  if (stage.id.includes("ready") || stage.state === "complete") {
-    return CheckCircle2;
-  }
-  if (stage.id.includes("upload") || stage.id.includes("vision")) {
-    return FileCheck2;
-  }
-  return Circle;
 }
 
 function railClass(state: PipelineStageState) {
