@@ -269,6 +269,51 @@ def test_cross_reference_only_inline_reference_does_not_get_reference_exact_boos
     assert primary_score.breakdown["reference_exact"] == 100.0
 
 
+def test_hybrid_scoring_uses_generic_reference_ranges():
+    chunk = Chunk(
+        id="chunk-1",
+        document_id="doc-1",
+        text="Part 7 Item 104 Body text",
+        source_location={"page": 1},
+        metadata_json={
+            "domain_metadata": {
+                "custom_json": {
+                    "reference_schema": {
+                        "type": "parent_item",
+                        "canonical_ref_template": "{parent_ref}:{unit_ref}",
+                        "fields": {"parent_ref": "parent", "unit_ref": "unit"},
+                    },
+                    "domain_structure": {
+                        "primary_anchor": {
+                            "regex": r"(?P<parent_ref>\d+):(?P<unit_ref>\d+)",
+                            "unit": "item",
+                            "verified": True,
+                        }
+                    },
+                    "reference_resolution": {
+                        "enabled": True,
+                        "build_canonical_units": True,
+                    },
+                }
+            },
+            "reference_metadata": {
+                "references": ["7:104"],
+                "identity_ranges": {
+                    "parent_ref": {"start": 7, "end": 7},
+                    "unit_ref": {"start": 104, "end": 104},
+                },
+                "previous_ref": "7:103",
+                "next_ref": "7:105",
+            },
+            "quality_action_policy": {"vector_index": "allow", "search": "allow"},
+        },
+    )
+
+    score = HybridChunkSearch().score("7:104", chunk)
+
+    assert score.breakdown["reference_exact"] == 100.0
+
+
 def test_arabic_phrase_boundary_pattern_is_cached():
     first = _arabic_phrase_boundary_pattern("\u0648\u062d\u0646\u0627\u0646\u0627")
     second = _arabic_phrase_boundary_pattern("\u0648\u062d\u0646\u0627\u0646\u0627")

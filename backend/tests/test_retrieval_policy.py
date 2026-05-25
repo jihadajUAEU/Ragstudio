@@ -11,6 +11,8 @@ def test_hybrid_score_policy_preserves_current_weights() -> None:
     policy = HybridScorePolicy()
 
     assert policy.reference_exact == 100.0
+    assert policy.same_parent_reference_query == 60.0
+    assert policy.same_parent_with_unit_query == 5.0
     assert policy.same_chapter_reference_query == 60.0
     assert policy.same_chapter_with_verse_query == 5.0
     assert policy.neighbor_match == 30.0

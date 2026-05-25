@@ -153,6 +153,39 @@ def test_verified_generic_reference_contract_enables_reference_defaults():
     assert semantics.canonical_units_enabled is True
 
 
+def test_reference_metadata_records_generic_identity_ranges():
+    semantics = ReferenceSemantics.from_metadata(
+        DomainMetadata(
+            custom_json={
+                "reference_schema": {
+                    "type": "parent_item",
+                    "fields": {"parent_ref": "parent", "unit_ref": "unit"},
+                    "canonical_ref_template": "{parent_ref}:{unit_ref}",
+                },
+                "domain_structure": {
+                    "primary_anchor": {
+                        "regex": r"Part\s+(?P<parent_ref>\d+)\s+Item\s+(?P<unit_ref>\d+)",
+                        "unit": "item",
+                        "verified": True,
+                    }
+                },
+                "reference_resolution": {"enabled": True, "build_canonical_units": True},
+                "chunking": {"unit": "item", "include_neighbors": 1},
+            }
+        )
+    )
+
+    metadata = semantics.derive_reference_metadata("Part 7 Item 104 Body text")
+
+    assert metadata["references"] == ["7:104"]
+    assert metadata["identity_ranges"] == {
+        "parent_ref": {"start": 7, "end": 7},
+        "unit_ref": {"start": 104, "end": 104},
+    }
+    assert metadata["previous_ref"] == "7:103"
+    assert metadata["next_ref"] == "7:105"
+
+
 def test_reference_semantics_extracts_custom_anchor_references():
     metadata = DomainMetadata(
         domain="archive",
@@ -439,6 +472,10 @@ def test_reference_semantics_supports_book_hadith_schema():
     assert semantics.derive_reference_metadata("Book 1, Hadith 2 text") == {
         "reference_type": "book_hadith",
         "references": ["book:1:hadith:2"],
+        "identity_ranges": {
+            "book": {"start": 1, "end": 1},
+            "hadith": {"start": 2, "end": 2},
+        },
         "book_start": 1,
         "book_end": 1,
         "hadith_start": 2,

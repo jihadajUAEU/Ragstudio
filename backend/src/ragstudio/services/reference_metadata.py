@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from string import Formatter
 from typing import Any
 
 from ragstudio.schemas.parsing import DomainMetadata
 from ragstudio.services.reference_contracts import (
     ReferenceAnchor,
     build_executable_reference_contract,
+    canonical_reference_from_groups,
 )
 from ragstudio.services.reference_regex_registry import (
     BOOK_HADITH_PATTERN,
@@ -16,6 +18,65 @@ from ragstudio.services.reference_regex_registry import (
     PAGE_LINE_PATTERN,
     REFERENCE_PATTERN,
 )
+
+
+def _numeric_identity_ranges(
+    references: list[dict[str, int | str]],
+) -> dict[str, dict[str, int]]:
+    ranges: dict[str, dict[str, int]] = {}
+    keys = {
+        key
+        for reference in references
+        for key, value in reference.items()
+        if key != "ref" and isinstance(value, int)
+    }
+    for key in keys:
+        values = [
+            int(reference[key])
+            for reference in references
+            if isinstance(reference.get(key), int)
+        ]
+        if values:
+            ranges[key] = {"start": min(values), "end": max(values)}
+    return ranges
+
+
+def _neighbor_reference_from_identity(
+    reference: dict[str, int | str],
+    *,
+    unit_field: str,
+    delta: int,
+    template: str | None,
+) -> str | None:
+    value = reference.get(unit_field)
+    if not isinstance(value, int):
+        return None
+    next_value = value + delta
+    if next_value <= 0:
+        return None
+    groups = dict(reference)
+    groups[unit_field] = next_value
+    return canonical_reference_from_groups(
+        {key: str(item) for key, item in groups.items() if key != "ref"},
+        template,
+    )
+
+
+def _ordered_identity_fields(
+    template: str | None,
+    required_groups: frozenset[str],
+) -> tuple[str, ...]:
+    if template:
+        fields: list[str] = []
+        for _, field_name, _, _ in Formatter().parse(template):
+            if not field_name:
+                continue
+            field = field_name.split(".", 1)[0].split("[", 1)[0]
+            if field and field not in fields:
+                fields.append(field)
+        if fields:
+            return tuple(fields)
+    return tuple(sorted(required_groups))
 
 
 @dataclass(frozen=True)
@@ -48,6 +109,7 @@ class ReferenceSemantics:
     inline_reference_pattern: str | None = None
     inline_reference_policy: str = "starts_unit"
     required_reference_groups: frozenset[str] = field(default_factory=frozenset)
+    reference_identity_fields: tuple[str, ...] = ()
 
     @classmethod
     def from_metadata(cls, metadata: DomainMetadata) -> ReferenceSemantics:
@@ -168,6 +230,10 @@ class ReferenceSemantics:
             )
         )
         verified_reference = reference_capability == "verified"
+        reference_identity_fields = _ordered_identity_fields(
+            canonical_ref_template,
+            contract.required_groups,
+        )
 
         return cls(
             profile_name=profile_name,
@@ -256,6 +322,7 @@ class ReferenceSemantics:
             inline_reference_pattern=inline_reference_pattern,
             inline_reference_policy=inline_reference_policy or "starts_unit",
             required_reference_groups=contract.required_groups,
+            reference_identity_fields=reference_identity_fields,
         )
 
     @property
@@ -409,9 +476,30 @@ class ReferenceSemantics:
             "reference_type": self.reference_type,
             "references": [str(ref["ref"]) for ref in references],
         }
+        identity_ranges = _numeric_identity_ranges(references)
+        if identity_ranges:
+            metadata["identity_ranges"] = identity_ranges
         cross_reference_labels = self._reference_labels(cross_references or [])
         if cross_reference_labels:
             metadata["cross_references"] = cross_reference_labels
+        unit_field = self.reference_identity_fields[-1] if self.reference_identity_fields else None
+        if self.include_neighbors > 0 and unit_field and len(references) == 1:
+            previous_ref = _neighbor_reference_from_identity(
+                references[0],
+                unit_field=unit_field,
+                delta=-self.include_neighbors,
+                template=self.canonical_ref_template,
+            )
+            next_ref = _neighbor_reference_from_identity(
+                references[0],
+                unit_field=unit_field,
+                delta=self.include_neighbors,
+                template=self.canonical_ref_template,
+            )
+            if previous_ref:
+                metadata["previous_ref"] = previous_ref
+            if next_ref:
+                metadata["next_ref"] = next_ref
         chapter_verse_refs = [
             ref
             for ref in references

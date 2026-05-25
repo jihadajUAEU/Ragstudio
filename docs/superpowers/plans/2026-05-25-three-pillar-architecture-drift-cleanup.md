@@ -514,7 +514,7 @@ git commit -m "fix: make reference semantics verification-aware"
 - Modify: `backend/tests/test_reference_metadata.py`
 - Modify: `backend/tests/test_hybrid_chunk_search_arabic.py`
 
-- [ ] **Step 1: Write failing generic reference metadata test**
+- [x] **Step 1: Write failing generic reference metadata test**
 
 Append to `backend/tests/test_reference_metadata.py`:
 
@@ -552,7 +552,7 @@ def test_reference_metadata_records_generic_identity_ranges():
     assert metadata["next_ref"] == "7:105"
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run:
 
@@ -562,7 +562,7 @@ $env:PYTHONPATH='backend/src'; python -m pytest backend/tests/test_reference_met
 
 Expected: FAIL because `identity_ranges` does not exist and neighbor references are only built from `chapter` and `verse`.
 
-- [ ] **Step 3: Add generic identity range metadata**
+- [x] **Step 3: Add generic identity range metadata**
 
 In `backend/src/ragstudio/services/reference_metadata.py`, add helpers:
 
@@ -637,7 +637,7 @@ if self.include_neighbors > 0 and unit_field and len(references) == 1:
         metadata["next_ref"] = next_ref
 ```
 
-- [ ] **Step 4: Add generic hybrid scoring test**
+- [x] **Step 4: Add generic hybrid scoring test**
 
 Append to `backend/tests/test_hybrid_chunk_search_arabic.py` or a narrower existing hybrid scoring test file:
 
@@ -692,7 +692,7 @@ def _chunk(text: str, metadata_json: dict[str, object]):
     )()
 ```
 
-- [ ] **Step 5: Update hybrid scorer to use generic ranges first**
+- [x] **Step 5: Update hybrid scorer to use generic ranges first**
 
 In `backend/src/ragstudio/services/hybrid_chunk_search.py`, add helpers:
 
@@ -734,7 +734,7 @@ if (
 
 Keep the existing chapter/verse path as compatibility fallback for one release.
 
-- [ ] **Step 6: Rename scoring policy fields with compatibility aliases**
+- [x] **Step 6: Rename scoring policy fields with compatibility aliases**
 
 In `backend/src/ragstudio/services/retrieval_policy.py`, change:
 
@@ -758,7 +758,7 @@ def same_chapter_with_verse_query(self) -> float:
     return self.same_parent_with_unit_query
 ```
 
-- [ ] **Step 7: Run focused tests**
+- [x] **Step 7: Run focused tests**
 
 Run:
 
@@ -768,7 +768,7 @@ $env:PYTHONPATH='backend/src'; python -m pytest backend/tests/test_reference_met
 
 Expected: PASS.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```powershell
 git add backend/src/ragstudio/services/reference_metadata.py backend/src/ragstudio/services/hybrid_chunk_search.py backend/src/ragstudio/services/retrieval_policy.py backend/tests/test_reference_metadata.py backend/tests/test_hybrid_chunk_search_arabic.py backend/tests/test_retrieval_policy.py

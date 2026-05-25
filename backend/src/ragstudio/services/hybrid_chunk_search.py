@@ -135,6 +135,13 @@ class HybridChunkSearch:
                 quality_allows_reference_boost
                 and semantics
                 and semantics.exact_reference_top1
+                and _reference_in_identity_ranges(query_ref, reference_metadata)
+            ):
+                reference_exact = self.policy.reference_exact
+            elif (
+                quality_allows_reference_boost
+                and semantics
+                and semantics.exact_reference_top1
                 and isinstance(q_chapter, int)
                 and isinstance(q_verse, int)
                 and isinstance(chapter_start, int)
@@ -507,3 +514,27 @@ def _arabic_phrase_boundary_pattern(variant: str) -> re.Pattern[str]:
 
 def _contains_arabic(value: str) -> bool:
     return _ARABIC_RE.search(value) is not None
+
+
+def _reference_in_identity_ranges(
+    query_ref: dict[str, Any],
+    reference_metadata: dict[str, Any],
+) -> bool:
+    ranges = reference_metadata.get("identity_ranges")
+    if not isinstance(ranges, dict):
+        return False
+    compared = False
+    for key, value in query_ref.items():
+        if key == "ref" or not isinstance(value, int):
+            continue
+        compared = True
+        item_range = ranges.get(key)
+        if not isinstance(item_range, dict):
+            return False
+        start = item_range.get("start")
+        end = item_range.get("end")
+        if not isinstance(start, int) or not isinstance(end, int):
+            return False
+        if not start <= value <= end:
+            return False
+    return compared

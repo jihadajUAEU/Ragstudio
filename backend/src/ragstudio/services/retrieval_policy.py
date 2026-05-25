@@ -6,8 +6,8 @@ from dataclasses import dataclass, field
 @dataclass(frozen=True, slots=True)
 class HybridScorePolicy:
     reference_exact: float = 100.0
-    same_chapter_reference_query: float = 60.0
-    same_chapter_with_verse_query: float = 5.0
+    same_parent_reference_query: float = 60.0
+    same_parent_with_unit_query: float = 5.0
     neighbor_match: float = 30.0
     term_coverage_multiplier: float = 10.0
     semantic_density_multiplier: float = 2.0
@@ -22,6 +22,14 @@ class HybridScorePolicy:
     guidance_request: float = 40.0
     exact_query_phrase: float = 8.0
     answer_bearing_phrase: float = 24.0
+
+    @property
+    def same_chapter_reference_query(self) -> float:
+        return self.same_parent_reference_query
+
+    @property
+    def same_chapter_with_verse_query(self) -> float:
+        return self.same_parent_with_unit_query
 
 
 @dataclass(frozen=True, slots=True)
