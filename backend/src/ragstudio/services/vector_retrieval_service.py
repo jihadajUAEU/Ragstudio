@@ -212,8 +212,13 @@ def _hydrate_candidate(
 
     metadata = _metadata(source)
     raw_metadata = _metadata(raw_candidate)
+    canonical_risk_flags = _string_values(metadata.get("risk_flags"))
+    raw_risk_flags = _string_values(raw_metadata.get("risk_flags"))
     raw_evidence_context = raw_metadata.get("evidence_context")
     metadata.update(raw_metadata)
+    risk_flags = _merge_string_values(canonical_risk_flags, raw_risk_flags)
+    if risk_flags:
+        metadata["risk_flags"] = risk_flags
     if isinstance(raw_evidence_context, Mapping):
         metadata["evidence_context"] = dict(raw_evidence_context)
     metadata["canonical_chunk_id"] = chunk_id
@@ -247,6 +252,7 @@ def _hydrate_candidate(
         ],
         retrieval_pass="vector_db",
         scope_status="in_scope",
+        risk_flags=risk_flags,
     )
 
 
@@ -308,6 +314,23 @@ def _score(raw_candidate: Mapping[str, Any]) -> float:
     if distance is not None:
         return 1.0 / (1.0 + max(distance, 0.0))
     return 0.0
+
+
+def _string_values(value: Any) -> list[str]:
+    if isinstance(value, str):
+        return [value] if value else []
+    if not isinstance(value, Sequence):
+        return []
+    return [item for item in value if isinstance(item, str) and item]
+
+
+def _merge_string_values(*groups: Sequence[str]) -> list[str]:
+    merged: list[str] = []
+    for group in groups:
+        for item in group:
+            if item not in merged:
+                merged.append(item)
+    return merged
 
 
 def _string_value(source: Mapping[str, Any], key: str) -> str | None:

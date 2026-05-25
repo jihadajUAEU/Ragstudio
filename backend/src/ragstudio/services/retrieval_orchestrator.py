@@ -1559,6 +1559,7 @@ class RetrievalOrchestrator:
         for index, source in enumerate(result.sources or [], start=1):
             if not isinstance(source, dict):
                 continue
+            metadata = _dict_or_empty(source.get("metadata"))
             candidates.append(
                 EvidenceCandidate(
                     candidate_id=f"native:{source.get('chunk_id') or index}",
@@ -1566,10 +1567,11 @@ class RetrievalOrchestrator:
                     document_id=_str_or_none(source.get("document_id")),
                     chunk_id=_str_or_none(source.get("chunk_id")),
                     source_location=_dict_or_empty(source.get("source_location")),
-                    metadata=_dict_or_empty(source.get("metadata")),
+                    metadata=metadata,
                     tool="native",
                     tool_rank=index,
                     base_score=max(1.0, 20.0 - index),
+                    risk_flags=_risk_flags_from_metadata(metadata),
                 )
             )
         return [candidate for candidate in candidates if candidate.text.strip()], native_timings
@@ -1742,6 +1744,17 @@ def _dict_or_empty(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def _risk_flags_from_metadata(metadata: dict[str, Any]) -> list[str]:
+    flags = metadata.get("risk_flags")
+    if not isinstance(flags, list):
+        return []
+    return [
+        flag.strip()
+        for flag in flags
+        if isinstance(flag, str) and flag.strip()
+    ]
+
+
 def _runtime_readiness(query_config: dict[str, Any]) -> dict[str, object]:
     configured = query_config.get("runtime_readiness")
     if isinstance(configured, dict):
@@ -1888,6 +1901,9 @@ def _lane_result_trace(
 def _layout_neighbor_trace_reason(candidates: list[EvidenceCandidate]) -> str:
     if not candidates:
         return "no_layout_neighbors"
+    contract_reasons = {"bbox_overlap", "table_caption", "figure_caption", "equation"}
+    if any(contract_reasons & set(candidate.reasons) for candidate in candidates):
+        return "contract_layout_neighbors"
     rich_reasons = {"layout_group", "reading_order_neighbor"}
     if any(rich_reasons & set(candidate.reasons) for candidate in candidates):
         return "same_page_reference_layout_group_or_reading_order_neighbors"

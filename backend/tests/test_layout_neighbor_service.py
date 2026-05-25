@@ -1,7 +1,41 @@
 import pytest
 from ragstudio.db.engine import init_db, make_engine, make_session_factory
 from ragstudio.db.models import Chunk, Document
+from ragstudio.services.layout_contracts import (
+    LayoutExpansionPolicy,
+    layout_policy_from_metadata,
+)
 from ragstudio.services.layout_neighbor_service import LayoutNeighborService
+
+
+def test_layout_policy_reads_verified_table_caption_relationships():
+    policy = layout_policy_from_metadata(
+        {
+            "layout_contract": {
+                "verified": True,
+                "relationships": ["table_caption", "figure_caption", "bbox_overlap"],
+                "vertical_proximity": 90,
+                "horizontal_overlap_min": 0.25,
+            }
+        }
+    )
+
+    assert policy == LayoutExpansionPolicy(
+        relationships=frozenset({"table_caption", "figure_caption", "bbox_overlap"}),
+        vertical_proximity=90.0,
+        horizontal_overlap_min=0.25,
+    )
+
+
+def test_unverified_layout_policy_uses_safe_defaults():
+    policy = layout_policy_from_metadata(
+        {"layout_contract": {"verified": False, "relationships": ["bbox_overlap"]}}
+    )
+
+    assert policy.relationships == frozenset(
+        {"same_page", "same_reference", "layout_group", "reading_order"}
+    )
+    assert policy.vertical_proximity == 150.0
 
 
 @pytest.mark.asyncio
@@ -194,6 +228,70 @@ async def test_layout_neighbor_service_returns_same_layout_group_caption(
 
     assert [candidate.chunk_id for candidate in neighbors] == ["caption"]
     assert "layout_group" in neighbors[0].reasons
+
+
+@pytest.mark.asyncio
+async def test_layout_neighbor_service_uses_verified_bbox_contract(
+    database_url, tmp_path
+):
+    engine = make_engine(database_url)
+    await init_db(engine)
+    factory = make_session_factory(engine)
+
+    async with factory() as session:
+        session.add(
+            Document(
+                id="doc-bbox-contract",
+                filename="bbox-contract.pdf",
+                content_type="application/pdf",
+                sha256="bbox-contract-sha",
+                artifact_path=str(tmp_path / "bbox-contract.pdf"),
+            )
+        )
+        session.add_all(
+            [
+                Chunk(
+                    id="seed-bbox-contract",
+                    document_id="doc-bbox-contract",
+                    text="Seed table cell.",
+                    source_location={"page": 2, "bbox": [100, 100, 200, 140]},
+                    metadata_json={
+                        "layout_contract": {
+                            "verified": True,
+                            "relationships": ["bbox_overlap"],
+                            "vertical_proximity": 80,
+                            "horizontal_overlap_min": 0.5,
+                        }
+                    },
+                ),
+                Chunk(
+                    id="overlap-bbox",
+                    document_id="doc-bbox-contract",
+                    text="Neighbor in the same visual column.",
+                    source_location={"page": 2, "bbox": [120, 150, 220, 190]},
+                    metadata_json={},
+                ),
+                Chunk(
+                    id="same-page-no-overlap",
+                    document_id="doc-bbox-contract",
+                    text="Same page, different visual column.",
+                    source_location={"page": 2, "bbox": [260, 150, 360, 190]},
+                    metadata_json={},
+                ),
+            ]
+        )
+        await session.commit()
+
+        neighbors = await LayoutNeighborService(session).neighbors_for(
+            seed_chunk_ids=["seed-bbox-contract"],
+            document_ids=["doc-bbox-contract"],
+            limit=5,
+        )
+
+    await engine.dispose()
+
+    assert [candidate.chunk_id for candidate in neighbors] == ["overlap-bbox"]
+    assert "bbox_overlap" in neighbors[0].reasons
 
 
 @pytest.mark.asyncio

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from functools import partial
 from importlib import import_module
@@ -22,6 +22,8 @@ from ragstudio.services.native_storage_config import (
     scoped_native_storage_env,
 )
 from ragstudio.services.runtime_types import RuntimeChunk, RuntimeQueryResult
+
+RUNTIME_BRIDGE_MISSING_RISK = "runtime_bridge_missing"
 
 
 class ScopedVectorStorageProxy:
@@ -648,23 +650,49 @@ class NativeRAGAnythingAdapter:
                 for key, value in row.items()
                 if key in {"page", "page_idx", "reference"} and value is not None
             }
+            metadata = self._native_source_metadata(
+                row,
+                document_id=document_id,
+                chunk_identity=chunk_identity,
+            )
             deduped[chunk_id] = {
                 "chunk_id": chunk_id,
                 "document_id": document_id,
                 "text": str(row.get("content") or ""),
                 "source_location": source_location,
-                "metadata": {
-                    "chunk_identity": chunk_identity,
-                    "full_doc_id": document_id,
-                    "runtime_source_id": chunk_identity,
-                    "score": row.get("score"),
-                    "native_scope": True,
-                    "source_role": "retrieved_candidate",
-                    "retrieval_scope": "document_ids",
-                    "retrieval_mode": "native_vector_naive",
-                },
+                "metadata": metadata,
             }
         return list(deduped.values())
+
+    def _native_source_metadata(
+        self,
+        row: Mapping[str, Any],
+        *,
+        document_id: str,
+        chunk_identity: str,
+    ) -> dict[str, Any]:
+        row_metadata = row.get("metadata")
+        metadata = dict(row_metadata) if isinstance(row_metadata, Mapping) else {}
+        metadata.update(
+            {
+                "chunk_identity": chunk_identity,
+                "full_doc_id": document_id,
+                "runtime_source_id": chunk_identity,
+                "score": row.get("score"),
+                "native_scope": True,
+                "source_role": "retrieved_candidate",
+                "retrieval_scope": "document_ids",
+                "retrieval_mode": "native_vector_naive",
+            }
+        )
+        if not _has_canonical_layout_context(metadata):
+            metadata.setdefault("canonical_hydration_status", "missing")
+            metadata.setdefault("layout_context_status", "runtime_minimal")
+            metadata["risk_flags"] = _merge_risk_flags(
+                metadata.get("risk_flags"),
+                [RUNTIME_BRIDGE_MISSING_RISK],
+            )
+        return metadata
 
     def _scope_leak_error(
         self,
@@ -950,3 +978,38 @@ class NativeRAGAnythingAdapter:
                 for row in edge_rows
             ]
         return nodes, edges
+
+
+def _has_canonical_layout_context(metadata: Mapping[str, Any]) -> bool:
+    evidence_context = metadata.get("evidence_context")
+    if isinstance(evidence_context, Mapping) and evidence_context:
+        return True
+    return any(
+        key in metadata
+        for key in (
+            "provenance",
+            "layout_group_id",
+            "layout_role",
+            "reading_order",
+            "block_index",
+            "parent_chunk_id",
+            "previous_chunk_id",
+            "next_chunk_id",
+            "reference_metadata",
+        )
+    )
+
+
+def _merge_risk_flags(*flag_groups: Any) -> list[str]:
+    merged: list[str] = []
+    for group in flag_groups:
+        if isinstance(group, str):
+            flags = [group]
+        elif isinstance(group, (list, tuple, set)):
+            flags = group
+        else:
+            continue
+        for flag in flags:
+            if isinstance(flag, str) and flag and flag not in merged:
+                merged.append(flag)
+    return merged

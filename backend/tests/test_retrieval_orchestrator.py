@@ -27,6 +27,7 @@ from ragstudio.services.retrieval_orchestrator import (
     _confirmed_hypothesis_answer_allowed,
     _evidence_from_context,
     _graph_seed_candidates,
+    _layout_neighbor_trace_reason,
 )
 from ragstudio.services.runtime_types import RuntimeQueryResult
 
@@ -117,6 +118,25 @@ def test_retrieval_orchestrator_threads_http_client_provider_to_default_reranker
     )
 
     assert orchestrator.reranker_service._http_client_provider is provider
+
+
+def test_layout_neighbor_trace_reports_contract_relationships():
+    candidates = [
+        EvidenceCandidate(
+            candidate_id="layout-neighbor:chunk-1",
+            text="Caption text",
+            document_id="doc-1",
+            chunk_id="chunk-1",
+            source_location={"page": 1},
+            metadata={"layout_group_id": "table-1"},
+            tool="metadata",
+            tool_rank=1,
+            base_score=9.0,
+            reasons=["layout_neighbor", "bbox_overlap", "layout_group"],
+        )
+    ]
+
+    assert _layout_neighbor_trace_reason(candidates) == "contract_layout_neighbors"
 
 
 @pytest.mark.asyncio

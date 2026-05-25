@@ -6,10 +6,13 @@ import pytest
 from ragstudio.config import AppSettings
 from ragstudio.schemas.runtime import RuntimeProfile
 from ragstudio.services.adapter import AdapterChunk
+from ragstudio.services.context_assembly_service import ContextAssemblyService
 from ragstudio.services.native_raganything_adapter import (
     NativeRAGAnythingAdapter,
     ScopedVectorStorageProxy,
 )
+from ragstudio.services.retrieval_evidence import EvidenceCandidate
+from ragstudio.services.vector_retrieval_service import prepare_vector_candidates
 
 OPENAI_CALLS: list[dict] = []
 
@@ -835,6 +838,9 @@ async def test_native_adapter_queries_selected_documents_with_scoped_lightrag(tm
                 "source_role": "retrieved_candidate",
                 "retrieval_scope": "document_ids",
                 "retrieval_mode": "native_vector_naive",
+                "canonical_hydration_status": "missing",
+                "layout_context_status": "runtime_minimal",
+                "risk_flags": ["runtime_bridge_missing"],
             },
         }
     ]
@@ -958,6 +964,113 @@ def test_native_sources_from_proxy_scrubs_file_paths(tmp_path):
     }
     assert "file_path" not in sources[0]["source_location"]
     assert "/srv/ragstudio" not in str(sources)
+
+
+def test_raw_native_candidate_marks_missing_canonical_layout_context(tmp_path):
+    adapter = NativeRAGAnythingAdapter(
+        profile(runtime_working_dir=str(tmp_path / "runtime")),
+        AppSettings(database_url="postgresql+asyncpg://user:pass@localhost:5432/ragstudio"),
+    )
+    proxy = SimpleNamespace(
+        collected_results=[
+            {
+                "id": "runtime-only-1",
+                "full_doc_id": "doc-1",
+                "content": "Runtime text",
+                "score": 0.9,
+                "page": 2,
+            }
+        ]
+    )
+
+    candidates = adapter._native_sources_from_proxy(proxy, ["doc-1"])
+
+    assert candidates[0]["metadata"]["canonical_hydration_status"] == "missing"
+    assert candidates[0]["metadata"]["layout_context_status"] == "runtime_minimal"
+    assert candidates[0]["metadata"]["risk_flags"] == ["runtime_bridge_missing"]
+
+
+def test_native_candidate_keeps_rich_layout_context_without_loss_flag(tmp_path):
+    adapter = NativeRAGAnythingAdapter(
+        profile(runtime_working_dir=str(tmp_path / "runtime")),
+        AppSettings(database_url="postgresql+asyncpg://user:pass@localhost:5432/ragstudio"),
+    )
+    proxy = SimpleNamespace(
+        collected_results=[
+            {
+                "id": "chunk-rich",
+                "full_doc_id": "doc-1",
+                "content": "Caption text",
+                "score": 0.92,
+                "metadata": {
+                    "evidence_context": {
+                        "breadcrumb": "Synthetic Report > Figure 2",
+                        "layout_summary": "figure; page=2; block=caption",
+                    },
+                    "layout_group_id": "figure-2",
+                },
+            }
+        ]
+    )
+
+    candidates = adapter._native_sources_from_proxy(proxy, ["doc-1"])
+
+    assert candidates[0]["metadata"]["evidence_context"] == {
+        "breadcrumb": "Synthetic Report > Figure 2",
+        "layout_summary": "figure; page=2; block=caption",
+    }
+    assert candidates[0]["metadata"]["layout_group_id"] == "figure-2"
+    assert "risk_flags" not in candidates[0]["metadata"]
+    assert "layout_context_status" not in candidates[0]["metadata"]
+
+
+def test_vector_hydration_preserves_runtime_bridge_missing_risk_for_context_drop():
+    result = prepare_vector_candidates(
+        [
+            {
+                "candidate_id": "native-vector-row",
+                "chunk_id": "chunk-runtime",
+                "score": 0.9,
+                "metadata": {"risk_flags": ["runtime_bridge_missing"]},
+            }
+        ],
+        baseline_gate={"passed": True},
+        canonical_chunks={
+            "chunk-runtime": {
+                "id": "chunk-runtime",
+                "document_id": "doc-1",
+                "text": "Runtime text",
+                "source_location": {"page": 2},
+                "metadata_json": {"chunk_identity": "doc-1|runtime"},
+            }
+        },
+    )
+
+    candidate = result.candidates[0]
+    context = ContextAssemblyService().assemble([candidate])
+
+    assert candidate.risk_flags == ["runtime_bridge_missing"]
+    assert candidate.metadata["risk_flags"] == ["runtime_bridge_missing"]
+    assert context.dropped[0].drop_reason == "runtime_bridge_missing"
+
+
+def test_runtime_bridge_missing_risk_is_visible_in_context_drop_reason():
+    candidate = EvidenceCandidate(
+        candidate_id="native:runtime-only-1",
+        text="Runtime text",
+        document_id="doc-1",
+        chunk_id=None,
+        source_location={"page": 2},
+        metadata={"risk_flags": ["runtime_bridge_missing"]},
+        tool="native",
+        tool_rank=1,
+        base_score=1.0,
+        risk_flags=["runtime_bridge_missing"],
+    )
+
+    context = ContextAssemblyService().assemble([candidate])
+
+    assert context.dropped[0].drop_reason == "runtime_bridge_missing"
 
 
 @pytest.mark.asyncio
