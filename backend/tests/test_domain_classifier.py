@@ -1,6 +1,31 @@
 from ragstudio.services.domain_classifier import DomainClassifier
 
 
+def _verified_reference_custom_json(
+    *,
+    schema_type: str = "parent_item",
+    template: str = "{parent_ref}:{unit_ref}",
+    fields: dict[str, str] | None = None,
+    regex: str = r"Part\s+(?P<parent_ref>\d+)\s+Item\s+(?P<unit_ref>\d+)",
+) -> dict[str, object]:
+    selected_fields = fields or {"parent_ref": "parent", "unit_ref": "unit"}
+    return {
+        "reference_schema": {
+            "type": schema_type,
+            "fields": selected_fields,
+            "canonical_ref_template": template,
+        },
+        "domain_structure": {
+            "primary_anchor": {
+                "regex": regex,
+                "unit": schema_type,
+                "verified": True,
+            }
+        },
+        "reference_resolution": {"enabled": True, "build_canonical_units": True},
+    }
+
+
 def test_domain_classifier_maps_quran_tafseer_reference_documents():
     result = DomainClassifier().classify(
         [
@@ -10,12 +35,12 @@ def test_domain_classifier_maps_quran_tafseer_reference_documents():
                 "content_role": "quran",
                 "language": "mixed",
                 "tags": ["quran", "tafseer", "arabic"],
-                "custom_json": {
-                    "reference_schema": {
-                        "type": "chapter_verse",
-                        "fields": {"chapter": "chapter_number", "verse": "verse_number"},
-                    }
-                },
+                "custom_json": _verified_reference_custom_json(
+                    schema_type="chapter_verse",
+                    template="{chapter}:{verse}",
+                    fields={"chapter": "chapter_number", "verse": "verse_number"},
+                    regex=r"\[(?P<chapter>\d+):(?P<verse>\d+)\]",
+                ),
             }
         ]
     )
@@ -33,12 +58,12 @@ def test_domain_classifier_maps_hadith_contract_to_reference_family():
             {
                 "domain": "hadith",
                 "tags": ["hadith"],
-                "custom_json": {
-                    "reference_schema": {
-                        "type": "book_hadith",
-                        "fields": {"book": "book_number", "hadith": "hadith_number"},
-                    }
-                },
+                "custom_json": _verified_reference_custom_json(
+                    schema_type="book_hadith",
+                    template="book:{book}:hadith:{hadith}",
+                    fields={"book": "book_number", "hadith": "hadith_number"},
+                    regex=r"Book\s+(?P<book>\d+),?\s+Hadith\s+(?P<hadith>\d+)",
+                ),
             }
         ]
     )
@@ -55,15 +80,15 @@ def test_domain_classifier_routes_custom_reference_contracts_as_reference_heavy(
         [
             {
                 "domain": "archive",
-                "custom_json": {
-                    "reference_schema": {
-                        "type": "article_clause",
-                        "fields": {
-                            "article": "article_number",
-                            "clause": "clause_number",
-                        },
-                    }
-                },
+                "custom_json": _verified_reference_custom_json(
+                    schema_type="article_clause",
+                    template="article:{article}:clause:{clause}",
+                    fields={
+                        "article": "article_number",
+                        "clause": "clause_number",
+                    },
+                    regex=r"Article\s+(?P<article>\d+)\.(?P<clause>\d+)",
+                ),
             }
         ]
     )
@@ -86,9 +111,9 @@ def test_domain_classifier_maps_legal_and_policy_to_legal_reference():
 
         assert result.domain_profile_id == "legal_reference"
         assert result.domain_family == "legal_reference"
-        assert result.layout_hint == "reference"
-        assert result.materialization_hint == "graph"
-        assert result.reference_heavy is True
+        assert result.layout_hint is None
+        assert result.materialization_hint == "vector"
+        assert result.reference_heavy is False
 
 
 def test_domain_classifier_preserves_specialized_family_with_reference_contract():
@@ -99,15 +124,15 @@ def test_domain_classifier_preserves_specialized_family_with_reference_contract(
             {
                 "domain": "legal",
                 "document_type": "contract",
-                "custom_json": {
-                    "reference_schema": {
-                        "type": "article_clause",
-                        "fields": {
-                            "article": "article_number",
-                            "clause": "clause_number",
-                        },
-                    }
-                },
+                "custom_json": _verified_reference_custom_json(
+                    schema_type="article_clause",
+                    template="article:{article}:clause:{clause}",
+                    fields={
+                        "article": "article_number",
+                        "clause": "clause_number",
+                    },
+                    regex=r"Article\s+(?P<article>\d+)\.(?P<clause>\d+)",
+                ),
             }
         ]
     )
@@ -116,15 +141,15 @@ def test_domain_classifier_preserves_specialized_family_with_reference_contract(
             {
                 "domain": "finance",
                 "document_type": "invoice",
-                "custom_json": {
-                    "reference_schema": {
-                        "type": "invoice_line",
-                        "fields": {
-                            "invoice": "invoice_number",
-                            "line": "line_number",
-                        },
-                    }
-                },
+                "custom_json": _verified_reference_custom_json(
+                    schema_type="invoice_line",
+                    template="invoice:{invoice}:line:{line}",
+                    fields={
+                        "invoice": "invoice_number",
+                        "line": "line_number",
+                    },
+                    regex=r"Invoice\s+(?P<invoice>\d+)\s+Line\s+(?P<line>\d+)",
+                ),
             }
         ]
     )
@@ -226,7 +251,7 @@ def test_domain_classifier_maps_specialized_non_arabic_profiles():
 
     assert legal.domain_family == "legal_reference"
     assert legal.domain_profile_id == "legal_reference"
-    assert legal.materialization_hint == "graph"
+    assert legal.materialization_hint == "vector"
     assert medical.domain_family == "medical_reference"
     assert medical.domain_profile_id == "medical_reference"
     assert medical.materialization_hint == "full"
@@ -246,3 +271,46 @@ def test_domain_classifier_does_not_infer_reference_family_without_contract():
     assert result.domain_family == "generic"
     assert result.domain_profile_id == "general"
     assert result.materialization_hint == "vector"
+
+
+def test_domain_classifier_keeps_unverified_reference_schema_as_hint():
+    result = DomainClassifier().classify(
+        [
+            {
+                "domain": "archive",
+                "custom_json": {
+                    "reference_schema": {
+                        "type": "parent_item",
+                        "fields": {"parent_ref": "parent", "unit_ref": "unit"},
+                    }
+                },
+            }
+        ]
+    )
+
+    assert result.layout_hint == "reference"
+    assert result.reference_heavy is False
+    assert result.materialization_hint == "vector"
+
+
+def test_domain_classifier_routes_verified_contract_as_reference_heavy():
+    result = DomainClassifier().classify(
+        [
+            {
+                "domain": "archive",
+                "index_contract": {
+                    "reference_contract": {
+                        "verified": True,
+                        "canonical_units": True,
+                        "schema_type": "parent_item",
+                        "canonical_ref_template": "{parent_ref}:{unit_ref}",
+                        "required_groups": ["parent_ref", "unit_ref"],
+                    }
+                },
+            }
+        ]
+    )
+
+    assert result.layout_hint == "reference"
+    assert result.reference_heavy is True
+    assert result.materialization_hint == "graph"

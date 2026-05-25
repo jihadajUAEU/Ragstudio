@@ -2,6 +2,8 @@ from ragstudio.services.reference_contracts import (
     build_executable_reference_contract,
     canonical_reference_from_groups,
     declared_required_groups,
+    metadata_has_reference_hint,
+    metadata_has_verified_reference_contract,
 )
 
 
@@ -22,6 +24,38 @@ def test_declared_groups_come_from_fields_and_template_not_schema_family():
     }
 
     assert declared_required_groups(metadata) == {"folio", "line"}
+
+
+def test_reference_schema_is_hint_not_verified_contract():
+    metadata = {
+        "custom_json": {
+            "reference_schema": {
+                "type": "parent_item",
+                "canonical_ref_template": "{parent_ref}:{unit_ref}",
+                "fields": {"parent_ref": "parent", "unit_ref": "unit"},
+            }
+        }
+    }
+
+    assert metadata_has_reference_hint(metadata) is True
+    assert metadata_has_verified_reference_contract(metadata) is False
+
+
+def test_verified_reference_contract_is_enforceable_capability():
+    metadata = {
+        "index_contract": {
+            "reference_contract": {
+                "verified": True,
+                "canonical_units": True,
+                "schema_type": "parent_item",
+                "canonical_ref_template": "{parent_ref}:{unit_ref}",
+                "required_groups": ["parent_ref", "unit_ref"],
+            }
+        }
+    }
+
+    assert metadata_has_reference_hint(metadata) is True
+    assert metadata_has_verified_reference_contract(metadata) is True
 
 
 def test_template_fields_are_identity_not_descriptive_schema_fields():

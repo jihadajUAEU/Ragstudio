@@ -3,7 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from ragstudio.services.reference_contracts import metadata_list_declares_reference_contract
+from ragstudio.services.reference_contracts import (
+    metadata_list_has_reference_hint,
+    metadata_list_has_verified_reference_contract,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,7 +42,11 @@ class DomainClassifier:
 
         signals = _signals(domain_metadata)
         layout_hint = _layout_hint(signals)
-        has_reference_contract = metadata_list_declares_reference_contract(domain_metadata)
+        has_reference_hint = metadata_list_has_reference_hint(domain_metadata)
+        has_verified_reference_contract = metadata_list_has_verified_reference_contract(
+            domain_metadata
+        )
+        effective_layout_hint = layout_hint or ("reference" if has_reference_hint else None)
 
         if {"legal", "law", "statute", "policy", "contract"} & signals:
             return self._remember(
@@ -47,14 +54,17 @@ class DomainClassifier:
                 DomainClassification(
                     domain_profile_id="legal_reference",
                     domain_family="legal_reference",
-                    layout_hint=layout_hint or "reference",
-                    materialization_hint="graph",
-                    reference_heavy=True,
+                    layout_hint=effective_layout_hint,
+                    materialization_hint=(
+                        "graph"
+                        if has_verified_reference_contract
+                        else _materialization_hint(effective_layout_hint, "vector")
+                    ),
+                    reference_heavy=has_verified_reference_contract,
                     signals=tuple(sorted(signals)),
                 ),
             )
         if {"medical", "clinical", "medicine", "diagnosis", "patient"} & signals:
-            effective_layout_hint = layout_hint or ("reference" if has_reference_contract else None)
             return self._remember(
                 cache_key,
                 DomainClassification(
@@ -62,14 +72,12 @@ class DomainClassifier:
                     domain_family="medical_reference",
                     layout_hint=effective_layout_hint,
                     materialization_hint=_materialization_hint(effective_layout_hint, "vector"),
-                    reference_heavy=has_reference_contract,
+                    reference_heavy=has_verified_reference_contract,
                     signals=tuple(sorted(signals)),
                 ),
             )
         if {"finance", "financial", "invoice", "tax", "accounting"} & signals:
-            effective_layout_hint = layout_hint or (
-                "reference" if has_reference_contract else "table"
-            )
+            effective_layout_hint = effective_layout_hint or "table"
             return self._remember(
                 cache_key,
                 DomainClassification(
@@ -77,7 +85,7 @@ class DomainClassifier:
                     domain_family="financial_reference",
                     layout_hint=effective_layout_hint,
                     materialization_hint=_materialization_hint(effective_layout_hint, "vector"),
-                    reference_heavy=has_reference_contract,
+                    reference_heavy=has_verified_reference_contract,
                     signals=tuple(sorted(signals)),
                 ),
             )
@@ -89,11 +97,11 @@ class DomainClassifier:
                     domain_family="code_reference",
                     layout_hint=layout_hint,
                     materialization_hint="vector",
-                    reference_heavy=has_reference_contract,
+                    reference_heavy=has_verified_reference_contract,
                     signals=tuple(sorted(signals)),
                 ),
             )
-        if has_reference_contract:
+        if has_verified_reference_contract:
             return self._remember(
                 cache_key,
                 DomainClassification(
@@ -123,7 +131,7 @@ class DomainClassifier:
                 DomainClassification(
                     domain_profile_id="general",
                     domain_family="research_semantic",
-                    layout_hint=layout_hint,
+                    layout_hint=effective_layout_hint,
                     materialization_hint="vector",
                     reference_heavy=False,
                     signals=tuple(sorted(signals)),
@@ -134,7 +142,7 @@ class DomainClassifier:
             DomainClassification(
                 domain_profile_id="general",
                 domain_family="generic",
-                layout_hint=layout_hint,
+                layout_hint=effective_layout_hint,
                 materialization_hint="vector",
                 reference_heavy=False,
                 signals=tuple(sorted(signals)),

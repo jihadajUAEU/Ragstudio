@@ -7,7 +7,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
 from ragstudio.services.query_understanding import QueryUnderstanding, understand_query
-from ragstudio.services.reference_contracts import metadata_declares_reference_contract
+from ragstudio.services.reference_contracts import metadata_has_verified_reference_contract
 
 QueryIntent = Literal["count", "title", "reference", "comparison", "summary", "semantic"]
 
@@ -367,7 +367,7 @@ def _domain_family(metadata: dict[str, Any]) -> str:
         *tags,
     }
 
-    if metadata_declares_reference_contract(domain_metadata):
+    if metadata_has_verified_reference_contract(domain_metadata):
         return "reference_heavy"
     if {"legal", "law", "statute", "policy"} & tokens:
         return "legal_reference"

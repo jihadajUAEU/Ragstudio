@@ -190,9 +190,11 @@ def canonical_reference_from_groups(groups: dict[str, str], template: str | None
     return rendered or None
 
 
-def metadata_declares_reference_contract(metadata: dict[str, Any]) -> bool:
+def metadata_has_reference_hint(metadata: dict[str, Any]) -> bool:
     custom_json = _dict_value(metadata.get("custom_json"))
     if isinstance(custom_json.get("reference_schema"), dict):
+        return True
+    if isinstance(custom_json.get("domain_structure"), dict):
         return True
     if isinstance(metadata.get("reference_contract"), dict):
         return True
@@ -200,14 +202,47 @@ def metadata_declares_reference_contract(metadata: dict[str, Any]) -> bool:
     return isinstance(index_contract.get("reference_contract"), dict)
 
 
-def metadata_list_declares_reference_contract(
+def metadata_has_verified_reference_contract(metadata: dict[str, Any]) -> bool:
+    for payload in _reference_contract_payloads(metadata):
+        if payload.get("verified") is True and payload.get("canonical_units") is True:
+            return True
+    custom_json = _dict_value(metadata.get("custom_json"))
+    contract = build_executable_reference_contract(custom_json)
+    reference_resolution = _dict_value(custom_json.get("reference_resolution"))
+    return bool(
+        contract.verified
+        and reference_resolution.get("build_canonical_units") is True
+    )
+
+
+def metadata_list_has_reference_hint(
     domain_metadata: list[dict[str, Any]],
 ) -> bool:
     return any(
-        metadata_declares_reference_contract(metadata)
+        metadata_has_reference_hint(metadata)
         for metadata in domain_metadata
         if isinstance(metadata, dict)
     )
+
+
+def metadata_list_has_verified_reference_contract(
+    domain_metadata: list[dict[str, Any]],
+) -> bool:
+    return any(
+        metadata_has_verified_reference_contract(metadata)
+        for metadata in domain_metadata
+        if isinstance(metadata, dict)
+    )
+
+
+def metadata_declares_reference_contract(metadata: dict[str, Any]) -> bool:
+    return metadata_has_reference_hint(metadata)
+
+
+def metadata_list_declares_reference_contract(
+    domain_metadata: list[dict[str, Any]],
+) -> bool:
+    return metadata_list_has_reference_hint(domain_metadata)
 
 
 def metadata_declared_scripts(metadata: dict[str, Any]) -> frozenset[str]:
@@ -223,6 +258,22 @@ def metadata_declared_scripts(metadata: dict[str, Any]) -> frozenset[str]:
     if isinstance(value, str) and value.strip():
         scripts.add(value.strip().casefold())
     return frozenset(scripts)
+
+
+def _reference_contract_payloads(metadata: dict[str, Any]) -> list[dict[str, Any]]:
+    payloads: list[dict[str, Any]] = []
+    direct = metadata.get("reference_contract")
+    if isinstance(direct, dict):
+        payloads.append(direct)
+    index_contract = _dict_value(metadata.get("index_contract"))
+    nested = index_contract.get("reference_contract")
+    if isinstance(nested, dict):
+        payloads.append(nested)
+    custom_json = _dict_value(metadata.get("custom_json"))
+    custom_nested = custom_json.get("reference_contract")
+    if isinstance(custom_nested, dict):
+        payloads.append(custom_nested)
+    return payloads
 
 
 def metadata_list_declared_scripts(
