@@ -837,7 +837,7 @@ class MinerUContentNormalizer:
                     code="recovered_text_from_disallowed_block",
                     message=(
                         "Recovered omitted reference text from the PDF text layer between "
-                        "a verse header and its translation."
+                        "a reference header and its body text."
                     ),
                     block_type="pdf_text_gap",
                     page=region_page,

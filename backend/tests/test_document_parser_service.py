@@ -7,6 +7,7 @@ from ragstudio.db.models import Document, SettingsProfile
 from ragstudio.schemas.parsing import DomainMetadata, IndexDocumentIn
 from ragstudio.services.adapter import AdapterChunk
 from ragstudio.services.document_parser_service import DocumentParserService
+from ragstudio.services.domain_quality_policy import quality_language_from_metadata
 from ragstudio.services.mineru_client import MinerUJobResult, MinerUSidecarHealth
 
 
@@ -109,6 +110,54 @@ class EventMinerUClient:
                 metadata={"parser_metadata": {"backend": "mineru"}},
             )
         ]
+
+
+def test_expected_language_does_not_use_domain_name_substrings(tmp_path):
+    service = DocumentParserService(EventSession(), tmp_path)
+    options = IndexDocumentIn(
+        domain_metadata=DomainMetadata(
+            domain="quranic_archive_without_script_policy",
+            language="",
+            script="",
+            tags=[],
+        )
+    )
+
+    assert service._expected_language(options) == ""
+
+
+def test_expected_language_uses_explicit_script_metadata(tmp_path):
+    service = DocumentParserService(EventSession(), tmp_path)
+    options = IndexDocumentIn(
+        domain_metadata=DomainMetadata(
+            domain="archive",
+            language="mixed",
+            script="arabic",
+        )
+    )
+
+    assert service._expected_language(options) == "arabic"
+
+
+def test_quality_language_does_not_use_domain_name_substrings():
+    assert (
+        quality_language_from_metadata(
+            DomainMetadata(domain="quranic_archive_without_script_policy")
+        )
+        == "unknown"
+    )
+
+
+def test_quality_language_uses_declared_script_policy():
+    assert (
+        quality_language_from_metadata(
+            DomainMetadata(
+                domain="archive",
+                custom_json={"quality_policy": {"required_scripts": ["arabic"]}},
+            )
+        )
+        == "arabic"
+    )
 
 
 @pytest.mark.asyncio

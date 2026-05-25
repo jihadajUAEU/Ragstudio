@@ -26,6 +26,17 @@ class FakeVisionRecoveryClient:
         return self.text
 
 
+async def test_parser_normalization_recovery_messages_are_domain_neutral():
+    source = (
+        Path("backend/src/ragstudio/services/parser_normalization.py")
+        .read_text(encoding="utf-8")
+        .casefold()
+    )
+
+    assert "verse header" not in source
+    assert "reference header and its body text" in source
+
+
 async def test_vision_recovery_config_uses_contract_triggers_only():
     metadata = DomainMetadata(
         domain="archive",

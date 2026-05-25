@@ -1536,10 +1536,11 @@ git commit -m "fix: require verified contracts for reference quality extraction"
 - Modify: `backend/src/ragstudio/services/parser_normalization.py`
 - Modify: `backend/src/ragstudio/services/chunk_service.py`
 - Modify: `backend/src/ragstudio/services/index_lifecycle_service.py`
+- Create: `backend/src/ragstudio/services/domain_quality_policy.py`
 - Modify: `backend/tests/test_document_parser_service.py`
 - Modify: `backend/tests/test_parser_normalization.py`
 
-- [ ] **Step 1: Add failing parser language regression**
+- [x] **Step 1: Add failing parser language regression**
 
 Append to `backend/tests/test_document_parser_service.py`:
 
@@ -1571,7 +1572,7 @@ def test_expected_language_uses_explicit_script_metadata(tmp_path):
     assert service._expected_language(options) == "arabic"
 ```
 
-- [ ] **Step 2: Run parser language tests to verify the first test fails**
+- [x] **Step 2: Run parser language tests to verify the first test fails**
 
 Run:
 
@@ -1581,7 +1582,7 @@ $env:PYTHONPATH='backend/src'; python -m pytest backend/tests/test_document_pars
 
 Expected: FAIL because `_expected_language()` currently returns `arabic` when `quran` or `arabic` appears in the domain name.
 
-- [ ] **Step 3: Remove domain-substring parser language inference**
+- [x] **Step 3: Remove domain-substring parser language inference**
 
 In `backend/src/ragstudio/services/document_parser_service.py`, change `_expected_language()` to:
 
@@ -1589,7 +1590,7 @@ In `backend/src/ragstudio/services/document_parser_service.py`, change `_expecte
 - Return `metadata.language` otherwise.
 - Do not read `metadata.domain`, `document_type`, `collection`, `content_role`, or `tags` for extraction-language enforcement.
 
-- [ ] **Step 4: Add parser normalization recovery-label regression**
+- [x] **Step 4: Add parser normalization recovery-label regression**
 
 Append to `backend/tests/test_parser_normalization.py`:
 
@@ -1612,7 +1613,7 @@ Then replace the hardcoded warning text in `parser_normalization.py` with:
 "a reference header and its body text."
 ```
 
-- [ ] **Step 5: Share quality-language policy instead of duplicating domain checks**
+- [x] **Step 5: Share quality-language policy instead of duplicating domain checks**
 
 Create or reuse a small helper in a service module such as `backend/src/ragstudio/services/domain_quality_policy.py`:
 
@@ -1635,7 +1636,7 @@ def quality_language_from_metadata(metadata: DomainMetadata) -> str:
 
 Update both `chunk_service.py` and `index_lifecycle_service.py` to call this helper. Remove their duplicate `"quran" in combined or "arabic" in combined` logic.
 
-- [ ] **Step 6: Add focused quality-language tests**
+- [x] **Step 6: Add focused quality-language tests**
 
 Add tests near the chunk and lifecycle service helpers or in a new focused test file:
 
@@ -1655,7 +1656,7 @@ def test_quality_language_uses_declared_script_policy():
     ) == "arabic"
 ```
 
-- [ ] **Step 7: Run focused tests**
+- [x] **Step 7: Run focused tests**
 
 Run:
 
@@ -1666,7 +1667,7 @@ python -m ruff check backend/src/ragstudio/services/document_parser_service.py b
 
 Expected: PASS.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```powershell
 git add backend/src/ragstudio/services/document_parser_service.py backend/src/ragstudio/services/parser_normalization.py backend/src/ragstudio/services/chunk_service.py backend/src/ragstudio/services/index_lifecycle_service.py backend/src/ragstudio/services/domain_quality_policy.py backend/tests/test_document_parser_service.py backend/tests/test_parser_normalization.py

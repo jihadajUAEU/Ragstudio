@@ -14,6 +14,7 @@ from ragstudio.services.chunk_sanitizer import sanitize_db_value
 from ragstudio.services.chunk_splitter import ChunkSplitter
 from ragstudio.services.document_parser_service import DocumentParserService
 from ragstudio.services.domain_metadata_quality_gate import DomainMetadataQualityGate
+from ragstudio.services.domain_quality_policy import quality_language_from_metadata
 from ragstudio.services.http_client_provider import HttpClientProviderProtocol
 from ragstudio.services.hybrid_chunk_search import ChunkScore, HybridChunkSearch
 from ragstudio.services.index_quality_gate import IndexQualityGate
@@ -554,17 +555,7 @@ class ChunkService:
         )
 
     def _quality_language(self, metadata: DomainMetadata) -> str:
-        values = [
-            metadata.domain,
-            metadata.document_type,
-            metadata.collection,
-            metadata.content_role,
-            *metadata.tags,
-        ]
-        combined = " ".join(value for value in values if value).casefold()
-        if "quran" in combined or "arabic" in combined:
-            return "quran"
-        return "unknown"
+        return quality_language_from_metadata(metadata)
 
     def _source_order(self, chunk: Chunk, fallback_order: int) -> tuple[int, Any, Any, Any]:
         chunk_index = chunk.metadata_json.get("chunk_index")

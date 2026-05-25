@@ -168,12 +168,9 @@ class DocumentParserService:
 
     def _expected_language(self, options: IndexDocumentIn) -> str:
         metadata = options.domain_metadata
-        for value in (metadata.language, metadata.script):
-            if value and value.lower() in {"arabic", "ar"}:
+        for value in (metadata.script, metadata.language):
+            if value and value.casefold() in {"arabic", "ar"}:
                 return "arabic"
-        domain = metadata.domain.lower()
-        if "quran" in domain or "arabic" in domain:
-            return "arabic"
         return metadata.language
 
     async def validated_mineru_client(self) -> tuple[SettingsProfile, MinerUClient]:

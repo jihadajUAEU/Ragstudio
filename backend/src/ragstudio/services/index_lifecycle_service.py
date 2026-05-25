@@ -14,6 +14,7 @@ from ragstudio.services.adapter import AdapterChunk
 from ragstudio.services.chunk_persistence_service import ChunkPersistenceService
 from ragstudio.services.chunk_splitter import ChunkSplitter
 from ragstudio.services.document_parser_service import DocumentParserService
+from ragstudio.services.domain_quality_policy import quality_language_from_metadata
 from ragstudio.services.graph_workspace import workspace_label
 from ragstudio.services.http_client_provider import HttpClientProviderProtocol
 from ragstudio.services.index_artifact_cleanup import cleanup_document_index_artifacts
@@ -640,14 +641,4 @@ class IndexLifecycleService:
         return projection_record
 
     def _quality_language(self, metadata: DomainMetadata) -> str:
-        values = [
-            metadata.domain,
-            metadata.document_type,
-            metadata.collection,
-            metadata.content_role,
-            *metadata.tags,
-        ]
-        combined = " ".join(value for value in values if value).casefold()
-        if "quran" in combined or "arabic" in combined:
-            return "quran"
-        return "unknown"
+        return quality_language_from_metadata(metadata)
