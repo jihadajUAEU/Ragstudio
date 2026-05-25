@@ -109,12 +109,12 @@ REFERENCE_CUSTOM_JSON_EXAMPLE: dict[str, Any] = {
     },
     "retrieval": {
         "exact_reference_top1": True,
-        "boost_same_chapter": True,
-        "boost_neighbor_verses": True,
+        "boost_same_parent_reference": True,
+        "boost_neighbor_references": True,
     },
     "graph": {
-        "node_types": ["chapter", "verse", "chunk"],
-        "edge_types": ["contains", "next", "references"],
+        "node_types": ["reference_parent", "reference_unit", "chunk"],
+        "edge_types": ["contains", "next_reference", "previous_reference", "references"],
         "materialize_from": ["mineru_structure", "reference_metadata"],
         "confidence_policy": "evidence_required",
     },

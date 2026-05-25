@@ -96,6 +96,17 @@ def test_validate_custom_json_checks_template_against_identity_fields():
         )
 
 
+def test_reference_custom_json_example_uses_generic_reference_vocabulary():
+    from ragstudio.services.metadata_json_schema import REFERENCE_CUSTOM_JSON_EXAMPLE
+
+    text = repr(REFERENCE_CUSTOM_JSON_EXAMPLE).casefold()
+
+    assert "boost_same_chapter" not in text
+    assert "boost_neighbor_verses" not in text
+    assert "chapter" not in REFERENCE_CUSTOM_JSON_EXAMPLE["graph"]["node_types"]
+    assert "verse" not in REFERENCE_CUSTOM_JSON_EXAMPLE["graph"]["node_types"]
+
+
 def test_validate_custom_json_accepts_reference_contract_candidates():
     payload = {
         "reference_contract_candidates": [

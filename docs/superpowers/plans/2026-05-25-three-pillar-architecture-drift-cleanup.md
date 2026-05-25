@@ -1684,7 +1684,7 @@ git commit -m "fix: make parser script policy explicit"
 - Modify: `backend/tests/test_mineru_relationship_builder.py`
 - Modify: `backend/tests/test_metadata_json_schema.py`
 
-- [ ] **Step 1: Add failing generic graph edge test**
+- [x] **Step 1: Add failing generic graph edge test**
 
 Append to `backend/tests/test_mineru_relationship_builder.py`:
 
@@ -1718,7 +1718,7 @@ def test_mineru_relationship_builder_uses_generic_reference_neighbor_edges():
     assert all(item["type"] != "next_ayah" for item in relationships)
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run:
 
@@ -1728,7 +1728,7 @@ $env:PYTHONPATH='backend/src'; python -m pytest backend/tests/test_mineru_relati
 
 Expected: FAIL because `_reference_neighbor_edge_type()` currently checks `next_ayah`, `next_verse`, and `next_hadith` before generic forms and does not select `next_reference`.
 
-- [ ] **Step 3: Replace default edge candidates**
+- [x] **Step 3: Replace default edge candidates**
 
 In `backend/src/ragstudio/services/mineru_relationship_builder.py`, change `_reference_neighbor_edge_type()` so generic policy names are the default:
 
@@ -1742,7 +1742,7 @@ candidates = (
 
 If bundled profiles still need old edge names, migrate the profile metadata to generic edge names instead of keeping alias literals in `mineru_relationship_builder.py`. Legacy naming can be documented in fixtures or migration notes, but generic graph construction must not carry domain-shaped edge vocabulary.
 
-- [ ] **Step 4: Normalize schema examples**
+- [x] **Step 4: Normalize schema examples**
 
 In `backend/src/ragstudio/services/metadata_json_schema.py`, update `REFERENCE_CUSTOM_JSON_EXAMPLE`:
 
@@ -1751,7 +1751,7 @@ In `backend/src/ragstudio/services/metadata_json_schema.py`, update `REFERENCE_C
 - Replace graph `node_types` values `chapter` and `verse` with `reference_parent` and `reference_unit`.
 - Prefer generic edge names `previous_reference` and `next_reference`.
 
-- [ ] **Step 5: Add schema example test**
+- [x] **Step 5: Add schema example test**
 
 Append to `backend/tests/test_metadata_json_schema.py`:
 
@@ -1767,7 +1767,7 @@ def test_reference_custom_json_example_uses_generic_reference_vocabulary():
     assert "verse" not in REFERENCE_CUSTOM_JSON_EXAMPLE["graph"]["node_types"]
 ```
 
-- [ ] **Step 6: Run focused tests**
+- [x] **Step 6: Run focused tests**
 
 Run:
 
@@ -1778,7 +1778,7 @@ python -m ruff check backend/src/ragstudio/services/mineru_relationship_builder.
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```powershell
 git add backend/src/ragstudio/services/mineru_relationship_builder.py backend/src/ragstudio/services/metadata_json_schema.py backend/tests/test_mineru_relationship_builder.py backend/tests/test_metadata_json_schema.py

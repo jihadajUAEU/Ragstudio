@@ -279,9 +279,7 @@ class MinerURelationshipBuilder:
         edge_types: set[str],
     ) -> str | None:
         candidates = (
-            f"{direction}_ayah",
-            f"{direction}_verse",
-            f"{direction}_hadith",
+            f"{direction}_reference",
             f"{direction}_ref",
             direction,
         )

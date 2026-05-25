@@ -25,7 +25,7 @@ def quran_metadata(
             "graph": {
                 "node_types": ["surah", "ayah", "chunk"],
                 "edge_types": edge_types
-                or ["contains", "previous_ayah", "next_ayah", "references"],
+                or ["contains", "previous_reference", "next_reference", "references"],
                 "materialize_from": materialize_from
                 or ["mineru_structure", "reference_metadata"],
                 "confidence_policy": "evidence_required",
@@ -50,7 +50,7 @@ def hadith_metadata() -> DomainMetadata:
             "chunking": {"unit": "hadith", "include_neighbors": 1},
             "graph": {
                 "node_types": ["book", "hadith", "chunk"],
-                "edge_types": ["references", "next_hadith", "previous_hadith"],
+                "edge_types": ["references", "next_reference", "previous_reference"],
                 "materialize_from": ["reference_metadata"],
                 "confidence_policy": "evidence_required",
             },
@@ -85,7 +85,7 @@ def test_mineru_relationship_builder_adds_reference_and_neighbor_edges():
             "evidence": "reference_metadata",
         },
         {
-            "type": "next_ayah",
+            "type": "next_reference",
             "source": "ref:113:1",
             "target": "ref:113:2",
             "evidence": "reference_metadata",
@@ -93,11 +93,40 @@ def test_mineru_relationship_builder_adds_reference_and_neighbor_edges():
     ]
     assert second_relationships["references"] == ["113:2"]
     assert second_relationships["graph_relationships"][1] == {
-        "type": "previous_ayah",
+        "type": "previous_reference",
         "source": "ref:113:2",
         "target": "ref:113:1",
         "evidence": "reference_metadata",
     }
+
+
+def test_mineru_relationship_builder_uses_generic_reference_neighbor_edges():
+    chunks = [
+        AdapterChunk(
+            text="[113:1] First unit.",
+            source_location={"page": 1},
+            metadata={"parser_metadata": {"backend": "mineru", "chunk_index": 0}},
+        ),
+        AdapterChunk(
+            text="[113:2] Second unit.",
+            source_location={"page": 1},
+            metadata={"parser_metadata": {"backend": "mineru", "chunk_index": 1}},
+        ),
+    ]
+
+    annotated = MinerURelationshipBuilder().annotate(
+        chunks,
+        quran_metadata(edge_types=["references", "previous_reference", "next_reference"]),
+    )
+
+    relationships = annotated[0].metadata["relationship_metadata"]["graph_relationships"]
+    assert {
+        "type": "next_reference",
+        "source": "ref:113:1",
+        "target": "ref:113:2",
+        "evidence": "reference_metadata",
+    } in relationships
+    assert all(item["type"] != "next_ayah" for item in relationships)
 
 
 def test_mineru_relationship_builder_does_not_emit_unobserved_neighbor_edges():
@@ -139,7 +168,7 @@ def test_mineru_relationship_builder_adds_hadith_reference_edges():
     relationships = annotated[0].metadata["relationship_metadata"]
     assert relationships["references"] == ["book:1:hadith:1"]
     assert {
-        "type": "next_hadith",
+        "type": "next_reference",
         "source": "ref:book:1:hadith:1",
         "target": "ref:book:1:hadith:2",
         "evidence": "reference_metadata",
@@ -261,14 +290,14 @@ def test_mineru_relationship_builder_respects_reference_only_materialization():
     annotated = MinerURelationshipBuilder().annotate(
         chunks,
         quran_metadata(
-            edge_types=["references", "next_ayah", "next_chunk"],
+            edge_types=["references", "next_reference", "next_chunk"],
             materialize_from=["reference_metadata"],
         ),
     )
 
     relationships = annotated[0].metadata["relationship_metadata"]["graph_relationships"]
     assert {
-        "type": "next_ayah",
+        "type": "next_reference",
         "source": "ref:113:1",
         "target": "ref:113:2",
         "evidence": "reference_metadata",
@@ -292,7 +321,7 @@ def test_mineru_relationship_builder_does_not_emit_mineru_order_for_fallback_chu
 
     annotated = MinerURelationshipBuilder().annotate(
         chunks,
-        quran_metadata(edge_types=["references", "next_ayah", "next_chunk"]),
+        quran_metadata(edge_types=["references", "next_reference", "next_chunk"]),
     )
 
     relationships = annotated[0].metadata["relationship_metadata"]["graph_relationships"]
