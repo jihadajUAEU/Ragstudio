@@ -790,6 +790,7 @@ function normalizeQuerySource(
     parserWarnings: parserWarningsFrom(source, metadata),
     qualityStatus: qualityStatusFrom(source, metadata),
     retrievalReasons: retrievalReasonsFrom(source),
+    contextWarnings: contextWarningsFrom(source, metadata),
     relationshipRefs,
     graphUnavailableDetail:
       textValue(source.graph_unavailable_detail) ?? textValue(source.graphUnavailableDetail) ?? null,
@@ -946,6 +947,28 @@ function evidenceSignals(
     textValue(source.quality_action_policy) ?? textValue(metadata?.quality_action_policy),
   ].filter(Boolean) as string[];
   return Array.from(new Set(signals));
+}
+
+function contextWarningsFrom(
+  source: Record<string, unknown>,
+  metadata: Record<string, unknown> | null | undefined,
+) {
+  const riskFlags = stringArray(source.risk_flags ?? metadata?.risk_flags);
+  const canonicalHydrationStatus =
+    textValue(source.canonical_hydration_status) ??
+    textValue(metadata?.canonical_hydration_status);
+  const layoutContextStatus =
+    textValue(source.layout_context_status) ??
+    textValue(metadata?.layout_context_status);
+  return [
+    ...riskFlags,
+    canonicalHydrationStatus && canonicalHydrationStatus !== "hydrated"
+      ? `canonical hydration: ${canonicalHydrationStatus}`
+      : null,
+    layoutContextStatus && layoutContextStatus !== "complete"
+      ? `layout context: ${layoutContextStatus}`
+      : null,
+  ].filter(Boolean) as string[];
 }
 
 function retrievalReasonsFrom(source: Record<string, unknown>) {

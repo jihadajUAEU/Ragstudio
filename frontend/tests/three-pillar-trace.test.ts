@@ -139,12 +139,6 @@ describe("buildThreePillarTrace", () => {
       { candidateId: "chunk-b", before: 1, after: 2, delta: -1 },
     ]);
     expect(summary.sources[0].layout.readingOrder).toBe("12");
-    expect(summary.sources[0].domain.reasons).toEqual([
-      "domain_profile:reference_heavy",
-      "verified_reference_contract",
-    ]);
-    expect(summary.sources[0].layout.reasons).toEqual(["bbox_overlap", "layout_group"]);
-    expect(summary.sources[0].context.reasons).toEqual(["heading_path_context"]);
     expect(summary.sources[0].context.parentChunkId).toBe("chunk-parent");
   });
 });

@@ -16,27 +16,26 @@ const evidence: NormalizedEvidence = {
   text: "Evidence text",
   sourceLocation: { page: 1, reference: "19:13" },
   metadata: {},
+  contextWarnings: [
+    "runtime_bridge_missing",
+    "canonical hydration: missing",
+    "layout context: runtime_minimal",
+  ],
   architecture: {
     domain: {
       domain: "quran_tafseer",
       materializationHint: "graph",
       qualityPolicy: "allow",
-      reasons: [
-        "domain_profile:reference_heavy",
-        "verified_reference_contract",
-      ],
     },
     layout: {
       layoutGroupId: "layout-1",
       layoutRole: "paragraph",
       readingOrder: "12",
-      reasons: ["bbox_overlap", "layout_group"],
     },
     context: {
       parentChunkId: "parent-1",
       previousChunkId: "prev-1",
       nextChunkId: "next-1",
-      reasons: ["heading_path_context", "linked_context"],
     },
     assembly: {
       groundingStatus: "grounded",
@@ -49,20 +48,13 @@ const evidence: NormalizedEvidence = {
 };
 
 describe("EvidenceViewer", () => {
-  it("renders three-pillar reason chips when they are provided", () => {
+  it("renders layout and context loss warnings when native evidence is not hydrated", () => {
     render(<EvidenceViewer evidence={evidence} open onClose={vi.fn()} />);
 
-    fireEvent.click(screen.getByText("Domain and materialization", { selector: "summary" }));
-    expect(screen.getByText("Contract reasons")).toBeVisible();
-    expect(screen.getByText("verified_reference_contract")).toBeVisible();
-
-    fireEvent.click(screen.getByText("Layout chain", { selector: "summary" }));
-    expect(screen.getByText("Layout reasons")).toBeVisible();
-    expect(screen.getByText("bbox_overlap")).toBeVisible();
-
     fireEvent.click(screen.getByText("Context chain", { selector: "summary" }));
-    expect(screen.getByText("Context reasons")).toBeVisible();
-    expect(screen.getByText("heading_path_context")).toBeVisible();
-    expect(screen.getByText("linked_context")).toBeVisible();
+    expect(screen.getByText("Layout/context loss")).toBeVisible();
+    expect(screen.getByText("runtime_bridge_missing")).toBeVisible();
+    expect(screen.getByText("canonical hydration: missing")).toBeVisible();
+    expect(screen.getByText("layout context: runtime_minimal")).toBeVisible();
   });
 });

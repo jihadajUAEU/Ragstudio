@@ -505,7 +505,7 @@ export interface ChunkOut {
 export interface HybridSearchWeights {
   reference_exact?: number | null;
   neighbor_match?: number | null;
-  same_chapter?: number | null;
+  same_parent_reference?: number | null;
   exact_phrase?: number | null;
   term_coverage?: number | null;
   semantic_density?: number | null;

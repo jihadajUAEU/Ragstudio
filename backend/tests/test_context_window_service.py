@@ -340,6 +340,18 @@ async def test_context_window_service_returns_verified_structural_context(
                         }
                     },
                 ),
+                Chunk(
+                    id="different-parent-reference-context",
+                    document_id="doc-structural-context-window",
+                    text="Same unit in a different parent should not be included.",
+                    source_location={"page": 6},
+                    metadata_json={
+                        "reference_identity_range": {
+                            "part": {"start": 2, "end": 2},
+                            "item": {"start": 10, "end": 10},
+                        }
+                    },
+                ),
             ]
         )
         await session.commit()

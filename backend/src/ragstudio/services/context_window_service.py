@@ -278,13 +278,14 @@ def _reference_ranges_are_near(
     *,
     max_distance: int,
 ) -> bool:
-    shared_fields = [field for field in seed if field in current]
-    if not shared_fields:
+    seed_fields = list(seed)
+    if not seed_fields or not all(field in current for field in seed_fields):
         return False
-    return all(
-        _range_distance(seed[field], current[field]) <= max_distance
-        for field in shared_fields
-    )
+    unit_field = seed_fields[-1]
+    parent_fields = seed_fields[:-1]
+    if any(_range_distance(seed[field], current[field]) != 0 for field in parent_fields):
+        return False
+    return _range_distance(seed[unit_field], current[unit_field]) <= max_distance
 
 
 def _reference_range_value(value: Any) -> dict[str, dict[str, int]]:

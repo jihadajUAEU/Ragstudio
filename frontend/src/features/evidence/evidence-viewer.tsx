@@ -38,6 +38,7 @@ export interface NormalizedEvidence {
   parserWarnings?: string[];
   qualityStatus?: string | null;
   retrievalReasons?: string[];
+  contextWarnings?: string[];
   relationshipRefs?: string[];
   graphUnavailableDetail?: string | null;
   rerankerSummary?: EvidenceRerankerSummary | null;
@@ -49,19 +50,16 @@ export interface NormalizedEvidence {
       domain: string;
       materializationHint: string;
       qualityPolicy: string;
-      reasons?: string[];
     };
     layout?: {
       layoutGroupId: string;
       layoutRole: string;
       readingOrder: string;
-      reasons?: string[];
     };
     context?: {
       parentChunkId: string;
       previousChunkId: string;
       nextChunkId: string;
-      reasons?: string[];
     };
     assembly?: {
       groundingStatus: string;
@@ -142,34 +140,22 @@ export function EvidenceViewer({
               </div>
             </EvidenceSection>
             <EvidenceSection title="Domain and materialization">
-              <div className="space-y-2">
-                <ArchitectureKeyValues
-                  values={[
-                    ["Domain", evidence.architecture?.domain?.domain],
-                    ["Materialization", evidence.architecture?.domain?.materializationHint],
-                    ["Quality policy", evidence.architecture?.domain?.qualityPolicy],
-                  ]}
-                />
-                <ReasonList
-                  label="Contract reasons"
-                  values={evidence.architecture?.domain?.reasons}
-                />
-              </div>
+              <ArchitectureKeyValues
+                values={[
+                  ["Domain", evidence.architecture?.domain?.domain],
+                  ["Materialization", evidence.architecture?.domain?.materializationHint],
+                  ["Quality policy", evidence.architecture?.domain?.qualityPolicy],
+                ]}
+              />
             </EvidenceSection>
             <EvidenceSection title="Layout chain">
-              <div className="space-y-2">
-                <ArchitectureKeyValues
-                  values={[
-                    ["Layout group", evidence.architecture?.layout?.layoutGroupId],
-                    ["Layout role", evidence.architecture?.layout?.layoutRole],
-                    ["Reading order", evidence.architecture?.layout?.readingOrder],
-                  ]}
-                />
-                <ReasonList
-                  label="Layout reasons"
-                  values={evidence.architecture?.layout?.reasons}
-                />
-              </div>
+              <ArchitectureKeyValues
+                values={[
+                  ["Layout group", evidence.architecture?.layout?.layoutGroupId],
+                  ["Layout role", evidence.architecture?.layout?.layoutRole],
+                  ["Reading order", evidence.architecture?.layout?.readingOrder],
+                ]}
+              />
             </EvidenceSection>
             <EvidenceSection title="Context chain">
               <div className="space-y-2">
@@ -181,8 +167,8 @@ export function EvidenceViewer({
                   ]}
                 />
                 <ReasonList
-                  label="Context reasons"
-                  values={evidence.architecture?.context?.reasons}
+                  label="Layout/context loss"
+                  values={evidence.contextWarnings}
                 />
               </div>
             </EvidenceSection>

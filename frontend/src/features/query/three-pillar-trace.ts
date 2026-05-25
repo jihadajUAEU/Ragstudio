@@ -81,19 +81,16 @@ export interface SourceArchitectureSummary {
     domain: string;
     materializationHint: string;
     qualityPolicy: string;
-    reasons: string[];
   };
   layout: {
     layoutGroupId: string;
     layoutRole: string;
     readingOrder: string;
-    reasons: string[];
   };
   context: {
     parentChunkId: string;
     previousChunkId: string;
     nextChunkId: string;
-    reasons: string[];
   };
 }
 
@@ -196,13 +193,7 @@ export function buildThreePillarTrace(run: RunOut): ThreePillarTraceSummary {
         .filter((item): item is { candidateId: string; before: number; after: number; delta: number } => item !== null),
       raw: rerankerLaneTrace ?? firstRerankerTrace ?? undefined,
     },
-    sources: run.sources.map((source, index) =>
-      sourceArchitectureSummary(source, index, {
-        domainReasons: route.domainReasons,
-        layoutReasons: layout.layoutReasons,
-        contextReasons: context.contextReasons,
-      }),
-    ),
+    sources: run.sources.map((source, index) => sourceArchitectureSummary(source, index)),
   };
 }
 
@@ -230,11 +221,6 @@ function laneTrace(
 function sourceArchitectureSummary(
   source: Record<string, unknown>,
   index: number,
-  reasons: {
-    domainReasons: string[];
-    layoutReasons: string[];
-    contextReasons: string[];
-  },
 ): SourceArchitectureSummary {
   const metadata = recordValue(source.metadata) ?? recordValue(source.metadata_json) ?? {};
   const domainMetadata = recordValue(metadata.domain_metadata);
@@ -247,7 +233,6 @@ function sourceArchitectureSummary(
         textValue(metadata.quality_action_policy) ??
         textValue(source.quality_action_policy) ??
         "not recorded",
-      reasons: reasons.domainReasons,
     },
     layout: {
       layoutGroupId: textValue(metadata.layout_group_id) ?? "not recorded",
@@ -256,13 +241,11 @@ function sourceArchitectureSummary(
         numberValue(metadata.reading_order)?.toString() ??
         textValue(metadata.reading_order) ??
         "not recorded",
-      reasons: reasons.layoutReasons,
     },
     context: {
       parentChunkId: textValue(metadata.parent_chunk_id) ?? "not recorded",
       previousChunkId: textValue(metadata.previous_chunk_id) ?? "not recorded",
       nextChunkId: textValue(metadata.next_chunk_id) ?? "not recorded",
-      reasons: reasons.contextReasons,
     },
   };
 }
