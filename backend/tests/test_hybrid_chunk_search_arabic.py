@@ -10,13 +10,17 @@ class Chunk(SimpleNamespace):
     pass
 
 
+def _arabic_script_metadata():
+    return {"domain_metadata": {"script": "arabic"}}
+
+
 def test_arabic_query_matches_diacritized_chunk_text():
     chunk = Chunk(
         id="chunk-1",
         document_id="doc-1",
         text="وَحَنَانًا مِّن لَّدُنَّا وَزَكَاةً",
         source_location={"page": 1},
-        metadata_json={},
+        metadata_json=_arabic_script_metadata(),
     )
 
     score = HybridChunkSearch().score("وحنانا", chunk)
@@ -31,7 +35,7 @@ def test_arabic_query_matches_prefix_stripped_token():
         document_id="doc-1",
         text="حَنَانًا مِّن لَّدُنَّا",
         source_location={"page": 1},
-        metadata_json={},
+        metadata_json=_arabic_script_metadata(),
     )
 
     score = HybridChunkSearch().score("وحنانا", chunk)
@@ -47,6 +51,7 @@ def test_arabic_query_does_not_match_quarantined_exact_policy():
         text="وَحَنَانًا مِّن لَّدُنَّا وَزَكَاةً",
         source_location={"page": 1},
         metadata_json={
+            "domain_metadata": {"script": "arabic"},
             "quality_action_policy": {
                 "index_vector": False,
                 "index_exact_arabic": False,
@@ -60,6 +65,21 @@ def test_arabic_query_does_not_match_quarantined_exact_policy():
 
     assert score.score == 0.0
     assert score.breakdown["quality_blocked_arabic"] == 1.0
+
+
+def test_arabic_exact_scoring_requires_domain_adapter_signal():
+    chunk = Chunk(
+        id="chunk-1",
+        document_id="doc-1",
+        text="\u0648\u064e\u062d\u064e\u0646\u064e\u0627\u0646\u064b\u0627",
+        source_location={"page": 1},
+        metadata_json={"domain_metadata": {"domain": "generic"}},
+    )
+
+    score = HybridChunkSearch().score("\u0648\u062d\u0646\u0627\u0646\u0627", chunk)
+
+    assert score.breakdown["arabic_exact"] == 0.0
+    assert score.breakdown["arabic_token"] == 0.0
 
 
 def test_count_intent_uses_domain_metadata_without_domain_specific_terms():
@@ -109,6 +129,40 @@ def test_count_intent_uses_domain_metadata_without_domain_specific_terms():
     assert correct_score.score > distractor_score.score
     assert correct_score.breakdown["domain_intent"] == 30.0
     assert distractor_score.breakdown["domain_intent"] == 0.0
+
+
+def test_count_boost_does_not_fire_without_domain_adapter():
+    service = HybridChunkSearch()
+    score = service._answer_bearing_count_boost(
+        "how many items",
+        "The collection contains 7277 records.",
+        {"domain_metadata": {"domain": "generic"}},
+    )
+
+    assert score == 0.0
+
+
+def test_count_boost_uses_hadith_adapter_terms():
+    service = HybridChunkSearch()
+    score = service._answer_bearing_count_boost(
+        "how many hadith",
+        "Sahih Bukhari collection contains 7277 hadith records.",
+        {"domain_metadata": {"domain": "hadith", "collection": "sahih_bukhari"}},
+    )
+
+    assert score == service.policy.answer_bearing_count
+
+
+def test_legacy_same_chapter_weight_maps_to_generic_weight_key():
+    search = HybridChunkSearch()
+
+    assert search._effective_weights(None, {"same_chapter": 2.0}) == {
+        "same_parent_reference": 2.0
+    }
+    assert search._effective_weights(
+        None,
+        {"same_parent_reference": 3.0, "same_chapter": 2.0},
+    ) == {"same_parent_reference": 3.0}
 
 
 def test_domain_intent_phrase_requires_full_query_phrase():

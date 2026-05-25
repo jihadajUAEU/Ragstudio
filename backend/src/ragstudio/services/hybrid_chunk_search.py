@@ -11,6 +11,7 @@ from ragstudio.services.arabic_text import (
     arabic_tokens,
     normalize_arabic_text,
 )
+from ragstudio.services.domain_retrieval_adapters import scoring_signals_for_metadata
 from ragstudio.services.domain_search_policy import DomainSearchPolicy
 from ragstudio.services.reference_metadata import ReferenceSemantics
 from ragstudio.services.retrieval_explainer import build_retrieval_explain
@@ -65,6 +66,7 @@ _ANSWER_BEARING_PATTERNS = (
 _LEADING_PHRASE_NOISE_RE = re.compile(r"^(?:that|which|the verse)\s+")
 _SPACE_RE = re.compile(r"\s+")
 _TERM_RE = re.compile(r"[\w\u0600-\u06FF]+", flags=re.UNICODE)
+_SEARCH_WEIGHT_ALIASES = {"same_chapter": "same_parent_reference"}
 
 
 @dataclass(frozen=True)
@@ -363,6 +365,8 @@ class HybridChunkSearch:
         metadata = chunk.metadata_json if isinstance(chunk.metadata_json, dict) else {}
         if not self._quality_allows_exact_arabic(metadata):
             return 0.0
+        if scoring_signals_for_metadata(metadata).exact_script_boost != "arabic":
+            return 0.0
         stored_tokens = getattr(chunk, "tokens_ar", None)
         token_set = set(
             stored_tokens
@@ -385,6 +389,8 @@ class HybridChunkSearch:
             return 0.0
         metadata = chunk.metadata_json if isinstance(chunk.metadata_json, dict) else {}
         if not self._quality_allows_exact_arabic(metadata):
+            return 0.0
+        if scoring_signals_for_metadata(metadata).exact_script_boost != "arabic":
             return 0.0
         stored_tokens = getattr(chunk, "tokens_ar", None)
         tokens = set(
@@ -410,7 +416,10 @@ class HybridChunkSearch:
         combined = f"{chunk_text} {self._metadata_title(metadata)}".casefold()
         if not _NUMBER_RE.search(combined):
             return 0.0
-        if not any(term in combined for term in ("hadith", "collection", "bukhari")):
+        signals = scoring_signals_for_metadata(metadata)
+        if not signals.count_answer_terms:
+            return 0.0
+        if not any(term in combined for term in signals.count_answer_terms):
             return 0.0
         return self.policy.answer_bearing_count
 
@@ -483,12 +492,11 @@ class HybridChunkSearch:
     ) -> dict[str, float]:
         weights: dict[str, float] = {}
         if policy is not None and policy.hybrid_search_weights:
-            weights.update(policy.hybrid_search_weights)
+            for key, value in policy.hybrid_search_weights.items():
+                _apply_search_weight(weights, key, value)
         if search_weights:
             for key, value in search_weights.items():
-                if isinstance(value, bool) or not isinstance(value, int | float):
-                    continue
-                weights[key] = float(value)
+                _apply_search_weight(weights, key, value)
         return weights
 
     def _query_reference_label(self, query_ref: dict[str, Any] | None) -> str | None:
@@ -514,6 +522,15 @@ def _arabic_phrase_boundary_pattern(variant: str) -> re.Pattern[str]:
 
 def _contains_arabic(value: str) -> bool:
     return _ARABIC_RE.search(value) is not None
+
+
+def _apply_search_weight(weights: dict[str, float], key: str, value: Any) -> None:
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return
+    normalized_key = _SEARCH_WEIGHT_ALIASES.get(key, key)
+    if normalized_key != key and normalized_key in weights:
+        return
+    weights[normalized_key] = float(value)
 
 
 def _reference_in_identity_ranges(

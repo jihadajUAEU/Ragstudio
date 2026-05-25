@@ -32,7 +32,7 @@ class ChunkOut(StudioModel):
 class HybridSearchWeights(StudioModel):
     reference_exact: float | None = None
     neighbor_match: float | None = None
-    same_chapter: float | None = None
+    same_parent_reference: float | None = None
     exact_phrase: float | None = None
     term_coverage: float | None = None
     semantic_density: float | None = None
@@ -40,6 +40,17 @@ class HybridSearchWeights(StudioModel):
     arabic_token: float | None = None
     metadata_boost: float | None = None
     domain_intent: float | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_legacy_same_chapter(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        if data.get("same_parent_reference") is None and "same_chapter" in data:
+            data = {**data, "same_parent_reference": data.get("same_chapter")}
+        if "same_chapter" in data:
+            data = {key: value for key, value in data.items() if key != "same_chapter"}
+        return data
 
     @model_validator(mode="after")
     def reject_negative_weights(self) -> "HybridSearchWeights":
