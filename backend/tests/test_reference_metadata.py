@@ -45,7 +45,8 @@ def quran_metadata() -> DomainMetadata:
 def test_reference_semantics_detects_scripture_profile_from_metadata_json():
     semantics = ReferenceSemantics.from_metadata(quran_metadata())
 
-    assert semantics.profile_name == "scripture_reference"
+    assert semantics.profile_name == "reference_hint"
+    assert semantics.reference_capability == "hint"
     assert semantics.reference_type == "surah_ayah"
     assert semantics.chunk_unit == "verse"
     assert semantics.include_neighbors == 1
@@ -67,10 +68,11 @@ def test_reference_semantics_falls_back_from_standard_metadata_fields():
 
     semantics = ReferenceSemantics.from_metadata(metadata)
 
-    assert semantics.profile_name == "scripture_reference"
+    assert semantics.profile_name == "reference_hint"
+    assert semantics.reference_capability == "hint"
     assert semantics.reference_type == "surah_ayah"
-    assert semantics.chunk_unit == "verse"
-    assert semantics.exact_reference_top1 is True
+    assert semantics.chunk_unit == "section"
+    assert semantics.exact_reference_top1 is False
     assert semantics.preserve_parallel_text is True
 
 
@@ -91,11 +93,64 @@ def test_reference_semantics_supports_generic_chapter_verse_schema():
 
     semantics = ReferenceSemantics.from_metadata(metadata)
 
-    assert semantics.profile_name == "scripture_reference"
+    assert semantics.profile_name == "reference_hint"
+    assert semantics.reference_capability == "hint"
     assert semantics.reference_type == "chapter_verse"
     assert semantics.chunk_unit == "stanza"
     assert semantics.include_neighbors == 2
     assert semantics.exact_reference_top1 is False
+
+
+def test_metadata_only_reference_schema_does_not_enable_enforcement_defaults():
+    semantics = ReferenceSemantics.from_metadata(
+        DomainMetadata(
+            custom_json={
+                "reference_schema": {
+                    "type": "parent_item",
+                    "fields": {"parent_ref": "parent", "unit_ref": "unit"},
+                    "canonical_ref_template": "{parent_ref}:{unit_ref}",
+                }
+            }
+        )
+    )
+
+    assert semantics.profile_name == "reference_hint"
+    assert semantics.reference_capability == "hint"
+    assert semantics.chunk_unit == "section"
+    assert semantics.exact_reference_top1 is False
+    assert semantics.boost_neighbor_verses is False
+    assert semantics.canonical_units_enabled is False
+
+
+def test_verified_generic_reference_contract_enables_reference_defaults():
+    semantics = ReferenceSemantics.from_metadata(
+        DomainMetadata(
+            custom_json={
+                "reference_schema": {
+                    "type": "parent_item",
+                    "fields": {"parent_ref": "parent", "unit_ref": "unit"},
+                    "canonical_ref_template": "{parent_ref}:{unit_ref}",
+                },
+                "domain_structure": {
+                    "primary_anchor": {
+                        "regex": r"Part\s+(?P<parent_ref>\d+)\s+Item\s+(?P<unit_ref>\d+)",
+                        "unit": "item",
+                        "verified": True,
+                    }
+                },
+                "reference_resolution": {
+                    "enabled": True,
+                    "build_canonical_units": True,
+                },
+            }
+        )
+    )
+
+    assert semantics.profile_name == "verified_reference"
+    assert semantics.reference_capability == "verified"
+    assert semantics.chunk_unit == "item"
+    assert semantics.exact_reference_top1 is True
+    assert semantics.canonical_units_enabled is True
 
 
 def test_reference_semantics_extracts_custom_anchor_references():
@@ -590,7 +645,7 @@ def test_reference_semantics_infers_legal_section_from_standard_metadata():
         DomainMetadata(domain="legal", document_type="statute", reference_pattern="section")
     )
 
-    assert semantics.profile_name == "scripture_reference"
+    assert semantics.profile_name == "reference_hint"
     assert semantics.reference_type == "legal_section"
     assert semantics.extract_query_reference("Explain Section 12.3") == {
         "raw": "Section 12.3",

@@ -21,6 +21,7 @@ from ragstudio.services.reference_regex_registry import (
 @dataclass(frozen=True)
 class ReferenceSemantics:
     profile_name: str = "generic"
+    reference_capability: str = "none"
     reference_type: str | None = None
     chunk_unit: str = "section"
     include_neighbors: int = 0
@@ -85,10 +86,24 @@ class ReferenceSemantics:
         )
 
         has_reference_schema = isinstance(reference_schema, dict)
-        structured_reference = has_reference_schema or cls._has_structured_reference_fields(
+        has_structured_hint = has_reference_schema or cls._has_structured_reference_fields(
             metadata
         )
-        profile_name = "scripture_reference" if structured_reference else "generic"
+        reference_capability = "none"
+        if has_structured_hint:
+            reference_capability = "hint"
+        if contract.verified and cls._bool_value(
+            reference_resolution.get("build_canonical_units"),
+            default=False,
+        ):
+            reference_capability = "verified"
+        profile_name = (
+            "verified_reference"
+            if reference_capability == "verified"
+            else "reference_hint"
+            if reference_capability == "hint"
+            else "generic"
+        )
         reference_type = contract.schema_type or cls._reference_type(metadata, reference_schema)
 
         primary_contract_anchor = cls._verified_anchor_for_groups(
@@ -119,8 +134,6 @@ class ReferenceSemantics:
             chunking.get("unit"),
             default=unit_anchor_unit or primary_anchor_unit or first_anchor_unit or "section",
         ) or "section"
-        if chunk_unit == "section" and structured_reference and not contract.anchors:
-            chunk_unit = "verse"
         verified_primary_anchor_pattern = (
             primary_contract_anchor.regex if primary_contract_anchor is not None else None
         )
@@ -154,9 +167,11 @@ class ReferenceSemantics:
                 and unit_anchor_pattern is not None
             )
         )
+        verified_reference = reference_capability == "verified"
 
         return cls(
             profile_name=profile_name,
+            reference_capability=reference_capability,
             reference_type=reference_type,
             chunk_unit=chunk_unit,
             include_neighbors=cls._safe_nonnegative_int(
@@ -172,24 +187,24 @@ class ReferenceSemantics:
             ),
             exact_reference_top1=cls._bool_value(
                 retrieval.get("exact_reference_top1"),
-                default=structured_reference,
+                default=verified_reference,
             ),
             boost_same_chapter=cls._bool_value(
                 retrieval.get("boost_same_chapter"),
-                default=structured_reference,
+                default=verified_reference,
             ),
             boost_neighbor_verses=cls._bool_value(
                 retrieval.get(
                     "boost_neighbor_verses",
                     retrieval.get("boost_neighbor_references"),
                 ),
-                default=structured_reference,
+                default=verified_reference,
             ),
             relationships=cls._relationships(custom.get("relationships")),
             reference_pattern=schema_pattern,
             canonical_ref_template=canonical_ref_template,
             canonical_units_enabled=bool(
-                structured_reference
+                verified_reference
                 and has_verified_anchor
                 and cls._bool_value(reference_resolution.get("enabled"), default=False)
                 and cls._bool_value(
@@ -511,7 +526,7 @@ class ReferenceSemantics:
                 pass
         reference_type = (self.reference_type or "").casefold()
         if reference_type in {"surah_ayah", "chapter_verse"} or (
-            self.profile_name == "scripture_reference" and not reference_type
+            self.reference_capability == "verified" and not reference_type
         ):
             patterns.append(REFERENCE_PATTERN)
             if include_chapter_only:

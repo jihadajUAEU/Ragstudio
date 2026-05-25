@@ -341,7 +341,7 @@ git commit -m "fix: separate reference hints from verified contracts"
 - Modify: `backend/src/ragstudio/services/reference_metadata.py`
 - Modify: `backend/tests/test_reference_metadata.py`
 
-- [ ] **Step 1: Write failing metadata-only semantics test**
+- [x] **Step 1: Write failing metadata-only semantics test**
 
 Append to `backend/tests/test_reference_metadata.py`:
 
@@ -370,7 +370,7 @@ def test_metadata_only_reference_schema_does_not_enable_enforcement_defaults():
     assert semantics.canonical_units_enabled is False
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run:
 
@@ -380,7 +380,7 @@ $env:PYTHONPATH='backend/src'; python -m pytest backend/tests/test_reference_met
 
 Expected: FAIL because current semantics uses `scripture_reference`, may default `chunk_unit` to `verse`, and enables reference boosts from a hint.
 
-- [ ] **Step 3: Add explicit capability status**
+- [x] **Step 3: Add explicit capability status**
 
 In `backend/src/ragstudio/services/reference_metadata.py`, add a field to `ReferenceSemantics`:
 
@@ -412,7 +412,7 @@ profile_name = (
 
 Keep the existing `has_verified_anchor` calculation later in the function, but make enforcement defaults depend on `reference_capability == "verified"`.
 
-- [ ] **Step 4: Replace hint-driven defaults**
+- [x] **Step 4: Replace hint-driven defaults**
 
 In the `ReferenceSemantics` return block, use:
 
@@ -450,7 +450,7 @@ if chunk_unit == "section" and structured_reference and not contract.anchors:
     chunk_unit = "verse"
 ```
 
-- [ ] **Step 5: Add verified generic semantics test**
+- [x] **Step 5: Add verified generic semantics test**
 
 Append to `backend/tests/test_reference_metadata.py`:
 
@@ -486,7 +486,7 @@ def test_verified_generic_reference_contract_enables_reference_defaults():
     assert semantics.canonical_units_enabled is True
 ```
 
-- [ ] **Step 6: Run focused tests**
+- [x] **Step 6: Run focused tests**
 
 Run:
 
@@ -496,7 +496,7 @@ $env:PYTHONPATH='backend/src'; python -m pytest backend/tests/test_reference_met
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```powershell
 git add backend/src/ragstudio/services/reference_metadata.py backend/tests/test_reference_metadata.py
