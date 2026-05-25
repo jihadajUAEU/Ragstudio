@@ -12,8 +12,22 @@ def _quran_metadata() -> DomainMetadata:
         citation_style="surah_ayah",
         expected_structure="surah_ayah_sections",
         custom_json={
-            "reference_schema": {"type": "chapter_verse", "display": "{chapter}:{verse}"},
+            "reference_schema": {
+                "type": "chapter_verse",
+                "fields": {"chapter": "chapter", "verse": "verse"},
+                "canonical_ref_template": "{chapter}:{verse}",
+                "display": "{chapter}:{verse}",
+            },
             "chunking": {"unit": "verse", "preserve_parallel_text": True},
+            "domain_structure": {
+                "primary_anchor": {
+                    "type": "chapter_verse",
+                    "regex": r"(?P<chapter>\d{1,4})\s*:\s*(?P<verse>\d{1,4})",
+                    "unit": "verse",
+                    "verified": True,
+                }
+            },
+            "reference_resolution": {"enabled": True, "build_canonical_units": True},
             "quality_policy": {
                 "required_scripts": ["arabic"],
                 "missing_required_script_action": "warn",
@@ -658,9 +672,9 @@ def test_domain_quality_gate_does_not_use_builtin_reference_fallback_for_context
                 "fields": {"chapter": "chapter", "verse": "verse"},
                 "canonical_ref_template": "{chapter}:{verse}",
             },
-            "domain_structure": {
-                "context_anchor": {
-                    "regex": r"\bSurah\s+(?P<chapter>\d{1,4})\b",
+                "domain_structure": {
+                    "context_anchor": {
+                        "regex": r"\bSurah\s+(?P<chapter>\d{1,4})\b",
                     "unit": "chapter",
                     "verified": True,
                 },
@@ -668,12 +682,13 @@ def test_domain_quality_gate_does_not_use_builtin_reference_fallback_for_context
                     "regex": r"\bAyah\s+(?P<verse>\d{1,4})\b",
                     "unit": "verse",
                     "context_source": "context_anchor",
-                    "verified": True,
+                        "verified": True,
+                    },
                 },
-            },
-            "quality_policy": {
-                "optional_scripts": ["arabic"],
-                "missing_optional_script_action": "warn",
+                "reference_resolution": {"enabled": True, "build_canonical_units": True},
+                "quality_policy": {
+                    "optional_scripts": ["arabic"],
+                    "missing_optional_script_action": "warn",
             },
         },
     )
@@ -727,6 +742,7 @@ def test_domain_quality_gate_uses_valid_contextual_contract_units():
                     "verified": True,
                 },
             },
+            "reference_resolution": {"enabled": True, "build_canonical_units": True},
             "quality_policy": {
                 "optional_scripts": ["arabic"],
                 "missing_optional_script_action": "warn",
@@ -1075,6 +1091,40 @@ def test_unverified_reference_schema_does_not_emit_reference_unit_unresolved(con
     assert report["index_quality_report"]["summary"]["reference_unit_unresolved_count"] == 0
 
 
+def test_metadata_only_hint_does_not_extract_builtin_colon_reference_units():
+    metadata = DomainMetadata(
+        domain="archive",
+        language="mixed",
+        custom_json={
+            "reference_schema": {
+                "type": "parent_item",
+                "fields": {"parent_ref": "parent", "unit_ref": "unit"},
+                "canonical_ref_template": "{parent_ref}:{unit_ref}",
+            },
+            "contract_status": "metadata_only",
+            "quality_policy": {
+                "required_scripts": ["hebrew"],
+                "missing_required_script_action": "warn",
+            },
+        },
+    )
+    chunk = AdapterChunk(
+        text="[7:104] English-only body that looks like a reference.",
+        source_location={"page": 1},
+        metadata={},
+    )
+
+    report = DomainMetadataQualityGate().validate_adapter_chunks(
+        [chunk],
+        domain_metadata=metadata,
+    )
+
+    assert report["index_quality_report"]["references"] == []
+    assert "reference_unit_missing_expected_script" not in report["parser_quality"][
+        "warning_counts"
+    ]
+
+
 def test_metadata_only_reference_hints_keep_independent_script_materialization_gate():
     metadata = DomainMetadata(
         domain="policy",
@@ -1116,6 +1166,46 @@ def test_metadata_only_reference_hints_keep_independent_script_materialization_g
     assert policy["index_vector"] is False
     assert policy["project_graph"] is False
     assert "missing_expected_script:latin" in policy["quality_flags"]
+
+
+def test_verified_contract_still_extracts_reference_units_for_quality_gate():
+    metadata = DomainMetadata(
+        domain="archive",
+        language="mixed",
+        custom_json={
+            "reference_schema": {
+                "type": "parent_item",
+                "fields": {"parent_ref": "parent", "unit_ref": "unit"},
+                "canonical_ref_template": "{parent_ref}:{unit_ref}",
+            },
+            "domain_structure": {
+                "primary_anchor": {
+                    "regex": r"Part\s+(?P<parent_ref>\d+)\s+Item\s+(?P<unit_ref>\d+)",
+                    "unit": "item",
+                    "verified": True,
+                }
+            },
+            "reference_resolution": {"enabled": True, "build_canonical_units": True},
+            "quality_policy": {
+                "required_scripts": ["latin"],
+                "missing_required_script_action": "warn",
+            },
+        },
+    )
+    chunk = AdapterChunk(
+        text="Part 7 Item 104",
+        source_location={"page": 1},
+        metadata={},
+    )
+
+    report = DomainMetadataQualityGate().validate_adapter_chunks(
+        [chunk],
+        domain_metadata=metadata,
+    )
+
+    assert [
+        record["reference"] for record in report["index_quality_report"]["references"]
+    ] == ["7:104"]
 
 
 def test_verified_reference_contract_still_enforces_unresolved_reference_units():

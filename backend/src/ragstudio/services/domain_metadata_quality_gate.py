@@ -23,16 +23,6 @@ from ragstudio.services.reference_unit_assembler import provenance_only_quality_
 from ragstudio.services.script_detection import SCRIPT_PATTERNS
 
 logger = logging.getLogger(__name__)
-CHAPTER_VERSE_PATTERN = re.compile(
-    r"(?P<prefix>\bQuran\s+)?(?P<bracket>\[)?"
-    r"(?P<chapter>\d{1,4})\s*:\s*(?P<verse>\d{1,4})"
-    r"(?(bracket)\])",
-    flags=re.IGNORECASE,
-)
-BOOK_HADITH_PATTERN = re.compile(
-    r"\bBook\s+\d+\s*,?\s*Hadith\s+\d+\b",
-    flags=re.IGNORECASE,
-)
 QUALITY_REPORT_VERSION = 1
 
 
@@ -887,16 +877,20 @@ class DomainMetadataQualityGate:
                     "end": len(text),
                 }
             ]
-        if semantics.has_primary_unit_anchor:
+        if (
+            semantics.reference_capability == "verified"
+            and semantics.has_primary_unit_anchor
+        ):
             return self._contract_reference_units(text, semantics)
 
-        label_units = self._labelled_reference_units(text)
-        if label_units:
-            return label_units
         if len(references) > 1:
             return []
 
-        semantic_refs = semantics.extract_chunk_references(text)
+        semantic_refs = (
+            semantics.extract_chunk_references(text)
+            if semantics.reference_capability == "verified"
+            else []
+        )
         if len(semantic_refs) == 1:
             return [
                 {
@@ -985,26 +979,6 @@ class DomainMetadataQualityGate:
                 }
             ]
         return []
-
-    def _labelled_reference_units(self, text: str) -> list[dict[str, Any]]:
-        matches = list(CHAPTER_VERSE_PATTERN.finditer(text))
-        if not matches:
-            return []
-        units: list[dict[str, Any]] = []
-        for index, match in enumerate(matches):
-            start = match.start()
-            end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
-            chapter = int(match.group("chapter"))
-            verse = int(match.group("verse"))
-            units.append(
-                {
-                    "reference": f"{chapter}:{verse}",
-                    "text": text[start:end].strip(),
-                    "start": start,
-                    "end": end,
-                }
-            )
-        return units
 
     def _reference_record(
         self,
@@ -1462,10 +1436,11 @@ class DomainMetadataQualityGate:
         if self._metadata_references(metadata):
             return True
         semantics = ReferenceSemantics.from_metadata(domain_metadata or DomainMetadata())
-        if semantics.has_primary_unit_anchor:
+        if (
+            semantics.reference_capability == "verified"
+            and semantics.has_primary_unit_anchor
+        ):
             return bool(semantics.extract_primary_anchor_references(text))
-        if CHAPTER_VERSE_PATTERN.search(text) or BOOK_HADITH_PATTERN.search(text):
-            return True
 
         for pattern in profile.reference_patterns:
             try:

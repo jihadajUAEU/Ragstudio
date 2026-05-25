@@ -1406,7 +1406,7 @@ git commit -m "feat: expose backend stage display metadata"
 - Modify: `backend/src/ragstudio/services/domain_metadata_quality_gate.py`
 - Modify: `backend/tests/test_domain_metadata_quality_gate.py`
 
-- [ ] **Step 1: Add failing regression for built-in reference extraction drift**
+- [x] **Step 1: Add failing regression for built-in reference extraction drift**
 
 Append to `backend/tests/test_domain_metadata_quality_gate.py`:
 
@@ -1445,7 +1445,7 @@ def test_metadata_only_hint_does_not_extract_builtin_colon_reference_units():
     ]
 ```
 
-- [ ] **Step 2: Run the focused test to verify it fails**
+- [x] **Step 2: Run the focused test to verify it fails**
 
 Run:
 
@@ -1455,7 +1455,7 @@ $env:PYTHONPATH='backend/src'; python -m pytest backend/tests/test_domain_metada
 
 Expected: FAIL while `_labelled_reference_units()` still uses `CHAPTER_VERSE_PATTERN` without a verified executable contract.
 
-- [ ] **Step 3: Remove generic built-in reference fallbacks**
+- [x] **Step 3: Remove generic built-in reference fallbacks**
 
 In `backend/src/ragstudio/services/domain_metadata_quality_gate.py`:
 
@@ -1465,7 +1465,7 @@ In `backend/src/ragstudio/services/domain_metadata_quality_gate.py`:
 - Remove the unconditional `_labelled_reference_units(text)` branch from `_reference_units()`.
 - Change `_has_reference()` so text patterns come from verified contract extractors or `profile.reference_patterns`; it must not return true because a generic `n:n` token exists in text.
 
-- [ ] **Step 4: Preserve verified-contract behavior**
+- [x] **Step 4: Preserve verified-contract behavior**
 
 Add a companion test in `backend/tests/test_domain_metadata_quality_gate.py` using a verified `domain_structure.primary_anchor` with named groups:
 
@@ -1510,7 +1510,7 @@ def test_verified_contract_still_extracts_reference_units_for_quality_gate():
     ] == ["7:104"]
 ```
 
-- [ ] **Step 5: Run focused tests**
+- [x] **Step 5: Run focused tests**
 
 Run:
 
@@ -1520,7 +1520,7 @@ $env:PYTHONPATH='backend/src'; python -m pytest backend/tests/test_domain_metada
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```powershell
 git add backend/src/ragstudio/services/domain_metadata_quality_gate.py backend/tests/test_domain_metadata_quality_gate.py
