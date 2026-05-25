@@ -1,8 +1,38 @@
 import pytest
 from ragstudio.db.engine import init_db, make_engine, make_session_factory
 from ragstudio.db.models import Chunk, Document
+from ragstudio.services.context_contracts import (
+    ContextExpansionPolicy,
+    context_policy_from_metadata,
+)
 from ragstudio.services.context_window_service import ContextWindowService
 from ragstudio.services.retrieval_evidence import EvidenceCandidate
+
+
+def test_context_policy_reads_verified_structural_links():
+    policy = context_policy_from_metadata(
+        {
+            "context_contract": {
+                "verified": True,
+                "relationships": ["heading_path", "section_path", "reference_range"],
+                "max_reference_distance": 2,
+            }
+        }
+    )
+
+    assert policy == ContextExpansionPolicy(
+        relationships=frozenset({"heading_path", "section_path", "reference_range"}),
+        max_reference_distance=2,
+    )
+
+
+def test_unverified_context_policy_uses_link_defaults():
+    policy = context_policy_from_metadata(
+        {"context_contract": {"verified": False, "relationships": ["heading_path"]}}
+    )
+
+    assert policy.relationships == frozenset({"reading_order", "parent", "sibling", "linked"})
+    assert policy.max_reference_distance == 1
 
 
 @pytest.mark.asyncio
@@ -227,3 +257,126 @@ async def test_context_window_service_returns_parent_sibling_and_linked_context(
     assert "linked_context" in by_id["previous-context"].reasons
     assert "sibling_context" in by_id["sibling-context"].reasons
     assert "linked_context" in by_id["next-context"].reasons
+
+
+@pytest.mark.asyncio
+async def test_context_window_service_returns_verified_structural_context(
+    database_url, tmp_path
+):
+    engine = make_engine(database_url)
+    await init_db(engine)
+    factory = make_session_factory(engine)
+
+    async with factory() as session:
+        session.add(
+            Document(
+                id="doc-structural-context-window",
+                filename="structural-context.pdf",
+                content_type="application/pdf",
+                sha256="structural-context-sha",
+                artifact_path=str(tmp_path / "structural-context.pdf"),
+            )
+        )
+        session.add_all(
+            [
+                Chunk(
+                    id="seed-structural-context",
+                    document_id="doc-structural-context-window",
+                    text="Seed contract chunk.",
+                    source_location={"page": 1},
+                    metadata_json={
+                        "heading_path": ["Part 1", "Section 2"],
+                        "section_path": ["Part 1"],
+                        "reference_identity_range": {
+                            "part": {"start": 1, "end": 1},
+                            "item": {"start": 10, "end": 10},
+                        },
+                        "context_contract": {
+                            "verified": True,
+                            "relationships": [
+                                "heading_path",
+                                "section_path",
+                                "reference_range",
+                            ],
+                            "max_reference_distance": 2,
+                        },
+                    },
+                ),
+                Chunk(
+                    id="heading-context",
+                    document_id="doc-structural-context-window",
+                    text="Same heading context.",
+                    source_location={"page": 2},
+                    metadata_json={"heading_path": ["Part 1", "Section 2"]},
+                ),
+                Chunk(
+                    id="section-context",
+                    document_id="doc-structural-context-window",
+                    text="Same section context.",
+                    source_location={"page": 3},
+                    metadata_json={"section_path": ["Part 1"]},
+                ),
+                Chunk(
+                    id="reference-context",
+                    document_id="doc-structural-context-window",
+                    text="Nearby reference context.",
+                    source_location={"page": 4},
+                    metadata_json={
+                        "reference_identity_range": {
+                            "part": {"start": 1, "end": 1},
+                            "item": {"start": 12, "end": 12},
+                        }
+                    },
+                ),
+                Chunk(
+                    id="far-reference-context",
+                    document_id="doc-structural-context-window",
+                    text="Far reference should not be included.",
+                    source_location={"page": 5},
+                    metadata_json={
+                        "reference_identity_range": {
+                            "part": {"start": 1, "end": 1},
+                            "item": {"start": 20, "end": 20},
+                        }
+                    },
+                ),
+            ]
+        )
+        await session.commit()
+        seed = EvidenceCandidate(
+            candidate_id="metadata:seed-structural-context",
+            text="Seed contract chunk.",
+            document_id="doc-structural-context-window",
+            chunk_id="seed-structural-context",
+            source_location={"page": 1},
+            metadata={
+                "heading_path": ["Part 1", "Section 2"],
+                "section_path": ["Part 1"],
+                "reference_identity_range": {
+                    "part": {"start": 1, "end": 1},
+                    "item": {"start": 10, "end": 10},
+                },
+                "context_contract": {
+                    "verified": True,
+                    "relationships": ["heading_path", "section_path", "reference_range"],
+                    "max_reference_distance": 2,
+                },
+            },
+            tool="metadata",
+            tool_rank=1,
+            base_score=10.0,
+        )
+
+        neighbors = await ContextWindowService(session).window_for(
+            [seed],
+            document_ids=["doc-structural-context-window"],
+            limit=10,
+        )
+
+    await engine.dispose()
+
+    by_id = {candidate.chunk_id: candidate for candidate in neighbors}
+    assert set(by_id) == {"heading-context", "section-context", "reference-context"}
+    assert "heading_path_context" in by_id["heading-context"].reasons
+    assert "section_path_context" in by_id["section-context"].reasons
+    assert "reference_range_context" in by_id["reference-context"].reasons

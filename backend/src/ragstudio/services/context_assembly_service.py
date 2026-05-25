@@ -231,6 +231,12 @@ def _append_drop(
 
 
 def _included_reason(candidate: EvidenceCandidate) -> str:
+    passes = _retrieval_passes(candidate)
+    if "context_window" in passes and any(
+        reason in candidate.reasons
+        for reason in {"heading_path_context", "section_path_context", "reference_range_context"}
+    ):
+        return "structural_context"
     features = _features(candidate)
     if features.get("reference_exact"):
         return "exact_reference_match"

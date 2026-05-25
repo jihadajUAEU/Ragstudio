@@ -250,3 +250,23 @@ def test_context_assembly_dynamic_fallback_breadcrumb_resolution():
     assert context.evidence[0].context_text.startswith(
         "[Holy Book > Surah Al-Baqarah > 2:45 | page=2]"
     )
+
+
+def test_context_assembly_preserves_structural_context_reason():
+    candidate = EvidenceCandidate(
+        candidate_id="context-window:chunk-2",
+        text="Continuation text",
+        document_id="doc-1",
+        chunk_id="chunk-2",
+        source_location={"page": 2},
+        metadata={"heading_path": ["Part 1", "Section 2"]},
+        tool="metadata",
+        tool_rank=1,
+        base_score=1.0,
+        reasons=["context_window", "heading_path_context"],
+        retrieval_pass="context_window",
+    )
+
+    assembled = ContextAssemblyService().assemble([candidate])
+
+    assert assembled.evidence[0].included_reason == "structural_context"

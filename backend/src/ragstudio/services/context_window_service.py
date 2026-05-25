@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from ragstudio.db.models import Chunk
+from ragstudio.services.context_contracts import context_policy_from_metadata
 from ragstudio.services.evidence_context import evidence_context_from_metadata
 from ragstudio.services.retrieval_evidence import EvidenceCandidate
 from ragstudio.services.retrieval_policy import DEFAULT_RETRIEVAL_POLICY
@@ -26,7 +27,17 @@ class ContextWindowService:
         seed_chunk_ids = {seed.chunk_id for seed in seeds if seed.chunk_id}
         seed_relationship_ids = _seed_relationship_ids(seeds)
         seed_parent_ids = _seed_parent_ids(seeds)
-        if not seed_orders and not seed_relationship_ids and not seed_parent_ids:
+        seed_heading_paths = _seed_paths(seeds, key="heading_path", relationship="heading_path")
+        seed_section_paths = _seed_paths(seeds, key="section_path", relationship="section_path")
+        seed_reference_ranges = _seed_reference_ranges(seeds)
+        if (
+            not seed_orders
+            and not seed_relationship_ids
+            and not seed_parent_ids
+            and not seed_heading_paths
+            and not seed_section_paths
+            and not seed_reference_ranges
+        ):
             return []
         scoped_documents = [document_id for document_id in document_ids if document_id]
         if not scoped_documents:
@@ -59,7 +70,13 @@ class ContextWindowService:
                 seed_relationship_ids=seed_relationship_ids,
                 seed_parent_ids=seed_parent_ids,
             )
-            if not adjacent and not relationship_reasons:
+            structural_reasons = _structural_relationship_reasons(
+                metadata,
+                seed_heading_paths=seed_heading_paths,
+                seed_section_paths=seed_section_paths,
+                seed_reference_ranges=seed_reference_ranges,
+            )
+            if not adjacent and not relationship_reasons and not structural_reasons:
                 continue
             source_location = row.source_location if isinstance(row.source_location, dict) else {}
             evidence_context = evidence_context_from_metadata(
@@ -75,6 +92,7 @@ class ContextWindowService:
             reasons.extend(
                 reason for reason in relationship_reasons if reason not in reasons
             )
+            reasons.extend(reason for reason in structural_reasons if reason not in reasons)
             candidates.append(
                 EvidenceCandidate(
                     candidate_id=f"context-window:{row.id}",
@@ -120,6 +138,37 @@ def _seed_parent_ids(seeds: list[EvidenceCandidate]) -> set[str]:
         parent_id = _string_value(seed.metadata, "parent_chunk_id")
         if parent_id:
             values.add(parent_id)
+    return values
+
+
+def _seed_paths(
+    seeds: list[EvidenceCandidate],
+    *,
+    key: str,
+    relationship: str,
+) -> set[tuple[str, ...]]:
+    values: set[tuple[str, ...]] = set()
+    for seed in seeds:
+        policy = context_policy_from_metadata(seed.metadata)
+        if relationship not in policy.relationships:
+            continue
+        path = _path_value(seed.metadata.get(key))
+        if path:
+            values.add(path)
+    return values
+
+
+def _seed_reference_ranges(
+    seeds: list[EvidenceCandidate],
+) -> list[tuple[dict[str, dict[str, int]], int]]:
+    values: list[tuple[dict[str, dict[str, int]], int]] = []
+    for seed in seeds:
+        policy = context_policy_from_metadata(seed.metadata)
+        if "reference_range" not in policy.relationships:
+            continue
+        reference_range = _reference_range_value(seed.metadata.get("reference_identity_range"))
+        if reference_range:
+            values.append((reference_range, policy.max_reference_distance))
     return values
 
 
@@ -170,6 +219,23 @@ def _relationship_reasons(
     return list(dict.fromkeys(reasons))
 
 
+def _structural_relationship_reasons(
+    metadata: dict[str, Any],
+    *,
+    seed_heading_paths: set[tuple[str, ...]],
+    seed_section_paths: set[tuple[str, ...]],
+    seed_reference_ranges: list[tuple[dict[str, dict[str, int]], int]],
+) -> list[str]:
+    reasons: list[str] = []
+    if _same_path(metadata, seed_heading_paths, "heading_path"):
+        reasons.append("heading_path_context")
+    if _same_path(metadata, seed_section_paths, "section_path"):
+        reasons.append("section_path_context")
+    if _near_reference_range(metadata, seed_reference_ranges):
+        reasons.append("reference_range_context")
+    return reasons
+
+
 def _relationship_chunk_ids(metadata: dict[str, Any]) -> set[str]:
     values: set[str] = set()
     for key in ("previous_chunk_id", "next_chunk_id"):
@@ -177,6 +243,77 @@ def _relationship_chunk_ids(metadata: dict[str, Any]) -> set[str]:
         if value:
             values.add(value)
     return values
+
+
+def _same_path(metadata: dict[str, Any], seed_paths: set[tuple[str, ...]], key: str) -> bool:
+    path = _path_value(metadata.get(key))
+    return bool(path and path in seed_paths)
+
+
+def _path_value(value: Any) -> tuple[str, ...]:
+    if isinstance(value, str):
+        text = value.strip()
+        return (text,) if text else ()
+    if isinstance(value, list):
+        return tuple(str(item).strip() for item in value if isinstance(item, str) and item.strip())
+    return ()
+
+
+def _near_reference_range(
+    metadata: dict[str, Any],
+    seed_ranges: list[tuple[dict[str, dict[str, int]], int]],
+) -> bool:
+    current = _reference_range_value(metadata.get("reference_identity_range"))
+    if not current:
+        return False
+    return any(
+        _reference_ranges_are_near(current, seed, max_distance=max_distance)
+        for seed, max_distance in seed_ranges
+    )
+
+
+def _reference_ranges_are_near(
+    current: dict[str, dict[str, int]],
+    seed: dict[str, dict[str, int]],
+    *,
+    max_distance: int,
+) -> bool:
+    shared_fields = [field for field in seed if field in current]
+    if not shared_fields:
+        return False
+    return all(
+        _range_distance(seed[field], current[field]) <= max_distance
+        for field in shared_fields
+    )
+
+
+def _reference_range_value(value: Any) -> dict[str, dict[str, int]]:
+    if not isinstance(value, dict):
+        return {}
+    ranges: dict[str, dict[str, int]] = {}
+    for field, raw_range in value.items():
+        if not isinstance(field, str) or not isinstance(raw_range, dict):
+            continue
+        start = raw_range.get("start")
+        end = raw_range.get("end")
+        if isinstance(start, int) and not isinstance(start, bool):
+            if isinstance(end, int) and not isinstance(end, bool):
+                ranges[field] = {"start": start, "end": end}
+            else:
+                ranges[field] = {"start": start, "end": start}
+    return ranges
+
+
+def _range_distance(left: dict[str, int], right: dict[str, int]) -> int:
+    left_start = left["start"]
+    left_end = left["end"]
+    right_start = right["start"]
+    right_end = right["end"]
+    if left_start <= right_end and right_start <= left_end:
+        return 0
+    if left_end < right_start:
+        return right_start - left_end
+    return left_start - right_end
 
 
 def _string_value(metadata: dict[str, Any], key: str) -> str | None:
