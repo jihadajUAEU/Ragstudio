@@ -91,7 +91,7 @@
 - Modify: `backend/tests/test_query_hypothesis_verifier.py`
 - Modify: `backend/tests/test_retrieval_orchestrator.py`
 
-- [ ] **Step 1: Add failing generic probable-answer parsing test**
+- [x] **Step 1: Add failing generic probable-answer parsing test**
 
 Append to `backend/tests/test_query_hypothesis_service.py`:
 
@@ -126,7 +126,7 @@ def test_probable_answer_uses_reference_groups_without_domain_fields():
     assert not hasattr(answer, "ayah")
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run:
 
@@ -136,7 +136,7 @@ $env:PYTHONPATH='backend/src'; python -m pytest backend/tests/test_query_hypothe
 
 Expected: FAIL because `ProbableAnswer` still exposes Quran-shaped fields.
 
-- [ ] **Step 3: Replace the probable-answer data shape**
+- [x] **Step 3: Replace the probable-answer data shape**
 
 In `backend/src/ragstudio/services/query_hypothesis_service.py`, replace the current `ProbableAnswer` dataclass with:
 
@@ -191,7 +191,7 @@ def _probable_answer(
     )
 ```
 
-- [ ] **Step 4: Add failing verifier regression**
+- [x] **Step 4: Add failing verifier regression**
 
 Append to `backend/tests/test_query_hypothesis_verifier.py`:
 
@@ -215,7 +215,7 @@ def test_verifier_does_not_synthesize_chapter_verse_reference_without_contract()
     assert verification.status == "unverified"
 ```
 
-- [ ] **Step 5: Remove verifier fallback fields**
+- [x] **Step 5: Remove verifier fallback fields**
 
 In `backend/src/ragstudio/services/query_hypothesis_verifier.py`:
 
@@ -231,7 +231,7 @@ def _expected_reference(hypothesis: QueryHypothesis) -> str | None:
     return answer.reference
 ```
 
-- [ ] **Step 6: Remove `surah_and_verse` as a direct-evidence answer shape**
+- [x] **Step 6: Remove `surah_and_verse` as a direct-evidence answer shape**
 
 In `backend/src/ragstudio/services/retrieval_orchestrator.py`, replace:
 
@@ -272,7 +272,7 @@ def test_confirmed_hypothesis_answer_requires_generic_reference_shape():
     ) is False
 ```
 
-- [ ] **Step 7: Run focused tests**
+- [x] **Step 7: Run focused tests**
 
 Run:
 
@@ -283,7 +283,7 @@ python -m ruff check backend/src/ragstudio/services/query_hypothesis_service.py 
 
 Expected: PASS.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```powershell
 git add backend/src/ragstudio/services/query_hypothesis_service.py backend/src/ragstudio/services/query_hypothesis_verifier.py backend/src/ragstudio/services/retrieval_orchestrator.py backend/tests/test_query_hypothesis_service.py backend/tests/test_query_hypothesis_verifier.py backend/tests/test_retrieval_orchestrator.py
@@ -303,7 +303,7 @@ git commit -m "fix: make query hypotheses use generic reference contracts"
 - Modify: `backend/tests/test_hybrid_chunk_search_arabic.py`
 - Modify: `backend/tests/test_retrieval_policy.py`
 
-- [ ] **Step 1: Add adapter tests**
+- [x] **Step 1: Add adapter tests**
 
 Create `backend/tests/test_domain_retrieval_adapters.py`:
 
@@ -329,7 +329,7 @@ def test_hadith_adapter_declares_count_answer_terms():
     assert signals.reference_label == "hadith"
 ```
 
-- [ ] **Step 2: Run the adapter tests to verify they fail**
+- [x] **Step 2: Run the adapter tests to verify they fail**
 
 Run:
 
@@ -339,7 +339,7 @@ $env:PYTHONPATH='backend/src'; python -m pytest backend/tests/test_domain_retrie
 
 Expected: FAIL because `domain_retrieval_adapters.py` does not exist.
 
-- [ ] **Step 3: Add the adapter module**
+- [x] **Step 3: Add the adapter module**
 
 Create `backend/src/ragstudio/services/domain_retrieval_adapters.py`:
 
@@ -387,7 +387,7 @@ def scoring_signals_for_metadata(metadata: dict[str, Any]) -> RetrievalScoringSi
     return RetrievalScoringSignals()
 ```
 
-- [ ] **Step 4: Replace hardcoded count-answer boost**
+- [x] **Step 4: Replace hardcoded count-answer boost**
 
 In `backend/src/ragstudio/services/hybrid_chunk_search.py`, import:
 
@@ -417,7 +417,7 @@ def _answer_bearing_count_boost(
     return self.policy.answer_bearing_count
 ```
 
-- [ ] **Step 5: Add generic count regression**
+- [x] **Step 5: Add generic count regression**
 
 Append to `backend/tests/test_hybrid_chunk_search_arabic.py`:
 
@@ -433,7 +433,7 @@ def test_count_boost_does_not_fire_without_domain_adapter():
     assert score == 0.0
 ```
 
-- [ ] **Step 6: Rename public score weight fields**
+- [x] **Step 6: Rename public score weight fields**
 
 In `backend/src/ragstudio/schemas/chunks.py`, replace `same_chapter` with:
 
@@ -452,7 +452,7 @@ if self.same_parent_reference is None:
 
 In `backend/src/ragstudio/services/retrieval_policy.py`, keep properties `same_chapter_reference_query` and `same_chapter_with_verse_query` as compatibility aliases, but ensure all production scoring uses `same_parent_reference_query` and `same_parent_with_unit_query`.
 
-- [ ] **Step 7: Run focused tests**
+- [x] **Step 7: Run focused tests**
 
 Run:
 
@@ -463,7 +463,7 @@ python -m ruff check backend/src/ragstudio/services/domain_retrieval_adapters.py
 
 Expected: PASS.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```powershell
 git add backend/src/ragstudio/services/domain_retrieval_adapters.py backend/src/ragstudio/services/hybrid_chunk_search.py backend/src/ragstudio/services/retrieval_policy.py backend/src/ragstudio/schemas/chunks.py backend/tests/test_domain_retrieval_adapters.py backend/tests/test_hybrid_chunk_search_arabic.py backend/tests/test_retrieval_policy.py
@@ -479,7 +479,7 @@ git commit -m "fix: move domain scoring signals into adapters"
 - Modify: `backend/src/ragstudio/services/reference_regex_registry.py`
 - Modify: `backend/tests/test_reference_metadata.py`
 
-- [ ] **Step 1: Add failing generic reference-range test**
+- [x] **Step 1: Add failing generic reference-range test**
 
 Append to `backend/tests/test_reference_metadata.py`:
 
@@ -520,7 +520,7 @@ def test_verified_generic_identity_range_does_not_emit_chapter_or_hadith_fields(
     assert "hadith_start" not in metadata
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run:
 
@@ -530,7 +530,7 @@ $env:PYTHONPATH='backend/src'; python -m pytest backend/tests/test_reference_met
 
 Expected: FAIL because generic identity ranges are not emitted.
 
-- [ ] **Step 3: Add generic identity range helper**
+- [x] **Step 3: Add generic identity range helper**
 
 In `backend/src/ragstudio/services/reference_metadata.py`, add:
 
@@ -555,7 +555,7 @@ if identity_range:
     metadata["reference_identity_range"] = identity_range
 ```
 
-- [ ] **Step 4: Gate legacy chapter/verse and book/hadith metadata**
+- [x] **Step 4: Gate legacy chapter/verse and book/hadith metadata**
 
 Wrap the existing chapter/verse metadata block with:
 
@@ -583,7 +583,7 @@ else:
     book_hadith_refs = []
 ```
 
-- [ ] **Step 5: Make default regex selection adapter-selected**
+- [x] **Step 5: Make default regex selection adapter-selected**
 
 In `_reference_patterns()` in `backend/src/ragstudio/services/reference_metadata.py`, only add `REFERENCE_PATTERN`, `CHAPTER_ONLY_PATTERN`, and `BOOK_HADITH_PATTERN` when `self.reference_capability == "verified"` and `self.reference_type` explicitly selects that adapter.
 
@@ -595,7 +595,7 @@ verified_adapter = self.reference_capability == "verified"
 
 Then require `verified_adapter` in each legacy pattern branch.
 
-- [ ] **Step 6: Run focused tests**
+- [x] **Step 6: Run focused tests**
 
 Run:
 
@@ -606,7 +606,7 @@ python -m ruff check backend/src/ragstudio/services/reference_metadata.py backen
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```powershell
 git add backend/src/ragstudio/services/reference_metadata.py backend/src/ragstudio/services/reference_regex_registry.py backend/tests/test_reference_metadata.py
@@ -624,7 +624,7 @@ git commit -m "fix: keep legacy reference metadata adapter-scoped"
 - Modify: `backend/tests/test_layout_neighbor_service.py`
 - Modify: `backend/tests/test_retrieval_orchestrator.py`
 
-- [ ] **Step 1: Add layout contract tests**
+- [x] **Step 1: Add layout contract tests**
 
 Create or append to `backend/tests/test_layout_neighbor_service.py`:
 
@@ -660,7 +660,7 @@ def test_unverified_layout_policy_uses_safe_defaults():
     assert policy.vertical_proximity == 150.0
 ```
 
-- [ ] **Step 2: Run layout contract tests to verify they fail**
+- [x] **Step 2: Run layout contract tests to verify they fail**
 
 Run:
 
@@ -670,7 +670,7 @@ $env:PYTHONPATH='backend/src'; python -m pytest backend/tests/test_layout_neighb
 
 Expected: FAIL because `layout_contracts.py` does not exist.
 
-- [ ] **Step 3: Add layout contract module**
+- [x] **Step 3: Add layout contract module**
 
 Create `backend/src/ragstudio/services/layout_contracts.py`:
 
@@ -717,7 +717,7 @@ def _float_value(value: Any, *, default: float) -> float:
     return default
 ```
 
-- [ ] **Step 4: Use layout policy in neighbor expansion**
+- [x] **Step 4: Use layout policy in neighbor expansion**
 
 In `backend/src/ragstudio/services/layout_neighbor_service.py`:
 
@@ -738,7 +738,7 @@ def _horizontal_overlap_ratio(
     return overlap / width
 ```
 
-- [ ] **Step 5: Add trace assertion**
+- [x] **Step 5: Add trace assertion**
 
 Append to `backend/tests/test_retrieval_orchestrator.py`:
 
@@ -763,7 +763,7 @@ def test_layout_neighbor_trace_reports_contract_relationships():
 
 Update `_layout_neighbor_trace_reason()` in `retrieval_orchestrator.py` so `bbox_overlap`, `table_caption`, and `figure_caption` return `"contract_layout_neighbors"`.
 
-- [ ] **Step 6: Run focused tests**
+- [x] **Step 6: Run focused tests**
 
 Run:
 
@@ -774,7 +774,7 @@ python -m ruff check backend/src/ragstudio/services/layout_contracts.py backend/
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```powershell
 git add backend/src/ragstudio/services/layout_contracts.py backend/src/ragstudio/services/layout_neighbor_service.py backend/src/ragstudio/services/retrieval_orchestrator.py backend/tests/test_layout_neighbor_service.py backend/tests/test_retrieval_orchestrator.py
@@ -792,7 +792,7 @@ git commit -m "feat: make layout neighbor expansion contract-driven"
 - Modify: `backend/tests/test_native_raganything_adapter.py`
 - Modify: `backend/tests/test_retrieval_orchestrator.py`
 
-- [ ] **Step 1: Add native fallback metadata test**
+- [x] **Step 1: Add native fallback metadata test**
 
 Append to `backend/tests/test_native_raganything_adapter.py`:
 
@@ -816,7 +816,7 @@ def test_raw_native_candidate_marks_missing_canonical_layout_context():
     assert candidates[0]["metadata"]["risk_flags"] == ["runtime_bridge_missing"]
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run:
 
@@ -826,7 +826,7 @@ $env:PYTHONPATH='backend/src'; python -m pytest backend/tests/test_native_ragany
 
 Expected: FAIL because raw native candidates do not expose these status fields.
 
-- [ ] **Step 3: Mark raw native fallback candidates**
+- [x] **Step 3: Mark raw native fallback candidates**
 
 In `backend/src/ragstudio/services/native_raganything_adapter.py`, in the raw native row conversion metadata, add:
 
@@ -838,7 +838,7 @@ In `backend/src/ragstudio/services/native_raganything_adapter.py`, in the raw na
 
 Keep canonical runtime chunks unchanged where they already include rich metadata.
 
-- [ ] **Step 4: Preserve risk flags through vector/native hydration**
+- [x] **Step 4: Preserve risk flags through vector/native hydration**
 
 In `backend/src/ragstudio/services/vector_retrieval_service.py`, when building `EvidenceCandidate`, pass raw risk flags:
 
@@ -850,7 +850,7 @@ risk_flags=tuple(
 ),
 ```
 
-- [ ] **Step 5: Add retrieval trace regression**
+- [x] **Step 5: Add retrieval trace regression**
 
 Append to `backend/tests/test_retrieval_orchestrator.py`:
 
@@ -873,7 +873,7 @@ def test_runtime_bridge_missing_risk_is_visible_in_context_drop_reason():
     assert context.dropped[0].drop_reason == "runtime_bridge_missing"
 ```
 
-- [ ] **Step 6: Run focused tests**
+- [x] **Step 6: Run focused tests**
 
 Run:
 
@@ -884,7 +884,7 @@ python -m ruff check backend/src/ragstudio/services/native_raganything_adapter.p
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```powershell
 git add backend/src/ragstudio/services/native_raganything_adapter.py backend/src/ragstudio/services/vector_retrieval_service.py backend/src/ragstudio/services/retrieval_orchestrator.py backend/tests/test_native_raganything_adapter.py backend/tests/test_retrieval_orchestrator.py
@@ -902,7 +902,7 @@ git commit -m "fix: expose native retrieval layout context loss"
 - Modify: `backend/tests/test_context_window_service.py`
 - Modify: `backend/tests/test_context_assembly_service.py`
 
-- [ ] **Step 1: Add context policy tests**
+- [x] **Step 1: Add context policy tests**
 
 Create or append to `backend/tests/test_context_window_service.py`:
 
@@ -936,7 +936,7 @@ def test_unverified_context_policy_uses_link_defaults():
     assert policy.max_reference_distance == 1
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run:
 
@@ -946,7 +946,7 @@ $env:PYTHONPATH='backend/src'; python -m pytest backend/tests/test_context_windo
 
 Expected: FAIL because `context_contracts.py` does not exist.
 
-- [ ] **Step 3: Add context contract module**
+- [x] **Step 3: Add context contract module**
 
 Create `backend/src/ragstudio/services/context_contracts.py`:
 
@@ -983,7 +983,7 @@ def context_policy_from_metadata(metadata: dict[str, Any]) -> ContextExpansionPo
     )
 ```
 
-- [ ] **Step 4: Add structural context matching**
+- [x] **Step 4: Add structural context matching**
 
 In `backend/src/ragstudio/services/context_window_service.py`:
 
@@ -1040,7 +1040,7 @@ def _near_reference_range(
     return False
 ```
 
-- [ ] **Step 5: Preserve structural reasons in assembly**
+- [x] **Step 5: Preserve structural reasons in assembly**
 
 Append to `backend/tests/test_context_assembly_service.py`:
 
@@ -1075,7 +1075,7 @@ if "context_window" in passes and any(
     return "structural_context"
 ```
 
-- [ ] **Step 6: Run focused tests**
+- [x] **Step 6: Run focused tests**
 
 Run:
 
@@ -1086,7 +1086,7 @@ python -m ruff check backend/src/ragstudio/services/context_contracts.py backend
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```powershell
 git add backend/src/ragstudio/services/context_contracts.py backend/src/ragstudio/services/context_window_service.py backend/src/ragstudio/services/context_assembly_service.py backend/tests/test_context_window_service.py backend/tests/test_context_assembly_service.py
@@ -1106,7 +1106,7 @@ git commit -m "feat: expand context windows from structural contracts"
 - Modify: `frontend/tests/query-pathway-viewer.test.tsx`
 - Modify: `frontend/tests/evidence-viewer.test.tsx`
 
-- [ ] **Step 1: Add frontend trace normalization test**
+- [x] **Step 1: Add frontend trace normalization test**
 
 Append to `frontend/tests/three-pillar-trace.test.ts`:
 
@@ -1140,7 +1140,7 @@ it("normalizes backend-provided three-pillar reasons", () => {
 });
 ```
 
-- [ ] **Step 2: Run frontend test to verify it fails**
+- [x] **Step 2: Run frontend test to verify it fails**
 
 Run:
 
@@ -1150,7 +1150,7 @@ cd frontend; npm test -- three-pillar-trace.test.ts --run
 
 Expected: FAIL because `domainReasons`, `layoutReasons`, and `contextReasons` are not normalized.
 
-- [ ] **Step 3: Add backend trace fields**
+- [x] **Step 3: Add backend trace fields**
 
 In `backend/src/ragstudio/services/retrieval_orchestrator.py`, add:
 
@@ -1171,7 +1171,7 @@ def _unique_reasons(candidates: list[EvidenceCandidate], *, exclude: set[str]) -
     return values
 ```
 
-- [ ] **Step 4: Normalize fields in the frontend**
+- [x] **Step 4: Normalize fields in the frontend**
 
 In `frontend/src/features/query/three-pillar-trace.ts`, add fields:
 
@@ -1189,7 +1189,7 @@ layoutReasons: stringArray(layoutTrace?.layout_reasons),
 contextReasons: stringArray(contextTrace?.context_reasons),
 ```
 
-- [ ] **Step 5: Render reason chips**
+- [x] **Step 5: Render reason chips**
 
 In `frontend/src/features/query/query-pathway-viewer.tsx` and `frontend/src/features/query/evidence-viewer.tsx`, render these arrays with the existing compact badge/chip style used for trace status values. Use labels:
 
@@ -1197,7 +1197,7 @@ In `frontend/src/features/query/query-pathway-viewer.tsx` and `frontend/src/feat
 - Layout: `Layout reasons`
 - Context: `Context reasons`
 
-- [ ] **Step 6: Run frontend tests**
+- [x] **Step 6: Run frontend tests**
 
 Run:
 
@@ -1207,7 +1207,7 @@ cd frontend; npm test -- three-pillar-trace.test.ts query-pathway-viewer.test.ts
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```powershell
 git add backend/src/ragstudio/services/retrieval_orchestrator.py frontend/src/features/query/three-pillar-trace.ts frontend/src/features/query/query-pathway-viewer.tsx frontend/src/features/query/evidence-viewer.tsx frontend/tests/three-pillar-trace.test.ts frontend/tests/query-pathway-viewer.test.tsx frontend/tests/evidence-viewer.test.tsx
@@ -1223,7 +1223,7 @@ git commit -m "feat: surface three-pillar trace reasons"
 - Modify: `docs/architecture/hardcoded-policy-inventory.md`
 - Modify: `docs/superpowers/plans/2026-05-25-three-pillar-p0-p1-remediation.md`
 
-- [ ] **Step 1: Add missed generic files to the guard**
+- [x] **Step 1: Add missed generic files to the guard**
 
 In `backend/tests/test_architecture_drift_guards.py`, replace `GENERIC_FILES` with:
 
@@ -1268,7 +1268,7 @@ DOMAIN_TERMS = [
 ]
 ```
 
-- [ ] **Step 2: Add adapter allowlist**
+- [x] **Step 2: Add adapter allowlist**
 
 Add this allowlist so intentionally adapter-owned modules can keep compatibility vocabulary:
 
@@ -1292,7 +1292,7 @@ def test_adapter_files_document_domain_specific_vocabulary_boundary():
     assert offenders == []
 ```
 
-- [ ] **Step 3: Run guard to verify it fails until prior tasks are complete**
+- [x] **Step 3: Run guard to verify it fails until prior tasks are complete**
 
 Run:
 
@@ -1302,7 +1302,7 @@ $env:PYTHONPATH='backend/src'; python -m pytest backend/tests/test_architecture_
 
 Expected: FAIL before Tasks 1 through 7 are complete; PASS after those tasks remove the generic drift.
 
-- [ ] **Step 4: Update hardcoded policy inventory**
+- [x] **Step 4: Update hardcoded policy inventory**
 
 Append to `docs/architecture/hardcoded-policy-inventory.md`:
 
@@ -1316,7 +1316,7 @@ Append to `docs/architecture/hardcoded-policy-inventory.md`:
 - UI trace components render backend-owned three-pillar reasons and must not invent pipeline stage vocabulary.
 ```
 
-- [ ] **Step 5: Run final focused validation**
+- [x] **Step 5: Run final focused validation**
 
 Run:
 
@@ -1328,7 +1328,7 @@ cd frontend; npm test -- three-pillar-trace.test.ts query-pathway-viewer.test.ts
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```powershell
 git add backend/tests/test_architecture_drift_guards.py docs/architecture/hardcoded-policy-inventory.md docs/superpowers/plans/2026-05-25-three-pillar-p0-p1-remediation.md

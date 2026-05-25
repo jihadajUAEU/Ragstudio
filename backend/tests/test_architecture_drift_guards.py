@@ -13,21 +13,40 @@ GENERIC_FILES = [
     "backend/src/ragstudio/services/index_lifecycle_service.py",
     "backend/src/ragstudio/services/mineru_relationship_builder.py",
     "backend/src/ragstudio/services/query_understanding.py",
+    "backend/src/ragstudio/services/query_hypothesis_service.py",
+    "backend/src/ragstudio/services/query_hypothesis_verifier.py",
+    "backend/src/ragstudio/services/retrieval_orchestrator.py",
+    "backend/src/ragstudio/services/retrieval_policy.py",
+    "backend/src/ragstudio/schemas/chunks.py",
 ]
 
 DOMAIN_TERMS = [
     "quran",
     "surah",
     "ayah",
+    "surah_and_verse",
+    "surah_number",
     "chapter_verse",
+    "book_hadith",
     "same_chapter",
     "boost_neighbor_verses",
-    "verse header",
     "next_ayah",
     "previous_ayah",
-    '"quran" in',
-    '"arabic" in combined',
+    '"hadith" in combined',
+    '"bukhari" in combined',
 ]
+
+ADAPTER_ALLOWED_FILES = {
+    "backend/src/ragstudio/services/reference_regex_registry.py",
+    "backend/src/ragstudio/services/domain_retrieval_adapters.py",
+    "backend/src/ragstudio/services/reference_metadata.py",
+}
+
+COMPATIBILITY_TERMS_BY_FILE = {
+    "backend/src/ragstudio/services/hybrid_chunk_search.py": {"same_chapter"},
+    "backend/src/ragstudio/services/retrieval_policy.py": {"same_chapter"},
+    "backend/src/ragstudio/schemas/chunks.py": {"same_chapter"},
+}
 
 
 def test_generic_pipeline_files_do_not_reintroduce_domain_specific_terms() -> None:
@@ -35,9 +54,22 @@ def test_generic_pipeline_files_do_not_reintroduce_domain_specific_terms() -> No
     for relative_path in GENERIC_FILES:
         text = (REPO_ROOT / relative_path).read_text(encoding="utf-8")
         lowered = text.casefold()
+        allowed_terms = COMPATIBILITY_TERMS_BY_FILE.get(relative_path, set())
         for term in DOMAIN_TERMS:
+            if term in allowed_terms:
+                continue
             if term.casefold() in lowered:
                 offenders.append(f"{relative_path}: {term}")
+
+    assert offenders == []
+
+
+def test_adapter_files_document_domain_specific_vocabulary_boundary() -> None:
+    offenders: list[str] = []
+    for relative_path in ADAPTER_ALLOWED_FILES:
+        text = (REPO_ROOT / relative_path).read_text(encoding="utf-8").casefold()
+        if "adapter" not in text or "generic" not in text:
+            offenders.append(relative_path)
 
     assert offenders == []
 

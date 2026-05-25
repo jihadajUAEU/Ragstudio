@@ -28,6 +28,14 @@ redaction rules in named modules so behavior can be inspected and tested before 
 - Legacy reference regexes are compatibility adapters. They must be selected by an explicit verified profile and must not run as global fallback enforcement.
 - Stage-flow UI metadata is backend-owned. React may provide fallback icons, but it must not be the source of truth for pipeline stage vocabulary.
 
+## Three-Pillar Drift Boundary
+
+- Domain-aware behavior is generic by default. Domain-shaped names such as Quran, Surah, Ayah, Hadith, Bukhari, chapter-verse, and book-hadith belong in adapter-owned files or fixtures, not generic orchestration, scoring, query, or schema surfaces.
+- Layout-aware behavior is contract-driven. Same-page and reading-order expansion are safe defaults, while bbox overlap, table-caption, figure-caption, equation, and multi-column behavior require backend layout policy evidence.
+- Context-aware behavior is structural. Parent, previous, next, heading path, section path, and verified reference range links are context signals; raw semantic proximity alone is not sufficient proof of context.
+- Native runtime candidates must either hydrate to canonical chunks or carry visible layout/context loss flags.
+- UI trace components render backend-owned three-pillar reasons and must not invent pipeline stage vocabulary.
+
 ## Remaining Tunable Areas
 
 - Domain-specific lexical adapters should own corpus-specific synonyms and reference behavior.

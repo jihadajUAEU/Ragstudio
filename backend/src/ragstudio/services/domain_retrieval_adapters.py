@@ -1,3 +1,9 @@
+"""Adapter-owned retrieval signals for non-generic domain behavior.
+
+Generic scoring code consumes the neutral ``RetrievalScoringSignals`` result;
+domain vocabulary stays isolated in this adapter module.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

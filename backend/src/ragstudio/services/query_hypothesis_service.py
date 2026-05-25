@@ -30,16 +30,6 @@ _ALLOWED_INTENTS = {
 }
 _ALLOWED_SCRIPTS = {"arabic", "latin", "mixed", "unknown"}
 _ALLOWED_TERM_TYPES = {"exact_text", "transliteration", "reference", "unknown"}
-_ALLOWED_DOMAIN_HINTS = {
-    "quran",
-    "tafseer",
-    "hadith",
-    "reference",
-    "research",
-    "legal",
-    "generic",
-    "unknown",
-}
 _ALLOWED_ANSWER_SHAPES = {
     "reference",
     "short_answer",
@@ -71,6 +61,7 @@ _ARABIC_TARGET_RE = re.compile(
 )
 _PATH_LIKE_RE = re.compile(r"(?:^|/)(?:Users|home|var|tmp|etc|private)(?:/|$)", re.IGNORECASE)
 _CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]+")
+_DOMAIN_HINT_RE = re.compile(r"^[a-z][a-z0-9_-]{0,39}$")
 
 
 @dataclass(frozen=True)
@@ -291,7 +282,7 @@ class QueryHypothesisService:
             default="unknown",
             aliases=_INTENT_ALIASES,
         )
-        domain_hint = _allowed(raw.get("domain_hint"), _ALLOWED_DOMAIN_HINTS, default="unknown")
+        domain_hint = _domain_hint(raw.get("domain_hint"))
         answer_shape = _allowed_alias(
             raw.get("answer_shape"),
             _ALLOWED_ANSWER_SHAPES,
@@ -799,6 +790,13 @@ def _safe_reference_group(value: Any) -> str | None:
     if "://" in normalized or _PATH_LIKE_RE.search(normalized):
         return None
     return normalized
+
+
+def _domain_hint(value: Any) -> str:
+    normalized = str(value or "").strip().casefold()
+    if normalized in {"", "unknown"}:
+        return "unknown"
+    return normalized if _DOMAIN_HINT_RE.fullmatch(normalized) else "unknown"
 
 
 def _allowed(value: Any, allowed: set[str], *, default: str) -> str:
