@@ -1791,9 +1791,14 @@ git commit -m "fix: make graph reference edges contract-declared"
 
 **Files:**
 - Modify: `backend/src/ragstudio/services/query_understanding.py`
+- Modify: `backend/src/ragstudio/services/retrieval_evidence.py`
+- Modify: `backend/src/ragstudio/services/retrieval_orchestrator.py`
+- Modify: `backend/src/ragstudio/services/reference_contracts.py`
+- Modify: `backend/src/ragstudio/services/reference_query_parser.py`
 - Modify: `backend/tests/test_query_understanding.py`
+- Modify: `backend/tests/test_retrieval_orchestrator.py`
 
-- [ ] **Step 1: Add failing generic reference-query tests**
+- [x] **Step 1: Add failing generic reference-query tests**
 
 Append to `backend/tests/test_query_understanding.py`:
 
@@ -1827,7 +1832,7 @@ def test_understanding_uses_verified_reference_contract_patterns():
     assert understanding.reference_hints == ["article:12:clause:7"]
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run:
 
@@ -1837,7 +1842,7 @@ $env:PYTHONPATH='backend/src'; python -m pytest backend/tests/test_query_underst
 
 Expected: FAIL because `understand_query()` currently uses the global `REFERENCE_PATTERN` and has no `reference_contracts` input.
 
-- [ ] **Step 3: Extend query understanding inputs**
+- [x] **Step 3: Extend query understanding inputs**
 
 In `backend/src/ragstudio/services/query_understanding.py`:
 
@@ -1846,7 +1851,7 @@ In `backend/src/ragstudio/services/query_understanding.py`:
 - Implement `_reference_hints()` through `parse_query_references()` from `reference_query_parser.py`.
 - Keep legacy `REFERENCE_PATTERN` only behind an explicit compatibility flag supplied by a verified profile or caller option.
 
-- [ ] **Step 4: Gate compact Arabic exact-token intent through script evidence**
+- [x] **Step 4: Gate compact Arabic exact-token intent through script evidence**
 
 Change the compact Arabic branch so it activates only when one of these is true:
 
@@ -1856,11 +1861,11 @@ Change the compact Arabic branch so it activates only when one of these is true:
 
 If none of those is true, preserve Arabic text as a semantic query with optional normalized variants, but do not force `reference_first_hybrid`.
 
-- [ ] **Step 5: Update callers and tests**
+- [x] **Step 5: Update callers and tests**
 
 Update callers that already have document metadata, query expansion, or reference contracts so they pass the new argument. Keep existing Quran and Hadith tests passing by passing verified contracts from the document metadata, not by relying on global patterns.
 
-- [ ] **Step 6: Run focused tests**
+- [x] **Step 6: Run focused tests**
 
 Run:
 
@@ -1871,10 +1876,10 @@ python -m ruff check backend/src/ragstudio/services/query_understanding.py
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```powershell
-git add backend/src/ragstudio/services/query_understanding.py backend/tests/test_query_understanding.py backend/tests/test_retrieval_orchestrator.py
+git add backend/src/ragstudio/services/query_understanding.py backend/src/ragstudio/services/retrieval_evidence.py backend/src/ragstudio/services/retrieval_orchestrator.py backend/src/ragstudio/services/reference_contracts.py backend/src/ragstudio/services/reference_query_parser.py backend/tests/test_query_understanding.py backend/tests/test_retrieval_orchestrator.py
 git commit -m "fix: make query understanding contract-aware"
 ```
 

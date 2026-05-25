@@ -29,7 +29,10 @@ from ragstudio.services.query_hypothesis_verifier import (
     QueryHypothesisVerification,
     QueryHypothesisVerifier,
 )
-from ragstudio.services.reference_contracts import metadata_list_declared_scripts
+from ragstudio.services.reference_contracts import (
+    metadata_list_declared_scripts,
+    metadata_list_reference_contracts,
+)
 from ragstudio.services.reranker_service import RerankerService
 from ragstudio.services.retrieval_evidence import (
     EvidenceCandidate,
@@ -189,6 +192,8 @@ class RetrievalOrchestrator:
             document_ids=document_ids,
             limit=limit,
             domain_expansion=domain_expansion,
+            reference_contracts=metadata_list_reference_contracts(domain_metadata),
+            declared_scripts=metadata_list_declared_scripts(domain_metadata),
         )
         route_request = build_retrieval_route_request(
             query=query,

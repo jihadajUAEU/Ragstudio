@@ -163,8 +163,15 @@ def plan_for_query(
     document_ids: list[str],
     limit: int,
     domain_expansion: Any | None = None,
+    reference_contracts: list[dict[str, Any]] | None = None,
+    declared_scripts: frozenset[str] | set[str] | list[str] | tuple[str, ...] | None = None,
 ) -> RetrievalPlan:
-    understanding = understand_query(query, domain_expansion=domain_expansion)
+    understanding = understand_query(
+        query,
+        domain_expansion=domain_expansion,
+        reference_contracts=reference_contracts,
+        declared_scripts=declared_scripts,
+    )
     normalized = query.casefold()
     intent: QueryIntent = "semantic"
     if re.search(r"\b(how many|count|number of|total)\b", normalized):

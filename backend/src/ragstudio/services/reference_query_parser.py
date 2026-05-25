@@ -123,6 +123,12 @@ def _anchors(reference_contract: dict[str, Any]) -> list[dict[str, Any]]:
         return [anchor for anchor in anchors if isinstance(anchor, dict)]
 
     result: list[dict[str, Any]] = []
+    patterns = reference_contract.get("patterns")
+    if isinstance(patterns, list):
+        for pattern in patterns:
+            regex = _string_value(pattern)
+            if regex:
+                result.append({"kind": "primary_anchor", "regex": regex, "verified": True})
     for kind, key in (
         ("primary_anchor", "primary_anchor_regex"),
         ("context_anchor", "context_anchor_regex"),

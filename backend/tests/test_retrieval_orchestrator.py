@@ -345,6 +345,17 @@ def test_plan_for_reference_context_query_sets_graph_context_strategy():
         "Explain 1:5 and show the surrounding connected verses",
         document_ids=["doc-tafseer"],
         limit=5,
+        reference_contracts=[
+            {
+                "reference_contract": {
+                    "verified": True,
+                    "canonical_units": True,
+                    "canonical_ref_template": "{chapter}:{verse}",
+                    "required_groups": ["chapter", "verse"],
+                    "patterns": [r"(?P<chapter>\d{1,4}):(?P<verse>\d{1,6})"],
+                }
+            }
+        ],
     )
 
     assert plan.intent == "reference"
@@ -353,7 +364,12 @@ def test_plan_for_reference_context_query_sets_graph_context_strategy():
 
 
 def test_plan_for_arabic_token_carries_retrieval_passes():
-    plan = plan_for_query("حنانا", document_ids=["doc-quran"], limit=5)
+    plan = plan_for_query(
+        "حنانا",
+        document_ids=["doc-quran"],
+        limit=5,
+        declared_scripts={"arabic"},
+    )
 
     assert plan.intent == "reference"
     assert plan.understanding is not None
@@ -1091,6 +1107,20 @@ class FakeChunkSearchService:
         ]
 
 
+class QuranContractFakeChunkSearchService(FakeChunkSearchService):
+    async def domain_metadata_for_documents(self, document_ids):
+        return [
+            {
+                "domain": "quran_tafseer",
+                "document_type": "commentary",
+                "language": "mixed",
+                "script": "arabic",
+                "tags": ["quran", "arabic"],
+                "custom_json": QURAN_REFERENCE_CUSTOM_JSON,
+            }
+        ]
+
+
 class QuranDomainMetadataChunkSearchService:
     def __init__(self):
         self.calls = 0
@@ -1729,7 +1759,7 @@ async def test_orchestrator_fuses_native_metadata_and_graph_before_answering():
         profile=type("Profile", (), {"enable_rerank": False, "reranker_provider": "disabled"})(),
         document_ids=["doc-1"],
         variant_id="variant-1",
-        query_config={"limit": 8},
+        query_config={"limit": 8, "query_hypothesis_required": False},
     )
 
     assert result.answer == "Sahih al-Bukhari contains 7277 hadith."
@@ -1848,7 +1878,7 @@ async def test_orchestrator_emits_primary_seed_expansion_and_final_fusion_stages
         profile=type("Profile", (), {"enable_rerank": False, "reranker_provider": "disabled"})(),
         document_ids=["doc-1"],
         variant_id="variant-1",
-        query_config={"limit": 8},
+        query_config={"limit": 8, "query_hypothesis_required": False},
     )
 
     stages = [trace.get("stage") for trace in result.chunk_traces if isinstance(trace, dict)]
@@ -2010,7 +2040,7 @@ async def test_orchestrator_records_grounding_validation_trace():
 @pytest.mark.asyncio
 async def test_orchestrator_uses_query_reference_hints_for_grounding_validation():
     orchestrator = RetrievalOrchestrator(
-        chunk_service=FakeChunkSearchService(),
+        chunk_service=QuranContractFakeChunkSearchService(),
         answer_service=FakeAnswerService(),
         reranker_service=FakeRerankerService(),
         graph_expansion_service=FakeGraphExpansionService(),
@@ -2022,7 +2052,7 @@ async def test_orchestrator_uses_query_reference_hints_for_grounding_validation(
         profile=type("Profile", (), {"enable_rerank": False, "reranker_provider": "disabled"})(),
         document_ids=["doc-1"],
         variant_id="variant-1",
-        query_config={"limit": 8},
+        query_config={"limit": 8, "query_hypothesis_required": False},
     )
 
     assert result.validation["status"] == "failed"
@@ -2251,7 +2281,7 @@ async def test_orchestrator_degrades_runtime_query_errors_to_metadata():
 @pytest.mark.asyncio
 async def test_orchestrator_skips_native_when_metadata_only_requested():
     answer_service = FakeAnswerService()
-    chunk_service = FakeChunkSearchService()
+    chunk_service = QuranContractFakeChunkSearchService()
     orchestrator = RetrievalOrchestrator(
         chunk_service=chunk_service,
         answer_service=answer_service,
@@ -2265,7 +2295,11 @@ async def test_orchestrator_skips_native_when_metadata_only_requested():
         profile=type("Profile", (), {"enable_rerank": False, "reranker_provider": "disabled"})(),
         document_ids=["doc-1"],
         variant_id="variant-1",
-        query_config={"limit": 8, "reference_query_mode": "exact"},
+        query_config={
+            "limit": 8,
+            "reference_query_mode": "exact",
+            "query_hypothesis_required": False,
+        },
     )
 
     assert result.answer == "Sahih al-Bukhari contains 7277 hadith."

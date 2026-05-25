@@ -245,6 +245,57 @@ def metadata_list_declares_reference_contract(
     return metadata_list_has_reference_hint(domain_metadata)
 
 
+def metadata_reference_contracts(metadata: dict[str, Any]) -> list[dict[str, Any]]:
+    contracts: list[dict[str, Any]] = []
+    for payload in _reference_contract_payloads(metadata):
+        contracts.append({"reference_contract": payload})
+
+    custom_json = _dict_value(metadata.get("custom_json"))
+    if isinstance(custom_json.get("reference_schema"), dict):
+        executable = build_executable_reference_contract(custom_json)
+        reference_resolution = _dict_value(custom_json.get("reference_resolution"))
+        contracts.append(
+            {
+                "reference_contract": {
+                    "schema_type": executable.schema_type,
+                    "canonical_ref_template": executable.canonical_ref_template,
+                    "required_groups": sorted(executable.required_groups),
+                    "verified": executable.verified,
+                    "canonical_units": reference_resolution.get(
+                        "build_canonical_units"
+                    )
+                    is True,
+                    "anchors": [
+                        {
+                            "kind": anchor.kind,
+                            "regex": anchor.regex,
+                            "verified": anchor.verified,
+                        }
+                        for anchor in executable.anchors
+                    ],
+                }
+            }
+        )
+    return contracts
+
+
+def metadata_list_reference_contracts(
+    domain_metadata: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    contracts: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for metadata in domain_metadata:
+        if not isinstance(metadata, dict):
+            continue
+        for contract in metadata_reference_contracts(metadata):
+            key = str(sorted(contract.get("reference_contract", {}).items()))
+            if key in seen:
+                continue
+            seen.add(key)
+            contracts.append(contract)
+    return contracts
+
+
 def metadata_declared_scripts(metadata: dict[str, Any]) -> frozenset[str]:
     custom_json = _dict_value(metadata.get("custom_json"))
     contract = build_executable_reference_contract(custom_json)

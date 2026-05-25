@@ -6,12 +6,12 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from ragstudio.services.arabic_text import arabic_query_variants
+from ragstudio.services.reference_query_parser import parse_query_references
 from ragstudio.services.reference_regex_registry import (
     QUERY_ARABIC_PATTERN,
     QUERY_GRAPH_CONTEXT_PATTERN,
     QUERY_NORMALIZED_PHRASE_PATTERN,
     QUERY_PHRASE_PATTERN,
-    REFERENCE_PATTERN,
 )
 
 QueryUnderstandingIntent = Literal[
@@ -31,7 +31,6 @@ QueryRetrievalStrategy = Literal[
 ]
 
 _ARABIC_RE = QUERY_ARABIC_PATTERN
-_REFERENCE_RE = REFERENCE_PATTERN
 _GRAPH_CONTEXT_RE = QUERY_GRAPH_CONTEXT_PATTERN
 _PHRASE_RE = QUERY_PHRASE_PATTERN
 _NORMALIZED_PHRASE_RE = QUERY_NORMALIZED_PHRASE_PATTERN
@@ -63,9 +62,18 @@ class QueryUnderstanding:
     expansion_trace: dict[str, Any] = field(default_factory=dict)
 
 
-def understand_query(query: str, *, domain_expansion: Any | None = None) -> QueryUnderstanding:
+def understand_query(
+    query: str,
+    *,
+    domain_expansion: Any | None = None,
+    reference_contracts: list[dict[str, Any]] | None = None,
+    declared_scripts: frozenset[str] | set[str] | list[str] | tuple[str, ...] | None = None,
+) -> QueryUnderstanding:
     normalized = query.casefold()
-    reference_hints = _reference_hints(query)
+    reference_hints = _reference_hints(
+        query,
+        reference_contracts=reference_contracts,
+    )
     graph_context_required = _needs_graph_context(query)
     expansion_passes = list(getattr(domain_expansion, "retrieval_passes", []) or [])
     if expansion_passes:
@@ -105,7 +113,10 @@ def understand_query(query: str, *, domain_expansion: Any | None = None) -> Quer
             direct_evidence_required=True,
         )
 
-    if _is_compact_arabic_query(query):
+    if _is_compact_arabic_query(query) and _arabic_direct_intent_allowed(
+        domain_expansion,
+        declared_scripts,
+    ):
         variants = arabic_query_variants(query)
         return QueryUnderstanding(
             query=query,
@@ -123,6 +134,20 @@ def understand_query(query: str, *, domain_expansion: Any | None = None) -> Quer
                 direct_first=True,
             ),
             direct_evidence_required=True,
+        )
+    if _is_compact_arabic_query(query):
+        variants = arabic_query_variants(query)
+        return QueryUnderstanding(
+            query=query,
+            intent="semantic",
+            answer_type="semantic",
+            retrieval_strategy=(
+                "graph_context_hybrid" if graph_context_required else "semantic_hybrid"
+            ),
+            graph_context_required=graph_context_required,
+            expanded_terms=variants,
+            arabic_query_variants=variants,
+            retrieval_passes=_semantic_passes(query),
         )
 
     target_phrases = _target_phrases(query)
@@ -175,14 +200,39 @@ def understand_query(query: str, *, domain_expansion: Any | None = None) -> Quer
     )
 
 
-def _reference_hints(query: str) -> list[str]:
-    hints = []
-    for match in _REFERENCE_RE.finditer(query):
-        chapter = match.group("chapter")
-        verse = match.group("verse")
-        if chapter and verse:
-            hints.append(f"{chapter}:{verse}")
-    return list(dict.fromkeys(hints))
+def _reference_hints(
+    query: str,
+    *,
+    reference_contracts: list[dict[str, Any]] | None,
+) -> list[str]:
+    if not reference_contracts:
+        return []
+    return parse_query_references(query, reference_contracts)
+
+
+def _arabic_direct_intent_allowed(
+    domain_expansion: Any | None,
+    declared_scripts: frozenset[str] | set[str] | list[str] | tuple[str, ...] | None,
+) -> bool:
+    scripts = {
+        str(script).casefold()
+        for script in declared_scripts or []
+        if isinstance(script, str)
+    }
+    if {"arabic", "ar", "arab"} & scripts:
+        return True
+    trace = getattr(domain_expansion, "trace", None)
+    if not isinstance(trace, dict):
+        return False
+    expansions = trace.get("expansions")
+    if not isinstance(expansions, list):
+        return False
+    return any(
+        isinstance(expansion, dict)
+        and str(expansion.get("script") or "").casefold()
+        in {"arabic", "ar", "arab"}
+        for expansion in expansions
+    )
 
 
 def _needs_graph_context(query: str) -> bool:
