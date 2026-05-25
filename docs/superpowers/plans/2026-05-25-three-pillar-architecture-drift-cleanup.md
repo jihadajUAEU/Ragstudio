@@ -937,11 +937,13 @@ git commit -m "fix: gate legacy reference parsing by profile"
 - Modify: `backend/src/ragstudio/services/query_hypothesis_service.py`
 - Modify: `backend/src/ragstudio/services/evidence_first_answer_service.py`
 - Modify: `backend/src/ragstudio/services/query_hypothesis_verifier.py`
+- Modify: `backend/src/ragstudio/services/metadata_retrieval_service.py`
+- Modify: `backend/src/ragstudio/services/reference_query_parser.py`
 - Modify: `backend/tests/test_query_hypothesis_service.py`
 - Modify: `backend/tests/test_query_hypothesis_verifier.py`
 - Modify: `backend/tests/test_retrieval_orchestrator.py`
 
-- [ ] **Step 1: Add generic probable-answer parsing test**
+- [x] **Step 1: Add generic probable-answer parsing test**
 
 Append to `backend/tests/test_query_hypothesis_service.py`:
 
@@ -976,7 +978,7 @@ def test_probable_answer_uses_contract_identity_fields():
     assert hypothesis.probable_answer.matched_term == "mercy"
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run:
 
@@ -986,7 +988,7 @@ $env:PYTHONPATH='backend/src'; python -m pytest backend/tests/test_query_hypothe
 
 Expected: FAIL because probable answers still privilege `surah_number` and `ayah`.
 
-- [ ] **Step 3: Add generic group storage to ProbableAnswer**
+- [x] **Step 3: Add generic group storage to ProbableAnswer**
 
 In `backend/src/ragstudio/services/query_hypothesis_service.py`, update `ProbableAnswer`:
 
@@ -1051,7 +1053,7 @@ def _first_verified_template(reference_contracts: list[dict[str, Any]]) -> str |
     return None
 ```
 
-- [ ] **Step 4: Add answer rendering test**
+- [x] **Step 4: Add answer rendering test**
 
 Append to `backend/tests/test_query_hypothesis_verifier.py` or the existing answer-service test file:
 
@@ -1084,7 +1086,7 @@ def test_evidence_first_answer_uses_generic_reference_label():
     assert trace["reference"] == "7:104"
 ```
 
-- [ ] **Step 5: Update answer renderer**
+- [x] **Step 5: Update answer renderer**
 
 In `backend/src/ragstudio/services/evidence_first_answer_service.py`, prefer `reference_label`:
 
@@ -1103,7 +1105,7 @@ elif reference:
 
 Remove the generic use of `_surah_reference_label(reference)` for any `n:n` reference. Keep `_surah_reference_label()` only if verification explicitly carries a Quran display role.
 
-- [ ] **Step 6: Run focused tests**
+- [x] **Step 6: Run focused tests**
 
 Run:
 
@@ -1113,12 +1115,18 @@ $env:PYTHONPATH='backend/src'; python -m pytest backend/tests/test_query_hypothe
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```powershell
-git add backend/src/ragstudio/services/query_hypothesis_service.py backend/src/ragstudio/services/evidence_first_answer_service.py backend/src/ragstudio/services/query_hypothesis_verifier.py backend/tests/test_query_hypothesis_service.py backend/tests/test_query_hypothesis_verifier.py backend/tests/test_retrieval_orchestrator.py
+git add backend/src/ragstudio/services/query_hypothesis_service.py backend/src/ragstudio/services/evidence_first_answer_service.py backend/src/ragstudio/services/query_hypothesis_verifier.py backend/src/ragstudio/services/metadata_retrieval_service.py backend/src/ragstudio/services/reference_query_parser.py backend/tests/test_query_hypothesis_service.py backend/tests/test_query_hypothesis_verifier.py backend/tests/test_retrieval_orchestrator.py
 git commit -m "fix: render query answers from verified contract display"
 ```
+
+Execution note: focused verification also exposed canonical-reference drift in metadata
+retrieval, where display references from `source_location` could override canonical
+`reference_metadata.references`. The implementation now preserves the canonical
+reference first and falls back to display/source references only when no canonical
+reference is available.
 
 ---
 

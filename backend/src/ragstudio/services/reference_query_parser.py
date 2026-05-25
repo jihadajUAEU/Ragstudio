@@ -10,7 +10,7 @@ def parse_query_references(query: str, contracts: list[dict[str, Any]]) -> list[
     references: list[str] = []
     for contract in contracts:
         reference_contract = _reference_contract(contract)
-        if not reference_contract or reference_contract.get("verified") is False:
+        if not reference_contract or reference_contract.get("verified") is not True:
             continue
         template = _string_value(reference_contract.get("canonical_ref_template"))
         anchors = _anchors(reference_contract)

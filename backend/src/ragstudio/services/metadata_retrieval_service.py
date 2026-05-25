@@ -299,16 +299,15 @@ class MetadataRetrievalService:
         return {}
 
     def _first_reference(self, chunk: ChunkOut) -> str | None:
+        reference_metadata = _chunk_metadata(chunk).get("reference_metadata")
+        if isinstance(reference_metadata, dict):
+            references = reference_metadata.get("references")
+            if isinstance(references, list) and references:
+                reference = str(references[0])
+                return normalize_reference_hypothesis(reference) or reference
         source_reference = _chunk_source_location(chunk).get("reference")
         if isinstance(source_reference, str) and source_reference:
             return normalize_reference_hypothesis(source_reference) or source_reference
-        reference_metadata = _chunk_metadata(chunk).get("reference_metadata")
-        if not isinstance(reference_metadata, dict):
-            return None
-        references = reference_metadata.get("references")
-        if isinstance(references, list) and references:
-            reference = str(references[0])
-            return normalize_reference_hypothesis(reference) or reference
         return None
 
     def _source_quality(self, chunk: ChunkOut) -> dict[str, Any]:

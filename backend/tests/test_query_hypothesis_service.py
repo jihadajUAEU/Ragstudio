@@ -5,6 +5,7 @@ from ragstudio.services.query_hypothesis_service import (
     QueryHypothesis,
     QueryHypothesisService,
     QueryTargetTerm,
+    parse_query_hypothesis_payload,
 )
 
 
@@ -73,6 +74,41 @@ def test_parse_hypothesis_extracts_transliteration_target_and_probable_answer():
     assert hypothesis.confidence == pytest.approx(0.82)
     assert hypothesis.needs_clarification is False
     assert hypothesis.valid is True
+
+
+def test_probable_answer_uses_contract_identity_fields():
+    payload = {
+        "intent": "find_word_occurrence",
+        "target_terms": ["mercy"],
+        "answer_shape": "reference",
+        "probable_answer": {
+            "parent_ref": "7",
+            "unit_ref": "104",
+            "matched_term": "mercy",
+        },
+    }
+    contracts = [
+        {
+            "reference_contract": {
+                "verified": True,
+                "canonical_ref_template": "{parent_ref}:{unit_ref}",
+                "required_groups": ["parent_ref", "unit_ref"],
+            }
+        }
+    ]
+
+    hypothesis = parse_query_hypothesis_payload(
+        payload,
+        reference_contracts=contracts,
+    )
+
+    assert hypothesis.probable_answer is not None
+    assert hypothesis.probable_answer.reference == "7:104"
+    assert hypothesis.probable_answer.reference_groups == {
+        "parent_ref": "7",
+        "unit_ref": "104",
+    }
+    assert hypothesis.probable_answer.matched_term == "mercy"
 
 
 def test_parse_hypothesis_drops_unsafe_and_oversized_terms():
@@ -179,6 +215,7 @@ def test_parse_hypothesis_normalizes_possible_hadith_references():
     hypothesis = QueryHypothesisService.parse_hypothesis(
         raw,
         original_query="Which hadith says about offering sacrifice for eid?",
+        reference_contracts=[book_hadith_contract()],
     )
 
     assert hypothesis.valid is True
@@ -199,6 +236,7 @@ def test_parse_hypothesis_accepts_reference_only_search_plan():
             "answer_shape": "reference",
         },
         original_query="find the Eid sacrifice hadith",
+        reference_contracts=[book_hadith_contract()],
     )
 
     assert hypothesis.valid is True
@@ -226,6 +264,7 @@ def test_parse_hypothesis_accepts_single_possible_reference_shapes(
             "answer_shape": "reference",
         },
         original_query="find the Eid sacrifice hadith",
+        reference_contracts=[book_hadith_contract()],
     )
 
     assert hypothesis.valid is True
@@ -398,6 +437,32 @@ def article_clause_contract() -> dict[str, object]:
                     "regex": r"Article\s+(?P<article>\d+)\.(?P<clause>\d+)",
                     "verified": True,
                 }
+            ],
+        }
+    }
+
+
+def book_hadith_contract() -> dict[str, object]:
+    return {
+        "reference_contract": {
+            "schema_type": "book_hadith",
+            "canonical_ref_template": "book:{book}:hadith:{hadith}",
+            "required_groups": ["book", "hadith"],
+            "verified": True,
+            "anchors": [
+                {
+                    "kind": "primary_anchor",
+                    "regex": (
+                        r"\bBook\s+(?P<book>\d{1,4})\s*,?\s*"
+                        r"Hadith\s+(?P<hadith>\d{1,6})\b"
+                    ),
+                    "verified": True,
+                },
+                {
+                    "kind": "inline_references",
+                    "regex": r"\bbook:(?P<book>\d{1,4}):hadith:(?P<hadith>\d{1,6})\b",
+                    "verified": True,
+                },
             ],
         }
     }

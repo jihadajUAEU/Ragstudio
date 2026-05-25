@@ -1,3 +1,4 @@
+from ragstudio.services.evidence_first_answer_service import EvidenceFirstAnswerService
 from ragstudio.services.query_hypothesis_service import (
     ProbableAnswer,
     QueryHypothesis,
@@ -5,6 +6,29 @@ from ragstudio.services.query_hypothesis_service import (
 )
 from ragstudio.services.query_hypothesis_verifier import QueryHypothesisVerifier
 from ragstudio.services.retrieval_evidence import EvidenceCandidate
+
+
+def test_evidence_first_answer_uses_generic_reference_label():
+    verification = type(
+        "Verification",
+        (),
+        {
+            "evidence_label": "S1",
+            "matched_terms": ["mercy"],
+            "reference": "7:104",
+            "reference_label": "Part 7, item 104",
+            "status": "confirmed",
+        },
+    )()
+
+    answer, trace = EvidenceFirstAnswerService().answer_confirmed_hypothesis(
+        "Where is mercy mentioned?",
+        [],
+        verification=verification,
+    )
+
+    assert answer == "The word mercy is mentioned at Part 7, item 104. [S1]"
+    assert trace["reference"] == "7:104"
 
 
 def test_verifier_confirms_probable_reference_and_matched_arabic_term():

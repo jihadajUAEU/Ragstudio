@@ -31,6 +31,16 @@ QURAN_REFERENCE_CUSTOM_JSON = {
     "reference_schema": {
         "type": "chapter_verse",
         "fields": {"chapter": "chapter_number", "verse": "verse_number"},
+        "canonical_ref_template": "{chapter}:{verse}",
+    },
+    "reference_resolution": {"build_canonical_units": True},
+    "domain_structure": {
+        "primary_anchor": {
+            "type": "chapter_verse",
+            "regex": r"(?P<chapter>\d{1,4}):(?P<verse>\d{1,6})",
+            "unit": "verse",
+            "verified": True,
+        },
     },
     "quality_policy": {
         "required_scripts_by_unit_role": {"verse": ["arabic"]},

@@ -23,6 +23,7 @@ class QueryHypothesisVerification:
     matched_terms: list[str]
     possible_reference_results: list[dict[str, str | None]] = field(default_factory=list)
     reference: str | None = None
+    reference_label: str | None = None
     surah: str | None = None
     surah_number: int | None = None
     ayah: int | None = None
@@ -113,6 +114,7 @@ class QueryHypothesisVerifier:
                 matched_terms=matched_terms,
                 possible_reference_results=possible_reference_results,
                 reference=reference or expected_reference,
+                reference_label=answer.display_label if answer is not None else None,
                 surah=answer.surah if answer is not None else None,
                 surah_number=answer.surah_number if answer is not None else None,
                 ayah=answer.ayah if answer is not None else None,

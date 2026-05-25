@@ -17,16 +17,17 @@ class EvidenceFirstAnswerService:
         matched_terms = getattr(verification, "matched_terms", None) or []
         matched_term = str(matched_terms[0]) if matched_terms else "the requested term"
         reference = getattr(verification, "reference", None)
+        reference_label = getattr(verification, "reference_label", None)
         surah = getattr(verification, "surah", None)
         surah_number = getattr(verification, "surah_number", None)
         ayah = getattr(verification, "ayah", None)
-        if surah and surah_number and ayah:
+        if reference and reference_label:
+            answer = f"The word {matched_term} is mentioned at {reference_label}. [{label}]"
+        elif surah and surah_number and ayah:
             answer = (
                 f"The word {matched_term} is mentioned in Surah {surah}, "
                 f"{surah_number}:{ayah}. [{label}]"
             )
-        elif reference and (surah_reference := _surah_reference_label(reference)):
-            answer = f"The word {matched_term} is mentioned in {surah_reference}. [{label}]"
         elif reference:
             answer = f"The word {matched_term} is mentioned at {reference}. [{label}]"
         else:
@@ -38,6 +39,7 @@ class EvidenceFirstAnswerService:
                 "generated_without_llm": True,
                 "source_count": len(evidence),
                 "confirmation_status": getattr(verification, "status", "confirmed"),
+                "reference": reference,
                 "confirmed_reference": reference,
             },
         )
@@ -108,16 +110,6 @@ def _reference_label(candidate: EvidenceCandidate) -> str:
     if candidate.chunk_id:
         return f"chunk={candidate.chunk_id}"
     return "chunk=unknown"
-
-
-def _surah_reference_label(reference: str) -> str | None:
-    parts = reference.split(":", maxsplit=1)
-    if len(parts) != 2:
-        return None
-    surah, ayah = parts
-    if not (surah.isdigit() and ayah.isdigit()):
-        return None
-    return f"Surah {int(surah)}, verse {int(ayah)}"
 
 
 def _relationship_label(metadata: dict[str, Any]) -> str:

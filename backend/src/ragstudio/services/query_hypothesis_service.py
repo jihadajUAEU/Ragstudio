@@ -87,11 +87,13 @@ class QueryTargetTerm:
 
 @dataclass(frozen=True)
 class ProbableAnswer:
+    matched_term: str | None = None
+    reference: str | None = None
+    reference_groups: dict[str, str] | None = None
+    display_label: str | None = None
     surah: str | None = None
     surah_number: int | None = None
     ayah: int | None = None
-    matched_term: str | None = None
-    reference: str | None = None
 
     def to_trace(self) -> dict[str, Any]:
         return {
@@ -374,6 +376,19 @@ class QueryHypothesisService:
         }
 
 
+def parse_query_hypothesis_payload(
+    payload: Any,
+    *,
+    reference_contracts: list[dict[str, Any]] | None = None,
+    original_query: str = "",
+) -> QueryHypothesis:
+    return QueryHypothesisService.parse_hypothesis(
+        payload,
+        original_query=original_query,
+        reference_contracts=reference_contracts,
+    )
+
+
 def _target_terms(raw: Any) -> list[QueryTargetTerm]:
     if not isinstance(raw, list):
         return []
@@ -449,10 +464,6 @@ def _reference_from_item(
     )
     if contract_reference is not None:
         return contract_reference
-    book = _positive_int(item.get("book"), max_value=9999)
-    hadith = _positive_int(item.get("hadith"), max_value=999999)
-    if book is not None and hadith is not None:
-        return f"book:{book}:hadith:{hadith}"
     return None
 
 
@@ -469,13 +480,30 @@ def _probable_answer(
         return None
     if raw.get("ayah") is not None and ayah is None:
         return None
-    reference = _safe_reference(raw.get("reference"), reference_contracts=reference_contracts)
+    reference_groups = _reference_groups_from_contracts(raw, reference_contracts)
+    contract_reference = (
+        canonical_reference_from_groups(
+            reference_groups,
+            _first_verified_template(reference_contracts),
+        )
+        if reference_groups
+        else None
+    )
+    reference = contract_reference or _safe_reference(
+        raw.get("reference"),
+        reference_contracts=reference_contracts,
+    )
     return ProbableAnswer(
+        matched_term=_safe_short_text(raw.get("matched_term"), max_length=80),
+        reference=reference,
+        reference_groups=reference_groups,
+        display_label=_safe_short_text(
+            raw.get("display_label", raw.get("reference_label")),
+            max_length=120,
+        ),
         surah=_safe_short_text(raw.get("surah"), max_length=80),
         surah_number=surah_number,
         ayah=ayah,
-        matched_term=_safe_short_text(raw.get("matched_term"), max_length=80),
-        reference=reference,
     )
 
 
@@ -555,7 +583,10 @@ def normalize_reference_hypothesis(
         canonical_reference = _canonical_reference_from_string(reference, active_contracts)
         if canonical_reference is not None:
             return canonical_reference
-    references = parse_legacy_reference_query(reference)
+    references = parse_legacy_reference_query(
+        reference,
+        enabled_profiles=_legacy_reference_profiles(active_contracts),
+    )
     return references[0] if references else None
 
 
@@ -639,7 +670,7 @@ def _reference_from_contract_groups(
 ) -> str | None:
     for contract in reference_contracts:
         reference_contract = _reference_contract_payload(contract)
-        if reference_contract.get("verified") is False:
+        if reference_contract.get("verified") is not True:
             continue
         template = _string_value(reference_contract.get("canonical_ref_template"))
         if not template:
@@ -663,13 +694,47 @@ def _reference_from_contract_groups(
     return None
 
 
+def _reference_groups_from_contracts(
+    raw: dict[str, Any],
+    reference_contracts: list[dict[str, Any]],
+) -> dict[str, str] | None:
+    for contract in reference_contracts:
+        reference_contract = _reference_contract_payload(contract)
+        if reference_contract.get("verified") is not True:
+            continue
+        fields = _string_list(reference_contract.get("required_groups"))
+        if not fields:
+            template = _string_value(reference_contract.get("canonical_ref_template"))
+            fields = sorted(_template_fields(template) or set()) if template else []
+        groups: dict[str, str] = {}
+        for field_name in fields:
+            value = _safe_reference_group(raw.get(field_name))
+            if value is None:
+                break
+            groups[field_name] = value
+        if len(groups) == len(fields) and groups:
+            return groups
+    return None
+
+
+def _first_verified_template(reference_contracts: list[dict[str, Any]]) -> str | None:
+    for contract in reference_contracts:
+        reference_contract = _reference_contract_payload(contract)
+        if reference_contract.get("verified") is not True:
+            continue
+        template = _string_value(reference_contract.get("canonical_ref_template"))
+        if template:
+            return template
+    return None
+
+
 def _canonical_reference_from_string(
     reference: str,
     reference_contracts: list[dict[str, Any]],
 ) -> str | None:
     for contract in reference_contracts:
         reference_contract = _reference_contract_payload(contract)
-        if reference_contract.get("verified") is False:
+        if reference_contract.get("verified") is not True:
             continue
         template = _string_value(reference_contract.get("canonical_ref_template"))
         if not template:
@@ -713,6 +778,18 @@ def _canonical_template_pattern(template: str) -> re.Pattern[str] | None:
 def _reference_contract_payload(contract: dict[str, Any]) -> dict[str, Any]:
     reference_contract = _dict_value(contract.get("reference_contract"))
     return reference_contract or contract
+
+
+def _legacy_reference_profiles(reference_contracts: list[dict[str, Any]]) -> set[str]:
+    profiles: set[str] = set()
+    for contract in reference_contracts:
+        reference_contract = _reference_contract_payload(contract)
+        if reference_contract.get("verified") is not True:
+            continue
+        schema_type = _string_value(reference_contract.get("schema_type"))
+        if schema_type:
+            profiles.add(schema_type)
+    return profiles
 
 
 def _anchor_list(reference_contract: dict[str, Any]) -> list[dict[str, Any]]:
