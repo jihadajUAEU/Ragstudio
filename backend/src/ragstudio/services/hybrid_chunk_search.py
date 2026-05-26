@@ -66,8 +66,6 @@ _ANSWER_BEARING_PATTERNS = (
 _LEADING_PHRASE_NOISE_RE = re.compile(r"^(?:that|which|the verse)\s+")
 _SPACE_RE = re.compile(r"\s+")
 _TERM_RE = re.compile(r"[\w\u0600-\u06FF]+", flags=re.UNICODE)
-_SEARCH_WEIGHT_ALIASES = {"same_chapter": "same_parent_reference"}
-
 
 @dataclass(frozen=True)
 class ChunkScore:
@@ -114,12 +112,6 @@ class HybridChunkSearch:
         requested_ref = self._query_reference_label(query_ref)
         quality_allows_reference_boost = self._quality_allows_reference_boost(metadata)
         if isinstance(query_ref, dict) and isinstance(reference_metadata, dict):
-            q_chapter = query_ref.get("chapter")
-            q_verse = query_ref.get("verse")
-            chapter_start = reference_metadata.get("chapter_start")
-            chapter_end = reference_metadata.get("chapter_end")
-            verse_start = reference_metadata.get("verse_start")
-            verse_end = reference_metadata.get("verse_end")
             references = reference_metadata.get("references")
             explicit_refs = (
                 {ref for ref in references if isinstance(ref, str)}
@@ -143,29 +135,12 @@ class HybridChunkSearch:
             elif (
                 quality_allows_reference_boost
                 and semantics
-                and semantics.exact_reference_top1
-                and isinstance(q_chapter, int)
-                and isinstance(q_verse, int)
-                and isinstance(chapter_start, int)
-                and isinstance(chapter_end, int)
-                and isinstance(verse_start, int)
-                and isinstance(verse_end, int)
-                and chapter_start <= q_chapter <= chapter_end
-                and verse_start <= q_verse <= verse_end
-            ):
-                reference_exact = self.policy.reference_exact
-            elif (
-                quality_allows_reference_boost
-                and semantics
                 and semantics.boost_same_parent_reference
-                and isinstance(q_chapter, int)
-                and isinstance(chapter_start, int)
-                and isinstance(chapter_end, int)
-                and chapter_start <= q_chapter <= chapter_end
+                and _reference_parent_in_identity_ranges(query_ref, reference_metadata)
             ):
                 same_parent_reference = (
                     self.policy.same_parent_reference_query
-                    if q_verse is None
+                    if not _query_reference_has_unit_field(query_ref, reference_metadata)
                     else self.policy.same_parent_with_unit_query
                 )
 
@@ -502,13 +477,7 @@ class HybridChunkSearch:
     def _query_reference_label(self, query_ref: dict[str, Any] | None) -> str | None:
         if not isinstance(query_ref, dict):
             return None
-        chapter = query_ref.get("chapter")
-        verse = query_ref.get("verse")
-        if isinstance(chapter, int) and isinstance(verse, int):
-            return f"{chapter}:{verse}"
-        if isinstance(chapter, int):
-            return f"chapter:{chapter}"
-        ref = query_ref.get("ref")
+        ref = query_ref.get("ref") or query_ref.get("canonical")
         if isinstance(ref, str) and ref:
             return ref
         return None
@@ -527,10 +496,7 @@ def _contains_arabic(value: str) -> bool:
 def _apply_search_weight(weights: dict[str, float], key: str, value: Any) -> None:
     if isinstance(value, bool) or not isinstance(value, int | float):
         return
-    normalized_key = _SEARCH_WEIGHT_ALIASES.get(key, key)
-    if normalized_key != key and normalized_key in weights:
-        return
-    weights[normalized_key] = float(value)
+    weights[key] = float(value)
 
 
 def _reference_in_identity_ranges(
@@ -555,3 +521,52 @@ def _reference_in_identity_ranges(
         if not start <= value <= end:
             return False
     return compared
+
+
+def _reference_parent_in_identity_ranges(
+    query_ref: dict[str, Any],
+    reference_metadata: dict[str, Any],
+) -> bool:
+    ranges = reference_metadata.get("identity_ranges")
+    if not isinstance(ranges, dict):
+        return False
+    parent_fields = _reference_parent_fields(reference_metadata)
+    if not parent_fields:
+        return False
+    compared = False
+    for key in parent_fields:
+        value = query_ref.get(key)
+        if not isinstance(value, int):
+            return False
+        item_range = ranges.get(key)
+        if not isinstance(item_range, dict):
+            return False
+        start = item_range.get("start")
+        end = item_range.get("end")
+        if not isinstance(start, int) or not isinstance(end, int):
+            return False
+        if not start <= value <= end:
+            return False
+        compared = True
+    return compared
+
+
+def _query_reference_has_unit_field(
+    query_ref: dict[str, Any],
+    reference_metadata: dict[str, Any],
+) -> bool:
+    unit_field = reference_metadata.get("reference_unit_field")
+    return isinstance(unit_field, str) and unit_field in query_ref
+
+
+def _reference_parent_fields(reference_metadata: dict[str, Any]) -> tuple[str, ...]:
+    fields = reference_metadata.get("reference_identity_fields")
+    unit_field = reference_metadata.get("reference_unit_field")
+    if not isinstance(fields, list) or not isinstance(unit_field, str):
+        return ()
+    parent_fields = [
+        field
+        for field in fields
+        if isinstance(field, str) and field and field != unit_field
+    ]
+    return tuple(parent_fields)

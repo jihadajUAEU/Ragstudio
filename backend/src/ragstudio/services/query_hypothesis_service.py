@@ -10,14 +10,11 @@ import httpx
 from ragstudio.services.http_client_provider import HttpClientProviderProtocol
 from ragstudio.services.http_retry import raise_for_transient_status, retry_async_http
 from ragstudio.services.reference_contracts import (
-    build_executable_reference_contract,
     canonical_reference_from_groups,
     metadata_list_declared_scripts,
+    metadata_reference_contracts,
 )
-from ragstudio.services.reference_query_parser import (
-    parse_legacy_reference_query,
-    parse_query_references,
-)
+from ragstudio.services.reference_query_parser import parse_query_references
 
 QUERY_HYPOTHESIS_PROTOCOL_VERSION = "2026-05-24"
 
@@ -568,11 +565,7 @@ def normalize_reference_hypothesis(
         canonical_reference = _canonical_reference_from_string(reference, active_contracts)
         if canonical_reference is not None:
             return canonical_reference
-    references = parse_legacy_reference_query(
-        reference,
-        enabled_profiles=_legacy_reference_profiles(active_contracts),
-    )
-    return references[0] if references else None
+    return None
 
 
 def _reference_contracts_from_metadata(
@@ -583,47 +576,12 @@ def _reference_contracts_from_metadata(
     for metadata in domain_metadata:
         if not isinstance(metadata, dict):
             continue
-        for contract in _metadata_reference_contracts(metadata):
+        for contract in metadata_reference_contracts(metadata):
             key = json.dumps(contract, sort_keys=True, default=str)
             if key in seen:
                 continue
             seen.add(key)
             contracts.append(contract)
-    return contracts
-
-
-def _metadata_reference_contracts(metadata: dict[str, Any]) -> list[dict[str, Any]]:
-    contracts: list[dict[str, Any]] = []
-    index_contract = _dict_value(metadata.get("index_contract"))
-    index_reference_contract = _dict_value(index_contract.get("reference_contract"))
-    if index_reference_contract:
-        contracts.append({"reference_contract": index_reference_contract})
-
-    reference_contract = _dict_value(metadata.get("reference_contract"))
-    if reference_contract:
-        contracts.append({"reference_contract": reference_contract})
-
-    custom_json = _dict_value(metadata.get("custom_json"))
-    if isinstance(custom_json.get("reference_schema"), dict):
-        executable = build_executable_reference_contract(custom_json)
-        contracts.append(
-            {
-                "reference_contract": {
-                    "schema_type": executable.schema_type,
-                    "canonical_ref_template": executable.canonical_ref_template,
-                    "required_groups": sorted(executable.required_groups),
-                    "verified": executable.verified,
-                    "anchors": [
-                        {
-                            "kind": anchor.kind,
-                            "regex": anchor.regex,
-                            "verified": anchor.verified,
-                        }
-                        for anchor in executable.anchors
-                    ],
-                }
-            }
-        )
     return contracts
 
 
@@ -755,19 +713,6 @@ def _canonical_template_pattern(template: str) -> re.Pattern[str] | None:
 def _reference_contract_payload(contract: dict[str, Any]) -> dict[str, Any]:
     reference_contract = _dict_value(contract.get("reference_contract"))
     return reference_contract or contract
-
-
-def _legacy_reference_profiles(reference_contracts: list[dict[str, Any]]) -> set[str]:
-    profiles: set[str] = set()
-    for contract in reference_contracts:
-        reference_contract = _reference_contract_payload(contract)
-        if reference_contract.get("verified") is not True:
-            continue
-        schema_type = _string_value(reference_contract.get("schema_type"))
-        if schema_type:
-            profiles.add(schema_type)
-    return profiles
-
 
 def _anchor_list(reference_contract: dict[str, Any]) -> list[dict[str, Any]]:
     anchors = reference_contract.get("anchors")

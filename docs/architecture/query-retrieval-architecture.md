@@ -133,7 +133,7 @@ ranking, and context signals.
 | Chunking lesson | Retrieval use | Expected performance effect | Metric to watch |
 | --- | --- | --- | --- |
 | Canonical reference units are better than parser fragments. | Search answerable canonical units first; keep header-only/provenance-only chunks out of answer evidence unless explicitly requested. | Higher direct-evidence precision and fewer irrelevant chunks in reranker/context. | Direct-evidence hit rate, MRR@10, provenance-only drop count. |
-| Domain-aware assembly identifies reference-heavy corpora such as Quran, tafseer, hadith, legal, and policy docs. | `DomainClassifier` maps those documents to `reference_heavy`; planner runs `lexical_reference` and metadata before vector/runtime lanes. | Faster exact-reference traversal and better rank for direct evidence. | Reference lane latency, direct hit rate, native lane skip rate. |
+| Domain-aware assembly identifies reference-heavy corpora such as Quran, tafseer, hadith, legal, and policy docs. | `DomainClassifier` maps those documents to `reference_heavy`; planner may prioritize reference lanes, but exact reference behavior must come from a verified document contract rather than hardcoded domain regexes. | Faster exact-reference traversal and better rank for direct evidence after the document proves an executable contract. | Reference lane latency, direct hit rate, native lane skip rate, unverified-contract skip count. |
 | Layout-aware assembly preserves block type, page, bbox, reading order, and layout roles. | Planner routes table/figure/equation queries through layout-aware canonical evidence and runtime bridge only when materialization allows it. | Fewer failed semantic matches for layout questions and fewer unnecessary graph traversals. | Layout-query MRR@10, runtime bridge missing rate, graph skip/degrade count. |
 | Semantic page-boundary stitching creates chunks that preserve multi-page evidence. | Context assembly can include stitched chunks directly instead of searching adjacent pages or graph neighbors. | Less follow-up traversal for page-boundary answers and better context compactness. | Context token use, adjacent-expansion count, answer evidence recall. |
 | Quality gates distinguish answerable, warning, repaired, quarantined, blocked, and provenance-only material. | Route planner uses `quality_action_policy` and materialization policy before ranking. | Unsafe chunks do not enter vector/graph/runtime lanes; precision improves without hiding the reason. | Policy-blocked lane count, unsafe candidate count, trace reason coverage. |
@@ -571,6 +571,12 @@ Default profile:
 ### Reference-Heavy Documents
 
 Examples: Quran, tafseer, hadith, legal/policy documents.
+
+These examples identify retrieval shape, not built-in reference parsers. A
+reference-heavy route may prioritize canonical, lexical, and metadata lanes, but
+reference-unit chunking and exact reference normalization require a verified
+document contract with model-declared identity fields, matching regex named
+groups, a valid canonical reference template, and successful sample execution.
 
 Profile:
 

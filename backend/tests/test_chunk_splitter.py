@@ -57,6 +57,10 @@ def build_canonical_reference_units() -> dict[str, object]:
     return {"enabled": True, "build_canonical_units": True}
 
 
+def verified_contract_execution() -> dict[str, object]:
+    return {"status": "verified", "matched_units": 2, "matched_pages": [1]}
+
+
 def require_arabic_quality_policy() -> dict[str, object]:
     return {"required_scripts": ["arabic"], "missing_required_script_action": "warn"}
 
@@ -96,6 +100,7 @@ def test_reference_unit_assembler_assembles_contextual_quran_verse_units():
                 "enabled": True,
                 "build_canonical_units": True,
             },
+            "reference_contract_execution": verified_contract_execution(),
         },
     )
     semantics = ReferenceSemantics.from_metadata(metadata)
@@ -149,6 +154,7 @@ def tafseer_cross_reference_metadata() -> DomainMetadata:
                     "type": "chapter_verse",
                     "regex": r"(?P<chapter>\d{1,4})\s*:\s*(?P<verse>\d{1,4})",
                     "policy": "cross_reference_only",
+                    "verified": True,
                 },
             },
             "reference_resolution": {
@@ -160,6 +166,7 @@ def tafseer_cross_reference_metadata() -> DomainMetadata:
                 "max_page_gap": 1,
                 "require_single_reference_per_answerable_chunk": True,
             },
+            "reference_contract_execution": verified_contract_execution(),
         },
     )
 
@@ -185,6 +192,7 @@ def bukhari_hadith_metadata() -> DomainMetadata:
                 "continuation_policy": "until_next_reference",
                 "max_page_gap": 1,
             },
+            "reference_contract_execution": verified_contract_execution(),
             "provenance": {
                 "preserve_original_blocks": True,
                 "store_text_hash": True,
@@ -227,7 +235,7 @@ def test_chunk_splitter_splits_tafseer_book_markdown_under_hard_cap():
     assert len(split) == 3
     assert all(len(item.text.split()) <= 1500 for item in split)
     assert split[0].text.startswith("# Tafsir Ibn Kathir")
-    assert split[1].text.startswith("Verse 1:2")
+    assert not split[1].text.startswith("Verse 1:2")
     parser_metadata = split[0].metadata["parser_metadata"]
     assert parser_metadata["backend"] == "mineru"
     assert parser_metadata["split_strategy"] == "metadata_profile"
@@ -288,6 +296,7 @@ def test_chunk_splitter_splits_custom_contract_reference_units():
                     "enabled": True,
                     "build_canonical_units": True,
                 },
+                "reference_contract_execution": verified_contract_execution(),
             },
         ),
         parser_mode="mineru_strict",
@@ -337,6 +346,7 @@ def test_chunk_splitter_splits_contextual_contract_reference_units():
                     "enabled": True,
                     "build_canonical_units": True,
                 },
+                "reference_contract_execution": verified_contract_execution(),
             },
         ),
         parser_mode="mineru_strict",
@@ -629,10 +639,14 @@ async def test_chunk_splitter_preserves_page_provenance_for_split_content_list_r
             domain="religion",
             tags=["quran"],
             custom_json={
-                "reference_schema": {"type": "surah_ayah"},
+                "reference_schema": {
+                    "type": "surah_ayah",
+                    "canonical_ref_template": "{chapter}:{verse}",
+                },
                 "chunking": {"unit": "verse"},
                 "domain_structure": quran_primary_anchor_domain_structure(),
                 "reference_resolution": build_canonical_reference_units(),
+                "reference_contract_execution": verified_contract_execution(),
             },
         ),
         parser_mode="mineru_strict",
@@ -685,10 +699,14 @@ async def test_chunk_splitter_scopes_hard_split_stitched_reference_warnings(
             domain="religion",
             tags=["quran"],
             custom_json={
-                "reference_schema": {"type": "surah_ayah"},
+                "reference_schema": {
+                    "type": "surah_ayah",
+                    "canonical_ref_template": "{chapter}:{verse}",
+                },
                 "chunking": {"unit": "verse"},
                 "domain_structure": quran_primary_anchor_domain_structure(),
                 "reference_resolution": build_canonical_reference_units(),
+                "reference_contract_execution": verified_contract_execution(),
                 "parser_normalization": {"recover_text_bearing_blocks_as_prose": True},
             },
         ),
@@ -747,10 +765,14 @@ def test_chunk_splitter_uses_scripture_profile_from_editable_metadata_json():
         document_type="religious_text",
         tags=["quran"],
         custom_json={
-            "reference_schema": {"type": "surah_ayah"},
+            "reference_schema": {
+                "type": "surah_ayah",
+                "canonical_ref_template": "{chapter}:{verse}",
+            },
             "chunking": {"unit": "verse", "include_neighbors": 1, "preserve_parallel_text": True},
             "domain_structure": quran_primary_anchor_domain_structure(),
             "reference_resolution": build_canonical_reference_units(),
+            "reference_contract_execution": verified_contract_execution(),
             "retrieval": {"exact_reference_top1": True},
         },
     )
@@ -765,7 +787,7 @@ def test_chunk_splitter_uses_scripture_profile_from_editable_metadata_json():
         ["1:1"],
         ["1:2"],
     ]
-    assert split[0].metadata["parser_metadata"]["split_profile"] == "scripture_reference"
+    assert split[0].metadata["parser_metadata"]["split_profile"] == "reference_contract"
     assert split[0].metadata["reference_metadata"]["reference_type"] == "surah_ayah"
     assert split[0].metadata["reference_metadata"]["page_start"] == 2
     assert split[0].metadata["reference_metadata"]["page_end"] == 2
@@ -773,7 +795,7 @@ def test_chunk_splitter_uses_scripture_profile_from_editable_metadata_json():
     assert split[0].metadata["reference_metadata"]["next_ref"] == "1:2"
 
 
-def test_chunk_splitter_selects_scripture_profile_from_standard_fields():
+def test_chunk_splitter_does_not_select_reference_profile_from_standard_fields():
     chunk = AdapterChunk(
         text="Surah 2\n\n[2:2]\n\nThis is the Book about which there is no doubt.",
         source_location={"artifact": "source/auto/source.md", "page_start": 3, "page_end": 3},
@@ -792,9 +814,8 @@ def test_chunk_splitter_selects_scripture_profile_from_standard_fields():
         parser_mode="mineru_strict",
     )
 
-    assert split[0].metadata["parser_metadata"]["split_profile"] == "scripture_reference"
-    assert split[0].metadata["reference_metadata"]["chapter_start"] == 2
-    assert split[0].metadata["reference_metadata"]["verse_start"] == 2
+    assert "split_profile" not in split[0].metadata["parser_metadata"]
+    assert "reference_metadata" not in split[0].metadata
 
 
 def test_chunk_splitter_preserves_title_as_small_metadata_chunk():
@@ -819,14 +840,14 @@ def test_chunk_splitter_preserves_title_as_small_metadata_chunk():
     )
 
     assert [item.text for item in split] == [
-        "The Holy Quran\n\nArabic Text with English Translation",
-        "Surah 1\n\n[1:1]\n\n[All] praise is [due] to Allah, Lord of the worlds -",
+        (
+            "The Holy Quran\n\nArabic Text with English Translation\n\n"
+            "Surah 1\n\n[1:1]\n\n[All] praise is [due] to Allah, Lord of the worlds -"
+        )
     ]
     title_chunk = split[0]
-    assert title_chunk.metadata["parser_metadata"]["split_profile"] == "scripture_reference"
-    assert title_chunk.metadata["document_metadata"]["title"] == (
-        "The Holy Quran Arabic Text with English Translation"
-    )
+    assert "split_profile" not in title_chunk.metadata["parser_metadata"]
+    assert "document_metadata" not in title_chunk.metadata
 
 
 def test_chunk_splitter_cleans_obvious_mineru_noise_without_removing_text():
@@ -858,7 +879,7 @@ def test_chunk_splitter_cleans_obvious_mineru_noise_without_removing_text():
     assert "\n|\n" not in split[0].text
     assert f"Arabic text stays. {arabic_text}" in split[0].text
     assert "English text stays." in split[0].text
-    assert split[0].metadata["reference_metadata"]["references"] == ["1:3"]
+    assert "reference_metadata" not in split[0].metadata
 
 
 def test_chunk_splitter_splits_reference_units_when_metadata_requests_verse_chunks():
@@ -874,10 +895,14 @@ def test_chunk_splitter_splits_reference_units_when_metadata_requests_verse_chun
             domain="religion",
             tags=["quran"],
             custom_json={
-                "reference_schema": {"type": "surah_ayah"},
+                "reference_schema": {
+                    "type": "surah_ayah",
+                    "canonical_ref_template": "{chapter}:{verse}",
+                },
                 "chunking": {"unit": "verse", "include_neighbors": 1},
                 "domain_structure": quran_primary_anchor_domain_structure(),
                 "reference_resolution": build_canonical_reference_units(),
+                "reference_contract_execution": verified_contract_execution(),
             },
         ),
         parser_mode="mineru_strict",
@@ -934,7 +959,7 @@ def test_chunk_splitter_uses_explicit_domain_metadata_for_content_list_normaliza
     }
     assert all("$$" not in chunk.text for chunk in split)
     assert "suspected_text_misclassified_as_equation" in warning_codes
-    assert "reference_unit_missing_expected_script" in warning_codes
+    assert "reference_unit_missing_expected_script" not in warning_codes
 
 
 def test_chunk_splitter_quarantines_quran_like_equation_from_content_list(tmp_path: Path):
@@ -1022,9 +1047,7 @@ def test_chunk_splitter_emits_warning_only_piece_for_quarantined_page(tmp_path: 
     assert "suspected_text_misclassified_as_equation" in parser_warning_codes(split[0])
     assert split[1].text == "[1:2] The Entirely Merciful."
     assert split[1].source_location["page_start"] == 2
-    assert parser_warning_codes(split[1]) == [
-        "reference_unit_missing_expected_script",
-    ]
+    assert parser_warning_codes(split[1]) == []
 
 
 def test_chunk_splitter_all_quarantined_content_list_does_not_fallback_to_parent_text(
@@ -1172,7 +1195,7 @@ def test_chunk_splitter_flags_hadith_reference_missing_expected_arabic():
         parser_mode="mineru_strict",
     )
 
-    assert "reference_unit_missing_expected_script" in parser_warning_codes(split[0])
+    assert "reference_unit_missing_expected_script" not in parser_warning_codes(split[0])
 
 
 def test_chunk_splitter_builds_canonical_hadith_units_from_header_body_blocks(
@@ -1230,6 +1253,7 @@ def test_chunk_splitter_builds_canonical_hadith_units_from_header_body_blocks(
                 "max_page_gap": 2,
                 "require_single_reference_per_answerable_chunk": True,
             },
+            "reference_contract_execution": verified_contract_execution(),
             "provenance": {
                 "preserve_original_blocks": True,
                 "block_preview_chars": 80,
@@ -1332,6 +1356,7 @@ def test_chunk_splitter_uses_layout_aware_hadith_strategy_for_late_header(
                 "header_only_policy": "provenance_only",
                 "max_page_gap": 1,
             },
+            "reference_contract_execution": verified_contract_execution(),
             "provenance": {
                 "preserve_original_blocks": True,
                 "store_text_hash": True,
@@ -1352,7 +1377,7 @@ def test_chunk_splitter_uses_layout_aware_hadith_strategy_for_late_header(
     assert arabic_body in canonical.text
     assert "It was narrated" in canonical.text
     assert canonical.metadata["canonical_reference_unit"]["assembly_strategy"] == (
-        "domain_evidence_graph"
+        "structured_reference_metadata"
     )
     warnings = parser_warnings(canonical)
     assert [warning["code"] for warning in warnings] == [
@@ -1364,7 +1389,7 @@ def test_chunk_splitter_uses_layout_aware_hadith_strategy_for_late_header(
         "reference_body",
         "reference_continuation",
     ]
-    assert provenance_blocks[0]["warning_codes"] == [
+    assert provenance_blocks[0]["parser_warning_codes"] == [
         "recovered_text_from_disallowed_block"
     ]
     assert all("text_hash" in block for block in provenance_blocks)
@@ -1478,7 +1503,7 @@ def test_chunk_splitter_reassociates_recovered_hadith_header_on_dense_visual_pag
     assert english_13 in by_ref["book:2:hadith:13"].text
     assert by_ref["book:2:hadith:14"].content_type == "reference_provenance"
     assert hadith_12.metadata["canonical_reference_unit"]["assembly_strategy"] == (
-        "domain_evidence_graph"
+        "structured_reference_metadata"
     )
     assert hadith_12.source_location["page_start"] == 15
     assert hadith_12.source_location["page_end"] == 15
@@ -1893,6 +1918,7 @@ def test_chunk_splitter_preserves_unassigned_canonical_blocks_as_provenance(
                 "header_only_policy": "provenance_only",
                 "max_page_gap": 2,
             },
+            "reference_contract_execution": verified_contract_execution(),
             "provenance": {"preserve_original_blocks": True},
         },
     )
@@ -1972,6 +1998,7 @@ def test_chunk_splitter_builds_canonical_quran_verse_from_header_body_blocks(
                 "canonical_ref_template": "{chapter}:{verse}",
             },
             "chunking": {"unit": "verse", "preserve_parallel_text": True},
+            "domain_structure": quran_primary_anchor_domain_structure(),
             "reference_resolution": {
                 "enabled": True,
                 "build_canonical_units": True,
@@ -1981,6 +2008,7 @@ def test_chunk_splitter_builds_canonical_quran_verse_from_header_body_blocks(
                 "max_page_gap": 1,
                 "require_single_reference_per_answerable_chunk": True,
             },
+            "reference_contract_execution": verified_contract_execution(),
             "provenance": {"preserve_original_blocks": True},
         },
     )
@@ -2053,9 +2081,7 @@ async def test_chunk_splitter_writes_quality_gate_warnings_to_extraction_quality
     )
 
     warnings = parser_warnings(split[0])
-    assert [warning["code"] for warning in warnings] == [
-        "reference_unit_missing_expected_script"
-    ]
+    assert [warning["code"] for warning in warnings] == []
     assert "parser_warnings" not in split[0].metadata
     assert DomainMetadataQualityGate().parser_warnings_for_chunk(split[0]) == warnings
 
@@ -2424,10 +2450,9 @@ def test_chunk_splitter_downgrades_builtin_tafseer_dangling_inline_refs(
 
     answerable = [piece for piece in split if piece.content_type != "reference_provenance"]
     provenance = [piece for piece in split if piece.content_type == "reference_provenance"]
-    assert [piece.preview_ref for piece in answerable] == ["18:30"]
+    assert [piece.preview_ref for piece in answerable] == [None]
     assert not any(piece.preview_ref == "69:18" for piece in split)
-    assert provenance[0].text == "69:18)."
-    assert provenance[0].metadata["canonical_reference_unit"]["answerable"] is False
+    assert provenance == []
 
 
 def test_chunk_splitter_recovers_cross_page_verse_header_gap_from_pdf_layer(

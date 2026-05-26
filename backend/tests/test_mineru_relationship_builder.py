@@ -19,8 +19,21 @@ def quran_metadata(
             "reference_schema": {
                 "type": "chapter_verse",
                 "display": "{chapter}:{verse}",
+                "canonical_ref_template": "{chapter}:{verse}",
                 "fields": {"chapter": "surah_number", "verse": "ayah_number"},
             },
+            "domain_structure": {
+                "primary_anchor": {
+                    "regex": r"\[(?P<chapter>\d+):(?P<verse>\d+)\]",
+                    "unit": "verse",
+                    "verified": True,
+                }
+            },
+            "reference_resolution": {
+                "enabled": True,
+                "build_canonical_units": True,
+            },
+            "reference_contract_validation": {"status": "verified"},
             "chunking": {"unit": "verse", "include_neighbors": 1},
             "graph": {
                 "node_types": ["surah", "ayah", "chunk"],
@@ -45,8 +58,21 @@ def hadith_metadata() -> DomainMetadata:
             "reference_schema": {
                 "type": "book_hadith",
                 "display": "Book {book}, Hadith {hadith}",
+                "canonical_ref_template": "book:{book}:hadith:{hadith}",
                 "fields": {"book": "book_number", "hadith": "hadith_number"},
             },
+            "domain_structure": {
+                "primary_anchor": {
+                    "regex": r"\bBook\s+(?P<book>\d+),\s*Hadith\s+(?P<hadith>\d+)\b",
+                    "unit": "hadith",
+                    "verified": True,
+                }
+            },
+            "reference_resolution": {
+                "enabled": True,
+                "build_canonical_units": True,
+            },
+            "reference_contract_validation": {"status": "verified"},
             "chunking": {"unit": "hadith", "include_neighbors": 1},
             "graph": {
                 "node_types": ["book", "hadith", "chunk"],
@@ -175,7 +201,7 @@ def test_mineru_relationship_builder_adds_hadith_reference_edges():
     } in relationships["graph_relationships"]
 
 
-def test_mineru_relationship_builder_uses_builtin_quran_profile(tmp_path):
+def test_mineru_relationship_builder_does_not_use_builtin_quran_profile_as_contract(tmp_path):
     profile = DomainMetadataService(tmp_path).get_profile("quran_tafseer")
     chunk = AdapterChunk(
         text="[113:1] Say, I seek refuge in the Lord of daybreak.",
@@ -186,17 +212,10 @@ def test_mineru_relationship_builder_uses_builtin_quran_profile(tmp_path):
     assert profile is not None
     annotated = MinerURelationshipBuilder().annotate([chunk], profile.metadata)
 
-    assert annotated[0].metadata["relationship_metadata"]["graph_relationships"] == [
-        {
-            "type": "references",
-            "source": "chunk:0",
-            "target": "ref:113:1",
-            "evidence": "reference_metadata",
-        }
-    ]
+    assert "relationship_metadata" not in annotated[0].metadata
 
 
-def test_mineru_relationship_builder_uses_builtin_hadith_profile(tmp_path):
+def test_mineru_relationship_builder_does_not_use_builtin_hadith_profile_as_contract(tmp_path):
     profile = DomainMetadataService(tmp_path).get_profile("hadith")
     chunk = AdapterChunk(
         text="Book 1, Hadith 1 narrated text.",
@@ -207,14 +226,7 @@ def test_mineru_relationship_builder_uses_builtin_hadith_profile(tmp_path):
     assert profile is not None
     annotated = MinerURelationshipBuilder().annotate([chunk], profile.metadata)
 
-    assert annotated[0].metadata["relationship_metadata"]["graph_relationships"] == [
-        {
-            "type": "references",
-            "source": "chunk:0",
-            "target": "ref:book:1:hadith:1",
-            "evidence": "reference_metadata",
-        }
-    ]
+    assert "relationship_metadata" not in annotated[0].metadata
 
 
 def test_mineru_relationship_builder_adds_unique_order_edges_when_policy_allows():

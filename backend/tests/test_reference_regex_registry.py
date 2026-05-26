@@ -1,9 +1,9 @@
 from ragstudio.services.reference_regex_registry import (
     ARABIC_DIACRITICS_PATTERN,
     ARABIC_TOKEN_PATTERN,
-    LEGAL_SECTION_PATTERN,
-    QUERY_REFERENCE_PATTERN,
-    REFERENCE_PATTERN,
+    QUERY_GRAPH_CONTEXT_PATTERN,
+    QUERY_NORMALIZED_PHRASE_PATTERN,
+    QUERY_PHRASE_PATTERN,
     SCRIPT_PATTERNS,
 )
 
@@ -24,19 +24,9 @@ def test_arabic_patterns_preserve_token_and_diacritic_behavior() -> None:
     )
 
 
-def test_reference_patterns_preserve_quran_reference_behavior() -> None:
-    match = REFERENCE_PATTERN.search("See 12:13 for the reference")
-    assert match is not None
-    assert match.group("chapter") == "12"
-    assert match.group("verse") == "13"
-
-    verifier_match = QUERY_REFERENCE_PATTERN.search("[12:13]")
-    assert verifier_match is not None
-    assert verifier_match.group("reference") == "12:13"
-
-
-def test_legal_section_pattern_preserves_section_symbol_behavior() -> None:
-    match = LEGAL_SECTION_PATTERN.search("See § 12.3 for details")
-
-    assert match is not None
-    assert match.group("section") == "12.3"
+def test_query_utility_patterns_preserve_non_reference_behavior() -> None:
+    assert QUERY_GRAPH_CONTEXT_PATTERN.search("show nearby context")
+    phrase = QUERY_PHRASE_PATTERN.search("which says guide us")
+    assert phrase is not None
+    assert phrase.group("phrase") == "guide us"
+    assert QUERY_NORMALIZED_PHRASE_PATTERN.sub(" ", "guide-us").strip() == "guide us"

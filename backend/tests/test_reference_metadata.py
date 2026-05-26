@@ -35,11 +35,32 @@ def quran_metadata() -> DomainMetadata:
             },
             "retrieval": {
                 "exact_reference_top1": True,
-                "boost_same_chapter": True,
-                "boost_neighbor_verses": True,
+                "boost_same_parent_reference": True,
+                "boost_neighbor_references": True,
             },
         },
     )
+
+
+def single_anchor_validation(regex: str) -> dict[str, object]:
+    return {
+        "status": "verified",
+        "selected_strategy": "single_anchor",
+        "selected_primary_anchor_regex": regex,
+        "matched_units": 2,
+        "matched_pages": [1],
+    }
+
+
+def contextual_validation(context_regex: str, unit_regex: str) -> dict[str, object]:
+    return {
+        "status": "verified",
+        "selected_strategy": "contextual_unit",
+        "selected_context_anchor_regex": context_regex,
+        "selected_unit_anchor_regex": unit_regex,
+        "matched_units": 2,
+        "matched_pages": [1],
+    }
 
 
 def verified_quran_metadata() -> DomainMetadata:
@@ -48,9 +69,10 @@ def verified_quran_metadata() -> DomainMetadata:
     reference_schema = dict(custom_json["reference_schema"])
     reference_schema["canonical_ref_template"] = "{chapter}:{verse}"
     custom_json["reference_schema"] = reference_schema
+    primary_regex = r"(?:\bQuran\s+|\[)?(?P<chapter>\d{1,4})\s*:\s*(?P<verse>\d{1,4})\]?"
     custom_json["domain_structure"] = {
         "primary_anchor": {
-            "regex": r"\bVerse\s+(?P<chapter>\d{1,4}):(?P<verse>\d{1,4})\b",
+            "regex": primary_regex,
             "unit": "verse",
             "verified": True,
         },
@@ -60,6 +82,7 @@ def verified_quran_metadata() -> DomainMetadata:
         "enabled": True,
         "build_canonical_units": True,
     }
+    custom_json["reference_contract_validation"] = single_anchor_validation(primary_regex)
     return metadata.model_copy(update={"custom_json": custom_json})
 
 
@@ -73,12 +96,12 @@ def test_reference_semantics_detects_scripture_profile_from_metadata_json():
     assert semantics.include_neighbors == 1
     assert semantics.exact_reference_top1 is True
     assert semantics.preserve_parallel_text is True
-    assert semantics.boost_same_chapter is True
-    assert semantics.boost_neighbor_verses is True
+    assert semantics.boost_same_parent_reference is True
+    assert semantics.boost_neighbor_references is True
     assert semantics.relationships["previous"] == ["same_chapter", "verse - 1"]
 
 
-def test_reference_semantics_falls_back_from_standard_metadata_fields():
+def test_reference_semantics_does_not_infer_contract_from_standard_metadata_fields():
     metadata = DomainMetadata(
         domain="religion",
         document_type="religious_text",
@@ -89,9 +112,9 @@ def test_reference_semantics_falls_back_from_standard_metadata_fields():
 
     semantics = ReferenceSemantics.from_metadata(metadata)
 
-    assert semantics.profile_name == "reference_hint"
-    assert semantics.reference_capability == "hint"
-    assert semantics.reference_type == "surah_ayah"
+    assert semantics.profile_name == "generic"
+    assert semantics.reference_capability == "none"
+    assert semantics.reference_type is None
     assert semantics.chunk_unit == "section"
     assert semantics.exact_reference_top1 is False
     assert semantics.preserve_parallel_text is True
@@ -139,11 +162,12 @@ def test_metadata_only_reference_schema_does_not_enable_enforcement_defaults():
     assert semantics.reference_capability == "hint"
     assert semantics.chunk_unit == "section"
     assert semantics.exact_reference_top1 is False
-    assert semantics.boost_neighbor_verses is False
+    assert semantics.boost_neighbor_references is False
     assert semantics.canonical_units_enabled is False
 
 
 def test_verified_generic_reference_contract_enables_reference_defaults():
+    primary_regex = r"Part\s+(?P<parent_ref>\d+)\s+Item\s+(?P<unit_ref>\d+)"
     semantics = ReferenceSemantics.from_metadata(
         DomainMetadata(
             custom_json={
@@ -154,7 +178,7 @@ def test_verified_generic_reference_contract_enables_reference_defaults():
                 },
                 "domain_structure": {
                     "primary_anchor": {
-                        "regex": r"Part\s+(?P<parent_ref>\d+)\s+Item\s+(?P<unit_ref>\d+)",
+                        "regex": primary_regex,
                         "unit": "item",
                         "verified": True,
                     }
@@ -163,6 +187,7 @@ def test_verified_generic_reference_contract_enables_reference_defaults():
                     "enabled": True,
                     "build_canonical_units": True,
                 },
+                "reference_contract_validation": single_anchor_validation(primary_regex),
             }
         )
     )
@@ -175,6 +200,7 @@ def test_verified_generic_reference_contract_enables_reference_defaults():
 
 
 def test_reference_metadata_records_generic_identity_ranges():
+    primary_regex = r"Part\s+(?P<parent_ref>\d+)\s+Item\s+(?P<unit_ref>\d+)"
     semantics = ReferenceSemantics.from_metadata(
         DomainMetadata(
             custom_json={
@@ -185,13 +211,14 @@ def test_reference_metadata_records_generic_identity_ranges():
                 },
                 "domain_structure": {
                     "primary_anchor": {
-                        "regex": r"Part\s+(?P<parent_ref>\d+)\s+Item\s+(?P<unit_ref>\d+)",
+                        "regex": primary_regex,
                         "unit": "item",
                         "verified": True,
                     }
                 },
                 "reference_resolution": {"enabled": True, "build_canonical_units": True},
                 "chunking": {"unit": "item", "include_neighbors": 1},
+                "reference_contract_validation": single_anchor_validation(primary_regex),
             }
         )
     )
@@ -209,6 +236,7 @@ def test_reference_metadata_records_generic_identity_ranges():
 
 
 def test_verified_generic_identity_range_does_not_emit_chapter_or_hadith_fields():
+    primary_regex = r"Part\s+(?P<part>\d+),\s+Item\s+(?P<item>\d+)"
     semantics = ReferenceSemantics.from_metadata(
         DomainMetadata(
             custom_json={
@@ -219,12 +247,13 @@ def test_verified_generic_identity_range_does_not_emit_chapter_or_hadith_fields(
                 },
                 "domain_structure": {
                     "primary_anchor": {
-                        "regex": r"Part\s+(?P<part>\d+),\s+Item\s+(?P<item>\d+)",
+                        "regex": primary_regex,
                         "unit": "item",
                         "verified": True,
                     }
                 },
                 "reference_resolution": {"enabled": True, "build_canonical_units": True},
+                "reference_contract_validation": single_anchor_validation(primary_regex),
             }
         )
     )
@@ -254,7 +283,7 @@ def test_unverified_legacy_schema_does_not_use_builtin_reference_adapter():
     assert semantics.derive_reference_metadata("Text [3:9]") == {}
 
 
-def test_hint_chapter_verse_anchor_keeps_legacy_fields_out_of_metadata():
+def test_hint_chapter_verse_anchor_does_not_materialize_reference_metadata():
     semantics = ReferenceSemantics.from_metadata(
         DomainMetadata(
             custom_json={
@@ -277,16 +306,13 @@ def test_hint_chapter_verse_anchor_keeps_legacy_fields_out_of_metadata():
     metadata = semantics.derive_reference_metadata("Verse 18:30 body.")
 
     assert semantics.reference_capability == "hint"
-    assert metadata["references"] == ["18:30"]
-    assert metadata["reference_identity_range"] == {
-        "chapter": {"start": 18, "end": 18},
-        "verse": {"start": 30, "end": 30},
-    }
+    assert metadata == {}
     assert "chapter_start" not in metadata
     assert "verse_start" not in metadata
 
 
 def test_reference_semantics_extracts_custom_anchor_references():
+    primary_regex = r"Folio\s+(?P<folio>\d+)\s+Line\s+(?P<line>\d+)"
     metadata = DomainMetadata(
         domain="archive",
         custom_json={
@@ -297,12 +323,13 @@ def test_reference_semantics_extracts_custom_anchor_references():
             },
             "domain_structure": {
                 "primary_anchor": {
-                    "regex": r"Folio\s+(?P<folio>\d+)\s+Line\s+(?P<line>\d+)",
+                    "regex": primary_regex,
                     "unit": "folio_line",
                     "verified": True,
                 }
             },
             "reference_resolution": {"enabled": True, "build_canonical_units": True},
+            "reference_contract_validation": single_anchor_validation(primary_regex),
         },
     )
 
@@ -314,6 +341,8 @@ def test_reference_semantics_extracts_custom_anchor_references():
 
 
 def test_reference_metadata_extracts_contextual_surah_verse_units():
+    context_regex = r"\bSurah\s+(?P<chapter>\d{1,4})\b"
+    unit_regex = r"\b(?P<verse>10[45])\b"
     metadata = DomainMetadata(
         domain="quran",
         custom_json={
@@ -325,18 +354,20 @@ def test_reference_metadata_extracts_contextual_surah_verse_units():
             "domain_structure": {
                 "context_anchor": {
                     "type": "chapter_verse",
-                    "regex": r"\bSurah\s+(?P<chapter>\d{1,4})\b",
+                    "regex": context_regex,
                     "unit": "chapter",
                     "verified": True,
                 },
                 "unit_anchor": {
                     "type": "chapter_verse",
-                    "regex": r"\b(?P<verse>10[45])\b",
+                    "regex": unit_regex,
                     "unit": "verse",
                     "context_source": "context_anchor",
                     "verified": True,
                 },
             },
+            "reference_resolution": {"enabled": True, "build_canonical_units": True},
+            "reference_contract_validation": contextual_validation(context_regex, unit_regex),
         },
     )
     semantics = ReferenceSemantics.from_metadata(metadata)
@@ -350,6 +381,8 @@ def test_reference_metadata_extracts_contextual_surah_verse_units():
 
 
 def test_contextual_reference_extraction_ignores_context_anchor_overlap():
+    context_regex = r"\bSurah\s+(?P<chapter>\d{1,4})\b"
+    unit_regex = r"\b(?P<verse>\d{1,4})\b"
     metadata = DomainMetadata(
         domain="quran",
         custom_json={
@@ -360,17 +393,19 @@ def test_contextual_reference_extraction_ignores_context_anchor_overlap():
             },
             "domain_structure": {
                 "context_anchor": {
-                    "regex": r"\bSurah\s+(?P<chapter>\d{1,4})\b",
+                    "regex": context_regex,
                     "unit": "chapter",
                     "verified": True,
                 },
                 "unit_anchor": {
-                    "regex": r"\b(?P<verse>\d{1,4})\b",
+                    "regex": unit_regex,
                     "unit": "verse",
                     "context_source": "context_anchor",
                     "verified": True,
                 },
             },
+            "reference_resolution": {"enabled": True, "build_canonical_units": True},
+            "reference_contract_validation": contextual_validation(context_regex, unit_regex),
         },
     )
 
@@ -382,6 +417,8 @@ def test_contextual_reference_extraction_ignores_context_anchor_overlap():
 
 
 def test_contextual_reference_contract_does_not_use_builtin_primary_fallback():
+    context_regex = r"\bSurah\s+(?P<chapter>\d{1,4})\b"
+    unit_regex = r"\bAyah\s+(?P<verse>\d{1,4})\b"
     metadata = DomainMetadata(
         domain="quran",
         custom_json={
@@ -392,17 +429,19 @@ def test_contextual_reference_contract_does_not_use_builtin_primary_fallback():
             },
             "domain_structure": {
                 "context_anchor": {
-                    "regex": r"\bSurah\s+(?P<chapter>\d{1,4})\b",
+                    "regex": context_regex,
                     "unit": "chapter",
                     "verified": True,
                 },
                 "unit_anchor": {
-                    "regex": r"\bAyah\s+(?P<verse>\d{1,4})\b",
+                    "regex": unit_regex,
                     "unit": "verse",
                     "context_source": "context_anchor",
                     "verified": True,
                 },
             },
+            "reference_resolution": {"enabled": True, "build_canonical_units": True},
+            "reference_contract_validation": contextual_validation(context_regex, unit_regex),
         },
     )
     semantics = ReferenceSemantics.from_metadata(metadata)
@@ -412,6 +451,8 @@ def test_contextual_reference_contract_does_not_use_builtin_primary_fallback():
 
 
 def test_contextual_reference_split_stops_at_next_context_anchor():
+    context_regex = r"\bSurah\s+(?P<chapter>\d{1,4})\b"
+    unit_regex = r"\b(?P<verse>\d{1,4})\b"
     metadata = DomainMetadata(
         domain="quran",
         custom_json={
@@ -422,17 +463,19 @@ def test_contextual_reference_split_stops_at_next_context_anchor():
             },
             "domain_structure": {
                 "context_anchor": {
-                    "regex": r"\bSurah\s+(?P<chapter>\d{1,4})\b",
+                    "regex": context_regex,
                     "unit": "chapter",
                     "verified": True,
                 },
                 "unit_anchor": {
-                    "regex": r"\b(?P<verse>\d{1,4})\b",
+                    "regex": unit_regex,
                     "unit": "verse",
                     "context_source": "context_anchor",
                     "verified": True,
                 },
             },
+            "reference_resolution": {"enabled": True, "build_canonical_units": True},
+            "reference_contract_validation": contextual_validation(context_regex, unit_regex),
         },
     )
 
@@ -448,6 +491,8 @@ def test_contextual_reference_split_stops_at_next_context_anchor():
 
 
 def test_contextual_reference_split_preserves_context_intro_before_first_unit():
+    context_regex = r"\bSurah\s+(?P<chapter>\d{1,4})\b"
+    unit_regex = r"\b(?P<verse>\d{1,4})\b"
     metadata = DomainMetadata(
         domain="quran",
         custom_json={
@@ -458,17 +503,19 @@ def test_contextual_reference_split_preserves_context_intro_before_first_unit():
             },
             "domain_structure": {
                 "context_anchor": {
-                    "regex": r"\bSurah\s+(?P<chapter>\d{1,4})\b",
+                    "regex": context_regex,
                     "unit": "chapter",
                     "verified": True,
                 },
                 "unit_anchor": {
-                    "regex": r"\b(?P<verse>\d{1,4})\b",
+                    "regex": unit_regex,
                     "unit": "verse",
                     "context_source": "context_anchor",
                     "verified": True,
                 },
             },
+            "reference_resolution": {"enabled": True, "build_canonical_units": True},
+            "reference_contract_validation": contextual_validation(context_regex, unit_regex),
         },
     )
 
@@ -509,6 +556,7 @@ def test_unverified_primary_anchor_does_not_enable_canonical_units():
 
 
 def test_reference_semantics_supports_book_hadith_schema():
+    primary_regex = r"\bBook\s+(?P<book>\d+)\s*,?\s*Hadith\s+(?P<hadith>\d+)\b"
     semantics = ReferenceSemantics.from_metadata(
         DomainMetadata(
             domain="hadith",
@@ -524,10 +572,7 @@ def test_reference_semantics_supports_book_hadith_schema():
                 "domain_structure": {
                     "primary_anchor": {
                         "type": "book_hadith",
-                        "regex": (
-                            r"\bBook\s+(?P<book>\d+)\s*,?\s*Hadith\s+"
-                            r"(?P<hadith>\d+)\b"
-                        ),
+                        "regex": primary_regex,
                         "unit": "hadith",
                         "verified": True,
                     },
@@ -546,6 +591,7 @@ def test_reference_semantics_supports_book_hadith_schema():
                     "block_preview_chars": 80,
                     "store_text_hash": True,
                 },
+                "reference_contract_validation": single_anchor_validation(primary_regex),
             },
         )
     )
@@ -582,10 +628,6 @@ def test_reference_semantics_supports_book_hadith_schema():
         },
         "reference_identity_fields": ["book", "hadith"],
         "reference_unit_field": "hadith",
-        "book_start": 1,
-        "book_end": 1,
-        "hadith_start": 2,
-        "hadith_end": 2,
         "previous_ref": "book:1:hadith:1",
         "next_ref": "book:1:hadith:3",
     }
@@ -602,7 +644,7 @@ def test_reference_semantics_stays_generic_without_reference_cues():
     assert semantics.exact_reference_top1 is False
 
 
-def test_extract_query_reference_supports_quran_bracket_and_bare_forms():
+def test_extract_query_reference_uses_model_declared_anchor_forms():
     semantics = ReferenceSemantics.from_metadata(verified_quran_metadata())
 
     assert semantics.extract_query_reference("What does Quran 1:4 say?") == {
@@ -623,11 +665,7 @@ def test_extract_query_reference_supports_quran_bracket_and_bare_forms():
         "verse": 4,
         "raw": "1:4",
     }
-    assert semantics.extract_query_reference("what is surah 113") == {
-        "chapter": 113,
-        "ref": "surah 113",
-        "raw": "surah 113",
-    }
+    assert semantics.extract_query_reference("what is surah 113") is None
 
 
 def test_extract_chunk_references_finds_multiple_markers():
@@ -663,15 +701,13 @@ def test_derive_reference_metadata_records_range_pages_and_neighbors():
     )
 
     assert metadata["reference_type"] == "surah_ayah"
-    assert metadata["chapter_start"] == 1
-    assert metadata["chapter_end"] == 1
-    assert metadata["verse_start"] == 4
-    assert metadata["verse_end"] == 4
     assert metadata["references"] == ["1:4"]
     assert metadata["reference_identity_range"] == {
         "chapter": {"start": 1, "end": 1},
         "verse": {"start": 4, "end": 4},
     }
+    assert "chapter_start" not in metadata
+    assert "verse_start" not in metadata
     assert metadata["page_start"] == 7
     assert metadata["page_end"] == 8
     assert metadata["previous_ref"] == "1:3"
@@ -679,6 +715,7 @@ def test_derive_reference_metadata_records_range_pages_and_neighbors():
 
 
 def test_derive_reference_metadata_omits_neighbors_when_not_configured():
+    primary_regex = r"\[(?P<chapter>\d{1,4}):(?P<verse>\d{1,4})\]"
     semantics = ReferenceSemantics.from_metadata(
         DomainMetadata(
             custom_json={
@@ -689,12 +726,13 @@ def test_derive_reference_metadata_omits_neighbors_when_not_configured():
                 },
                 "domain_structure": {
                     "primary_anchor": {
-                        "regex": r"\[(?P<chapter>\d{1,4}):(?P<verse>\d{1,4})\]",
+                        "regex": primary_regex,
                         "unit": "verse",
                         "verified": True,
                     }
                 },
                 "reference_resolution": {"enabled": True, "build_canonical_units": True},
+                "reference_contract_validation": single_anchor_validation(primary_regex),
             }
         )
     )
@@ -710,6 +748,7 @@ def test_derive_reference_metadata_omits_neighbors_when_not_configured():
 
 
 def test_derive_reference_metadata_keeps_cross_reference_only_mentions_non_primary():
+    primary_regex = r"\bVerse\s+(?P<chapter>\d{1,4})\s*:\s*(?P<verse>\d{1,4})\b"
     semantics = ReferenceSemantics.from_metadata(
         DomainMetadata(
             custom_json={
@@ -719,16 +758,18 @@ def test_derive_reference_metadata_keeps_cross_reference_only_mentions_non_prima
                 },
                 "domain_structure": {
                     "primary_anchor": {
-                        "regex": r"\bVerse\s+(?P<chapter>\d{1,4})\s*:\s*(?P<verse>\d{1,4})\b",
+                        "regex": primary_regex,
                         "unit": "verse_section",
                         "verified": True,
                     },
                     "inline_references": {
                         "regex": r"(?P<chapter>\d{1,4})\s*:\s*(?P<verse>\d{1,4})",
                         "policy": "cross_reference_only",
+                        "verified": True,
                     },
                 },
                 "reference_resolution": {"enabled": True, "build_canonical_units": True},
+                "reference_contract_validation": single_anchor_validation(primary_regex),
             }
         )
     )
@@ -743,28 +784,27 @@ def test_derive_reference_metadata_keeps_cross_reference_only_mentions_non_prima
     )[0]["ref"] == "18:30"
     assert metadata["references"] == ["18:30"]
     assert metadata["cross_references"] == ["25:75"]
-    assert metadata["chapter_start"] == 18
-    assert metadata["chapter_end"] == 18
-    assert metadata["verse_start"] == 30
-    assert metadata["verse_end"] == 30
+    assert "chapter_start" not in metadata
+    assert "verse_start" not in metadata
 
 
-def test_builtin_quran_tafseer_defaults_inline_references_to_cross_references(tmp_path):
+def test_builtin_quran_tafseer_profile_has_no_reference_capability_without_contract(tmp_path):
     profile = DomainMetadataService(tmp_path).get_profile("quran_tafseer")
     assert profile is not None
     semantics = ReferenceSemantics.from_metadata(profile.metadata)
 
-    assert semantics.inline_reference_policy == "cross_reference_only"
+    assert semantics.reference_capability == "none"
+    assert semantics.canonical_units_enabled is False
     assert semantics.extract_primary_anchor_references("See also 69:18).") == []
     assert semantics.derive_reference_metadata("See also 69:18).") == {}
     assert semantics.derive_reference_metadata(
         "Verse 18:30 body mentions 25:75-76.",
         {"page": 809},
-    )["references"] == ["18:30"]
+    ) == {}
     assert semantics.derive_reference_metadata(
         "[1:1]\n\nArabic text\n\nEnglish translation.",
         {"page": 2},
-    )["references"] == ["1:1"]
+    ) == {}
 
 
 def test_chunk_reference_metadata_aliases_derive_reference_metadata():
@@ -775,7 +815,7 @@ def test_chunk_reference_metadata_aliases_derive_reference_metadata():
     )
 
 
-def test_reference_semantics_uses_custom_schema_pattern_for_legal_sections():
+def test_reference_semantics_keeps_custom_schema_pattern_as_hint_without_execution():
     semantics = ReferenceSemantics.from_metadata(
         DomainMetadata(
             domain="legal",
@@ -791,42 +831,28 @@ def test_reference_semantics_uses_custom_schema_pattern_for_legal_sections():
         )
     )
 
-    assert semantics.extract_query_reference("Explain Article 12.3") == {
-        "raw": "Article 12.3",
-        "section": "12.3",
-        "ref": "section:12.3",
-    }
-    assert semantics.derive_reference_metadata("Article 12.3 text")["references"] == [
-        "section:12.3"
-    ]
+    assert semantics.reference_capability == "hint"
+    assert semantics.extract_query_reference("Explain Article 12.3") is None
+    assert semantics.derive_reference_metadata("Article 12.3 text") == {}
 
 
-def test_reference_semantics_infers_legal_section_from_standard_metadata():
+def test_reference_semantics_does_not_infer_legal_section_from_standard_metadata():
     semantics = ReferenceSemantics.from_metadata(
         DomainMetadata(domain="legal", document_type="statute", reference_pattern="section")
     )
 
-    assert semantics.profile_name == "reference_hint"
-    assert semantics.reference_type == "legal_section"
-    assert semantics.extract_query_reference("Explain Section 12.3") == {
-        "raw": "Section 12.3",
-        "section": "12.3",
-        "ref": "section:12.3",
-    }
+    assert semantics.profile_name == "generic"
+    assert semantics.reference_type is None
+    assert semantics.extract_query_reference("Explain Section 12.3") is None
 
 
-def test_reference_semantics_infers_page_line_from_standard_metadata():
+def test_reference_semantics_does_not_infer_page_line_from_standard_metadata():
     semantics = ReferenceSemantics.from_metadata(
         DomainMetadata(domain="archive", reference_pattern="page line")
     )
 
-    assert semantics.reference_type == "page_line"
-    assert semantics.extract_query_reference("See page 5 line 8") == {
-        "raw": "page 5 line 8",
-        "page": 5,
-        "line": 8,
-        "ref": "page:5:line:8",
-    }
+    assert semantics.reference_type is None
+    assert semantics.extract_query_reference("See page 5 line 8") is None
 
 
 def test_reference_semantics_splits_text_into_reference_units():

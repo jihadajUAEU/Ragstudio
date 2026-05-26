@@ -23,35 +23,6 @@ def parse_query_references(query: str, contracts: list[dict[str, Any]]) -> list[
     return list(dict.fromkeys(references))
 
 
-def parse_legacy_reference_query(
-    query: str,
-    *,
-    enabled_profiles: set[str] | None = None,
-) -> list[str]:
-    profiles = enabled_profiles or set()
-    references: list[str] = []
-    if "chapter_verse" in profiles:
-        references.extend(re.findall(r"\b\d{1,4}:\d{1,6}\b", query))
-    if "book_hadith" in profiles:
-        references.extend(
-            f"book:{int(match.group('book'))}:hadith:{int(match.group('hadith'))}"
-            for match in re.finditer(
-                r"\bBook\s+(?P<book>\d{1,4})\s*,?\s*Hadith\s+(?P<hadith>\d{1,6})\b",
-                query,
-                flags=re.IGNORECASE,
-            )
-        )
-        references.extend(
-            f"book:{int(match.group('book'))}:hadith:{int(match.group('hadith'))}"
-            for match in re.finditer(
-                r"\bbook:(?P<book>\d{1,4}):hadith:(?P<hadith>\d{1,6})\b",
-                query,
-                flags=re.IGNORECASE,
-            )
-        )
-    return list(dict.fromkeys(references))
-
-
 def _single_anchor_references(
     query: str,
     anchors: list[dict[str, Any]],

@@ -61,6 +61,7 @@ class ReferenceUnitAssembler:
 
         units: list[AssembledReferenceUnit] = []
         current: _OpenReferenceUnit | None = None
+        pending_before_first_reference: list[ReferenceSourceBlock] = []
         for block in self._expand_multi_reference_blocks(blocks, semantics):
             text = block.text.strip()
             references = semantics.extract_primary_anchor_references(text) if text else []
@@ -79,17 +80,56 @@ class ReferenceUnitAssembler:
                     )
                 reference = references[0]
                 is_header_only = self._is_header_only_reference(text, reference)
-                role = "reference_header" if is_header_only else "reference_body"
+                is_reference_header = is_header_only or block.block_type == "header"
+                role = "reference_header" if is_reference_header else "reference_body"
                 unit_block = replace(block, role=role)
+                pending_blocks = self._pending_blocks_for_reference(
+                    pending_before_first_reference,
+                    block,
+                    semantics,
+                )
+                if pending_blocks is not pending_before_first_reference:
+                    units.extend(
+                        self._provenance_units_for_pending(
+                            pending_before_first_reference,
+                            pending_blocks,
+                            semantics=semantics,
+                            parent_metadata=parent_metadata,
+                            parent_source_location=parent_source_location,
+                            runtime_source_id=runtime_source_id,
+                            preview_ref=preview_ref,
+                        )
+                    )
+                body_blocks = [] if is_reference_header else [unit_block]
+                body_blocks.extend(pending_blocks)
                 current = _OpenReferenceUnit(
                     reference=reference,
-                    blocks=[unit_block],
-                    body_blocks=[] if is_header_only else [unit_block],
+                    blocks=[unit_block, *pending_blocks],
+                    body_blocks=body_blocks,
                 )
+                pending_before_first_reference = []
                 continue
 
             if current is None:
-                if self._should_emit_provenance(block):
+                if semantics.carry_forward_body_blocks and text:
+                    pending_before_first_reference.append(block)
+                elif self._should_emit_provenance(block):
+                    if pending_before_first_reference:
+                        units.append(
+                            self._provenance_unit(
+                                [
+                                    replace(pending_block, role="unassigned")
+                                    for pending_block in pending_before_first_reference
+                                ],
+                                semantics=semantics,
+                                parent_metadata=parent_metadata,
+                                parent_source_location=parent_source_location,
+                                runtime_source_id=runtime_source_id,
+                                preview_ref=preview_ref,
+                                reason="unassigned_before_first_reference",
+                            )
+                        )
+                        pending_before_first_reference = []
                     units.append(
                         self._provenance_unit(
                             [replace(block, role="unassigned")],
@@ -162,6 +202,18 @@ class ReferenceUnitAssembler:
             elif self._should_emit_provenance(block):
                 current.blocks.append(replace(block, role="parser_warning"))
 
+        if pending_before_first_reference:
+            units.append(
+                self._provenance_unit(
+                    [replace(block, role="unassigned") for block in pending_before_first_reference],
+                    semantics=semantics,
+                    parent_metadata=parent_metadata,
+                    parent_source_location=parent_source_location,
+                    runtime_source_id=runtime_source_id,
+                    preview_ref=preview_ref,
+                    reason="unassigned_before_first_reference",
+                )
+            )
         if current is not None:
             units.append(
                 self._finish_unit(
@@ -175,6 +227,51 @@ class ReferenceUnitAssembler:
                 )
             )
         return units
+
+    def _pending_blocks_for_reference(
+        self,
+        pending: list[ReferenceSourceBlock],
+        reference_block: ReferenceSourceBlock,
+        semantics: ReferenceSemantics,
+    ) -> list[ReferenceSourceBlock]:
+        if not pending:
+            return []
+        if not semantics.carry_forward_body_blocks:
+            return []
+        if not self._within_page_gap(pending[-1], reference_block, semantics.max_page_gap):
+            return []
+        return [
+            replace(
+                block,
+                role="reference_body" if index == 0 else "reference_continuation",
+            )
+            for index, block in enumerate(pending)
+        ]
+
+    def _provenance_units_for_pending(
+        self,
+        pending: list[ReferenceSourceBlock],
+        attached: list[ReferenceSourceBlock],
+        *,
+        semantics: ReferenceSemantics,
+        parent_metadata: dict[str, Any],
+        parent_source_location: dict[str, Any],
+        runtime_source_id: str | None,
+        preview_ref: str | None,
+    ) -> list[AssembledReferenceUnit]:
+        if not pending or attached:
+            return []
+        return [
+            self._provenance_unit(
+                [replace(block, role="unassigned") for block in pending],
+                semantics=semantics,
+                parent_metadata=parent_metadata,
+                parent_source_location=parent_source_location,
+                runtime_source_id=runtime_source_id,
+                preview_ref=preview_ref,
+                reason="unassigned_before_first_reference",
+            )
+        ]
 
     def _finish_unit(
         self,

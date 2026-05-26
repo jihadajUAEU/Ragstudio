@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import re
 from dataclasses import asdict, replace
 from time import perf_counter
 from typing import Any
@@ -653,7 +652,6 @@ class RetrievalOrchestrator:
         return _quality_diagnostics_from_reports(
             reports,
             query_script=query_script,
-            query=query,
         )
 
     def _context_assembly_service(self, profile: Any) -> ContextAssemblyService:
@@ -2228,9 +2226,7 @@ def _quality_diagnostics_from_reports(
     reports: list[dict[str, Any]],
     *,
     query_script: str,
-    query: str,
 ) -> dict[str, Any] | None:
-    reference_hints = _reference_hints(query)
     affected: list[str] = []
     document_summaries: list[dict[str, Any]] = []
     unknown_documents: list[str] = []
@@ -2260,8 +2256,6 @@ def _quality_diagnostics_from_reports(
                 continue
             reference = item.get("reference")
             if not isinstance(reference, str) or not reference:
-                continue
-            if reference_hints and reference not in reference_hints:
                 continue
             if not _reference_affects_script(item, query_script):
                 continue
@@ -2318,13 +2312,6 @@ def _reference_affects_script(reference: dict[str, Any], query_script: str) -> b
     if isinstance(materialization, dict) and query_script == "arabic":
         return not bool(materialization.get("index_exact_arabic", True))
     return False
-
-
-def _reference_hints(query: str) -> set[str]:
-    return {
-        re.sub(r"\s+", "", match)
-        for match in re.findall(r"\b\d{1,4}\s*:\s*\d{1,4}\b", query)
-    }
 
 
 def _evidence_from_context(

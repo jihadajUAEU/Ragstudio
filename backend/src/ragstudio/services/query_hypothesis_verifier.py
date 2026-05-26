@@ -9,10 +9,7 @@ from ragstudio.services.query_hypothesis_service import (
     QueryHypothesis,
     normalize_reference_hypothesis,
 )
-from ragstudio.services.reference_regex_registry import QUERY_REFERENCE_PATTERN
 from ragstudio.services.retrieval_evidence import EvidenceCandidate
-
-_REFERENCE_RE = QUERY_REFERENCE_PATTERN
 
 
 @dataclass(frozen=True)
@@ -98,7 +95,7 @@ class QueryHypothesisVerifier:
             if not matched_terms:
                 continue
             answer = hypothesis.probable_answer
-            reference = _reference(candidate, matched_terms=matched_terms)
+            reference = _reference(candidate)
             expected_reference = _expected_reference(hypothesis)
             if expected_reference and _normalize_reference(reference) != _normalize_reference(
                 expected_reference
@@ -266,31 +263,12 @@ def _expected_reference(hypothesis: QueryHypothesis) -> str | None:
     return answer.reference
 
 
-def _reference(candidate: EvidenceCandidate, *, matched_terms: list[str]) -> str | None:
-    section_reference = _section_reference(candidate.text, matched_terms=matched_terms)
-    if section_reference:
-        return section_reference
+def _reference(candidate: EvidenceCandidate) -> str | None:
     if candidate.canonical_reference:
         return candidate.canonical_reference
     raw_reference = candidate.source_location.get("reference")
     if isinstance(raw_reference, str) and raw_reference:
         return raw_reference
-    match = _REFERENCE_RE.search(candidate.text)
-    return match.group("reference") if match else None
-
-
-def _section_reference(text: str, *, matched_terms: list[str]) -> str | None:
-    matches = list(_REFERENCE_RE.finditer(text))
-    if not matches:
-        return None
-    normalized_terms = {normalize_arabic_text(term) for term in matched_terms if term}
-    for index, match in enumerate(matches):
-        section_start = match.end()
-        section_end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
-        section = text[section_start:section_end]
-        section_tokens = {normalize_arabic_text(token) for token in arabic_tokens(section)}
-        if normalized_terms & section_tokens:
-            return match.group("reference")
     return None
 
 

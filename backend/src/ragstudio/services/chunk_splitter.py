@@ -191,9 +191,9 @@ class ChunkSplitter:
 
     def _profile(self, metadata: DomainMetadata) -> ChunkProfile:
         semantics = ReferenceSemantics.from_metadata(metadata)
-        if semantics.profile_name == "scripture_reference":
+        if semantics.canonical_units_enabled:
             return ChunkProfile(
-                "scripture_reference",
+                "reference_contract",
                 target_words=REFERENCE_HEAVY_TARGET_WORDS,
                 hard_max_words=min(self.max_words, REFERENCE_HEAVY_HARD_MAX_WORDS),
                 semantics=semantics,
@@ -1065,12 +1065,9 @@ class ChunkSplitter:
     def _starts_boundary(self, block: str) -> bool:
         patterns = (
             r"^#{1,6}\s+",
-            r"^Verse\s+\d+:\d+\b",
-            r"^Surah\s+\d+\b",
             r"^\[\[?page\s+\d+\]?\]",
-            r"^\[\d+\s*:\s*\d+\]",
             r"^page\s+\d+\b",
-            r"^\d+[:.]\d+\b",
+            r"^\d+\.\s+",
         )
         return any(re.match(pattern, block, flags=re.IGNORECASE) for pattern in patterns)
 
@@ -1469,7 +1466,14 @@ class ChunkSplitter:
         ]
         if len(first_blocks) >= 2:
             candidate = "\n\n".join(first_blocks[:2]).strip()
-            if self._document_title(candidate, chunk.source_location) is not None:
+            if (
+                self._document_title(
+                    candidate,
+                    chunk.source_location,
+                    semantics=profile.semantics,
+                )
+                is not None
+            ):
                 remaining = sections[1:]
                 if len(first_blocks) > 2:
                     remaining = ["\n\n".join(first_blocks[2:]).strip(), *remaining]
@@ -1478,7 +1482,14 @@ class ChunkSplitter:
         if len(sections) < 3:
             return [], sections
         candidate = "\n\n".join(sections[:2]).strip()
-        if self._document_title(candidate, chunk.source_location) is not None:
+        if (
+            self._document_title(
+                candidate,
+                chunk.source_location,
+                semantics=profile.semantics,
+            )
+            is not None
+        ):
             return [candidate], sections[2:]
         return [], sections
 
@@ -1486,6 +1497,8 @@ class ChunkSplitter:
         self,
         text: str,
         source_location: dict[str, Any] | None = None,
+        *,
+        semantics: ReferenceSemantics | None = None,
     ) -> str | None:
         if not self._is_early_source_location(source_location):
             return None
@@ -1498,7 +1511,9 @@ class ChunkSplitter:
         if any(self._starts_boundary(block) for block in title_blocks):
             return None
         joined = " ".join(title_blocks).strip()
-        if len(joined.split()) <= 18 and not re.search(r"\d+\s*:\s*\d+", joined):
+        if semantics is not None and semantics.extract_primary_anchor_references(joined):
+            return None
+        if len(joined.split()) <= 18:
             return joined
         return None
 

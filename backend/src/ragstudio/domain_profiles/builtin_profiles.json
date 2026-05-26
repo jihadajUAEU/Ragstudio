@@ -62,7 +62,7 @@
           "preserve_original_block_type": true
         },
         "retrieval": {
-          "boost_same_chapter": true
+          "boost_same_parent_reference": true
         }
       },
       "reference_pattern": null,
@@ -91,21 +91,6 @@
       "citation_style": "section",
       "expected_structure": "sections",
       "custom_json": {
-        "reference_schema": {
-          "type": "section",
-          "display": "Section {section}",
-          "fields": {
-            "section": "section_number"
-          }
-        },
-        "relationships": {
-          "section": [
-            "same_section"
-          ],
-          "next": [
-            "next_section"
-          ]
-        },
         "chunking": {
           "unit": "section"
         },
@@ -113,13 +98,9 @@
           "allow_equations_as_content": false,
           "recover_text_bearing_blocks_as_prose": true,
           "preserve_original_block_type": true
-        },
-        "retrieval": {
-          "exact_reference_top1": true,
-          "boost_same_chapter": true
         }
       },
-      "reference_pattern": "section_number",
+      "reference_pattern": null,
       "script": null,
       "content_role": null,
       "metadata_sources": []
@@ -184,32 +165,6 @@
       "citation_style": "book_hadith",
       "expected_structure": "book_chapter_hadith",
       "custom_json": {
-        "reference_schema": {
-          "type": "book_hadith",
-          "display": "Book {book}, Hadith {hadith}",
-          "canonical_ref_template": "book:{book}:hadith:{hadith}",
-          "fields": {
-            "book": "book_number",
-            "hadith": "hadith_number",
-            "chapter": "chapter_title"
-          }
-        },
-        "relationships": {
-          "previous": [
-            "same_book",
-            "hadith - 1"
-          ],
-          "next": [
-            "same_book",
-            "hadith + 1"
-          ],
-          "book": [
-            "same_book"
-          ],
-          "chapter": [
-            "same_chapter"
-          ]
-        },
         "chunking": {
           "unit": "hadith",
           "include_neighbors": 1,
@@ -217,8 +172,8 @@
           "merge_reference_header_with_body": true
         },
         "reference_resolution": {
-          "enabled": true,
-          "build_canonical_units": true,
+          "enabled": false,
+          "build_canonical_units": false,
           "carry_forward_body_blocks": true,
           "header_only_policy": "provenance_only",
           "continuation_policy": "until_next_reference",
@@ -244,35 +199,9 @@
           "formula": false,
           "table": false,
           "max_concurrent_files": 1
-        },
-        "retrieval": {
-          "exact_reference_top1": true,
-          "boost_same_chapter": true,
-          "boost_neighbor_verses": true
-        },
-        "graph": {
-          "node_types": [
-            "collection",
-            "book",
-            "chapter",
-            "hadith",
-            "chunk"
-          ],
-          "edge_types": [
-            "contains",
-            "references",
-            "next_hadith",
-            "same_book",
-            "same_chapter"
-          ],
-          "materialize_from": [
-            "mineru_structure",
-            "reference_metadata"
-          ],
-          "confidence_policy": "evidence_required"
         }
       },
-      "reference_pattern": "Book N, Hadith N",
+      "reference_pattern": null,
       "script": "mixed",
       "content_role": "primary_source",
       "metadata_sources": []
@@ -299,54 +228,15 @@
       "citation_style": "surah_ayah",
       "expected_structure": "surah_ayah_sections",
       "custom_json": {
-        "reference_schema": {
-          "type": "chapter_verse",
-          "display": "{chapter}:{verse}",
-          "canonical_ref_template": "{chapter}:{verse}",
-          "fields": {
-            "chapter": "surah_number",
-            "verse": "ayah_number",
-            "page": "page_number"
-          }
-        },
-        "relationships": {
-          "previous": [
-            "same_chapter",
-            "verse - 1"
-          ],
-          "next": [
-            "same_chapter",
-            "verse + 1"
-          ],
-          "chapter": [
-            "same_chapter"
-          ],
-          "page": [
-            "same_page"
-          ]
-        },
         "chunking": {
           "unit": "verse",
           "include_neighbors": 1,
           "preserve_parallel_text": true,
           "merge_reference_header_with_body": true
         },
-        "domain_structure": {
-          "primary_anchor": {
-            "type": "chapter_verse",
-            "regex": "(\\bVerse\\s+|\\[)(?P<chapter>\\d{1,4})\\s*:\\s*(?P<verse>\\d{1,4})\\]?",
-            "unit": "verse_section",
-            "verified": true
-          },
-          "inline_references": {
-            "type": "chapter_verse",
-            "regex": "(?P<chapter>\\d{1,4})\\s*:\\s*(?P<verse>\\d{1,4})",
-            "policy": "cross_reference_only"
-          }
-        },
         "reference_resolution": {
-          "enabled": true,
-          "build_canonical_units": true,
+          "enabled": false,
+          "build_canonical_units": false,
           "carry_forward_body_blocks": true,
           "header_only_policy": "provenance_only",
           "continuation_policy": "until_next_reference",
@@ -372,34 +262,9 @@
           "formula": false,
           "table": false,
           "max_concurrent_files": 1
-        },
-        "retrieval": {
-          "exact_reference_top1": true,
-          "boost_same_chapter": true,
-          "boost_neighbor_verses": true
-        },
-        "graph": {
-          "node_types": [
-            "surah",
-            "ayah",
-            "translation",
-            "chunk"
-          ],
-          "edge_types": [
-            "contains",
-            "references",
-            "next_ayah",
-            "same_surah",
-            "translation_of"
-          ],
-          "materialize_from": [
-            "mineru_structure",
-            "reference_metadata"
-          ],
-          "confidence_policy": "evidence_required"
         }
       },
-      "reference_pattern": "surah_number:verse_number",
+      "reference_pattern": null,
       "script": "mixed",
       "content_role": "tafseer",
       "metadata_sources": []
@@ -443,7 +308,7 @@
           "preserve_original_block_type": true
         },
         "retrieval": {
-          "boost_same_chapter": true
+          "boost_same_parent_reference": true
         }
       },
       "reference_pattern": null,

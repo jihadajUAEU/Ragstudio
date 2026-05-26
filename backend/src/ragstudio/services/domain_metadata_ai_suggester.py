@@ -836,7 +836,7 @@ references that users may need to edit or tune, propose generic reference semant
 in custom_json instead of relying on a hardcoded local strategy. Separate primary answerable units
 from inline cross-references, and provide a document-specific quality/script policy
 and layout/block recovery policy instead of only broad domain metadata.
-Examples include Quran chapter:verse references, legal sections/subsections,
+Examples include recurring numbered headings, legal sections/subsections,
 page-line references, case or article citations, and similar cited corpora.
 Return JSON only with this shape:
 {{
@@ -932,11 +932,11 @@ Return JSON only with this shape:
       "mineru_parse_options": null,
       "reference_contract_candidates": [
         {{
-          "schema_type": "chapter_verse",
-          "unit": "verse",
+          "schema_type": "document_declared_reference",
+          "unit": "visible_answerable_unit",
           "identity": {{
-            "fields": ["chapter", "verse"],
-            "canonical_ref_template": "{{chapter}}:{{verse}}"
+            "fields": ["parent_id", "unit_id"],
+            "canonical_ref_template": "{{parent_id}}:{{unit_id}}"
           }},
           "extractors": [
             {{
@@ -970,24 +970,26 @@ For custom_json.reference_schema, describe the editable reference type, display
 format, fields, and any observed pattern only when supported by the samples.
 For custom_json.reference_contract_candidates, generate executable extraction
 contracts when the sampled pages show structured references. Prefer named regex
-groups that directly match identity.fields. Do not mark the contract verified;
+groups that directly match identity.fields, and choose identity field names from
+the visible document structure instead of predefined domain names. Do not mark
+the contract verified;
 Ragstudio will execute candidates against sampled pages and verify only working
 contracts. If the samples do not show enough evidence, return an empty list.
 For custom_json.relationships, describe useful relationships such as previous,
-next, same_section, same_page, same_article, or same_chapter when they are visible
+next, same_section, same_page, same_article, or same_parent when they are visible
 or strongly implied by the reference system.
 For custom_json.chunking, suggest the natural chunk unit and whether neighboring
 references, parallel text, headings, page-line spans, or section boundaries should
 be preserved.
 For custom_json.domain_structure, identify the text pattern that starts a primary
 answerable unit and distinguish it from inline cross-references. For example, a
-Tafseer page may use "Verse 18:30" as the section anchor while "25:75-76" inside
-the commentary is only a cross-reference.
+page may use a visible parent/unit heading as the section anchor while another
+inline citation inside commentary text is only a cross-reference.
 When pages use contextual local numbers, describe that directly. For example,
-if a page has a chapter heading such as "Surah 7" and local verse numbers such
-as "104" and "105", put the chapter heading regex in context_anchor and the
-local verse regex in unit_anchor. Do not invent chapter:verse anchors unless
-the sampled pages visibly contain chapter:verse text.
+if a page has a parent heading and local item numbers, put the parent heading
+regex in context_anchor and the local item regex in unit_anchor. Do not invent
+combined references unless the sampled pages visibly contain combined reference
+text.
 For collections with a book-level heading and item-level numbers, keep the
 book/item heading as the primary answerable unit. Parenthetical references inside
 explanatory text are cross-references/provenance only unless the page visibly uses
@@ -1012,8 +1014,8 @@ secondary-source role, do not require a primary-source script unless the sampled
 pages show that every answerable unit depends on that script.
 For custom_json.mineru_parse_options, suggest upstream MinerU/RAG-Anything parse
 overrides only when the samples justify them. Use parse_method="ocr" when the PDF
-appears scanned or when Arabic glyphs need OCR, lang="arabic" for Arabic or mixed
-Arabic religious texts, formula=false when standalone Arabic prose/verses could be
+appears scanned or when source-script glyphs need OCR, set lang to the visible
+script/language when justified, formula=false when standalone prose could be
 misclassified as formulas, and table=false when tables are not part of the evidence.
 For custom_json.retrieval, suggest honest retrieval hints such as exact reference
 top result, same-section boosting, neighbor expansion, or page-line matching only

@@ -1683,11 +1683,7 @@ def _has_latin_script(text: str) -> bool:
 
 
 def _looks_like_reference_header(text: str) -> bool:
-    return (
-        re.fullmatch(
-            r"\s*Verse\s+\d{1,4}\s*:\s*\d{1,4}\s*",
-            text,
-            flags=re.IGNORECASE,
-        )
-        is not None
-    )
+    # Reference headers are document-contract behavior. This parser-layer recovery
+    # path has no verified contract context, so it must not guess a reference
+    # shape from hardcoded text patterns.
+    return False

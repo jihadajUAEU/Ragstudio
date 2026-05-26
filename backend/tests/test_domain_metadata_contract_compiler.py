@@ -9,7 +9,29 @@ from ragstudio.services.domain_metadata_contract_compiler import (
 from ragstudio.services.reference_contracts import build_executable_reference_contract
 
 
+def single_anchor_validation(regex: str) -> dict[str, object]:
+    return {
+        "status": "verified",
+        "selected_strategy": "single_anchor",
+        "selected_primary_anchor_regex": regex,
+        "matched_units": 2,
+        "matched_pages": [1],
+    }
+
+
+def contextual_validation(context_regex: str, unit_regex: str) -> dict[str, object]:
+    return {
+        "status": "verified",
+        "selected_strategy": "contextual_unit",
+        "selected_context_anchor_regex": context_regex,
+        "selected_unit_anchor_regex": unit_regex,
+        "matched_units": 2,
+        "matched_pages": [1],
+    }
+
+
 def test_custom_folio_line_contract_gets_generic_gate_without_family_rewrite():
+    primary_regex = r"Folio\s+(?P<folio>\d+)\s+Line\s+(?P<line>\d+)"
     metadata = DomainMetadata(
         domain="manuscript",
         document_type="folio",
@@ -26,11 +48,12 @@ def test_custom_folio_line_contract_gets_generic_gate_without_family_rewrite():
             "chunking": {"unit": "folio_line"},
             "domain_structure": {
                 "primary_anchor": {
-                    "regex": r"Folio\s+(?P<folio>\d+)\s+Line\s+(?P<line>\d+)",
+                    "regex": primary_regex,
                     "unit": "folio_line",
                     "verified": True,
                 }
             },
+            "reference_contract_validation": single_anchor_validation(primary_regex),
         },
     )
 
@@ -38,7 +61,12 @@ def test_custom_folio_line_contract_gets_generic_gate_without_family_rewrite():
 
     custom_json = compiled.custom_json
     assert custom_json["reference_schema"] == metadata.custom_json["reference_schema"]
-    assert custom_json["domain_structure"] == metadata.custom_json["domain_structure"]
+    assert custom_json["domain_structure"]["primary_anchor"] == {
+        "regex": primary_regex,
+        "unit": "folio_line",
+        "verified": True,
+        "type": "folio_line",
+    }
     assert custom_json["reference_resolution"]["enabled"] is True
     assert custom_json["reference_resolution"]["build_canonical_units"] is True
     assert custom_json["provenance"] == {
@@ -60,6 +88,7 @@ def test_custom_folio_line_contract_gets_generic_gate_without_family_rewrite():
 
 
 def test_quran_like_contract_uses_template_identity_groups_not_all_fields():
+    primary_regex = r"\[(?P<chapter>\d{1,4}):(?P<verse>\d{1,4})\]"
     metadata = DomainMetadata(
         domain="quran",
         document_type="translation",
@@ -78,11 +107,12 @@ def test_quran_like_contract_uses_template_identity_groups_not_all_fields():
             "chunking": {"unit": "verse"},
             "domain_structure": {
                 "primary_anchor": {
-                    "regex": r"\[(?P<chapter>\d{1,4}):(?P<verse>\d{1,4})\]",
+                    "regex": primary_regex,
                     "unit": "verse",
                     "verified": True,
                 }
             },
+            "reference_contract_validation": single_anchor_validation(primary_regex),
         },
     )
 
@@ -265,7 +295,7 @@ def test_unverified_bad_primary_anchor_raises_when_reference_chunking_requested(
 
     compiled = compile_domain_metadata(metadata)
 
-    with pytest.raises(DomainMetadataContractError, match="line"):
+    with pytest.raises(DomainMetadataContractError, match="reference_resolution\\.enabled"):
         validate_executable_reference_contract(compiled)
 
 
@@ -299,6 +329,8 @@ def test_unverified_malformed_template_raises_when_reference_chunking_requested(
 
 
 def test_contextual_anchor_pair_can_satisfy_contract_when_primary_is_incomplete():
+    context_regex = r"Folio\s+(?P<folio>\d+)"
+    unit_regex = r"Line\s+(?P<line>\d+)"
     metadata = DomainMetadata(
         domain="manuscript",
         custom_json={
@@ -313,21 +345,22 @@ def test_contextual_anchor_pair_can_satisfy_contract_when_primary_is_incomplete(
             "chunking": {"unit": "line"},
             "domain_structure": {
                 "primary_anchor": {
-                    "regex": r"Folio\s+(?P<folio>\d+)",
+                    "regex": context_regex,
                     "unit": "folio_line",
                     "verified": True,
                 },
                 "context_anchor": {
-                    "regex": r"Folio\s+(?P<folio>\d+)",
+                    "regex": context_regex,
                     "unit": "folio",
                     "verified": True,
                 },
                 "unit_anchor": {
-                    "regex": r"Line\s+(?P<line>\d+)",
+                    "regex": unit_regex,
                     "unit": "line",
                     "verified": True,
                 },
             },
+            "reference_contract_validation": contextual_validation(context_regex, unit_regex),
         },
     )
 

@@ -3,9 +3,8 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 from ragstudio.services.domain_resolvers.base import DomainResolver, ResolverContext
-from ragstudio.services.domain_resolvers.hadith import HadithResolver
 
-_RESOLVERS: tuple[DomainResolver, ...] = (HadithResolver(),)
+_RESOLVERS: tuple[DomainResolver, ...] = ()
 
 
 def resolvers_for_context(context: ResolverContext) -> Iterable[DomainResolver]:

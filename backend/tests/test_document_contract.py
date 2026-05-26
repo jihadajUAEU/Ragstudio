@@ -2,7 +2,29 @@ from ragstudio.schemas.parsing import DomainMetadata, IndexDocumentIn
 from ragstudio.services.document_contract import build_document_index_contract
 
 
+def single_anchor_validation(regex: str) -> dict[str, object]:
+    return {
+        "status": "verified",
+        "selected_strategy": "single_anchor",
+        "selected_primary_anchor_regex": regex,
+        "matched_units": 2,
+        "matched_pages": [1],
+    }
+
+
+def contextual_validation(context_regex: str, unit_regex: str) -> dict[str, object]:
+    return {
+        "status": "verified",
+        "selected_strategy": "contextual_unit",
+        "selected_context_anchor_regex": context_regex,
+        "selected_unit_anchor_regex": unit_regex,
+        "matched_units": 2,
+        "matched_pages": [1],
+    }
+
+
 def test_build_document_index_contract_marks_reference_contract_ready():
+    primary_regex = r"(?P<chapter>\d{1,4}):(?P<verse>\d{1,4})"
     options = IndexDocumentIn(
         domain_metadata=DomainMetadata(
             domain="quran_tafseer",
@@ -12,7 +34,7 @@ def test_build_document_index_contract_marks_reference_contract_ready():
                 "chunking": {"unit": "verse"},
                 "domain_structure": {
                     "primary_anchor": {
-                        "regex": r"(?P<chapter>\d{1,4}):(?P<verse>\d{1,4})",
+                        "regex": primary_regex,
                         "verified": True,
                     }
                 },
@@ -21,6 +43,7 @@ def test_build_document_index_contract_marks_reference_contract_ready():
                     "build_canonical_units": True,
                 },
                 "vision_recovery_policy": {"enabled": True},
+                "reference_contract_validation": single_anchor_validation(primary_regex),
             },
         )
     )
@@ -152,6 +175,7 @@ def test_build_document_index_contract_persists_parser_layout_hints():
 
 
 def test_build_document_index_contract_derives_preflight_from_quality_policy():
+    primary_regex = r"\[(?P<chapter>\d{1,4}):(?P<verse>\d{1,4})\]"
     options = IndexDocumentIn(
         domain_metadata=DomainMetadata(
             domain="quran",
@@ -161,7 +185,7 @@ def test_build_document_index_contract_derives_preflight_from_quality_policy():
                 "chunking": {"unit": "verse"},
                 "domain_structure": {
                     "primary_anchor": {
-                        "regex": r"\[(?P<chapter>\d{1,4}):(?P<verse>\d{1,4})\]",
+                        "regex": primary_regex,
                         "verified": True,
                     }
                 },
@@ -177,6 +201,7 @@ def test_build_document_index_contract_derives_preflight_from_quality_policy():
                     "required_scripts": ["arabic", "latin"],
                     "missing_required_script_action": "block",
                 },
+                "reference_contract_validation": single_anchor_validation(primary_regex),
             },
         )
     )
@@ -229,6 +254,8 @@ def test_build_document_index_contract_treats_unverified_reference_as_metadata_o
 
 
 def test_build_document_index_contract_uses_contextual_strategy_when_primary_incomplete():
+    context_regex = r"Folio\s+(?P<folio>\d+)"
+    unit_regex = r"Line\s+(?P<line>\d+)"
     options = IndexDocumentIn(
         domain_metadata=DomainMetadata(
             domain="archive",
@@ -240,17 +267,17 @@ def test_build_document_index_contract_uses_contextual_strategy_when_primary_inc
                 },
                 "domain_structure": {
                     "primary_anchor": {
-                        "regex": r"Folio\s+(?P<folio>\d+)",
+                        "regex": context_regex,
                         "unit": "folio_line",
                         "verified": True,
                     },
                     "context_anchor": {
-                        "regex": r"Folio\s+(?P<folio>\d+)",
+                        "regex": context_regex,
                         "unit": "folio",
                         "verified": True,
                     },
                     "unit_anchor": {
-                        "regex": r"Line\s+(?P<line>\d+)",
+                        "regex": unit_regex,
                         "unit": "line",
                         "verified": True,
                     },
@@ -260,6 +287,10 @@ def test_build_document_index_contract_uses_contextual_strategy_when_primary_inc
                     "build_canonical_units": True,
                 },
                 "preprocessing_policy": {"strict_pdf_text_preflight": True},
+                "reference_contract_validation": contextual_validation(
+                    context_regex,
+                    unit_regex,
+                ),
             },
         )
     )

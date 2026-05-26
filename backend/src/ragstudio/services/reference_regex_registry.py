@@ -19,41 +19,7 @@ SCRIPT_PATTERNS: dict[str, re.Pattern[str]] = {
     "han": re.compile(r"[\u4e00-\u9fff]"),
 }
 
-REFERENCE_PATTERN = re.compile(
-    r"(?P<prefix>\bQuran\s+)?(?P<bracket>\[)?"
-    r"(?P<chapter>\d{1,4})\s*:\s*(?P<verse>\d{1,4})"
-    r"(?(bracket)\])",
-    flags=re.IGNORECASE,
-)
-CHAPTER_ONLY_PATTERN = re.compile(
-    r"\b(?:surah|sura|chapter)\s+(?P<chapter>\d{1,4})\b",
-    flags=re.IGNORECASE,
-)
-LEGAL_SECTION_PATTERN = re.compile(
-    r"(?:\bsection\b|\bsec\.?|§)\s*(?P<section>\d+(?:\.\d+)*)",
-    flags=re.IGNORECASE,
-)
-PAGE_LINE_PATTERN = re.compile(
-    r"\b(?:page|p\.?)\s*(?P<page>\d+)(?:\s*(?:[:,-]\s*)?(?:line|l\.?)\s*(?P<line>\d+))?",
-    flags=re.IGNORECASE,
-)
-BOOK_HADITH_PATTERN = re.compile(
-    r"\bBook\s+(?P<book>\d+)\s*,?\s*Hadith\s+(?P<hadith>\d+)\b",
-    flags=re.IGNORECASE,
-)
-
-# These legacy regexes are compatibility adapters. Generic reference contracts
-# must provide verified domain_structure regexes instead of relying on fallback
-# enforcement from this registry.
-LEGACY_REFERENCE_PATTERN_PROFILES = {
-    "chapter_verse": ("REFERENCE_PATTERN", "CHAPTER_ONLY_PATTERN"),
-    "book_hadith": ("BOOK_HADITH_PATTERN",),
-    "legal_section": ("LEGAL_SECTION_PATTERN",),
-    "page_line": ("PAGE_LINE_PATTERN",),
-}
-
 QUERY_ARABIC_PATTERN = re.compile(r"[\u0600-\u06FF]")
-QUERY_REFERENCE_PATTERN = re.compile(r"\[(?P<reference>\d{1,3}:\d{1,3})\]")
 QUERY_GRAPH_CONTEXT_PATTERN = re.compile(
     r"\b(?:surrounding|connected|related|nearby|neighboring|previous|next|before|after|context|around)\b",
     re.IGNORECASE,

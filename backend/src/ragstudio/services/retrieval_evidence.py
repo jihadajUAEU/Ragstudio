@@ -178,8 +178,6 @@ def plan_for_query(
         intent = "count"
     elif re.search(r"\b(title|name of|collection)\b", normalized):
         intent = "title"
-    elif re.search(r"\b(book|hadith|chapter)\s+\d+", normalized):
-        intent = "reference"
     elif re.search(r"\b(compare|difference|similarities)\b", normalized):
         intent = "comparison"
     elif re.search(r"\b(summary|summarize|overview)\b", normalized):

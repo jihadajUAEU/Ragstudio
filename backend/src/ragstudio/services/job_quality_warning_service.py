@@ -513,7 +513,7 @@ class JobQualityWarningService:
             "count": count,
             "reason": (
                 "Some chunks are prose continuations, titles, or front matter that could not be "
-                "attached to exactly one book/hadith reference."
+                "attached to exactly one verified document reference unit."
             ),
             "action": "mark_non_reference_chunks_and_carry_forward_references",
             "metadata_patch": {
@@ -817,25 +817,6 @@ class JobQualityWarningService:
     ) -> dict[str, Any]:
         _ = domain_metadata
         return custom_json
-
-    def _domain_metadata_tokens(self, domain_metadata: dict[str, Any]) -> set[str]:
-        values: list[Any] = [
-            domain_metadata.get("domain"),
-            domain_metadata.get("document_type"),
-            domain_metadata.get("citation_style"),
-            domain_metadata.get("expected_structure"),
-            domain_metadata.get("reference_pattern"),
-            domain_metadata.get("script"),
-            domain_metadata.get("content_role"),
-        ]
-        tags = domain_metadata.get("tags")
-        if isinstance(tags, list):
-            values.extend(tags)
-        return {
-            value.strip().casefold()
-            for value in values
-            if isinstance(value, str) and value.strip()
-        }
 
     async def _ai_repair_suggestion(
         self,

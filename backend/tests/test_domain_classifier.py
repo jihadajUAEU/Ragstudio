@@ -23,6 +23,13 @@ def _verified_reference_custom_json(
             }
         },
         "reference_resolution": {"enabled": True, "build_canonical_units": True},
+        "reference_contract_validation": {
+            "status": "verified",
+            "selected_strategy": "single_anchor",
+            "selected_primary_anchor_regex": regex,
+            "matched_units": 2,
+            "matched_pages": [1],
+        },
     }
 
 

@@ -1,8 +1,4 @@
-"""Adapter-owned retrieval signals for non-generic domain behavior.
-
-Generic scoring code consumes the neutral ``RetrievalScoringSignals`` result;
-domain vocabulary stays isolated in this adapter module.
-"""
+"""Generic adapter-owned retrieval signals derived from declared document metadata."""
 
 from __future__ import annotations
 
@@ -21,22 +17,6 @@ def scoring_signals_for_metadata(metadata: dict[str, Any]) -> RetrievalScoringSi
     domain_metadata = metadata.get("domain_metadata")
     if not isinstance(domain_metadata, dict):
         return RetrievalScoringSignals()
-    domain = str(domain_metadata.get("domain") or "").casefold()
-    collection = str(domain_metadata.get("collection") or "").casefold()
-    tags = {
-        str(tag).casefold()
-        for tag in domain_metadata.get("tags", [])
-        if isinstance(tag, str)
-    }
-    if domain == "hadith" or "hadith" in tags:
-        terms = {"hadith", "collection"}
-        if "bukhari" in collection:
-            terms.add("bukhari")
-        return RetrievalScoringSignals(
-            count_answer_terms=frozenset(terms),
-            exact_script_boost="arabic",
-            reference_label="hadith",
-        )
     declared_scripts = _declared_scripts(domain_metadata)
     if "arabic" in declared_scripts:
         return RetrievalScoringSignals(exact_script_boost="arabic")

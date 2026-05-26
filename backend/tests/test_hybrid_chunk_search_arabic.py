@@ -142,7 +142,7 @@ def test_count_boost_does_not_fire_without_domain_adapter():
     assert score == 0.0
 
 
-def test_count_boost_uses_hadith_adapter_terms():
+def test_count_boost_does_not_use_domain_label_terms():
     service = HybridChunkSearch()
     score = service._answer_bearing_count_boost(
         "how many hadith",
@@ -150,19 +150,17 @@ def test_count_boost_uses_hadith_adapter_terms():
         {"domain_metadata": {"domain": "hadith", "collection": "sahih_bukhari"}},
     )
 
-    assert score == service.policy.answer_bearing_count
+    assert score == 0.0
 
 
-def test_legacy_same_chapter_weight_maps_to_generic_weight_key():
+def test_legacy_same_chapter_weight_is_not_migrated():
     search = HybridChunkSearch()
 
-    assert search._effective_weights(None, {"same_chapter": 2.0}) == {
-        "same_parent_reference": 2.0
-    }
+    assert search._effective_weights(None, {"same_chapter": 2.0}) == {"same_chapter": 2.0}
     assert search._effective_weights(
         None,
         {"same_parent_reference": 3.0, "same_chapter": 2.0},
-    ) == {"same_parent_reference": 3.0}
+    ) == {"same_parent_reference": 3.0, "same_chapter": 2.0}
 
 
 def test_domain_intent_phrase_requires_full_query_phrase():
@@ -286,11 +284,18 @@ def test_cross_reference_only_inline_reference_does_not_get_reference_exact_boos
                 "primary_anchor": {
                     "regex": r"\bVerse\s+(?P<chapter>\d{1,4})\s*:\s*(?P<verse>\d{1,4})\b",
                     "unit": "verse_section",
+                    "verified": True,
                 },
                 "inline_references": {
                     "regex": r"(?P<chapter>\d{1,4})\s*:\s*(?P<verse>\d{1,4})",
                     "policy": "cross_reference_only",
+                    "verified": True,
                 },
+            },
+            "reference_contract_validation": {"status": "verified"},
+            "reference_resolution": {
+                "enabled": True,
+                "build_canonical_units": True,
             },
             "retrieval": {"exact_reference_top1": True},
         },
@@ -308,10 +313,12 @@ def test_cross_reference_only_inline_reference_does_not_get_reference_exact_boos
             "reference_metadata": {
                 "references": ["18:30"],
                 "cross_references": ["25:75"],
-                "chapter_start": 18,
-                "chapter_end": 18,
-                "verse_start": 30,
-                "verse_end": 30,
+                "identity_ranges": {
+                    "chapter": {"start": 18, "end": 18},
+                    "verse": {"start": 30, "end": 30},
+                },
+                "reference_identity_fields": ["chapter", "verse"],
+                "reference_unit_field": "verse",
             },
         },
     )
@@ -344,6 +351,7 @@ def test_hybrid_scoring_uses_generic_reference_ranges():
                             "verified": True,
                         }
                     },
+                    "reference_contract_validation": {"status": "verified"},
                     "reference_resolution": {
                         "enabled": True,
                         "build_canonical_units": True,
@@ -356,6 +364,8 @@ def test_hybrid_scoring_uses_generic_reference_ranges():
                     "parent_ref": {"start": 7, "end": 7},
                     "unit_ref": {"start": 104, "end": 104},
                 },
+                "reference_identity_fields": ["parent_ref", "unit_ref"],
+                "reference_unit_field": "unit_ref",
                 "previous_ref": "7:103",
                 "next_ref": "7:105",
             },

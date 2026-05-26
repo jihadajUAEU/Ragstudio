@@ -34,7 +34,8 @@ def compile_domain_metadata(metadata: DomainMetadata) -> DomainMetadata:
     custom_json = deepcopy(metadata.custom_json) if isinstance(metadata.custom_json, dict) else {}
     _apply_reference_contract_execution_status(custom_json)
     _apply_reference_contract_validation(custom_json)
-    if _reference_contract_explicitly_unverified(custom_json):
+    if _reference_contract_unverified_or_missing_proof(custom_json):
+        _demote_reference_contract(custom_json)
         return metadata.model_copy(update={"custom_json": custom_json}, deep=True)
     contract = build_executable_reference_contract(custom_json)
     if not _has_declared_executable_reference_contract(contract):
@@ -66,7 +67,7 @@ def validate_executable_reference_contract(metadata: DomainMetadata) -> None:
             "and build_canonical_units=true before indexing."
         )
 
-    if contract.verified:
+    if _reference_contract_verified(custom_json) and contract.verified:
         return
 
     if _has_satisfied_primary_anchor(contract):
@@ -174,14 +175,33 @@ def _compile_mineru_parse_options(metadata: DomainMetadata) -> MinerUParseOption
     return None
 
 
-def _reference_contract_explicitly_unverified(custom_json: dict[str, Any]) -> bool:
+def _reference_contract_unverified_or_missing_proof(custom_json: dict[str, Any]) -> bool:
+    if not _declares_reference_contract(custom_json):
+        return False
+    return not _reference_contract_verified(custom_json)
+
+
+def _reference_contract_verified(custom_json: dict[str, Any]) -> bool:
     validation = _dict_value(custom_json.get("reference_contract_validation"))
     if validation.get("status") == "verified":
-        return False
-    if validation.get("status") == "unverified":
         return True
+    if validation.get("status") == "unverified":
+        return False
     execution = _dict_value(custom_json.get("reference_contract_execution"))
-    return execution.get("status") == "unverified"
+    return execution.get("status") == "verified"
+
+
+def _declares_reference_contract(custom_json: dict[str, Any]) -> bool:
+    return any(
+        isinstance(custom_json.get(key), expected_type)
+        for key, expected_type in (
+            ("reference_schema", dict),
+            ("domain_structure", dict),
+            ("reference_contract_execution", dict),
+            ("reference_contract_validation", dict),
+            ("reference_contract_candidates", list),
+        )
+    )
 
 
 def _apply_reference_contract_execution_status(custom_json: dict[str, Any]) -> None:
@@ -245,10 +265,14 @@ def _apply_reference_contract_validation(custom_json: dict[str, Any]) -> None:
 
 def _demote_reference_contract(custom_json: dict[str, Any]) -> None:
     domain_structure = _dict_value(custom_json.get("domain_structure"))
-    if not domain_structure:
-        return
-    _demote_reference_anchor_verification(domain_structure)
-    custom_json["domain_structure"] = domain_structure
+    if domain_structure:
+        _demote_reference_anchor_verification(domain_structure)
+        custom_json["domain_structure"] = domain_structure
+    reference_resolution = _dict_value(custom_json.get("reference_resolution"))
+    if reference_resolution:
+        reference_resolution["enabled"] = False
+        reference_resolution["build_canonical_units"] = False
+        custom_json["reference_resolution"] = reference_resolution
 
 
 def _selected_validation_candidate(

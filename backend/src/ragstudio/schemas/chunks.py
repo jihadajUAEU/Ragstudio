@@ -41,17 +41,6 @@ class HybridSearchWeights(StudioModel):
     metadata_boost: float | None = None
     domain_intent: float | None = None
 
-    @model_validator(mode="before")
-    @classmethod
-    def migrate_legacy_same_chapter(cls, data: Any) -> Any:
-        if not isinstance(data, dict):
-            return data
-        if data.get("same_parent_reference") is None and "same_chapter" in data:
-            data = {**data, "same_parent_reference": data.get("same_chapter")}
-        if "same_chapter" in data:
-            data = {key: value for key, value in data.items() if key != "same_chapter"}
-        return data
-
     @model_validator(mode="after")
     def reject_negative_weights(self) -> "HybridSearchWeights":
         for key, value in self.model_dump(exclude_none=True).items():

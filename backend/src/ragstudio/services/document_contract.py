@@ -30,6 +30,7 @@ def build_document_index_contract(options: IndexDocumentIn) -> dict[str, Any]:
     has_reference_contract = bool(
         reference_schema.get("type")
         and verified_reference_contract
+        and reference_resolution.get("enabled") is True
         and reference_resolution.get("build_canonical_units") is True
     )
     is_generic = (
@@ -169,7 +170,10 @@ def _reference_contract_payload(custom_json: dict[str, Any]) -> dict[str, Any]:
         "schema_type": executable.schema_type,
         "canonical_ref_template": executable.canonical_ref_template,
         "required_groups": sorted(executable.required_groups),
-        "canonical_units": reference_resolution.get("build_canonical_units") is True,
+        "canonical_units": (
+            reference_resolution.get("enabled") is True
+            and reference_resolution.get("build_canonical_units") is True
+        ),
         "verified": verified,
         "strategy": strategy,
         "anchors": anchors,
@@ -185,7 +189,7 @@ def _validation_matches_executable(
     required_groups: frozenset[str],
 ) -> bool:
     if not validation:
-        return True
+        return False
     if validation.get("status") != "verified":
         return False
     strategy = _string_value(validation.get("selected_strategy"))
@@ -228,17 +232,6 @@ def _verified_strategy(
         required_groups=required_groups,
     ):
         return selected_strategy
-    for anchor in _verified_anchors_by_kind(anchors, "primary_anchor"):
-        if _anchor_satisfies_required_groups(anchor, required_groups):
-            return "single_anchor"
-    for context_anchor in _verified_anchors_by_kind(anchors, "context_anchor"):
-        for unit_anchor in _verified_anchors_by_kind(anchors, "unit_anchor"):
-            if _anchor_pair_satisfies_required_groups(
-                context_anchor,
-                unit_anchor,
-                required_groups,
-            ):
-                return "contextual_unit"
     return None
 
 

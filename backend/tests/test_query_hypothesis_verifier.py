@@ -86,7 +86,7 @@ def test_verifier_confirms_probable_reference_and_matched_arabic_term():
     assert verification.evidence_label == "S1"
 
 
-def test_verifier_prefers_section_reference_over_wrong_chunk_canonical_reference():
+def test_verifier_uses_canonical_reference_without_text_reference_fallback():
     hypothesis = QueryHypothesis(
         original_query="where is hanan",
         target_terms=[QueryTargetTerm(surface="hanan", script="latin")],
@@ -115,7 +115,7 @@ def test_verifier_prefers_section_reference_over_wrong_chunk_canonical_reference
     )
 
     assert verification.status == "confirmed"
-    assert verification.reference == "19:13"
+    assert verification.reference == "19:10"
 
 
 def test_verifier_rejects_when_reference_does_not_match_probable_answer():

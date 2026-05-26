@@ -1,6 +1,5 @@
 import pytest
 from pydantic import ValidationError
-
 from ragstudio.schemas.chunks import HybridSearchWeights
 from ragstudio.services.retrieval_policy import (
     DEFAULT_RETRIEVAL_POLICY,
@@ -17,8 +16,6 @@ def test_hybrid_score_policy_preserves_current_weights() -> None:
     assert policy.reference_exact == 100.0
     assert policy.same_parent_reference_query == 60.0
     assert policy.same_parent_with_unit_query == 5.0
-    assert policy.same_chapter_reference_query == 60.0
-    assert policy.same_chapter_with_verse_query == 5.0
     assert policy.neighbor_match == 30.0
     assert policy.term_coverage_multiplier == 10.0
     assert policy.semantic_density_multiplier == 2.0
@@ -38,16 +35,9 @@ def test_hybrid_search_weights_uses_generic_same_parent_reference_name() -> None
     assert weights.model_dump(exclude_none=True) == {"same_parent_reference": 2.5}
 
 
-def test_hybrid_search_weights_accepts_legacy_same_chapter_payload() -> None:
-    weights = HybridSearchWeights.model_validate({"same_chapter": 2.5})
-
-    assert weights.same_parent_reference == 2.5
-    assert weights.model_dump(exclude_none=True) == {"same_parent_reference": 2.5}
-
-
-def test_hybrid_search_weights_rejects_negative_legacy_same_chapter_payload() -> None:
+def test_hybrid_search_weights_does_not_migrate_legacy_same_chapter_payload() -> None:
     with pytest.raises(ValidationError):
-        HybridSearchWeights.model_validate({"same_chapter": -1})
+        HybridSearchWeights.model_validate({"same_chapter": 2.5})
 
 
 def test_fusion_policy_preserves_current_priorities() -> None:

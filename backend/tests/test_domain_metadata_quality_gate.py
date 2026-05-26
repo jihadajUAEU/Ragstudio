@@ -4,7 +4,29 @@ from ragstudio.services.adapter import AdapterChunk
 from ragstudio.services.domain_metadata_quality_gate import DomainMetadataQualityGate
 
 
+def single_anchor_validation(regex: str) -> dict[str, object]:
+    return {
+        "status": "verified",
+        "selected_strategy": "single_anchor",
+        "selected_primary_anchor_regex": regex,
+        "matched_units": 2,
+        "matched_pages": [1],
+    }
+
+
+def contextual_validation(context_regex: str, unit_regex: str) -> dict[str, object]:
+    return {
+        "status": "verified",
+        "selected_strategy": "contextual_unit",
+        "selected_context_anchor_regex": context_regex,
+        "selected_unit_anchor_regex": unit_regex,
+        "matched_units": 2,
+        "matched_pages": [1],
+    }
+
+
 def _quran_metadata() -> DomainMetadata:
+    primary_regex = r"(?P<chapter>\d{1,4})\s*:\s*(?P<verse>\d{1,4})"
     return DomainMetadata(
         domain="quran_tafseer",
         language="mixed",
@@ -22,12 +44,13 @@ def _quran_metadata() -> DomainMetadata:
             "domain_structure": {
                 "primary_anchor": {
                     "type": "chapter_verse",
-                    "regex": r"(?P<chapter>\d{1,4})\s*:\s*(?P<verse>\d{1,4})",
+                    "regex": primary_regex,
                     "unit": "verse",
                     "verified": True,
                 }
             },
             "reference_resolution": {"enabled": True, "build_canonical_units": True},
+            "reference_contract_validation": single_anchor_validation(primary_regex),
             "quality_policy": {
                 "required_scripts": ["arabic"],
                 "missing_required_script_action": "warn",
@@ -721,6 +744,8 @@ def test_domain_quality_gate_does_not_use_builtin_reference_fallback_for_context
 
 
 def test_domain_quality_gate_uses_valid_contextual_contract_units():
+    context_regex = r"\bSurah\s+(?P<chapter>\d{1,4})\b"
+    unit_regex = r"\bAyah\s+(?P<verse>\d{1,4})\b"
     metadata = DomainMetadata(
         domain="quran",
         custom_json={
@@ -731,18 +756,19 @@ def test_domain_quality_gate_uses_valid_contextual_contract_units():
             },
             "domain_structure": {
                 "context_anchor": {
-                    "regex": r"\bSurah\s+(?P<chapter>\d{1,4})\b",
+                    "regex": context_regex,
                     "unit": "chapter",
                     "verified": True,
                 },
                 "unit_anchor": {
-                    "regex": r"\bAyah\s+(?P<verse>\d{1,4})\b",
+                    "regex": unit_regex,
                     "unit": "verse",
                     "context_source": "context_anchor",
                     "verified": True,
                 },
             },
             "reference_resolution": {"enabled": True, "build_canonical_units": True},
+            "reference_contract_validation": contextual_validation(context_regex, unit_regex),
             "quality_policy": {
                 "optional_scripts": ["arabic"],
                 "missing_optional_script_action": "warn",
@@ -1169,6 +1195,7 @@ def test_metadata_only_reference_hints_keep_independent_script_materialization_g
 
 
 def test_verified_contract_still_extracts_reference_units_for_quality_gate():
+    primary_regex = r"Part\s+(?P<parent_ref>\d+)\s+Item\s+(?P<unit_ref>\d+)"
     metadata = DomainMetadata(
         domain="archive",
         language="mixed",
@@ -1180,12 +1207,13 @@ def test_verified_contract_still_extracts_reference_units_for_quality_gate():
             },
             "domain_structure": {
                 "primary_anchor": {
-                    "regex": r"Part\s+(?P<parent_ref>\d+)\s+Item\s+(?P<unit_ref>\d+)",
+                    "regex": primary_regex,
                     "unit": "item",
                     "verified": True,
                 }
             },
             "reference_resolution": {"enabled": True, "build_canonical_units": True},
+            "reference_contract_validation": single_anchor_validation(primary_regex),
             "quality_policy": {
                 "required_scripts": ["latin"],
                 "missing_required_script_action": "warn",
@@ -1209,6 +1237,7 @@ def test_verified_contract_still_extracts_reference_units_for_quality_gate():
 
 
 def test_verified_reference_contract_still_enforces_unresolved_reference_units():
+    primary_regex = r"^(?:Clause|البند)\s+(?P<clause>\d+)"
     metadata = DomainMetadata(
         domain="policy",
         document_type="insurance_policy",
@@ -1221,11 +1250,13 @@ def test_verified_reference_contract_still_enforces_unresolved_reference_units()
             },
             "domain_structure": {
                 "primary_anchor": {
-                    "regex": r"^(?:Clause|البند)\s+(?P<clause>\d+)",
+                    "regex": primary_regex,
                     "unit": "clause",
                     "verified": True,
                 }
             },
+            "reference_resolution": {"enabled": True, "build_canonical_units": True},
+            "reference_contract_validation": single_anchor_validation(primary_regex),
             "quality_policy": {
                 "required_scripts": ["latin"],
                 "missing_required_script_action": "warn",

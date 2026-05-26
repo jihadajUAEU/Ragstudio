@@ -207,10 +207,13 @@ def metadata_has_verified_reference_contract(metadata: dict[str, Any]) -> bool:
         if payload.get("verified") is True and payload.get("canonical_units") is True:
             return True
     custom_json = _dict_value(metadata.get("custom_json"))
+    if not _custom_json_reference_contract_verified(custom_json):
+        return False
     contract = build_executable_reference_contract(custom_json)
     reference_resolution = _dict_value(custom_json.get("reference_resolution"))
     return bool(
         contract.verified
+        and reference_resolution.get("enabled") is True
         and reference_resolution.get("build_canonical_units") is True
     )
 
@@ -251,7 +254,8 @@ def metadata_reference_contracts(metadata: dict[str, Any]) -> list[dict[str, Any
         contracts.append({"reference_contract": payload})
 
     custom_json = _dict_value(metadata.get("custom_json"))
-    if isinstance(custom_json.get("reference_schema"), dict):
+    has_verified_custom_contract = _custom_json_reference_contract_verified(custom_json)
+    if isinstance(custom_json.get("reference_schema"), dict) and has_verified_custom_contract:
         executable = build_executable_reference_contract(custom_json)
         reference_resolution = _dict_value(custom_json.get("reference_resolution"))
         contracts.append(
@@ -277,6 +281,23 @@ def metadata_reference_contracts(metadata: dict[str, Any]) -> list[dict[str, Any
             }
         )
     return contracts
+
+
+def _custom_json_reference_contract_verified(custom_json: dict[str, Any]) -> bool:
+    validation = _dict_value(custom_json.get("reference_contract_validation"))
+    execution = _dict_value(custom_json.get("reference_contract_execution"))
+    reference_resolution = _dict_value(custom_json.get("reference_resolution"))
+    return bool(
+        (
+            validation.get("status") == "verified"
+            or (
+                not validation
+                and execution.get("status") == "verified"
+            )
+        )
+        and reference_resolution.get("enabled") is True
+        and reference_resolution.get("build_canonical_units") is True
+    )
 
 
 def metadata_list_reference_contracts(

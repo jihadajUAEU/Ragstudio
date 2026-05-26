@@ -23,14 +23,6 @@ class HybridScorePolicy:
     exact_query_phrase: float = 8.0
     answer_bearing_phrase: float = 24.0
 
-    @property
-    def same_chapter_reference_query(self) -> float:
-        return self.same_parent_reference_query
-
-    @property
-    def same_chapter_with_verse_query(self) -> float:
-        return self.same_parent_with_unit_query
-
 
 @dataclass(frozen=True, slots=True)
 class FusionScorePolicy:

@@ -1,3 +1,5 @@
+"""Generic reference metadata adapter for model-declared document contracts."""
+
 from __future__ import annotations
 
 import re
@@ -10,13 +12,6 @@ from ragstudio.services.reference_contracts import (
     ReferenceAnchor,
     build_executable_reference_contract,
     canonical_reference_from_groups,
-)
-from ragstudio.services.reference_regex_registry import (
-    BOOK_HADITH_PATTERN,
-    CHAPTER_ONLY_PATTERN,
-    LEGAL_SECTION_PATTERN,
-    PAGE_LINE_PATTERN,
-    REFERENCE_PATTERN,
 )
 
 
@@ -81,8 +76,8 @@ class ReferenceSemantics:
     include_neighbors: int = 0
     preserve_parallel_text: bool = False
     exact_reference_top1: bool = False
-    boost_same_chapter: bool = False
-    boost_neighbor_verses: bool = False
+    boost_same_parent_reference: bool = False
+    boost_neighbor_references: bool = False
     relationships: dict[str, list[str]] = field(default_factory=dict)
     reference_pattern: str | None = None
     canonical_ref_template: str | None = None
@@ -102,13 +97,6 @@ class ReferenceSemantics:
     inline_reference_pattern: str | None = None
     inline_reference_policy: str = "starts_unit"
 
-    @property
-    def boost_same_parent_reference(self) -> bool:
-        return self.boost_same_chapter
-
-    @property
-    def boost_neighbor_references(self) -> bool:
-        return self.boost_neighbor_verses
     required_reference_groups: frozenset[str] = field(default_factory=frozenset)
     reference_identity_fields: tuple[str, ...] = ()
 
@@ -149,15 +137,18 @@ class ReferenceSemantics:
         )
 
         has_reference_schema = isinstance(reference_schema, dict)
-        has_structured_hint = has_reference_schema or cls._has_structured_reference_fields(
-            metadata
-        )
+        has_structured_hint = has_reference_schema or bool(contract.anchors)
         reference_capability = "none"
         if has_structured_hint:
             reference_capability = "hint"
-        if contract.verified and cls._bool_value(
-            reference_resolution.get("build_canonical_units"),
-            default=False,
+        if (
+            contract.verified
+            and cls._contract_state_verified(custom)
+            and cls._bool_value(reference_resolution.get("enabled"), default=False)
+            and cls._bool_value(
+                reference_resolution.get("build_canonical_units"),
+                default=False,
+            )
         ):
             reference_capability = "verified"
         profile_name = (
@@ -167,22 +158,39 @@ class ReferenceSemantics:
             if reference_capability == "hint"
             else "generic"
         )
-        reference_type = contract.schema_type or cls._reference_type(metadata, reference_schema)
+        reference_type = contract.schema_type
 
-        primary_contract_anchor = cls._verified_anchor_for_groups(
-            contract.anchors,
-            "primary_anchor",
-            contract.required_groups,
+        verified_reference = reference_capability == "verified"
+        primary_contract_anchor = (
+            cls._verified_anchor_for_groups(
+                contract.anchors,
+                "primary_anchor",
+                contract.required_groups,
+            )
+            if verified_reference
+            else None
         )
-        context_contract_anchor = cls._verified_context_anchor_for_groups(
-            contract.anchors,
-            contract.required_groups,
+        context_contract_anchor = (
+            cls._verified_context_anchor_for_groups(
+                contract.anchors,
+                contract.required_groups,
+            )
+            if verified_reference
+            else None
         )
-        unit_contract_anchor = cls._verified_unit_anchor_for_groups(
-            contract.anchors,
-            contract.required_groups,
+        unit_contract_anchor = (
+            cls._verified_unit_anchor_for_groups(
+                contract.anchors,
+                contract.required_groups,
+            )
+            if verified_reference
+            else None
         )
-        inline_contract_anchor = cls._anchor_by_kind(contract.anchors, "inline_references")
+        inline_contract_anchor = (
+            cls._anchor_by_kind(contract.anchors, "inline_references")
+            if verified_reference
+            else None
+        )
         primary_anchor_unit = (
             primary_contract_anchor.unit_role
             if primary_contract_anchor is not None
@@ -212,8 +220,8 @@ class ReferenceSemantics:
         )
         inline_reference_pattern = cls._string_value(
             inline_contract_anchor.regex
-            if inline_contract_anchor
-            else inline_references.get("regex"),
+            if inline_contract_anchor is not None and inline_contract_anchor.verified
+            else None,
             default=None,
         )
         context_anchor_pattern = (
@@ -230,7 +238,6 @@ class ReferenceSemantics:
                 and unit_anchor_pattern is not None
             )
         )
-        verified_reference = reference_capability == "verified"
         reference_identity_fields = _ordered_identity_fields(
             canonical_ref_template,
             contract.required_groups,
@@ -256,15 +263,12 @@ class ReferenceSemantics:
                 retrieval.get("exact_reference_top1"),
                 default=verified_reference,
             ),
-            boost_same_chapter=cls._bool_value(
-                retrieval.get("boost_same_chapter"),
+            boost_same_parent_reference=cls._bool_value(
+                retrieval.get("boost_same_parent_reference"),
                 default=verified_reference,
             ),
-            boost_neighbor_verses=cls._bool_value(
-                retrieval.get(
-                    "boost_neighbor_verses",
-                    retrieval.get("boost_neighbor_references"),
-                ),
+            boost_neighbor_references=cls._bool_value(
+                retrieval.get("boost_neighbor_references"),
                 default=verified_reference,
             ),
             relationships=cls._relationships(custom.get("relationships")),
@@ -338,7 +342,7 @@ class ReferenceSemantics:
         return bool(self.context_anchor_pattern and self.unit_anchor_pattern)
 
     def extract_query_reference(self, query: str) -> dict[str, int | str] | None:
-        for pattern in self._compiled_patterns(include_chapter_only=True):
+        for pattern in self._compiled_patterns():
             match = pattern.search(query)
             if match is not None:
                 return self._match_to_reference(match)
@@ -505,70 +509,6 @@ class ReferenceSemantics:
                 metadata["previous_ref"] = previous_ref
             if next_ref:
                 metadata["next_ref"] = next_ref
-        if self._legacy_adapter_selected("surah_ayah", "chapter_verse"):
-            chapter_verse_refs = [
-                ref
-                for ref in references
-                if isinstance(ref.get("chapter"), int) and isinstance(ref.get("verse"), int)
-            ]
-        else:
-            chapter_verse_refs = []
-        if chapter_verse_refs:
-            chapter_values = [int(ref["chapter"]) for ref in chapter_verse_refs]
-            verse_values = [int(ref["verse"]) for ref in chapter_verse_refs]
-            chapter_start = min(chapter_values)
-            chapter_end = max(chapter_values)
-            same_chapter = chapter_start == chapter_end
-            verse_start = min(verse_values) if same_chapter else int(chapter_verse_refs[0]["verse"])
-            verse_end = max(verse_values) if same_chapter else int(chapter_verse_refs[-1]["verse"])
-            metadata.update(
-                {
-                    "chapter_start": chapter_start,
-                    "chapter_end": chapter_end,
-                    "verse_start": verse_start,
-                    "verse_end": verse_end,
-                }
-            )
-            if self.include_neighbors > 0 and same_chapter:
-                previous_verse = verse_start - self.include_neighbors
-                if previous_verse > 0:
-                    metadata["previous_ref"] = f"{chapter_start}:{previous_verse}"
-                metadata["next_ref"] = f"{chapter_end}:{verse_end + self.include_neighbors}"
-
-        if self._legacy_adapter_selected("book_hadith", "hadith"):
-            book_hadith_refs = [
-                ref
-                for ref in references
-                if isinstance(ref.get("book"), int) and isinstance(ref.get("hadith"), int)
-            ]
-        else:
-            book_hadith_refs = []
-        if book_hadith_refs:
-            book_values = [int(ref["book"]) for ref in book_hadith_refs]
-            hadith_values = [int(ref["hadith"]) for ref in book_hadith_refs]
-            book_start = min(book_values)
-            book_end = max(book_values)
-            same_book = book_start == book_end
-            hadith_start = (
-                min(hadith_values) if same_book else int(book_hadith_refs[0]["hadith"])
-            )
-            hadith_end = max(hadith_values) if same_book else int(book_hadith_refs[-1]["hadith"])
-            metadata.update(
-                {
-                    "book_start": book_start,
-                    "book_end": book_end,
-                    "hadith_start": hadith_start,
-                    "hadith_end": hadith_end,
-                }
-            )
-            if self.include_neighbors > 0 and same_book:
-                previous_hadith = hadith_start - self.include_neighbors
-                if previous_hadith > 0:
-                    metadata["previous_ref"] = f"book:{book_start}:hadith:{previous_hadith}"
-                metadata["next_ref"] = (
-                    f"book:{book_end}:hadith:{hadith_end + self.include_neighbors}"
-                )
-
         for reference_field in ("section", "page", "line"):
             values = [ref[reference_field] for ref in references if reference_field in ref]
             if values:
@@ -576,12 +516,6 @@ class ReferenceSemantics:
         metadata.update(self._page_range(source_location))
 
         return metadata
-
-    def _legacy_adapter_selected(self, *reference_types: str) -> bool:
-        return (
-            self.reference_capability == "verified"
-            and (self.reference_type or "").casefold() in reference_types
-        )
 
     def _reference_labels(self, references: list[dict[str, int | str]]) -> list[str]:
         labels: list[str] = []
@@ -610,17 +544,12 @@ class ReferenceSemantics:
             matches.extend(pattern.finditer(text))
         return sorted(matches, key=lambda match: match.start())
 
-    def _compiled_patterns(
-        self,
-        *,
-        include_chapter_only: bool = False,
-    ) -> list[re.Pattern[str]]:
+    def _compiled_patterns(self) -> list[re.Pattern[str]]:
         patterns: list[re.Pattern[str]] = []
         seen: set[str] = set()
         for pattern_text in (
             self.primary_anchor_pattern,
             self.inline_reference_pattern,
-            self.reference_pattern,
         ):
             if not pattern_text or pattern_text in seen:
                 continue
@@ -629,18 +558,6 @@ class ReferenceSemantics:
                 patterns.append(re.compile(pattern_text, flags=re.IGNORECASE))
             except re.error:
                 pass
-        reference_type = (self.reference_type or "").casefold()
-        verified_adapter = self.reference_capability == "verified"
-        if verified_adapter and reference_type in {"surah_ayah", "chapter_verse"}:
-            patterns.append(REFERENCE_PATTERN)
-            if include_chapter_only:
-                patterns.append(CHAPTER_ONLY_PATTERN)
-        if reference_type in {"legal_section", "section", "article_section"}:
-            patterns.append(LEGAL_SECTION_PATTERN)
-        if reference_type in {"page_line", "page"}:
-            patterns.append(PAGE_LINE_PATTERN)
-        if verified_adapter and reference_type in {"book_hadith", "hadith"}:
-            patterns.append(BOOK_HADITH_PATTERN)
         return patterns
 
     def _primary_anchor_regex(self) -> re.Pattern[str] | None:
@@ -804,8 +721,6 @@ class ReferenceSemantics:
         templated_ref = self._render_canonical_ref(ref)
         if templated_ref:
             ref["ref"] = templated_ref
-        elif isinstance(ref.get("chapter"), int) and isinstance(ref.get("verse"), int):
-            ref["ref"] = f"{ref['chapter']}:{ref['verse']}"
         else:
             ref["ref"] = raw.strip()
         ref["canonical"] = str(ref["ref"])
@@ -824,16 +739,6 @@ class ReferenceSemantics:
         templated_ref = self._render_canonical_ref(ref)
         if templated_ref:
             ref["ref"] = templated_ref
-        elif isinstance(ref.get("chapter"), int) and isinstance(ref.get("verse"), int):
-            ref["ref"] = f"{ref['chapter']}:{ref['verse']}"
-        elif isinstance(ref.get("book"), int) and isinstance(ref.get("hadith"), int):
-            ref["ref"] = f"book:{ref['book']}:hadith:{ref['hadith']}"
-        elif "section" in ref:
-            ref["ref"] = f"section:{ref['section']}"
-        elif "page" in ref and "line" in ref:
-            ref["ref"] = f"page:{ref['page']}:line:{ref['line']}"
-        elif "page" in ref:
-            ref["ref"] = f"page:{ref['page']}"
         else:
             ref["ref"] = match.group(0).strip()
         return ref
@@ -847,86 +752,6 @@ class ReferenceSemantics:
         except (KeyError, IndexError, ValueError):
             return None
         return rendered or None
-
-    @classmethod
-    def _has_structured_reference_fields(cls, metadata: DomainMetadata) -> bool:
-        values = cls._metadata_tokens(metadata)
-        has_reference_pattern = any(
-            cls._token_mentions(value, "chapter", "surah", "sura")
-            and cls._token_mentions(value, "verse", "ayah", "aya")
-            for value in values
-        )
-        has_parallel_structure = "parallel_text" in values
-        has_strong_scripture_tag = bool({"quran", "bible", "scripture"} & values)
-        has_scripture_text_type = "religious_text" in values
-        has_legal_reference = any(
-            cls._token_mentions(value, "statute", "section", "article")
-            for value in values
-        )
-        has_page_line_reference = any(
-            cls._token_mentions(value, "page_line", "page-line", "page:line")
-            or (
-                cls._token_mentions(value, "page")
-                and cls._token_mentions(value, "line")
-            )
-            for value in values
-        )
-        has_hadith_reference = any(
-            cls._token_mentions(value, "hadith")
-            and cls._token_mentions(value, "book", "collection")
-            for value in values
-        )
-        return (
-            has_reference_pattern
-            or has_strong_scripture_tag
-            or (has_parallel_structure and has_scripture_text_type)
-            or has_legal_reference
-            or has_page_line_reference
-            or has_hadith_reference
-        )
-
-    @classmethod
-    def _reference_type(cls, metadata: DomainMetadata, reference_schema: Any) -> str | None:
-        if isinstance(reference_schema, dict):
-            schema_type = cls._string_value(reference_schema.get("type"), default="")
-            if schema_type:
-                return schema_type
-            fields = reference_schema.get("fields")
-            if isinstance(fields, dict) and cls._field_map_has_chapter_and_verse(fields):
-                return "chapter_verse"
-
-        values = cls._metadata_tokens(metadata)
-        if "surah_number:verse_number" in values or "quran" in values:
-            return "surah_ayah"
-        if any(
-            cls._token_mentions(value, "surah", "sura")
-            and cls._token_mentions(value, "verse", "ayah", "aya")
-            for value in values
-        ):
-            return "surah_ayah"
-        if any(
-            cls._token_mentions(value, "chapter")
-            and cls._token_mentions(value, "verse", "ayah", "aya")
-            for value in values
-        ):
-            return "chapter_verse"
-        if any(cls._token_mentions(value, "statute", "section", "article") for value in values):
-            return "legal_section"
-        if any(
-            cls._token_mentions(value, "page_line", "page-line", "page:line")
-            or (
-                cls._token_mentions(value, "page")
-                and cls._token_mentions(value, "line")
-            )
-            for value in values
-        ):
-            return "page_line"
-        if "hadith" in values or any(
-            cls._token_mentions(value, "book") and cls._token_mentions(value, "hadith")
-            for value in values
-        ):
-            return "book_hadith"
-        return None
 
     @staticmethod
     def _schema_pattern(reference_schema: Any) -> str | None:
@@ -946,18 +771,6 @@ class ReferenceSemantics:
         if isinstance(value, str) and value.strip():
             return value.strip()
         return None
-
-    @staticmethod
-    def _field_map_has_chapter_and_verse(fields: dict[Any, Any]) -> bool:
-        tokens = {
-            str(item).casefold()
-            for pair in fields.items()
-            for item in pair
-            if item is not None
-        }
-        has_chapter = bool({"chapter", "surah", "sura"} & tokens)
-        has_verse = bool({"verse", "ayah", "aya"} & tokens)
-        return has_chapter and has_verse
 
     @classmethod
     def _anchor_by_kind(
@@ -1037,22 +850,15 @@ class ReferenceSemantics:
             if isinstance(key, str) and isinstance(items, list)
         }
 
-    @staticmethod
-    def _metadata_tokens(metadata: DomainMetadata) -> set[str]:
-        raw_values = [
-            metadata.domain,
-            metadata.document_type,
-            metadata.expected_structure,
-            metadata.reference_pattern,
-            metadata.script,
-            metadata.content_role,
-            *metadata.tags,
-        ]
-        return {value.casefold() for value in raw_values if isinstance(value, str)}
-
-    @staticmethod
-    def _token_mentions(value: str, *words: str) -> bool:
-        return any(word in value for word in words)
+    @classmethod
+    def _contract_state_verified(cls, custom_json: dict[str, Any]) -> bool:
+        validation = custom_json.get("reference_contract_validation")
+        validation = validation if isinstance(validation, dict) else {}
+        execution = custom_json.get("reference_contract_execution")
+        execution = execution if isinstance(execution, dict) else {}
+        return validation.get("status") == "verified" or (
+            not validation and execution.get("status") == "verified"
+        )
 
     @staticmethod
     def _page_range(source_location: dict[str, Any] | None) -> dict[str, Any]:

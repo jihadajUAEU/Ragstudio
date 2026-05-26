@@ -1642,14 +1642,25 @@ def _materialization_policy(value: Any) -> str:
 
 def _reference_unit_resolution_required(custom_json: dict[str, Any]) -> bool:
     reference_contract = custom_json.get("reference_contract")
-    if isinstance(reference_contract, dict) and reference_contract.get("verified") is False:
+    if isinstance(reference_contract, dict):
+        return (
+            reference_contract.get("verified") is True
+            and reference_contract.get("canonical_units") is True
+        )
+    reference_resolution = custom_json.get("reference_resolution")
+    reference_resolution = reference_resolution if isinstance(reference_resolution, dict) else {}
+    if (
+        reference_resolution.get("enabled") is not True
+        or reference_resolution.get("build_canonical_units") is not True
+    ):
         return False
     validation = custom_json.get("reference_contract_validation")
-    if isinstance(validation, dict) and validation.get("status") == "unverified":
-        return False
-    if custom_json.get("contract_status") == "metadata_only":
-        return False
-    return True
+    validation = validation if isinstance(validation, dict) else {}
+    if validation:
+        return validation.get("status") == "verified"
+    execution = custom_json.get("reference_contract_execution")
+    execution = execution if isinstance(execution, dict) else {}
+    return execution.get("status") == "verified"
 
 
 def _string_value(value: Any) -> str | None:

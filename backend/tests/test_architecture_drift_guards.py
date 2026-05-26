@@ -37,27 +37,16 @@ DOMAIN_TERMS = [
 ]
 
 ADAPTER_ALLOWED_FILES = {
-    "backend/src/ragstudio/services/reference_regex_registry.py",
     "backend/src/ragstudio/services/domain_retrieval_adapters.py",
     "backend/src/ragstudio/services/reference_metadata.py",
 }
-
-COMPATIBILITY_TERMS_BY_FILE = {
-    "backend/src/ragstudio/services/hybrid_chunk_search.py": {"same_chapter"},
-    "backend/src/ragstudio/services/retrieval_policy.py": {"same_chapter"},
-    "backend/src/ragstudio/schemas/chunks.py": {"same_chapter"},
-}
-
 
 def test_generic_pipeline_files_do_not_reintroduce_domain_specific_terms() -> None:
     offenders: list[str] = []
     for relative_path in GENERIC_FILES:
         text = (REPO_ROOT / relative_path).read_text(encoding="utf-8")
         lowered = text.casefold()
-        allowed_terms = COMPATIBILITY_TERMS_BY_FILE.get(relative_path, set())
         for term in DOMAIN_TERMS:
-            if term in allowed_terms:
-                continue
             if term.casefold() in lowered:
                 offenders.append(f"{relative_path}: {term}")
 

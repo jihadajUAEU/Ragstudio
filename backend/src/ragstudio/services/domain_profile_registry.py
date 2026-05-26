@@ -99,7 +99,6 @@ DEFAULT_DOMAIN_PROFILES: tuple[DomainProfile, ...] = (
         retrieval_priority=("postgres_canonical", "lexical_reference", "graph", "vector"),
         supported_layouts=("plain_text", "reference", "mixed"),
         materialization_hints=("canonical_only", "vector", "graph", "full"),
-        reference_patterns=("section", "article", "ayah", "hadith", "footnote"),
     ),
     DomainProfile(
         id="multimodal_layout",
@@ -122,7 +121,6 @@ DEFAULT_DOMAIN_PROFILES: tuple[DomainProfile, ...] = (
         ),
         supported_layouts=("plain_text", "reference", "table", "mixed"),
         materialization_hints=("canonical_only", "vector", "graph", "full"),
-        reference_patterns=("section", "article", "clause", "regulation"),
         default_top_k=10,
     ),
     DomainProfile(
@@ -138,7 +136,6 @@ DEFAULT_DOMAIN_PROFILES: tuple[DomainProfile, ...] = (
         ),
         supported_layouts=("plain_text", "table", "figure", "reference", "mixed"),
         materialization_hints=("canonical_only", "vector", "runtime", "full"),
-        reference_patterns=("diagnosis", "treatment", "dose", "figure"),
         default_top_k=10,
     ),
     DomainProfile(
@@ -148,7 +145,6 @@ DEFAULT_DOMAIN_PROFILES: tuple[DomainProfile, ...] = (
         retrieval_priority=("postgres_canonical", "metadata", "vector", "graph"),
         supported_layouts=("plain_text", "table", "reference", "mixed"),
         materialization_hints=("canonical_only", "vector", "graph", "full"),
-        reference_patterns=("invoice", "account", "line_item", "tax"),
         default_top_k=10,
     ),
     DomainProfile(
@@ -158,7 +154,6 @@ DEFAULT_DOMAIN_PROFILES: tuple[DomainProfile, ...] = (
         retrieval_priority=("postgres_canonical", "metadata", "vector", "graph"),
         supported_layouts=("plain_text", "reference", "mixed"),
         materialization_hints=("canonical_only", "vector", "graph", "full"),
-        reference_patterns=("symbol", "function", "class", "stacktrace"),
         default_top_k=12,
     ),
 )

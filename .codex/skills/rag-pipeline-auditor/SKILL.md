@@ -53,6 +53,10 @@ plans, reranker traces, and proof packet validity are first-class evidence.
   model hosts, private document content, or unapproved screenshots.
 - Do not bypass quality gates to make retrieval look better. If a gate blocks
   vector indexing or graph projection, inspect the warning and policy first.
+- Do not treat raw reference-looking metadata as executable policy. Enforceable
+  document reference contracts must be model-declared, sample-executed,
+  verified, and stored on the document before they control chunking, exact
+  reference retrieval, graph identity, or query reference normalization.
 - Do not assume standard RAG behavior. Ragstudio uses MinerU strict parsing,
   layout-aware chunking, metadata policies, pgvector, lexical search, optional
   native RAG-Anything, optional reranking, and Neo4j as a rebuildable projection.
@@ -82,6 +86,10 @@ context:
 4. Boundary: live runtime issue, static fixture proof issue, UI display issue, or
    public launch/claim issue.
 5. Safety: whether any artifact, screenshot, log, or endpoint is public-safe.
+6. Regex/reference drift: if the change touches reference behavior, classify
+   every regex hit as verified contract execution, safety validation, script/text
+   utility, query-intent heuristic, fixture/example, or forbidden hardcoded
+   reference fallback.
 
 ## Architecture Map
 
@@ -146,18 +154,21 @@ Current implementation status:
 
 Target contract:
 
-- Domain profiles should be executable contracts, not labels. A profile should
-  define reference schemas, expected scripts/languages, canonical unit rules,
-  parser normalization rules, quality policy, retrieval preferences, graph
-  projection hints, and public-proof limitations.
+- Domain profiles should be executable defaults, not labels. A profile may
+  define expected scripts/languages, parser normalization rules, quality policy,
+  retrieval preferences, graph projection hints, and public-proof limitations.
+  Document-specific reference identity is a separate executable contract: the
+  model proposes it, Ragstudio validates named groups and templates, executes it
+  on sample pages, and only then stores it as verified.
 - Domain query expansion should be pluggable by domain/profile. Arabic
   religious expansion is one adapter, not the architecture. Legal, policy,
   medical, financial, code, tabular, and multilingual domains need their own
   lexical adapters, synonym maps, reference parsers, tokenizers, and
   cross-lingual/code-mixed rules when supported.
 - Domain metadata must compile before durable indexing. Raw AI/vision metadata
-  is descriptive until `domain_metadata_contract_compiler.py` turns it into a
-  validated contract with named regex groups and materialization policy.
+  is descriptive until `domain_metadata_contract_compiler.py` and the reference
+  contract execution path turn it into a validated contract with named regex
+  groups, successful sample matches, canonical units, and materialization policy.
 - Quality gates must travel with every evidence unit. `quality_action_policy`
   decides exact search, vector materialization, graph projection, runtime lane
   eligibility, and context assembly inclusion.
@@ -170,6 +181,8 @@ Audit checks:
 
 - Is the domain family hardcoded in the path being changed, or resolved through a
   profile/registry/contract?
+- Are reference-shaped regexes compiled from a verified document contract, or are
+  they hardcoded domain fallback logic hiding in generic services?
 - Does the change preserve `domain_metadata`, `reference_metadata`,
   `canonical_reference_unit`, and `quality_action_policy` in persisted chunks
   and response traces?
@@ -350,14 +363,16 @@ Audit focus:
 
 Audit focus:
 
-- Treat vision/LLM metadata as descriptive until it has been compiled into an
-  executable reference contract. Reference-aware chunking must have normalized
-  `reference_schema.type`, `domain_structure.primary_anchor.regex` with required
-  named groups, and `reference_resolution.build_canonical_units=true` before
-  upload or reindex can proceed.
+- Treat vision/LLM metadata as descriptive until it has been compiled and
+  executed as an executable reference contract. Reference-aware chunking requires
+  model-declared identity fields, regex named groups that match those fields, a
+  valid canonical reference template, successful sample-page execution, and
+  `reference_resolution.build_canonical_units=true` before upload or reindex can
+  use reference units.
 - The compiler belongs before durable job creation; the quality gate belongs in
-  upload/reindex validation. Do not let raw vision metadata such as
-  `surah:verse` without a regex reach the worker as an indexing contract.
+  upload/reindex validation. Do not let raw vision metadata, unverified
+  `reference_schema`, or reference-shaped regex strings reach the worker as an
+  indexing contract.
 - A missing retrieval candidate may be correct if `quality_action_policy` blocks
   `index_vector`, exact search, graph projection, or materialization.
 - Inspect `index_quality_report`, parser warning severity, expected script checks,
@@ -374,6 +389,33 @@ Audit focus:
   blocked unsafe chunks.
 - A fix that hides a warning without repairing the evidence path is not a real
   fix.
+
+### Hardcoded Reference And Regex Drift
+
+Use this check whenever reference behavior, chunking, retrieval, query
+understanding, domain metadata, or quality gates are changed.
+
+Scan target:
+
+```powershell
+rg -n -- "Verse\\s+|Surah\\s+|Hadith\\s+|Book\\s+|\\d+\\s*:\\s*\\d+|chapter_verse|surah_ayah|book_hadith|same_chapter|next_ayah|same_surah" backend/src/ragstudio/services backend/src/ragstudio/schemas backend/src/ragstudio/domain_profiles
+```
+
+Classify every hit:
+
+- Verified contract execution: allowed when the regex is compiled from stored
+  document contract fields that are verified and sample-executed.
+- Safety or syntax validation: allowed for redaction, path/URL filtering, custom
+  JSON regex allowlists, and unsupported-regex-token guards.
+- Script/text utility: allowed for script detection, whitespace normalization,
+  tokenization, and text cleanup that does not infer reference identity.
+- Query-intent heuristic: allowed only when it classifies query intent or
+  extracts non-reference terms; keep it traceable and eval-gated when it changes
+  ranking.
+- Fixture/example: allowed in tests, examples, and schema examples, but it must
+  not become production fallback behavior.
+- Hardcoded reference fallback: not allowed in generic production code. Replace
+  it with verified document-contract execution or remove it.
 
 ### Runtime, Retrieval, Fusion, And Answering
 

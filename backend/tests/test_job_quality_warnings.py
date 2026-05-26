@@ -664,16 +664,7 @@ async def test_fix_job_quality_warnings_queues_strict_reindex_from_stored_option
         "block_preview_chars": 160,
         "store_text_hash": True,
     }
-    assert repaired_custom_json["reference_schema"] == {
-        "type": "chapter_verse",
-        "display": "{chapter}:{verse}",
-        "canonical_ref_template": "{chapter}:{verse}",
-        "fields": {
-            "chapter": "surah_number",
-            "verse": "ayah_number",
-            "page": "page_number",
-        },
-    }
+    assert "reference_schema" not in repaired_custom_json
     assert repair_metadata["reference_unit_unresolved"][
         "carry_forward_previous_reference"
     ] is True
